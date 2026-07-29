@@ -29,6 +29,8 @@ interface WorkbenchAutoPrompt {
   metadata?: Record<string, unknown>;
 }
 
+const EMPTY_CHAT_MESSAGES: ChatMsg[] = [];
+
 /* ── timing constants ── */
 // Auto-send delay for prompts pulled out of sessionStorage (e.g. workbench_auto_prompt)
 // — short enough to feel responsive, long enough for the input frame to mount.
@@ -357,6 +359,7 @@ export function TaskWorkbench() {
   useEffect(() => {
     const autoRaw = safeGetSession("workbench_auto_prompt");
     if (autoRaw && currentWorkspaceId) {
+      let timer: ReturnType<typeof setTimeout> | undefined;
       let payload: WorkbenchAutoPrompt;
       try {
         payload = JSON.parse(autoRaw) as WorkbenchAutoPrompt;
@@ -372,7 +375,12 @@ export function TaskWorkbench() {
       pendingAutoMetadataRef.current = payload.metadata || {};
       setInput(prompt);
       safeRemoveSession("workbench_auto_prompt");
-      return;
+      timer = setTimeout(() => {
+        void onSendRef.current(prompt, payload.metadata || {}, { appendUser: true });
+      }, AUTO_SEND_DELAY_MS);
+      return () => {
+        if (timer) clearTimeout(timer);
+      };
     }
   }, [currentWorkspaceId]); // do NOT include onSend — use ref to avoid re-render killing timeout
 

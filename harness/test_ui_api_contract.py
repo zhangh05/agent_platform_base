@@ -17,6 +17,7 @@ import pytest
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 FRONTEND_SRC = os.path.join(PROJECT_ROOT, "frontend", "src")
+FRONTEND_INDEX = os.path.join(PROJECT_ROOT, "frontend", "index.html")
 
 
 def _frontend_source():
@@ -48,6 +49,11 @@ class TestForbiddenPatterns:
         assert retired_path not in html, (
             "retired business API found in frontend"
         )
+
+    def test_browser_title_is_platform_base(self):
+        index = open(FRONTEND_INDEX, encoding="utf-8").read()
+        assert "<title>Agent Platform Base</title>" in index
+        assert "Network Agent" not in index
 
     def test_no_port_8020(self):
         """Port 8020 must NOT appear as a formal service port."""

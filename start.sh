@@ -90,7 +90,7 @@ stop_started_services() {
     # Roll back any service that already came up. Called on fatal
     # failures so we never leave a half-started stack holding ports.
     local svc
-    for svc in "${STARTED_SERVICES[@]}"; do
+    for svc in "${STARTED_SERVICES[@]+"${STARTED_SERVICES[@]}"}"; do
         case "$svc" in
             backend)
                 log "[rollback] stopping backend (port $BACKEND_PORT)"

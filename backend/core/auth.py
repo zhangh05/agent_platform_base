@@ -20,6 +20,7 @@ Returns 401 on auth failure:
 import os
 import logging
 import hmac
+import ipaddress
 from functools import wraps
 from urllib.parse import urlparse
 
@@ -106,12 +107,39 @@ def _extract_token_from_request() -> str | None:
 def _configured_dev_origins() -> set[str]:
     raw = os.environ.get("AGENT_PLATFORM_ALLOWED_ORIGINS", "")
     origins = {item.strip().rstrip("/") for item in raw.split(",") if item.strip()}
-    origins.update({
-        "http://localhost:5273",
-        "http://127.0.0.1:5273",
-        "http://[::1]:5273",
-    })
+    ports = _configured_workbench_ports()
+    for port in ports:
+        origins.update({
+            f"http://localhost:{port}",
+            f"http://127.0.0.1:{port}",
+            f"http://[::1]:{port}",
+        })
     return origins
+
+
+def _configured_workbench_ports() -> set[int]:
+    raw = os.environ.get("AGENT_PLATFORM_WORKBENCH_PORTS", "5273,5274")
+    ports: set[int] = set()
+    for item in raw.split(","):
+        try:
+            port = int(item.strip())
+        except ValueError:
+            continue
+        if 1 <= port <= 65535:
+            ports.add(port)
+    return ports or {5273, 5274}
+
+
+def _is_local_or_private_host(hostname: str) -> bool:
+    value = (hostname or "").strip().lower()
+    if value in {"localhost", "127.0.0.1", "::1"}:
+        return True
+    try:
+        ip = ipaddress.ip_address(value)
+    except ValueError:
+        return value.endswith(".local")
+    shared_cgnat = ipaddress.ip_network("100.64.0.0/10")
+    return bool(ip.is_loopback or ip.is_private or ip.is_link_local or ip in shared_cgnat)
 
 
 def is_allowed_browser_origin(origin: str | None, request_host: str) -> bool:
@@ -126,6 +154,14 @@ def is_allowed_browser_origin(origin: str | None, request_host: str) -> bool:
         origin_hostname = origin_url.hostname or ""
         request_hostname = host.split(":")[0]
         if origin_hostname == request_hostname:
+            return True
+        origin_port = origin_url.port or (443 if origin_url.scheme == "https" else 80)
+        if (
+            origin_url.scheme in {"http", "https"}
+            and origin_port in _configured_workbench_ports()
+            and _is_local_or_private_host(origin_hostname)
+            and _is_local_or_private_host(request_hostname)
+        ):
             return True
         return origin_root in _configured_dev_origins()
     except Exception:
