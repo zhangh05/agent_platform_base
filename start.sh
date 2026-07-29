@@ -234,15 +234,15 @@ start_backend() {
     export AGENT_PLATFORM_ALLOWED_ORIGINS="$allowed_origins"
 
     log "[backend] Starting on $BACKEND_HOST:$BACKEND_PORT..."
-    : > "$LOG_DIR/backend-8010.log"
+    : > "$LOG_DIR/backend-$BACKEND_PORT.log"
     stop_screen "$BACKEND_SCREEN"
     if command -v screen >/dev/null 2>&1; then
         screen -dmS "$BACKEND_SCREEN" /bin/bash -lc \
-            "cd '$ROOT' && export AGENT_PLATFORM_ALLOWED_ORIGINS='$allowed_origins' && exec '$PYTHON_BIN' backend/main.py --host '$BACKEND_HOST' --port '$BACKEND_PORT' >> '$LOG_DIR/backend-8010.log' 2>&1"
+            "cd '$ROOT' && export AGENT_PLATFORM_ALLOWED_ORIGINS='$allowed_origins' && exec '$PYTHON_BIN' backend/main.py --host '$BACKEND_HOST' --port '$BACKEND_PORT' >> '$LOG_DIR/backend-$BACKEND_PORT.log' 2>&1"
     else
-        (cd "$ROOT" && export AGENT_PLATFORM_ALLOWED_ORIGINS="$allowed_origins" && nohup "$PYTHON_BIN" backend/main.py --host "$BACKEND_HOST" --port "$BACKEND_PORT" >> "$LOG_DIR/backend-8010.log" 2>&1 </dev/null &)
+        (cd "$ROOT" && export AGENT_PLATFORM_ALLOWED_ORIGINS="$allowed_origins" && nohup "$PYTHON_BIN" backend/main.py --host "$BACKEND_HOST" --port "$BACKEND_PORT" >> "$LOG_DIR/backend-$BACKEND_PORT.log" 2>&1 </dev/null &)
     fi
-    wait_for_url backend "http://127.0.0.1:$BACKEND_PORT/api/health" || { stop_started_services; fail "Backend failed to start. See $LOG_DIR/backend-8010.log"; }
+    wait_for_url backend "http://127.0.0.1:$BACKEND_PORT/api/health" || { stop_started_services; fail "Backend failed to start. See $LOG_DIR/backend-$BACKEND_PORT.log"; }
     write_port_pid "$BACKEND_PORT" "$BACKEND_PID_FILE"
     STARTED_SERVICES+=("backend")
 }
@@ -256,15 +256,16 @@ start_frontend() {
     fi
 
     log "[frontend] Starting on $FRONTEND_HOST:$FRONTEND_PORT..."
-    : > "$LOG_DIR/frontend-5273.log"
+    local dev_api_target="http://127.0.0.1:$BACKEND_PORT"
+    : > "$LOG_DIR/frontend-$FRONTEND_PORT.log"
     stop_screen "$FRONTEND_SCREEN"
     if command -v screen >/dev/null 2>&1; then
         screen -dmS "$FRONTEND_SCREEN" /bin/bash -lc \
-            "cd '$ROOT/frontend' && exec '$VITE_BIN' --host '$FRONTEND_HOST' --port '$FRONTEND_PORT' >> '$LOG_DIR/frontend-5273.log' 2>&1"
+            "cd '$ROOT/frontend' && export VITE_DEV_API_TARGET='$dev_api_target' && exec '$VITE_BIN' --host '$FRONTEND_HOST' --port '$FRONTEND_PORT' >> '$LOG_DIR/frontend-$FRONTEND_PORT.log' 2>&1"
     else
-        (cd "$ROOT/frontend" && nohup "$VITE_BIN" --host "$FRONTEND_HOST" --port "$FRONTEND_PORT" >> "$LOG_DIR/frontend-5273.log" 2>&1 </dev/null &)
+        (cd "$ROOT/frontend" && export VITE_DEV_API_TARGET="$dev_api_target" && nohup "$VITE_BIN" --host "$FRONTEND_HOST" --port "$FRONTEND_PORT" >> "$LOG_DIR/frontend-$FRONTEND_PORT.log" 2>&1 </dev/null &)
     fi
-    wait_for_url frontend "http://127.0.0.1:$FRONTEND_PORT" || { stop_started_services; fail "Frontend failed to start. See $LOG_DIR/frontend-5273.log"; }
+    wait_for_url frontend "http://127.0.0.1:$FRONTEND_PORT" || { stop_started_services; fail "Frontend failed to start. See $LOG_DIR/frontend-$FRONTEND_PORT.log"; }
     write_port_pid "$FRONTEND_PORT" "$FRONTEND_PID_FILE"
     STARTED_SERVICES+=("frontend")
 }
@@ -281,8 +282,8 @@ print_summary() {
         log ""
         log "Screen sessions: $BACKEND_SCREEN, $FRONTEND_SCREEN"
     fi
-    log "Logs:         $LOG_DIR/backend-8010.log"
-    log "              $LOG_DIR/frontend-5273.log"
+    log "Logs:         $LOG_DIR/backend-$BACKEND_PORT.log"
+    log "              $LOG_DIR/frontend-$FRONTEND_PORT.log"
     log "Stop with:    ./stop.sh"
 }
 
