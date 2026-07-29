@@ -1,0 +1,51 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+venv/
+.venv/
+.runtime/
+.env
+*.env
+config/llm.local.yaml
+config/secrets.yaml
+apikey
+api_key
+minimax_apikey
+minimax_api_key
+# Runtime ephemera
+*.log
+.backend.pid
+.frontend.pid
+data/
+artifacts/*
+!artifacts/*.py
+logs/
+memory/data/
+reports/*secret*
+reports/*apikey*
+reports/*key*
+# workspaces runtime data (all of it)
+workspaces/
+workspace/output/
+
+config/providers/
+config/.providers-test.lock
+config/llm.local.json
+API_key.txt
+
+# Generated audit/planning output
+reports/
+
+node_modules/
+*.tsbuildinfo
+frontend/vite.config.ts.timestamp-*.mjs
+
+reports/tool_catalog.json
+
+# macOS system files
+**/.DS_Store
+.AppleDouble
+.LSOverride
+._*
+.playwright-cli/
+.graph/events.jsonl

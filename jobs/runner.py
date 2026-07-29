@@ -1,0 +1,130 @@
+# jobs/runner.py
+"""Job runner — executes generic base jobs."""
+
+import time, sys, os, traceback
+
+from jobs.schemas import JobRecord, JobEvent
+from jobs.store import get_job, update_job, append_event, append_log
+from jobs.manager import mark_running, mark_succeeded, mark_failed, update_progress
+
+
+def run_job(ws_id: str, job_id: str):
+    """Execute a job. Entry point called by worker/API."""
+    rec = get_job(ws_id, job_id)
+    if not rec:
+        return
+
+    # Planned job types: go through queued→running→succeeded
+    if rec.job_type not in ("agent_run", "generic_agent_task", "export_report", "knowledge_index"):
+        try:
+            mark_running(ws_id, job_id)
+        except Exception:
+            pass
+        mark_succeeded(ws_id, job_id, {"status": "coming_soon", "planned": True, "job_type": rec.job_type})
+        return
+
+    try:
+        mark_running(ws_id, job_id)
+        append_log(ws_id, job_id, f"Starting {rec.job_type} job")
+
+        if rec.job_type in {"agent_run", "generic_agent_task"}:
+            _run_agent_job(rec)
+        elif rec.job_type == "export_report":
+            _run_export_report(rec)
+        elif rec.job_type == "knowledge_index":
+            _run_knowledge_index(rec)
+
+        # Fresh-get final job for accurate summary
+        final = get_job(ws_id, job_id)
+        mark_succeeded(ws_id, job_id, {
+            "run_count": len(final.run_ids) if final else 0,
+            "artifact_count": len(final.output_artifacts) if final else 0,
+        })
+    except Exception as e:
+        error_msg = str(e)[:300]
+        mark_failed(ws_id, job_id, error_msg)
+        append_log(ws_id, job_id, f"Job failed: {error_msg}", level="error")
+
+
+def _run_agent_job(rec: JobRecord):
+    ws = rec.workspace_id
+    jid = rec.job_id
+    payload = dict(rec.payload)
+
+    # Check cancel
+    if _cancel_check(rec):
+        return
+
+    from agent.app.service import get_default_agent_app
+    app = get_default_agent_app()
+    result = app.submit_user_message(
+        user_input=payload.pop("message", ""),
+        session_id=None,
+        workspace_id=ws,
+        metadata={"intent": payload.pop("intent", ""), "job_id": jid},
+    )
+    result_dict = result.to_dict()
+    # Update job with run info
+    update_job(ws, jid, {
+        "run_ids": [result_dict.get("run_id", "")],
+        "trace_ids": [result_dict.get("trace_id", "")],
+        "output_artifacts": result_dict.get("output_artifacts", []),
+        "report_artifacts": result_dict.get("report_artifacts", []),
+        "result_summary": {"ok": result_dict.get("ok")},
+    })
+    append_event(ws, jid, JobEvent(job_id=jid, workspace_id=ws,
+                 event_type="job_run_finished", run_id=result_dict.get("run_id", ""),
+                 message=f"Agent run completed"))
+
+def _run_export_report(rec: JobRecord):
+    ws = rec.workspace_id
+    jid = rec.job_id
+
+    if _cancel_check(rec):
+        return
+
+    payload = rec.payload
+    try:
+        from core.reports.schemas import ReportRequest
+        from core.reports.service import create_report
+        result = create_report(
+            ReportRequest(
+                workspace_id=ws,
+                run_id=payload.get("run_id", ""),
+                report_type=payload.get("report_type", "generic"),
+                title=payload.get("title", "Report"),
+                format=payload.get("report_format", "markdown"),
+                content=payload.get("content", ""),
+            ),
+            payload.get("agent_result", {}),
+        )
+        if result.ok:
+            update_job(ws, jid, {
+                "report_artifacts": [result.artifact_id],
+                "result_summary": {"report_id": result.report_id, "format": result.format},
+            })
+            append_event(ws, jid, JobEvent(job_id=jid, workspace_id=ws,
+                         event_type="job_report_created", artifact_id=result.artifact_id))
+        else:
+            mark_failed(ws, jid, result.error)
+    except Exception as e:
+        mark_failed(ws, jid, str(e))
+
+
+def _run_knowledge_index(rec: JobRecord):
+    ws = rec.workspace_id
+    jid = rec.job_id
+    if _cancel_check(rec):
+        return
+    append_log(ws, jid, "Knowledge index job is available to downstream implementations")
+    update_progress(ws, jid, current=1, total=1, message="Knowledge index placeholder completed")
+    update_job(ws, jid, {"result_summary": {"status": "completed", "job_type": "knowledge_index"}})
+
+
+def _cancel_check(rec: JobRecord) -> bool:
+    """Check if cancellation was requested. Returns True if should stop."""
+    from jobs.store import get_job
+    freshest = get_job(rec.workspace_id, rec.job_id)
+    if freshest and freshest.cancel_requested:
+        return True
+    return False

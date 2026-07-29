@@ -1,0 +1,268 @@
+{
+  "version": "v1.0.2",
+  "description": "Retrieval evaluation fixtures for v1.0.2 — Chinese books / RFCs / manuals.",
+  "thresholds": {
+    "recall_at_1": 0.70,
+    "recall_at_3": 0.85,
+    "recall_at_5": 0.92,
+    "mrr": 0.75,
+    "no_hit_precision": 1.0,
+    "duplicate_rate_max": 0.20
+  },
+  "documents": [
+    {
+      "doc_id": "ospf_book_zh",
+      "title": "OSPF 完全手册",
+      "source_type": "book",
+      "scope": "workspace",
+      "language": "zh",
+      "tags": ["routing", "ospf", "interior"],
+      "chapters": [
+        {
+          "chapter": "第一章 OSPF 协议概述",
+          "sections": [
+            {
+              "section": "1.1 OSPF 简介",
+              "content": "OSPF（开放式最短路径优先）是一种基于链路状态的内部网关协议（IGP），广泛应用于中大型企业网和服务提供商网络。OSPF 使用 Dijkstra 算法计算最短路径。OSPF 通过区域（area）划分减少链路状态通告（LSA）的泛洪范围。"
+            }
+          ]
+        },
+        {
+          "chapter": "第二章 OSPF 邻居与邻接",
+          "sections": [
+            {
+              "section": "2.1 DR 与 BDR",
+              "content": "在多路访问网络中，OSPF 通过选举指定路由器（DR）和备份指定路由器（BDR）来减少邻接关系数量。所有其他路由器（DRother）只与 DR 和 BDR 形成邻接关系，邻居之间保持 2-Way 状态。DR 监听 224.0.0.5，BDR 和 DRother 监听 224.0.0.6。"
+            }
+          ]
+        },
+        {
+          "chapter": "第三章 OSPF LSA 类型",
+          "sections": [
+            {
+              "section": "3.1 常见 LSA 类型",
+              "content": "OSPF 链路状态通告（LSA）类型包括：Router LSA（Type 1）、Network LSA（Type 2）、Summary LSA（Type 3）、ASBR Summary LSA（Type 4）、External LSA（Type 5）、NSSA External LSA（Type 7）。Type 3 LSA 由区域边界路由器（ABR）生成，Type 4 与 Type 5 由自治系统边界路由器（ASBR）参与。"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "doc_id": "bgp_book_zh",
+      "title": "BGP 协议详解",
+      "source_type": "book",
+      "scope": "workspace",
+      "language": "zh",
+      "tags": ["routing", "bgp", "exterior"],
+      "chapters": [
+        {
+          "chapter": "第一章 BGP 概述",
+          "sections": [
+            {
+              "section": "1.1 BGP 简介",
+              "content": "CSV 是一种常见的结构化文本格式，通常用逗号分隔字段，用换行分隔记录。分析前应先确认表头、编码、空值、重复行和字段类型。"
+            }
+          ]
+        },
+        {
+          "chapter": "第二章 BGP 路由策略",
+          "sections": [
+            {
+              "section": "2.1 路由策略与 community",
+              "content": "BGP 路由策略（route policy）通过 route-map 实施，常见的过滤维度包括：AS 路径、前缀列表、community（团体属性）等。community 是 BGP 的重要标记机制，可用于控制路由的传播范围。"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "doc_id": "switching_book_zh",
+      "title": "园区交换网络基础",
+      "source_type": "book",
+      "scope": "workspace",
+      "language": "zh",
+      "tags": ["switching", "lan"],
+      "chapters": [
+        {
+          "chapter": "第一章 VLAN 基础",
+          "sections": [
+            {
+              "section": "1.1 VLAN 概念",
+              "content": "VLAN（虚拟局域网）用于在二层交换机上划分广播域。不同 VLAN 之间的通信需要三层设备（如路由器或三层交换机）。"
+            }
+          ]
+        },
+        {
+          "chapter": "第二章 生成树",
+          "sections": [
+            {
+              "section": "2.1 STP 简介",
+              "content": "生成树协议（STP / spanning tree protocol）用于在二层交换网络中消除环路，避免广播风暴。RSTP 是 STP 的快速收敛版本。"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "doc_id": "nat_ppt_zh",
+      "title": "NAT 技术概览",
+      "source_type": "manual",
+      "scope": "session",
+      "language": "zh",
+      "tags": ["nat", "address-translation"],
+      "chapters": [
+        {
+          "chapter": "第一章 NAT 概念",
+          "sections": [
+            {
+              "section": "1.1 NAT 简介",
+              "content": "NAT（网络地址转换）用于在 IPv4 地址短缺时让多个内网主机共享一个公网 IP。源 NAT（SNAT）常用于出向流量，目的 NAT（DNAT）常用于入向服务的发布。"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "doc_id": "rfc2328_en",
+      "title": "RFC 2328 - OSPFv2",
+      "source_type": "rfc",
+      "scope": "global",
+      "language": "en",
+      "tags": ["rfc", "ospf", "igp"],
+      "chapters": [
+        {
+          "chapter": "Section 1 Introduction",
+          "sections": [
+            {
+              "section": "1.1 Protocol Overview",
+              "content": "OSPF is an Interior Gateway Protocol (IGP) that uses link-state advertisements (LSAs) and the Dijkstra shortest path first (SPF) algorithm. OSPF supports hierarchical routing through the use of areas."
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "queries": [
+    {
+      "id": "q_zh_ospf_basic",
+      "type": "chinese_exact",
+      "query": "OSPF 协议",
+      "expected_doc_id": "ospf_book_zh",
+      "expected_chapter_substrings": ["OSPF 协议概述"],
+      "description": "中文精确查询 — 协议名 + 协议"
+    },
+    {
+      "id": "q_en_ospf",
+      "type": "english_acronym",
+      "query": "OSPF",
+      "expected_doc_id": "ospf_book_zh",
+      "expected_chapter_substrings": ["OSPF"],
+      "description": "英文缩写 — 应通过扩展 + 字段权重命中 OSPF 章节"
+    },
+    {
+      "id": "q_zh_ospf_expansion",
+      "type": "chinese_expansion",
+      "query": "开放式最短路径优先",
+      "expected_doc_id": "ospf_book_zh",
+      "expected_chapter_substrings": ["OSPF 简介"],
+      "description": "中文全称 — 应通过扩展命中 OSPF"
+    },
+    {
+      "id": "q_mixed_ospf_neighbor",
+      "type": "mixed_cjk_en",
+      "query": "OSPF 邻居",
+      "expected_doc_id": "ospf_book_zh",
+      "expected_chapter_substrings": ["2.1 DR 与 BDR", "邻居与邻接", "邻居", "DR"],
+      "description": "中英文混合查询 — OSPF 邻居"
+    },
+    {
+      "id": "q_dr_bdr_zh",
+      "type": "chapter_title",
+      "query": "DR 与 BDR",
+      "expected_doc_id": "ospf_book_zh",
+      "expected_chapter_substrings": ["2.1 DR 与 BDR", "DR 与 BDR"],
+      "description": "章节标题命中 — DR 与 BDR"
+    },
+    {
+      "id": "q_ospf_lsa_synonym",
+      "type": "body_synonym",
+      "query": "链路状态通告",
+      "expected_doc_id": "ospf_book_zh",
+      "expected_chapter_substrings": ["LSA"],
+      "description": "正文同义词命中（链路状态通告 = LSA）"
+    },
+    {
+      "id": "q_bgp_basic",
+      "type": "english_acronym",
+      "query": "BGP",
+      "expected_doc_id": "bgp_book_zh",
+      "expected_chapter_substrings": ["BGP"],
+      "description": "英文缩写 — BGP"
+    },
+    {
+      "id": "q_bgp_community_zh",
+      "type": "chinese_expansion",
+      "query": "BGP 团体属性",
+      "expected_doc_id": "bgp_book_zh",
+      "expected_chapter_substrings": ["路由策略", "community"],
+      "description": "BGP community 概念"
+    },
+    {
+      "id": "q_vlan_zh",
+      "type": "chinese_exact",
+      "query": "VLAN 是什么",
+      "expected_doc_id": "switching_book_zh",
+      "expected_chapter_substrings": ["VLAN"],
+      "description": "VLAN 概念"
+    },
+    {
+      "id": "q_stp_zh",
+      "type": "chinese_exact",
+      "query": "生成树",
+      "expected_doc_id": "switching_book_zh",
+      "expected_chapter_substrings": ["STP", "生成树"],
+      "description": "STP / 生成树"
+    },
+    {
+      "id": "q_nat_zh",
+      "type": "chinese_exact",
+      "query": "网络地址转换",
+      "expected_doc_id": "nat_ppt_zh",
+      "expected_chapter_substrings": ["NAT", "网络地址转换"],
+      "description": "NAT — session scope 文档"
+    },
+    {
+      "id": "q_no_hit",
+      "type": "no_hit",
+      "query": "完全不相关的查询 xyzqqq",
+      "expected_doc_id": null,
+      "expected_chapter_substrings": [],
+      "description": "无命中 — 必须诚实返回空（不能伪造）"
+    },
+    {
+      "id": "q_scope_global_rfc",
+      "type": "scope_isolation",
+      "query": "OSPF link state",
+      "expected_doc_id": "rfc2328_en",
+      "expected_chapter_substrings": ["Protocol", "OSPF"],
+      "description": "global scope 隔离 — RFC 2328 (English)"
+    },
+    {
+      "id": "q_source_id_filter",
+      "type": "source_id_filter",
+      "query": "OSPF 区域",
+      "expected_doc_id": "ospf_book_zh",
+      "expected_chapter_substrings": ["OSPF"],
+      "filter_source_id": "ospf_book_zh",
+      "description": "source_id 过滤 — 只允许 OSPF 书的命中 (eval 用 doc_id 解析为 source_id)"
+    },
+    {
+      "id": "q_duplicate_siblings",
+      "type": "duplicate_siblings",
+      "query": "OSPF 链路状态",
+      "expected_doc_id": "ospf_book_zh",
+      "expected_chapter_substrings": ["LSA", "OSPF"],
+      "description": "重复 chunk 去重 — 多个 sibling 命中后应去重"
+    }
+  ]
+}

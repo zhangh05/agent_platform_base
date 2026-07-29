@@ -1,0 +1,139 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  windows-package:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        id: python312
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Set up Python 3.13
+        id: python313
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Build frontend
+        shell: pwsh
+        run: |
+          npm --prefix frontend ci
+          npm --prefix frontend run build
+
+      - name: Build offline Python dependency cache
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force wheelhouse | Out-Null
+          & "${{ steps.python312.outputs.python-path }}" -m pip download --only-binary=:all: --dest wheelhouse -r requirements.txt
+          & "${{ steps.python313.outputs.python-path }}" -m pip download --only-binary=:all: --dest wheelhouse -r requirements.txt
+
+      - name: Verify dependency cache offline
+        shell: pwsh
+        run: |
+          foreach ($runtime in @(
+            @{ Name = "3.12"; Python = "${{ steps.python312.outputs.python-path }}" },
+            @{ Name = "3.13"; Python = "${{ steps.python313.outputs.python-path }}" }
+          )) {
+            $venv = Join-Path $env:RUNNER_TEMP "network-agent-wheelhouse-$($runtime.Name)"
+            $runtimePython = $runtime.Python
+            & $runtimePython -m venv $venv
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            $python = Join-Path $venv "Scripts/python.exe"
+            & $python -m pip install --disable-pip-version-check --no-index --find-links wheelhouse -r requirements.txt
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            & $python -m pip check
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            & $python -c "import flask, flask_sock, yaml, bs4, lxml, pdfplumber, scapy, paramiko"
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            & $python -m pytest -q harness/test_windows_runtime_contract.py harness/test_session_management.py harness/test_storage_integration.py
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+
+      - name: Validate Windows launch scripts
+        shell: pwsh
+        run: |
+          $tokens = $null
+          $errors = $null
+          [void][System.Management.Automation.Language.Parser]::ParseFile(
+            (Resolve-Path "start.ps1"), [ref]$tokens, [ref]$errors
+          )
+          if ($errors.Count -gt 0) { $errors | Format-List; exit 1 }
+          .\start.ps1 -NoBrowser -ValidateOnly
+          $tokens = $null
+          $errors = $null
+          [void][System.Management.Automation.Language.Parser]::ParseFile(
+            (Resolve-Path "stop.ps1"), [ref]$tokens, [ref]$errors
+          )
+          if ($errors.Count -gt 0) { $errors | Format-List; exit 1 }
+
+      - name: Assemble Windows package
+        shell: pwsh
+        run: |
+          $stage = Join-Path $PWD "release/network-agent"
+          New-Item -ItemType Directory -Force $stage | Out-Null
+          robocopy $PWD $stage /E /XD .git .github .venv .runtime node_modules logs data workspaces reports release frontend\test-results frontend\playwright-report /XF .backend.pid .frontend.pid *.log | Out-Null
+          $robocopyExitCode = $LASTEXITCODE
+          if ($robocopyExitCode -ge 8) { exit $robocopyExitCode }
+
+          # A Windows release is self-contained: users only extract the archive
+          # and double-click start.bat. Bundle the verified Python runtime,
+          # Node executable, and Vite runtime dependencies.
+          $pythonRoot = Split-Path "${{ steps.python312.outputs.python-path }}" -Parent
+          $runtimePython = Join-Path $stage "runtime/python"
+          $runtimeNode = Join-Path $stage "runtime/node"
+          New-Item -ItemType Directory -Force $runtimePython, $runtimeNode | Out-Null
+          robocopy $pythonRoot $runtimePython /E | Out-Null
+          if ($LASTEXITCODE -ge 8) { exit $LASTEXITCODE }
+
+          $nodePath = (Get-Command node.exe -ErrorAction Stop).Source
+          Copy-Item $nodePath (Join-Path $runtimeNode "node.exe") -Force
+          robocopy (Join-Path $PWD "frontend/node_modules") (Join-Path $stage "frontend/node_modules") /E | Out-Null
+          if ($LASTEXITCODE -ge 8) { exit $LASTEXITCODE }
+
+          $bundledPython = Join-Path $runtimePython "python.exe"
+          & $bundledPython -m pip install --disable-pip-version-check --no-index --find-links (Join-Path $stage "wheelhouse") -r (Join-Path $stage "requirements.txt")
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & $bundledPython -m pip check
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & $bundledPython -c "import flask, flask_sock, yaml, bs4, lxml, pdfplumber, scapy, paramiko"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+          $env:NETWORK_AGENT_NO_PAUSE = "1"
+          & (Get-Command pwsh.exe -ErrorAction Stop).Source -NoProfile -File (Join-Path $stage "start.ps1") -NoBrowser -ValidateOnly
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+          # Dependencies are installed into the portable runtime, so the large
+          # wheel cache is no longer needed in the user-facing archive.
+          Remove-Item -Recurse -Force (Join-Path $stage "wheelhouse")
+
+          # Robocopy uses 1-7 for successful copy states. Reset the native exit
+          # code so GitHub's pwsh wrapper does not mark the step as failed.
+          $global:LASTEXITCODE = 0
+          $version = "${{ github.ref_name }}"
+          Compress-Archive -Path $stage -DestinationPath "release/network-agent-$version-windows-x64.zip" -Force
+          exit 0
+
+      - name: Publish release asset
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release/network-agent-*-windows-x64.zip
+          generate_release_notes: true

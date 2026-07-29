@@ -1,0 +1,36 @@
+# config/llm.example.yaml
+# Copy to config/llm.yaml and configure.
+# Default: LLM disabled, all providers off.
+
+llm:
+  enabled: false
+  default_provider: disabled
+  safe_mode: true
+
+  providers:
+    openai:
+      type: openai_compatible
+      base_url: https://api.openai.com/v1
+      api_key_env: OPENAI_API_KEY
+      model: gpt-4.1-mini
+
+    deepseek:
+      type: openai_compatible
+      base_url: https://api.deepseek.com/v1
+      api_key_env: DEEPSEEK_API_KEY
+      model: deepseek-chat
+
+    minimax:
+      type: openai_compatible
+      base_url: https://api.minimaxi.com/v1
+      api_key_env: MINIMAX_API_KEY
+      model: MiniMax-M3
+
+    ollama:
+      type: ollama_compatible
+      base_url: http://127.0.0.1:11434/v1
+      model: qwen2.5:14b
+
+    mock:
+      type: mock
+      model: mock-safe-composer

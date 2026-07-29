@@ -1,0 +1,245 @@
+/* rt-* = RuntimeEventTimeline — v3.9 collapsible cards */
+
+/* ── list (v3.9.1: must be the scroll container, parent .wb-chat is overflow:hidden) ── */
+.rt-list {
+  display: flex; flex-direction: column; gap: 10px;
+  padding: 16px 32px 28px;
+  height: 100%;
+  min-height: 0;
+  overflow-y: auto;
+  scroll-behavior: auto;
+}
+
+/* ── card ── */
+.rt-card {
+  border: 1px solid var(--line); border-radius: 8px; background: var(--surface);
+  /* v3.9.1: was overflow:hidden, which clipped expanded bodies.
+     Keep radius by allowing children to render normally; the rt-list above
+     is the scroll container. */
+  overflow: visible;
+}
+.rt-card-bar {
+  display: flex; align-items: center; gap: 8px; padding: 10px 14px;
+  cursor: pointer; user-select: none; transition: background 0.12s;
+}
+.rt-card-bar:hover { background: var(--surface-2); }
+.rt-card-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+.rt-card-dot.ok  { background: var(--ok); }
+.rt-card-dot.err { background: var(--danger); }
+.rt-card-id {
+  font-family: "SF Mono", Menlo, monospace; font-size: 13px; font-weight: 600;
+  color: var(--text); flex-shrink: 0;
+}
+.rt-card-ws {
+  font-size: 10px; padding: 1px 6px; border-radius: 3px;
+  background: var(--surface-2); color: var(--text-3); border: 1px solid var(--line);
+}
+.rt-card-snippet {
+  flex: 1; min-width: 0; font-size: 12px; color: var(--text-3);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.rt-card-chev {
+  font-size: 11px; color: var(--text-4); flex-shrink: 0; white-space: nowrap;
+}
+
+/* ── body ── */
+.rt-card-body {
+  border-top: 1px solid var(--line); padding: 10px 14px 14px;
+  display: flex; flex-direction: column; gap: 10px;
+}
+
+/* ── diagnostics ── */
+.rt-diag {
+  display: flex; flex-direction: column; gap: 4px; padding: 8px 12px;
+  border-radius: 6px; border: 1px solid var(--warn); background: var(--warn-soft);
+}
+.rt-diag-e { font-size: 12px; color: var(--danger); font-family: "SF Mono", Menlo, monospace; }
+.rt-diag-w { font-size: 12px; color: var(--warn); font-family: "SF Mono", Menlo, monospace; }
+
+/* ── timeline (inside card) ── */
+.rt-timeline {
+  display: flex; flex-direction: column;
+  padding-left: 14px; border-left: 1.5px solid var(--line);
+}
+
+/* ── step ── */
+.rt-step {
+  display: flex; align-items: flex-start; gap: 8px; padding: 3px 0; position: relative;
+}
+.rt-dot {
+  width: 6px; height: 6px; border-radius: 50%; margin-top: 7px;
+  margin-left: calc(-14px - 4px); flex-shrink: 0; border: 2px solid var(--surface);
+}
+.rt-step-body { flex: 1; min-width: 0; }
+.rt-step-line { display: flex; align-items: center; gap: 8px; }
+.rt-step-label {
+  font-size: 13px; color: var(--text-2); font-weight: 500;
+}
+.rt-step-ts {
+  font-size: 11px; color: var(--text-4); font-family: "SF Mono", Menlo, monospace;
+  margin-left: auto; flex-shrink: 0;
+}
+.rt-step-msg {
+  margin-top: 2px; font-size: 12px; color: var(--text-3); line-height: 1.5;
+}
+
+/* ── tool step ── */
+.rt-step-tool { padding: 2px 0; }
+.rt-step-head {
+  display: flex; align-items: center; gap: 7px; padding: 4px 10px;
+  border: 1px solid var(--line); border-radius: 5px; background: var(--surface-2);
+  transition: border-color 0.12s;
+}
+.rt-step-head:hover { border-color: var(--line-3); }
+.rt-step-ok { font-size: 11px; color: var(--ok); flex-shrink: 0; }
+.rt-step-name { font-size: 12px; font-weight: 600; color: var(--text-2); font-family: "SF Mono", Menlo, monospace; }
+.rt-tag { font-size: 10px; padding: 1px 5px; border-radius: 3px; color: var(--text-3); }
+.rt-dur { font-size: 11px; color: var(--text-4); font-family: "SF Mono", Menlo, monospace; }
+.rt-chev { font-size: 10px; color: var(--text-4); margin-left: auto; flex-shrink: 0; }
+.rt-step-detail {
+  margin-top: 4px; padding: 4px 10px 4px 22px;
+  font-size: 12px; color: var(--text-3); line-height: 1.5;
+}
+.rt-step-err {
+  margin-top: 4px; padding: 4px 10px 4px 10px;
+  font-size: 11px; color: var(--danger); font-family: "SF Mono", Menlo, monospace;
+}
+
+/* ── chips ── */
+.rt-chips { display: flex; gap: 4px; flex-wrap: wrap; padding: 4px 0 0; }
+.rt-chip {
+  font-size: 10px; padding: 1px 6px; border-radius: 3px;
+  background: var(--ok-soft); color: var(--ok);
+}
+
+/* ── artifacts bar ── */
+.rt-artifacts {
+  display: flex; align-items: center; gap: 8px;
+  padding: 6px 10px; border: 1px solid var(--line); border-radius: 5px;
+  background: var(--surface-2);
+}
+.rt-art-label { font-size: 11px; font-weight: 600; color: var(--text-3); flex-shrink: 0; }
+
+.rt-retry-summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: var(--surface-2);
+}
+.rt-retry-items { display: flex; flex-wrap: wrap; gap: 4px; }
+.rt-retry-chip {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 3px;
+  border: 1px solid var(--line);
+  color: var(--text-3);
+  background: var(--surface);
+}
+.rt-retry-chip.ok {
+  color: var(--ok);
+  background: var(--ok-soft);
+}
+.rt-retry-chip.muted {
+  color: var(--text-4);
+}
+
+.rt-tracking-summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: var(--surface-2);
+}
+.rt-tracking-id {
+  font-size: 11px;
+  color: var(--text-3);
+  font-family: "SF Mono", Menlo, monospace;
+}
+.rt-tracking-chip {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 3px;
+  border: 1px solid var(--line);
+  color: var(--text-3);
+  background: var(--surface);
+}
+.rt-tracking-chip.ok {
+  color: var(--ok);
+  background: var(--ok-soft);
+}
+.rt-tracking-chip.live {
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+.rt-tracking-chip.warn {
+  color: var(--warn);
+  background: var(--warn-soft);
+}
+
+/* ── empty ── */
+.rt-empty { display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 80px 20px; color: var(--text-4); text-align: center; min-height: 200px; }
+.rt-empty p { margin: 2px 0; font-size: 14px; }
+.rt-empty-hint { font-size: 12px; color: var(--text-4); opacity: 0.8; }
+
+/* ── fallback body (C-plan: no AgentResult attached, just text) ── */
+.rt-fallback { display: flex; flex-direction: column; gap: 6px; }
+.rt-fallback-row { display: flex; gap: 8px; align-items: flex-start; }
+.rt-fallback-role { font-size: 11px; color: var(--text-4); flex-shrink: 0; min-width: 56px; }
+.rt-fallback-text { font-size: 13px; color: var(--text-2); line-height: 1.55; white-space: pre-wrap; word-break: break-word; }
+.rt-fallback-hint {
+  margin-top: 6px;
+  font-size: 11px;
+  color: var(--text-4);
+  font-style: italic;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* ── loading spinner (v3.9.1 lazy load) ── */
+.rt-loading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 16px 18px;
+  font-size: 12px;
+  color: var(--text-4);
+}
+.rt-spinner {
+  width: 12px;
+  height: 12px;
+  border: 2px solid var(--line-2);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: rt-spin 0.8s linear infinite;
+  flex-shrink: 0;
+}
+@keyframes rt-spin { to { transform: rotate(360deg); } }
+
+/* ── retry button ── */
+.rt-retry-btn {
+  font-size: 11px;
+  padding: 2px 8px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--surface-2);
+  color: var(--text-2);
+  cursor: pointer;
+  font-style: normal;
+}
+.rt-retry-btn:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+/* ── scrollbar (matches wb-chat-list) ── */
+.rt-list::-webkit-scrollbar { width: 8px; }
+.rt-list::-webkit-scrollbar-thumb { background: var(--line-2); border-radius: 4px; }
+
+/* ── dark ── */
+[data-theme="dark"] .rt-diag { background: #3d2e0a; border-color: #ca8a04; }

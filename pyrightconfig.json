@@ -1,0 +1,31 @@
+{
+  "include": [
+    "agent",
+    "backend",
+    "context",
+    "memory",
+    "runtime",
+    "core",
+    "workspace",
+    "artifacts",
+    "observability",
+    "modules"
+  ],
+  "exclude": [
+    "**/__pycache__",
+    "venv",
+    ".git",
+    "harness",
+    "frontend"
+  ],
+  "pythonVersion": "3.12",
+  "typeCheckingMode": "basic",
+  "reportMissingImports": "warning",
+  "reportMissingTypeStubs": false,
+  "reportUnusedImport": "warning",
+  "reportUnusedVariable": "warning",
+  "reportOptionalSubscript": "warning",
+  "reportOptionalMemberAccess": "warning",
+  "reportGeneralTypeIssues": "warning",
+  "reportAttributeAccessIssue": "warning"
+}

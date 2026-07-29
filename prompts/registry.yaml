@@ -1,0 +1,148 @@
+version: "2.0.0"
+description: "Agent Platform Base Prompt Registry"
+prompts:
+  - prompt_id: assistant.chat.v2
+    task: assistant_chat
+    version: v2
+    status: enabled
+    template_path: prompts/templates/assistant_chat.md
+    description: "Non-tool conversational fallback; production tool turns use QueryLoop prompt SSOT"
+    input_policy:
+      allow_full_source: false
+      allow_full_output: false
+      allow_full_artifact_content: false
+      allow_secret: false
+      max_context_chars: 4000
+    output_policy:
+      forbid_fake_trace_or_job_status: true
+      forbid_fake_artifact_id: true
+      forbid_secret_output: true
+
+  - prompt_id: response.compose.v2
+    task: response_compose
+    version: v2
+    status: enabled
+    template_path: prompts/templates/response_compose.md
+    description: "Organize final response from agent results"
+    input_policy:
+      allow_full_source: false
+      allow_full_output: false
+      allow_full_artifact_content: false
+      allow_secret: false
+      max_context_chars: 8000
+    output_policy:
+      forbid_fake_execution: true
+      forbid_unverified_mutation: true
+      forbid_hide_review: true
+      forbid_unverified_execution_claim: true
+      forbid_fake_trace_or_job_status: true
+      forbid_fake_artifact_id: true
+      forbid_secret_output: true
+    context_policy:
+      require_safe_llm_context: true
+      require_citations_for_references: true
+      max_artifact_refs: 10
+
+  - prompt_id: context.qa.v2
+    task: context_qa
+    version: v2
+    status: enabled
+    template_path: prompts/templates/context_qa.md
+    description: "Answer follow-up questions about last result"
+    input_policy:
+      allow_full_source: false
+      allow_full_output: false
+      allow_full_artifact_content: false
+      allow_secret: false
+      max_context_chars: 6000
+    output_policy:
+      forbid_fake_execution: true
+      forbid_unverified_mutation: true
+      forbid_hide_review: true
+      forbid_unverified_execution_claim: true
+      forbid_fake_trace_or_job_status: true
+      forbid_fake_artifact_id: true
+      forbid_secret_output: true
+
+  - prompt_id: manual_review.explain.v2
+    task: manual_review_explain
+    version: v2
+    status: enabled
+    template_path: prompts/templates/manual_review_explain.md
+    description: "Explain manual review items"
+    output_policy:
+      forbid_fake_execution: true
+      forbid_unverified_mutation: true
+      forbid_hide_review: true
+      forbid_unverified_execution_claim: true
+      forbid_secret_output: true
+
+  - prompt_id: result.summarize.v2
+    task: result_summarize
+    version: v2
+    status: enabled
+    template_path: prompts/templates/result_summarize.md
+    description: "Summarize deterministic runtime results"
+
+  - prompt_id: job_failure.explain.v2
+    task: job_failure_explain
+    version: v2
+    status: enabled
+    template_path: prompts/templates/job_failure_explain.md
+    description: "Explain why a job failed"
+
+  - prompt_id: report.summary.v2
+    task: report_summary
+    version: v2
+    status: enabled
+    template_path: prompts/templates/report_summary.md
+    description: "Summarize a report artifact"
+
+  - prompt_id: artifact_summary.explain.v2
+    task: artifact_summary_explain
+    version: v2
+    status: enabled
+    template_path: prompts/templates/artifact_summary_explain.md
+    description: "Explain artifact metadata"
+
+  - prompt_id: knowledge.answer.v2
+    task: knowledge_answer
+    version: v2
+    status: enabled
+    template_path: prompts/templates/knowledge_answer.md
+    description: "Answer questions from knowledge index search results — safe RAG"
+    input_policy:
+      allow_full_source: false
+      allow_full_output: false
+      allow_full_artifact_content: false
+      allow_secret: false
+      max_context_chars: 6000
+    output_policy:
+      forbid_fake_execution: true
+      forbid_unverified_mutation: true
+      forbid_hide_review: true
+      forbid_unverified_execution_claim: true
+      forbid_fake_trace_or_job_status: true
+      forbid_fake_artifact_id: true
+      forbid_secret_output: true
+    context_policy:
+      require_safe_llm_context: true
+      require_citations_for_references: true
+      max_artifact_refs: 5
+      max_knowledge_hits: 8
+
+  - prompt_id: memory.consolidation.v3
+    task: memory_consolidation
+    version: v3
+    status: enabled
+    template_path: prompts/templates/memory_consolidation.md
+    description: "Task-level reflection that consolidates experience into layered long-term memory"
+    input_policy:
+      allow_full_source: false
+      allow_secret: false
+    output_policy:
+      forbid_fake_execution: true
+      forbid_secret_output: true
+      require_json: true
+    context_policy:
+      require_safe_llm_context: false
