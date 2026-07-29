@@ -17,6 +17,7 @@
 - Store functions should not invent a workspace for caller mistakes.
 - Deletion must be scoped and explicit.
 - Redacted summaries may be returned in list APIs; raw secret-bearing payloads must not.
+- Provider credentials must be encrypted at rest with AES-GCM or an equivalent authenticated encryption scheme.
 - Business modules call domain repositories for persistence. Low-level path,
   atomic-I/O, and generic-record helpers remain inside data-plane adapters;
   business services must not assemble `workspace_root()/module/*.json(l)` paths

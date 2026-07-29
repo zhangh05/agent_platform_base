@@ -14,6 +14,16 @@ from typing import Any, Callable
 from core.tools.schemas import ToolInvocation, ToolSpec
 
 
+def handle_weather_current(inv: ToolInvocation) -> dict:
+    from core.tools.general_tools.web_tools import handle_weather_current as _impl
+    return _impl(inv)
+
+
+def handle_weather_forecast(inv: ToolInvocation) -> dict:
+    from core.tools.general_tools.web_tools import handle_weather_forecast as _impl
+    return _impl(inv)
+
+
 @dataclass(frozen=True)
 class CanonicalToolEntry:
     canonical_tool_id: str
@@ -158,7 +168,6 @@ def _handle_web(inv: ToolInvocation) -> dict:
             return handle_news_search(inv)
         return handle_web_search(inv)
     if action == "weather":
-        from core.tools.general_tools.web_tools import handle_weather_current, handle_weather_forecast
         days = int(args.get("days") or 1)
         return handle_weather_forecast(inv) if days > 1 else handle_weather_current(inv)
     if action == "fetch":
@@ -407,6 +416,15 @@ def _handle_workspace_metadata(inv: ToolInvocation) -> dict:
 def _handle_pdf_extract(inv: ToolInvocation) -> dict:
     from core.tools.general_tools.pdf_tools import handle_pdf_extract_text
     return handle_pdf_extract_text(inv)
+
+
+def _weather_merged(inv: ToolInvocation) -> dict:
+    result = _handle_web(inv)
+    return {
+        "ok": bool(result.get("ok", True)),
+        "status": result.get("status", "ok" if result.get("ok", True) else "failed"),
+        "output": result,
+    }
 
 
 def _entry(

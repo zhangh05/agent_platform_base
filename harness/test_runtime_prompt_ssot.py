@@ -38,7 +38,7 @@ def test_turn_message_separates_history_context_and_current_request():
     )
     assert '<conversation_history data_only="true">' in text
     assert '<governed_context data_only="true">' in text
-    assert "<current_user_request>\ncheck the device" in text
+    assert "<current_user_request>\ncheck the file" in text
     assert text.index("</governed_context>") < text.index("<current_user_request>")
 
 

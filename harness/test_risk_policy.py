@@ -271,7 +271,7 @@ def test_approval_handler_resumes_exact_call():
     def mock_llm(**kw):
         return json.dumps({"nodes": [
             {"id": "n1", "tool": "exec.run",
-             "args": {"command": "rm -f /tmp/agent-platform-base-test-file"}},
+             "args": {"action": "shell", "command": "rm -f /tmp/agent-platform-base-test-file"}},
         ]})
 
     registry = {"exec.run": {"description": "", "args_schema": {
@@ -310,7 +310,7 @@ def test_hard_block_denied_approval():
     def mock_llm(**kw):
         return json.dumps({"nodes": [
             {"id": "n1", "tool": "exec.run",
-             "args": {"command": "rm -rf /"}},
+             "args": {"action": "shell", "command": "rm -rf /"}},
         ]})
 
     registry = {"exec.run": {"description": "", "args_schema": {

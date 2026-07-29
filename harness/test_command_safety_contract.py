@@ -266,7 +266,7 @@ def test_policy_check_curl_pipe_sh_escalates():
 
 def test_policy_check_forbidden_tool_blocks():
     """ssh.exec is in V02_FORBIDDEN_TOOLS and must still block."""
-    spec = _make_spec(tool_id="ssh.exec", category="ssh")
+    spec = _make_spec(tool_id="ssh.exec", category="exec")
     inv = ToolInvocation(
         tool_id="ssh.exec", arguments={"command": "ls"},
         workspace_id="default", requested_by="test",

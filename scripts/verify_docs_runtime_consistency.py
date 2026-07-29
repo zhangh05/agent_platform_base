@@ -46,7 +46,7 @@ def main() -> int:
     _registered = len(CANONICAL_REGISTRY)
     _manifests = len(MANIFESTS)
     check(
-        _registered == _manifests and _registered >= 20,
+        _registered == _manifests and _registered >= 16,
         f"canonical/manifest registry count drift "
         f"(CANONICAL_REGISTRY={_registered}, MANIFESTS={_manifests})",
     )

@@ -1,6 +1,11 @@
 # Windows
 
-This base project keeps the startup scripts, but release packaging should be owned by each downstream product.
+This base project keeps the startup scripts, but release packaging should be owned by each downstream product. 打包产物应内置运行时，不要求用户另行安装开发环境。
+
+Packaged Windows releases should include:
+
+- `runtime\python\python.exe`
+- `runtime\node\node.exe`
 
 For source development:
 
