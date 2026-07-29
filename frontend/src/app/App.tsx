@@ -171,7 +171,7 @@ function AppShell() {
             so navigation never tears down the shell. */}
         <AppLayout>
           <Suspense fallback={<RouteFallback />}>
-            <div className="route-view" key={location.pathname}>
+            <div className="route-view">
               <Routes>
                 <Route path="/workbench" element={<ErrorBoundary><TaskWorkbench /></ErrorBoundary>} />
                 <Route path="/knowledge" element={<ErrorBoundary><KnowledgeLibrary /></ErrorBoundary>} />

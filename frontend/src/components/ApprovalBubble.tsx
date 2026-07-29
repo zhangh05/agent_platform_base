@@ -2,6 +2,7 @@ import { useEffect, useState, useRef, useCallback } from "react";
 import { useSessionStore } from "../stores/session";
 import { approvalApi, openApprovalStream } from "../api";
 import { IconAlert, IconCheck, IconClose, IconClock } from "./Icon";
+import "./ApprovalBubble.css";
 
 interface PendingApproval {
   approval_id: string;
@@ -43,21 +44,6 @@ export function ApprovalBubble({ onResolved }: { onResolved?: (decision: "approv
       setPending(null);
       resolvingRef.current = false;
       setSecondsLeft(60);
-    };
-  }, []);
-
-  // Inject component styles on mount
-  useEffect(() => {
-    const elId = "abp-style";
-    let el = document.getElementById(elId) as HTMLStyleElement | null;
-    if (!el) {
-      el = document.createElement("style");
-      el.id = elId;
-      el.textContent = STYLE;
-      document.head.appendChild(el);
-    }
-    return () => {
-      if (el && el.parentNode) el.parentNode.removeChild(el);
     };
   }, []);
 
@@ -248,141 +234,3 @@ export function ApprovalBubble({ onResolved }: { onResolved?: (decision: "approv
     </div>
   );
 }
-
-/* ── Small popup styles — positioned above input bar ── */
-const STYLE = `
-.approval-bubble-popup {
-  position: fixed;
-  bottom: 100px;
-  left: 50%;
-  transform: translateX(-50%);
-  z-index: 200;
-  animation: abpSlideUp 0.25s ease-out;
-}
-@keyframes abpSlideUp {
-  from { opacity: 0; transform: translateX(-50%) translateY(12px); }
-  to { opacity: 1; transform: translateX(-50%) translateY(0); }
-}
-.abp-inner {
-  background: var(--surface, #fff);
-  border: 1px solid var(--danger, #c0392b);
-  border-left: 3px solid var(--danger, #c0392b);
-  border-radius: 10px;
-  padding: 12px 16px;
-  min-width: 300px;
-  max-width: 420px;
-  box-shadow: 0 4px 20px rgba(0,0,0,0.14);
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-.abp-header {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--danger, #c0392b);
-}
-.abp-countdown {
-  margin-left: auto;
-  display: flex;
-  align-items: center;
-  gap: 3px;
-  font-size: 11px;
-  font-weight: 500;
-  color: var(--text-3, #999);
-  background: var(--bg-soft, #f5f0e8);
-  padding: 2px 8px;
-  border-radius: 10px;
-}
-.abp-countdown.urgent {
-  color: var(--danger, #c0392b);
-  background: rgba(192, 57, 43, 0.1);
-  animation: abpPulse 0.8s infinite;
-}
-@keyframes abpPulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.6; }
-}
-.abp-body {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  align-items: baseline;
-  font-size: 12px;
-}
-.abp-body code {
-  background: var(--bg-soft, #f5f0e8);
-  padding: 2px 6px;
-  border-radius: 4px;
-  font-size: 11px;
-  font-weight: 600;
-}
-.abp-args {
-  color: var(--text-3, #999);
-  font-size: 11px;
-  max-width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.abp-actions {
-  display: flex;
-  gap: 8px;
-  justify-content: flex-end;
-}
-.abp-actions .btn.primary {
-  background: var(--primary, #2563eb);
-  color: #fff;
-  border: none;
-  padding: 4px 14px;
-  border-radius: 6px;
-  font-size: 12px;
-  cursor: pointer;
-  font-weight: 500;
-}
-
-/* v2.3.1-p1: Risk source info in approval bubble */
-.abp-risk-info {
-  margin-top: 6px;
-  padding: 6px 8px;
-  background: var(--surface-2, #fff3cd);
-  border-radius: 4px;
-  font-size: 11px;
-  line-height: 1.5;
-}
-.abp-risk-tag {
-  display: inline-block;
-  padding: 1px 6px;
-  border-radius: 3px;
-  background: var(--surface-3, #f0f0f0);
-  margin-right: 6px;
-  font-weight: 500;
-}
-.abp-risk-tag[data-source="unknown"],
-.abp-risk-tag[data-source="rag"],
-.abp-risk-tag[data-source="memory"] {
-  background: var(--danger-soft, #fde8e8);
-  border: 1px solid var(--danger, #c0392b);
-}
-.abp-risk-note {
-  color: var(--text-2, #666);
-  font-style: italic;
-}
-
-.abp-actions .btn.primary:hover { opacity: 0.9; }
-.abp-actions .btn.ghost {
-  background: transparent;
-  color: var(--fg-muted, #666);
-  border: 1px solid var(--line, #ddd);
-  padding: 4px 12px;
-  border-radius: 6px;
-  font-size: 12px;
-  cursor: pointer;
-}
-.abp-actions .btn.ghost:hover {
-  border-color: var(--danger, #c0392b);
-  color: var(--danger, #c0392b);
-}
-`;

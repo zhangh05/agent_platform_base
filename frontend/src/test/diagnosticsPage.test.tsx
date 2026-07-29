@@ -1,6 +1,7 @@
 import React from "react";
 import { describe, expect, it } from "vitest";
 import { render, screen } from "@testing-library/react";
+import { MemoryRouter } from "react-router-dom";
 import { Diagnostics } from "../pages/Diagnostics/Diagnostics";
 import { useSessionStore } from "../stores/session";
 
@@ -39,7 +40,9 @@ describe("Diagnostics page", () => {
 
     render(
       <React.StrictMode>
-        <Diagnostics />
+        <MemoryRouter>
+          <Diagnostics />
+        </MemoryRouter>
       </React.StrictMode>,
     );
 

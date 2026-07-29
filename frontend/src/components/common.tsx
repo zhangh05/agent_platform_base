@@ -329,6 +329,10 @@ export function useAsync<T>(
   const [state, setState] = useState<AsyncState<T>>({ kind: "idle" });
   const [reloadSeq, setReloadSeq] = useState(0);
 
+  // Stable deps key: callers may pass a fresh array literal on every render;
+  // stringify lets us compare values rather than references so the effect only
+  // re-runs when the actual dependencies change.
+  const depsKey = JSON.stringify(deps);
   useEffect(() => {
     const ctrl = new AbortController();
     setState({ kind: "loading" });
@@ -362,7 +366,7 @@ export function useAsync<T>(
       });
     return () => ctrl.abort();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [...deps, reloadSeq]);
+  }, [depsKey, reloadSeq]);
 
   const reload = useCallback(() => setReloadSeq((s) => s + 1), []);
   return { state, reload };

@@ -348,6 +348,7 @@ pre code {
   overflow: hidden auto;
   background: var(--surface-2);
   border-right: 1px solid var(--line);
+  contain: layout style;
 }
 
 .app-sidebar.collapsed {
@@ -1240,23 +1241,11 @@ pre code {
   gap: 10px 16px;
 }
 
-.info-grid-3 {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-  gap: 10px 16px;
-}
-
 .info-grid-4 {
   display: grid;
   grid-template-columns: 120px 1fr 120px 1fr;
   gap: 6px 20px;
   align-items: center;
-}
-
-.info-grid-3 {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-  gap: 10px 16px;
 }
 
 .authority-reason {
@@ -2949,6 +2938,8 @@ details.collapse[open] summary::before {
   overflow-y: auto;
   padding: 20px 32px 28px;
   scroll-behavior: auto;
+  contain: layout size style;
+  overflow-anchor: auto;
 }
 
 .wb-empty {
@@ -2989,6 +2980,7 @@ details.collapse[open] summary::before {
   width: 100%;
   margin: 0 0 18px;
   animation: message-in var(--dur-4) var(--ease-out) both;
+  contain: layout style;
 }
 
 .message-row.user {
@@ -3069,8 +3061,8 @@ details.collapse[open] summary::before {
   transition:
     background var(--dur-2) var(--ease),
     border-color var(--dur-2) var(--ease),
-    box-shadow var(--dur-2) var(--ease),
-    transform var(--dur-2) var(--ease);
+    box-shadow var(--dur-2) var(--ease);
+  contain: layout style;
 }
 
 .chat-bubble.user {
@@ -3576,6 +3568,7 @@ details.collapse[open] summary::before {
   border: 1px solid rgba(215, 224, 234, 0.78);
   border-radius: var(--r-6);
   background: rgba(255, 255, 255, 0.58);
+  contain: layout style;
 }
 
 [data-theme="dark"] .action-trace-panel {
@@ -5019,6 +5012,7 @@ details.collapse[open] summary::before {
   background: var(--surface-2);
   transition: border-color var(--dur-1);
   user-select: none;
+  contain: layout style;
 }
 .tool-call-card.ok { border-left: 3px solid var(--ok); }
 .tool-call-card.fail { border-left: 3px solid var(--danger); }
