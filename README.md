@@ -11,7 +11,7 @@ bash start.sh
 默认地址：
 
 - Frontend: `http://localhost:5273`
-- Backend API: `http://127.0.0.1:8010/api/health`
+- Backend API: `http://127.0.0.1:8011/api/health`
 
 源码运行需要 Python 3.12+、Node.js 18+。
 

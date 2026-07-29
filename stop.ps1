@@ -4,7 +4,7 @@ $ErrorActionPreference = "Stop"
 [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
 
 $Root = Split-Path -Parent $MyInvocation.MyCommand.Path
-$BackendPort = if ($env:BACKEND_PORT) { [int]$env:BACKEND_PORT } else { 8010 }
+$BackendPort = if ($env:BACKEND_PORT) { [int]$env:BACKEND_PORT } else { 8011 }
 $FrontendPort = if ($env:FRONTEND_PORT) { [int]$env:FRONTEND_PORT } else { 5273 }
 $BackendPidFile = Join-Path $Root ".backend.pid"
 $FrontendPidFile = Join-Path $Root ".frontend.pid"

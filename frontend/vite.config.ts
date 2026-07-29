@@ -7,7 +7,7 @@ import react from "@vitejs/plugin-react";
  * Vite config.
  *
  * Dev proxy (npm run dev):
- *  - `/api` → `VITE_DEV_API_TARGET` (default `http://127.0.0.1:8010`)
+ *  - `/api` → `VITE_DEV_API_TARGET` (default `http://127.0.0.1:8011`)
  *
  * Production build (npm run build):
  *  - Static files in `dist/` can be served by the Flask backend
@@ -18,7 +18,7 @@ import react from "@vitejs/plugin-react";
  */
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), "");
-  const devApiTarget = env.VITE_DEV_API_TARGET || "http://127.0.0.1:8010";
+  const devApiTarget = env.VITE_DEV_API_TARGET || "http://127.0.0.1:8011";
   const proxy = {
     "/api": {
       target: devApiTarget,

@@ -6,7 +6,7 @@
 
 import { request } from "@playwright/test";
 
-const BACKEND_URL = process.env.E2E_BACKEND_URL ?? "http://127.0.0.1:8010";
+const BACKEND_URL = process.env.E2E_BACKEND_URL ?? "http://127.0.0.1:8011";
 
 export default async function globalSetup() {
   const ctx = await request.newContext({ baseURL: BACKEND_URL });

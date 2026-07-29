@@ -59,7 +59,7 @@ class TestForbiddenPatterns:
         """Port 8020 must NOT appear as a formal service port."""
         html = _html()
         assert "8020" not in html, (
-            "Port 8020 found in frontend — 8010 is the unified port"
+            "Port 8020 found in frontend — 8011 is the unified port"
         )
 
     def test_no_minimax_m1_default(self):

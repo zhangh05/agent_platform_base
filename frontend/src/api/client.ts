@@ -84,7 +84,7 @@ function toApiError(err: unknown, url?: string): ApiError {
       return mkError("aborted", 0, "请求已取消", url, ax.response);
     }
     if (!ax.response) {
-      return mkError("network", 0, "后端不可达 · 检查 Flask 8010 端口 / Vite proxy", url, undefined);
+      return mkError("network", 0, "后端不可达 · 检查 Flask 8011 端口 / Vite proxy", url, undefined);
     }
     const status = ax.response.status;
     const body = ax.response.data as

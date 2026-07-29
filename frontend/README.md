@@ -9,7 +9,7 @@ cd /Users/zhangh01/Desktop/agent_platform_base/frontend
 npm run dev -- --host 0.0.0.0
 ```
 
-The dev server listens on port `5273` and proxies `/api` to `VITE_DEV_API_TARGET`, defaulting to `http://127.0.0.1:8010`.
+The dev server listens on port `5273` and proxies `/api` to `VITE_DEV_API_TARGET`, defaulting to `http://127.0.0.1:8011`.
 
 ## Stack
 

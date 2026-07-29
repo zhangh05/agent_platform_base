@@ -3,9 +3,9 @@
 Agent Platform Base — unified backend entry point.
 
 Start:
-    python3 backend/main.py --port 8010
+    python3 backend/main.py --port 8011
 or:
-    python -m backend.main --port 8010
+    python -m backend.main --port 8011
 """
 
 import os
@@ -352,8 +352,8 @@ def create_app():
 
     # ── Backend-only root ──
     # The UI is served exclusively by the Vite frontend on 5273. Keeping
-    # 8010 API-only avoids split browser storage between two origins
-    # (8010 and 5273), which made session/local UI state look unsynced.
+    # 8011 API-only avoids split browser storage between two origins
+    # (8011 and 5273), which made session/local UI state look unsynced.
     @app.route("/")
     def backend_root():
         return jsonify({
@@ -375,7 +375,7 @@ app = create_app()
 def main():
     import argparse
     parser = argparse.ArgumentParser(description="Agent Platform Base — Unified Backend")
-    parser.add_argument("--port", type=int, default=UNIFIED_PORT, help="Port to listen on (default: 8010)")
+    parser.add_argument("--port", type=int, default=UNIFIED_PORT, help="Port to listen on (default: 8011)")
     parser.add_argument("--host", type=str, default="127.0.0.1", help="Host to bind to")
     args = parser.parse_args()
 

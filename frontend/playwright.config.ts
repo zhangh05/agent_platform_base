@@ -9,8 +9,8 @@ import { defineConfig, devices } from "@playwright/test";
  * (see scripts/run-e2e.sh) so its lifecycle is independent of the test
  * runner.
  *
- * Backend env: AGENT_PLATFORM_BACKEND_URL — defaults to http://127.0.0.1:8010.
- * Frontend env: VITE_DEV_API_TARGET — defaults to http://127.0.0.1:8010.
+ * Backend env: AGENT_PLATFORM_BACKEND_URL — defaults to http://127.0.0.1:8011.
+ * Frontend env: VITE_DEV_API_TARGET — defaults to http://127.0.0.1:8011.
  */
 const FRONTEND_URL = process.env.E2E_FRONTEND_URL ?? "http://127.0.0.1:5273";
 

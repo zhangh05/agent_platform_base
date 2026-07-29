@@ -1,6 +1,6 @@
 # API
 
-Base URL: `http://localhost:8010`
+Base URL: `http://localhost:8011`
 
 所有工作区数据接口都要求显式、合法的 `workspace_id`。缺失或非法工作区 ID 返回 400。
 

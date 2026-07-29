@@ -8,7 +8,7 @@ from pathlib import Path
 AGENT_PLATFORM_ROOT = Path(__file__).resolve().parent.parent.parent
 
 # Port
-UNIFIED_PORT = int(os.environ.get("AGENT_PLATFORM_PORT", os.environ.get("AGENT_PLATFORM_PORT", "8010")))
+UNIFIED_PORT = int(os.environ.get("AGENT_PLATFORM_PORT", "8011"))
 
 # Build commit
 def _resolve_build_commit() -> str:

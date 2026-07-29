@@ -419,7 +419,7 @@ export function TaskWorkbench() {
     // Try WebSocket streaming first, fall back to HTTP
     // Dev: proxied through Vite (port 5273). Prod: same-origin.
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-    const wsHost = window.location.host; // Includes port (5273 in dev, 8010 in prod)
+    const wsHost = window.location.host; // Includes port (5273 in dev, 8011 in prod)
     const wsUrl = `${protocol}//${wsHost}/ws/agent`;
     let ws: WebSocket | null = null;
     abortRef.current = new AbortController();

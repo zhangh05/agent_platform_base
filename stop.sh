@@ -4,7 +4,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
-BACKEND_PORT="${BACKEND_PORT:-8010}"
+BACKEND_PORT="${BACKEND_PORT:-8011}"
 FRONTEND_PORT="${FRONTEND_PORT:-5273}"
 BACKEND_PID_FILE="$ROOT/.backend.pid"
 FRONTEND_PID_FILE="$ROOT/.frontend.pid"
