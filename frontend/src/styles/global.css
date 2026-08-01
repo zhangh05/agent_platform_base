@@ -3246,6 +3246,16 @@ details.collapse[open] summary::before {
   text-wrap: pretty;
 }
 
+.streaming-markdown {
+  display: block;
+  width: 100%;
+  min-width: 0;
+}
+
+.streaming-markdown .markdown-table-scroll {
+  margin-bottom: 8px;
+}
+
 .markdown-body p {
   margin: 0 0 10px;
   color: var(--text-2);
