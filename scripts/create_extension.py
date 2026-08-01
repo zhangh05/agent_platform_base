@@ -24,7 +24,7 @@ def create_extension(extension_id: str, name: str, output_root: Path) -> Path:
         "name": name,
         "version": "0.1.0",
         "api_version": "1",
-        "min_platform_version": "3.29.0",
+        "min_platform_version": "1.0.0",
         "capabilities": [extension_id.replace(".", "_")],
         "tools": [tool_id],
         "permissions": ["workspace:read"],
