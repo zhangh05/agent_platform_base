@@ -8624,7 +8624,7 @@ summary:focus-visible,
 
 .data-split {
   flex: 1;
-  grid-template-columns: minmax(360px, 42%) minmax(0, 1fr);
+  grid-template-columns: clamp(300px, 30%, 420px) minmax(0, 1fr);
   height: auto;
 }
 
