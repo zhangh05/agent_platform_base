@@ -167,7 +167,7 @@ describe("Experience polish", () => {
       expect(list.querySelectorAll(".list-item.active")).toHaveLength(1);
     });
     expect(firstRun).toHaveClass("active");
-    expect(await screen.findByText("该 turn 无 event")).toBeInTheDocument();
+    expect(await screen.findByText("本次执行没有详细过程记录")).toBeInTheDocument();
     expect(consoleError).not.toHaveBeenCalledWith(
       expect.stringContaining("Each child in a list should have a unique"),
       expect.anything(),

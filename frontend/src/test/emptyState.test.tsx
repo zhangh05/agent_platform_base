@@ -20,6 +20,6 @@ describe("Empty state", () => {
     render(<ReviewCenter />);
     const empty = await screen.findByTestId("review-empty-state");
     expect(empty.textContent).toContain("当前没有待处理评审");
-    expect(empty.textContent).toContain("评审中心只收集需要人工确认的结果");
+    expect(empty.textContent).toContain("这里只收集需要人工确认的结果");
   });
 });

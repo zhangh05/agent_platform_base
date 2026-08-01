@@ -50,7 +50,7 @@ function getSessionId(job: JobItem): string {
 /* ── Labels ── */
 
 const JOB_TYPE_LABELS: Record<string, string> = {
-  agent_run: "Agent 对话",
+  agent_run: "智能体对话",
   export_report: "报告导出",
   knowledge_index: "知识索引",
   generic_agent_task: "通用任务",
@@ -391,8 +391,8 @@ export function OperationsPage() {
                 <line x1="8" y1="21" x2="16" y2="21" /><line x1="12" y1="17" x2="12" y2="21" />
               </svg>
             </div>
-            <h2 className="hero-title">暂无作业</h2>
-            <p className="hero-sub">在工作台发起对话或执行任务后，每个会话/任务将自动生成作业，在此追踪运行与产出。</p>
+            <h2 className="hero-title">暂无任务记录</h2>
+            <p className="hero-sub">在对话工作台发起任务后，这里会展示任务进度、执行过程和产出。</p>
           </div>
         </div>
       </div>
@@ -411,7 +411,7 @@ export function OperationsPage() {
       )}
 
       {loading ? (
-        <div className="page-body"><LoadingState text="加载作业列表…" skeleton="list" /></div>
+        <div className="page-body"><LoadingState text="正在加载任务列表…" skeleton="list" /></div>
       ) : (
         <div className="split-shell operations-split">
           {/* ══════ 左侧 作业列表 ══════ */}
@@ -510,12 +510,8 @@ export function OperationsPage() {
 function OperationsPageHeader({ count, onRefresh }: { count: number; onRefresh: () => void }) {
   return (
     <PageHeader
-      title={
-        <>
-          运行与作业 <span>· Operations</span>
-        </>
-      }
-      subtitle="任务全貌与执行细节：作业追踪、运行记录、Trace 调试"
+      title="任务记录"
+      subtitle="查看任务进度、执行记录和详细过程"
     >
       {count > 0 && (
         <div className="status-pill"><span className="dot accent" />{count} 项</div>
@@ -546,8 +542,8 @@ function JobDetail({
     return (
       <DetailPanel
         empty={{
-          text: "选择一个作业",
-          hint: "点击左侧列表中的作业，查看运行记录、统计与任务概要。",
+          text: "选择一项任务",
+          hint: "点击左侧任务，查看执行记录、统计和任务概要。",
         }}
       />
     );
@@ -590,7 +586,7 @@ function JobDetail({
 
       <div className="tabs operations-tabs">
         <button className={"tab" + (jobTab === "overview" ? " active" : "")} onClick={() => setJobTab("overview")}>
-          运行记录 {stats.runCount > 0 && <span className="opacity-60 ml-1">{stats.runCount}</span>}
+          执行记录 {stats.runCount > 0 && <span className="opacity-60 ml-1">{stats.runCount}</span>}
         </button>
         <button className={"tab" + (jobTab === "stats" ? " active" : "")} onClick={() => setJobTab("stats")}>统计</button>
         <button className={"tab" + (jobTab === "summary" ? " active" : "")} onClick={() => setJobTab("summary")}>概要</button>
@@ -619,9 +615,9 @@ function QuickStat({ label, value, mono, danger }: { label: string; value: strin
 /* ── Tab: 运行记录 ── */
 
 function TabRuns({ job, runs, runsLoading, onOpenRun }: { job: JobItem; runs: RuntimeAuditTurn[] | null; runsLoading: boolean; onOpenRun: (r: RuntimeAuditTurn) => void; }) {
-  if (runsLoading) return <LoadingState text="加载运行记录…" />;
+  if (runsLoading) return <LoadingState text="正在加载执行记录…" />;
   if (!runs || runs.length === 0) {
-    return <EmptyState text={getSessionId(job) || (job.run_ids || []).length > 0 ? "该作业暂无可展示运行记录" : "非会话作业（如报告导出），无运行记录"} />;
+    return <EmptyState text={getSessionId(job) || (job.run_ids || []).length > 0 ? "该任务暂无可展示的执行记录" : "这类任务不生成执行记录"} />;
   }
   return (
     <div>
@@ -670,7 +666,7 @@ function TabStats({ job, runs, runsLoading, stats, duration }: {
     <div>
       <div className="stat-grid-4">
         <StatCard label="会话 ID" value={getSessionId(job).slice(0, 16) || "-"} mono />
-        <StatCard label="作业 ID" value={job.job_id.slice(0, 12)} mono />
+        <StatCard label="任务 ID" value={job.job_id.slice(0, 12)} mono />
         <StatCard label="类型" value={JOB_TYPE_LABELS[job.job_type] || job.job_type} />
         <StatCard label="状态" value={sMeta(job.status).label} />
         <StatCard label="耗时" value={duration || "-"} />
@@ -717,7 +713,7 @@ function TabStats({ job, runs, runsLoading, stats, duration }: {
 
 function TabSummary({ job }: { job: JobItem }) {
   const rows: Array<[string, string]> = [
-    ["作业 ID", job.job_id],
+    ["任务 ID", job.job_id],
     ["类型", JOB_TYPE_LABELS[job.job_type] || job.job_type],
     ["状态", sMeta(job.status).label],
     ["会话 ID", getSessionId(job) || "—"],
@@ -798,7 +794,7 @@ function RunTraceView({ run, trace, tab, setTab, onBack }: {
   return (
     <div className="split-detail operations-pane-scroll operations-detail-body">
       <Button size="sm" variant="ghost" onClick={onBack} className="mb-3">
-        ← 返回作业
+        ← 返回任务列表
       </Button>
 
       <div className="operations-detail-header">
@@ -809,16 +805,16 @@ function RunTraceView({ run, trace, tab, setTab, onBack }: {
 
       <div className="tabs operations-tabs">
         <button className={"tab" + (tab === "overview" ? " active" : "")} onClick={() => setTab("overview")}>概览</button>
-        <button className={"tab" + (tab === "events" ? " active" : "")} onClick={() => setTab("events")}>事件时间线</button>
+        <button className={"tab" + (tab === "events" ? " active" : "")} onClick={() => setTab("events")}>处理过程</button>
       </div>
 
       {tab === "overview" && (
         <>
           <div className="card">
             <div className="info-grid-4">
-              <span className="info-grid-label">运行 ID</span>
+              <span className="info-grid-label">执行记录 ID</span>
               <span className="info-grid-value mono">{run.turn_id || run.run_id || "—"}</span>
-              <span className="info-grid-label">追踪 ID</span>
+              <span className="info-grid-label">过程记录 ID</span>
               <span className="info-grid-value mono">{run.trace_id || "—"}</span>
               <span className="info-grid-label">意图</span>
               <span className="info-grid-value">{run.intent || "—"}</span>
@@ -831,7 +827,7 @@ function RunTraceView({ run, trace, tab, setTab, onBack }: {
               <span className="info-grid-label">工具调用</span>
               <span className="info-grid-value">{selectedStats.toolCallCount || 0}</span>
               <span className="info-grid-label">状态</span>
-              <span>{run.ok ? <Badge kind="ok" withDot>ok</Badge> : <Badge kind="err" withDot>failed</Badge>}</span>
+              <span>{run.ok ? <Badge kind="ok" withDot>成功</Badge> : <Badge kind="err" withDot>失败</Badge>}</span>
             </div>
           </div>
 
@@ -856,7 +852,7 @@ function RunTraceView({ run, trace, tab, setTab, onBack }: {
                   <div className="fail-reason-body">{failInfo.error}</div>
                 </div>
               )}
-              <div className="section-head">事件时间线 · {trace.length} 个事件</div>
+              <div className="section-head">处理过程 · {trace.length} 条记录</div>
               {trace.length === 0 ? <EmptyState text="该运行无事件记录" /> : (
                 trace.map((ev: any, i: number) => {
                   const et = ev.event_type || ev.type || "unknown";

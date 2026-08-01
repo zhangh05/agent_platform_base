@@ -23,11 +23,11 @@ type DataTab = "overview" | "files" | "artifacts" | "relations" | "lifecycle";
 type ArtifactView = "" | "current" | "history" | "deliverables";
 
 const TAB_LABELS: Array<[DataTab, string]> = [
-  ["overview", "总览"],
-  ["files", "全部数据"],
-  ["artifacts", "证据与制品"],
-  ["relations", "关系与来源"],
-  ["lifecycle", "生命周期"],
+  ["overview", "概览"],
+  ["files", "文件"],
+  ["artifacts", "任务产出"],
+  ["relations", "数据关联"],
+  ["lifecycle", "归档与清理"],
 ];
 
 const TYPE_LABELS: Record<string, string> = {
@@ -220,7 +220,7 @@ export function DataCenter() {
     form.append("title", file.name);
     try {
       await apiRequest({ method: "POST", url: `/workspaces/${workspaceId}/artifacts/upload`, data: form });
-      toast({ kind: "success", title: "数据已导入", body: `${file.name} 已进入数据中心` });
+      toast({ kind: "success", title: "文件已导入", body: `${file.name} 已进入数据管理` });
       await Promise.all([loadData(), loadArtifacts()]);
       setTab("files");
     } catch (reason) {
@@ -236,9 +236,9 @@ export function DataCenter() {
     const standaloneFiles = targets.filter((file) => !file.artifacts.some((item) => item.lifecycle !== "deleted"));
     const referencedCount = targets.filter((file) => file.reference_count > 0).length;
     const accepted = await confirm({
-      title: targets.length > 1 ? `删除 ${targets.length} 项数据？` : artifactIds.length ? "删除文件及关联制品？" : "永久删除文件？",
+      title: targets.length > 1 ? `删除 ${targets.length} 项数据？` : artifactIds.length ? "删除文件及关联产出？" : "永久删除文件？",
       body: [
-        `将删除 ${targets.length} 项数据${artifactIds.length ? `，包含 ${artifactIds.length} 个关联制品` : ""}。`,
+        `将删除 ${targets.length} 项数据${artifactIds.length ? `，包含 ${artifactIds.length} 个关联产出` : ""}。`,
         referencedCount ? `其中 ${referencedCount} 项存在引用关系，系统会同步清理这些引用记录。` : "",
         "删除后无法恢复。",
       ].filter(Boolean).join(" "),
@@ -257,8 +257,8 @@ export function DataCenter() {
       const artifactFailed = Math.max(0, (artifactResult?.total ?? 0) - artifactDeleted);
       if (failedStandalone.length || artifactFailed) {
         const firstFailed = failedStandalone[0];
-        const failedName = firstFailed?.file.original_name || firstFailed?.file.file_id || (artifactFailed ? `${artifactFailed} 个制品` : "");
-        const failedReason = firstFailed ? (isApiError(firstFailed.item.reason) ? firstFailed.item.reason.message : String(firstFailed.item.reason)) : "部分关联制品删除失败";
+        const failedName = firstFailed?.file.original_name || firstFailed?.file.file_id || (artifactFailed ? `${artifactFailed} 个任务产出` : "");
+        const failedReason = firstFailed ? (isApiError(firstFailed.item.reason) ? firstFailed.item.reason.message : String(firstFailed.item.reason)) : "部分关联产出删除失败";
         throw new Error(`${failedName} 删除失败：${failedReason}`);
       }
       const deletedCount = standaloneResults.length + artifactDeleted;
@@ -280,8 +280,8 @@ export function DataCenter() {
   const deleteArtifact = async (artifact: Artifact) => {
     if (!workspaceId) return;
     const accepted = await confirm({
-      title: "删除制品？",
-      body: `将删除「${artifact.title || artifact.artifact_id}」及其专属文件。此操作无法恢复。`,
+      title: "删除任务产出？",
+      body: `将删除「${artifact.title || artifact.artifact_id}」及其关联文件。此操作无法恢复。`,
       confirmLabel: "确认删除",
       destructive: true,
     });
@@ -290,7 +290,7 @@ export function DataCenter() {
       await artifactsApi.batchDelete(workspaceId, [artifact.artifact_id]);
       setSelectedArtifact(null);
       await Promise.all([loadData(), loadArtifacts()]);
-      toast({ kind: "success", title: "制品已删除" });
+      toast({ kind: "success", title: "任务产出已删除" });
     } catch (reason) {
       toast({ kind: "error", title: "删除失败", body: isApiError(reason) ? reason.message : String(reason) });
     }
@@ -304,7 +304,7 @@ export function DataCenter() {
     const accepted = await confirm({
       title: kind === "retention" ? "清理到期数据？" : "归档历史数据？",
       body: kind === "retention"
-        ? `将永久清理 ${count} 项已到期数据。系统会保护仍被会话和制品引用的内容。`
+        ? `将永久清理 ${count} 项已到期数据。系统会保护仍被会话和任务产出引用的内容。`
         : `将把 ${count} 项历史数据移入归档区，之后可在本页恢复。`,
       confirmLabel: kind === "retention" ? "确认清理" : "确认归档",
       destructive: kind === "retention",
@@ -336,7 +336,7 @@ export function DataCenter() {
 
   return (
     <div className="page data-center" data-testid="page-data-center">
-      <PageHeader title="数据中心" subtitle="统一管理文件、证据制品、引用关系与数据生命周期">
+      <PageHeader title="数据管理" subtitle="管理文件、任务产出、数据关联、归档和清理">
         <input ref={uploadRef} type="file" className="file-upload-input" onChange={(event) => {
           const file = event.target.files?.[0];
           if (file) void upload(file);
@@ -359,7 +359,7 @@ export function DataCenter() {
       </FilterBar>
 
       {error && <div className="callout error">{error}</div>}
-      {loading && !overview ? <LoadingState text="正在读取数据平面…" skeleton="table" /> : null}
+      {loading && !overview ? <LoadingState text="正在读取数据…" skeleton="table" /> : null}
 
       {tab === "overview" && <Overview
         overview={overview}
@@ -422,7 +422,7 @@ function Overview({ overview, files, onImport, onOpenFiles, onOpenLifecycle }: {
       </div>
       <div className="data-metric-row">
         <Stat label="活跃文件" value={overview.files.active} hint="当前可用" />
-        <Stat label="证据与制品" value={overview.artifacts.active} hint="业务产出" />
+        <Stat label="任务产出" value={overview.artifacts.active} hint="分析和报告" />
         <Stat label="已有引用" value={overview.files.referenced} hint="关系保护" />
         <Stat label="独立文件" value={overview.files.unreferenced} hint="可直接管理" />
         <Stat label="已归档" value={overview.files.archived} hint="可恢复" />
@@ -442,7 +442,7 @@ function Overview({ overview, files, onImport, onOpenFiles, onOpenLifecycle }: {
           </div>)}
         </div> : <div className="data-onboarding-empty">
           <div className="data-empty-mark">＋</div>
-          <div><strong>还没有数据</strong><p>导入文件，或运行一次会产生制品的任务。</p></div>
+          <div><strong>还没有数据</strong><p>导入文件，或运行一次会生成结果文件的任务。</p></div>
           <Button variant="primary" size="sm" onClick={onImport}>导入第一份数据</Button>
         </div>}
       </section>
@@ -455,10 +455,10 @@ function Overview({ overview, files, onImport, onOpenFiles, onOpenLifecycle }: {
           )) : <p className="data-compact-empty">导入数据后将在这里显示类型分布。</p>}
         </section>
         <section className="data-governance-section">
-          <div className="data-panel-head"><div><h3>生命周期</h3><p>归档与清理</p></div></div>
+          <div className="data-panel-head"><div><h3>归档与清理</h3><p>处理历史和到期数据</p></div></div>
           <div className="data-breakdown-row"><span>待处理软删除</span><b>{overview.files.soft_deleted}</b></div>
           <div className="data-breakdown-row"><span>已归档文件</span><b>{overview.files.archived}</b></div>
-          <Button size="sm" onClick={onOpenLifecycle}>管理生命周期</Button>
+          <Button size="sm" onClick={onOpenLifecycle}>打开归档与清理</Button>
         </section>
       </aside>
     </div>
@@ -530,7 +530,7 @@ function FilesView({ files, search, onSearch, typeFilter, typeOptions, onTypeFil
                 <small>{typeLabel(file.logical_type)} · {sourceLabel(file.source)} · {formatFileSize(file.size_bytes)} · {formatDate(file.created_at, "short")}</small>
               </span>
               <span className="data-row-badges">
-                {file.artifacts.length > 0 && <Badge kind="info">{file.artifacts.length} 个制品</Badge>}
+                {file.artifacts.length > 0 && <Badge kind="info">{file.artifacts.length} 个产出</Badge>}
                 <Badge kind={file.reference_count ? "warn" : "muted"}>{file.reference_count ? `${file.reference_count} 个引用` : "独立文件"}</Badge>
               </span>
               <Button size="sm" variant="danger-ghost" disabled={busy} title="删除这项数据" onClick={(event) => { event.stopPropagation(); onDelete(file); }}>删除</Button>
@@ -544,7 +544,7 @@ function FilesView({ files, search, onSearch, typeFilter, typeOptions, onTypeFil
 }
 
 function FileDetail({ file, content, note, busy, onDelete }: { file: ManagedFile | null; content: string; note: string; busy: boolean; onDelete: (file: ManagedFile) => void }) {
-  if (!file) return <DetailPanel empty={{ text: "选择一项数据", hint: "查看内容、来源、制品和引用关系" }} />;
+  if (!file) return <DetailPanel empty={{ text: "选择一个文件", hint: "查看内容、来源、任务产出和关联信息" }} />;
   return <DetailPanel title={file.original_name || file.file_id} subtitle={`${typeLabel(file.logical_type)} · ${formatFileSize(file.size_bytes)}`} actions={<>
     <Button size="sm" variant="danger-ghost" disabled={busy} title="删除这项数据" onClick={() => onDelete(file)}>删除</Button>
   </>}>
@@ -554,14 +554,14 @@ function FileDetail({ file, content, note, busy, onDelete }: { file: ManagedFile
       <Info label="敏感级别" value={sensitivityLabel(file.sensitivity)} />
       <Info label="关联任务" value={file.run_id ? shortId(file.run_id) : "无"} />
       <Info label="引用数量" value={String(file.reference_count)} />
-      <Info label="生命周期" value={lifecycleLabel(file.lifecycle)} />
+      <Info label="数据状态" value={lifecycleLabel(file.lifecycle)} />
     </div>
     <section className="data-detail-section">
-      <h4>关联制品</h4>
+      <h4>关联任务产出</h4>
       {file.artifacts.length ? file.artifacts.map((artifact) => <div className="data-relation-item" key={artifact.artifact_id}>
         <span><b>{artifact.title || artifact.artifact_id}</b><small>{artifact.artifact_type}</small></span>
         <Badge kind={artifact.lifecycle === "active" ? "ok" : "muted"}>{artifact.lifecycle}</Badge>
-      </div>) : <p className="dim text-sm">当前没有关联的证据或任务制品。</p>}
+      </div>) : <p className="dim text-sm">当前没有关联的任务产出。</p>}
     </section>
     <section className="data-detail-section">
       <h4>业务引用</h4>
@@ -580,16 +580,16 @@ function ArtifactsView({ artifacts, governance, view, onView, producerId, onClea
 }) {
   return <>
     <FilterBar>
-      {([ ["", "全部"], ["current", "当前证据"], ["history", "历史与不完整"], ["deliverables", "业务交付物"] ] as Array<[ArtifactView, string]>).map(([key, label]) => (
+      {([ ["", "全部"], ["current", "当前有效"], ["history", "历史或不完整"], ["deliverables", "交付结果"] ] as Array<[ArtifactView, string]>).map(([key, label]) => (
         <Button key={key || "all"} size="sm" variant={view === key ? "primary" : "default"} onClick={() => onView(key)}>{label}</Button>
       ))}
       {producerId && <span className="status-pill">任务 {shortId(producerId)} <button type="button" className="link-button" onClick={onClearProducer}>清除</button></span>}
       <div className="spacer" />
-      {governance && <><Badge kind="ok">证据流 {governance.evidence_streams || 0}</Badge><Badge kind="muted">交付物 {governance.deliverables || 0}</Badge></>}
+      {governance && <><Badge kind="ok">过程结果 {governance.evidence_streams || 0}</Badge><Badge kind="muted">交付结果 {governance.deliverables || 0}</Badge></>}
     </FilterBar>
     <div className="split-shell data-split">
-      <aside className="data-list" aria-label="制品列表">
-        {!artifacts.length && <EmptyState text="暂无制品" hint="分析、报告或 Agent 任务的产出会显示在这里" />}
+      <aside className="data-list" aria-label="任务产出列表">
+        {!artifacts.length && <EmptyState text="暂无任务产出" hint="分析、报告或智能体任务生成的结果会显示在这里" />}
         {artifacts.map((artifact) => <button key={artifact.artifact_id} type="button" className={`data-row ${selected?.artifact_id === artifact.artifact_id ? "selected" : ""}`} onClick={() => onSelect(artifact)}>
           <span className="data-row-main"><b>{artifact.title || artifact.artifact_id}</b><small>{artifact.artifact_type} · {sourceLabel(artifact.source)}</small></span>
           <span className="data-row-badges"><AuthorityBadge artifact={artifact} /></span>
@@ -602,15 +602,15 @@ function ArtifactsView({ artifacts, governance, view, onView, producerId, onClea
 }
 
 function ArtifactDetail({ artifact, content, note, onDelete }: { artifact: Artifact | null; content: string; note: string; onDelete: (artifact: Artifact) => void }) {
-  if (!artifact) return <DetailPanel empty={{ text: "选择一件制品", hint: "查看证据地位、来源和内容" }} />;
+  if (!artifact) return <DetailPanel empty={{ text: "选择一项任务产出", hint: "查看可信状态、来源和内容" }} />;
   return <DetailPanel title={artifact.title || artifact.artifact_id} subtitle={`${artifact.artifact_type} · ${formatFileSize(artifact.size_bytes)}`} actions={<Button size="sm" variant="danger-ghost" onClick={() => onDelete(artifact)}>删除</Button>}>
     <div className="info-grid-3 data-info-grid">
-      <Info label="证据地位" value={authorityLabel(artifact)} />
+      <Info label="可信状态" value={authorityLabel(artifact)} />
       <Info label="来源" value={sourceLabel(artifact.source)} />
       <Info label="关联任务" value={artifact.run_id ? shortId(artifact.run_id) : "无"} />
       <Info label="文件 ID" value={artifact.file_id || "无"} mono />
       <Info label="敏感级别" value={artifact.sensitivity} />
-      <Info label="生命周期" value={artifact.lifecycle} />
+      <Info label="数据状态" value={lifecycleLabel(artifact.lifecycle)} />
     </div>
     {artifact.governance?.authority_reason && <div className="callout info">{artifact.governance.authority_reason}</div>}
     <section className="data-detail-section"><h4>内容预览</h4>{note && <p className="dim text-sm">{note}</p>}{content && <CodeBlock>{content}</CodeBlock>}</section>
@@ -626,7 +626,7 @@ function RelationsView({ files, search, onSearch, onSelect }: { files: ManagedFi
         <span className="data-relation-file"><b>{file.original_name || file.file_id}</b><small>{typeLabel(file.logical_type)}</small></span>
         <span className="data-relation-flow">文件</span><span className="data-relation-arrow">→</span>
         <span className="data-relation-flow">{file.reference_count} 个引用</span><span className="data-relation-arrow">→</span>
-        <span className="data-relation-flow">{file.artifacts.length} 个制品</span>
+        <span className="data-relation-flow">{file.artifacts.length} 个任务产出</span>
         <span className="data-relation-types">{file.reference_types.length ? file.reference_types.map(referenceTypeLabel).join("、") : "暂无业务引用"}</span>
       </button>)}
       {!files.length && <EmptyState text="暂无关系数据" />}
@@ -648,7 +648,7 @@ function LifecycleView({ retention, archive, archivedItems, busy, onApply, onRes
       <Button variant="danger" size="sm" disabled={!retentionCount || busy} onClick={() => onApply("retention")}>清理到期数据</Button>
     </section>
     <section className="card data-lifecycle-card">
-      <div className="data-lifecycle-head"><div><h3>历史归档</h3><p>把历史运行、追踪和作业移入可恢复归档区。</p></div><Badge kind={archiveCount ? "info" : "ok"}>{archiveCount} 项候选</Badge></div>
+      <div className="data-lifecycle-head"><div><h3>历史归档</h3><p>把历史执行记录、处理过程和任务移入可恢复归档区。</p></div><Badge kind={archiveCount ? "info" : "ok"}>{archiveCount} 项候选</Badge></div>
       <CandidateCounts counts={archive?.candidate_counts} />
       {archive?.blocked_items?.length ? <p className="text-sm dim">已自动保护 {archive.blocked_items.length} 项仍在使用的数据。</p> : null}
       <Button variant="primary" size="sm" disabled={!archiveCount || busy} onClick={() => onApply("archive")}>归档历史数据</Button>
@@ -676,24 +676,24 @@ function Info({ label, value, mono = false }: { label: string; value: string; mo
 function AuthorityBadge({ artifact }: { artifact: Artifact }) {
   const status = artifact.governance?.authority_status;
   if (status === "authoritative") return <Badge kind="ok">最新完整</Badge>;
-  if (status === "provisional") return <Badge kind="warn">临时证据</Badge>;
+  if (status === "provisional") return <Badge kind="warn">临时结果</Badge>;
   if (status === "incomplete") return <Badge kind="err">不完整</Badge>;
   if (status === "historical") return <Badge kind="muted">历史版本</Badge>;
-  if (status === "contextual") return <Badge kind="info">上下文证据</Badge>;
-  return <Badge kind="muted">业务制品</Badge>;
+  if (status === "contextual") return <Badge kind="info">参考结果</Badge>;
+  return <Badge kind="muted">交付结果</Badge>;
 }
 
 function authorityLabel(artifact: Artifact): string {
   const status = artifact.governance?.authority_status;
-  return status === "authoritative" ? "最新完整证据" : status === "provisional" ? "临时证据" : status === "incomplete" ? "不完整证据" : status === "historical" ? "历史版本" : status === "contextual" ? "上下文证据" : "业务交付物";
+  return status === "authoritative" ? "最新且完整" : status === "provisional" ? "临时结果" : status === "incomplete" ? "内容不完整" : status === "historical" ? "历史版本" : status === "contextual" ? "参考结果" : "交付结果";
 }
 
 function typeLabel(type: string): string { return TYPE_LABELS[type] || type || "未知类型"; }
 function sourceLabel(source: string): string { return SOURCE_LABELS[source] || source || "系统"; }
 function sumCounts(counts?: Record<string, number>): number { return Object.values(counts || {}).reduce((sum, value) => sum + Number(value || 0), 0); }
-function archiveKindLabel(kind: string): string { return ({ runs: "运行记录", traces: "追踪记录", jobs: "作业", tmp: "临时文件" } as Record<string, string>)[kind] || kind; }
-function candidateLabel(kind: string): string { return ({ runs: "运行", traces: "追踪", jobs: "作业", artifacts: "临时文件", sessions: "会话", memories: "记忆", temp: "临时文件" } as Record<string, string>)[kind] || kind; }
-function referenceTypeLabel(type: string): string { return ({ run: "运行任务", session: "会话", artifact: "证据制品", knowledge_source: "知识来源", job: "作业" } as Record<string, string>)[type] || type || "业务对象"; }
+function archiveKindLabel(kind: string): string { return ({ runs: "执行记录", traces: "处理过程", jobs: "任务", tmp: "临时文件" } as Record<string, string>)[kind] || kind; }
+function candidateLabel(kind: string): string { return ({ runs: "执行记录", traces: "处理过程", jobs: "任务", artifacts: "临时文件", sessions: "会话", memories: "长期记忆", temp: "临时文件" } as Record<string, string>)[kind] || kind; }
+function referenceTypeLabel(type: string): string { return ({ run: "执行任务", session: "会话", artifact: "任务产出", knowledge_source: "知识来源", job: "定时任务" } as Record<string, string>)[type] || type || "业务对象"; }
 function relationLabel(relation: string): string { return ({ source: "源文件", output: "任务产出", attachment: "附件", normalized: "规范化内容" } as Record<string, string>)[relation] || relation || "关联"; }
 function sensitivityLabel(value: string): string { return ({ public: "公开", internal: "内部", sensitive: "敏感", secret: "机密" } as Record<string, string>)[value] || value; }
 function lifecycleLabel(value: string): string { return ({ active: "使用中", archived: "已归档", soft_deleted: "待清理", purged: "已清理" } as Record<string, string>)[value] || value; }

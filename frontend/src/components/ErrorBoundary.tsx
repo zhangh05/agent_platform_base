@@ -31,7 +31,7 @@ export class ErrorBoundary extends Component<Props, State> {
           <div className="error-boundary-icon">⚠</div>
           <h1 className="error-boundary-title">应用发生错误</h1>
           <p className="error-boundary-message">
-            请刷新页面 (Cmd+Shift+R) 重试。如持续出现，请在系统设置的 LLM 配置中确认设置后，清除浏览器 localStorage 数据。
+            请强制刷新页面重试。如持续出现，请检查系统设置中的模型配置，然后清除浏览器缓存数据。
           </p>
           <details className="error-boundary-details">
             <summary className="error-boundary-summary">错误详情</summary>

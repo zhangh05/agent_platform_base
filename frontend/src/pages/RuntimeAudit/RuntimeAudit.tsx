@@ -75,14 +75,9 @@ export function RuntimeAudit() {
     <div className="page" data-testid="page-audit">
       <div className="page-header">
         <div>
-          <h1>
-            运行审计{" "}
-            <span className="ra-title-suffix">
-              · Runtime Audit
-            </span>
-          </h1>
+          <h1>执行详情</h1>
           <div className="subtitle">
-            turn 时间线 · 模型 I/O · 工具调用 · provider 错误
+            查看每次任务的处理步骤、模型请求、工具调用和错误
           </div>
         </div>
       </div>
@@ -90,13 +85,13 @@ export function RuntimeAudit() {
         <aside className="ra-aside">
           <div className="ra-sidebar-card">
             <div className="section-head ra-section-head-sm">
-              <IconClock size={11} /> 最近 turn
+              <IconClock size={11} /> 最近执行
             </div>
             <AsyncView
               state={turns.state}
               onRetry={turns.reload}
-              emptyText="无 turn 记录"
-              emptyHint="等待 agent run 出现"
+              emptyText="暂无执行记录"
+              emptyHint="完成一次任务后会显示在这里"
             >
               {(d) => (
                 <div className="list list-scroll" data-testid="audit-turn-list">
@@ -153,14 +148,14 @@ export function RuntimeAudit() {
           {!selectedRunId ? (
             <div className="hero ra-hero-sm">
               <div className="hero-mark">审</div>
-              <h1 className="hero-title">未选择 turn</h1>
-              <p className="hero-sub">在左侧选择一个 turn，查看 trace 事件流</p>
+              <h1 className="hero-title">未选择执行记录</h1>
+              <p className="hero-sub">在左侧选择一条记录，查看详细处理过程</p>
             </div>
           ) : (
             <>
               {trace.state.kind === "loading" && (
                 <div className="row-flex">
-                  <span className="spinner" /> 加载 trace…
+                  <span className="spinner" /> 正在加载执行详情…
                 </div>
               )}
               {trace.state.kind === "error" && (
@@ -183,7 +178,7 @@ export function RuntimeAudit() {
                   {trace.state.data.events.length === 0 ? (
                     <div className="empty">
                       <div className="empty-icon">○</div>
-                      <div className="empty-text">该 turn 无 event</div>
+                      <div className="empty-text">本次执行没有详细过程记录</div>
                     </div>
                   ) : (
                     <>

@@ -27,7 +27,7 @@ interface Props {
 type EventFilter = "all" | "tool" | "skill" | "warning" | "error" | "llm" | "node";
 
 const FILTER_LABELS: Record<EventFilter, string> = {
-  all: "全部", tool: "工具", skill: "能力", warning: "警告", error: "错误", llm: "LLM", node: "节点",
+  all: "全部", tool: "工具", skill: "能力", warning: "警告", error: "错误", llm: "模型", node: "处理步骤",
 };
 
 export function TraceDetailPanel({ traceEvents, selectedRun }: Props) {
@@ -89,7 +89,7 @@ export function TraceDetailPanel({ traceEvents, selectedRun }: Props) {
   if (traceEvents === null && selectedRun.trace_id) {
     return (
       <div className="card trace-loading">
-        正在加载 trace…
+        正在加载处理过程…
       </div>
     );
   }
@@ -98,7 +98,7 @@ export function TraceDetailPanel({ traceEvents, selectedRun }: Props) {
     <div className="trace-panel">
       {/* ── Summary bar ── */}
       <div className="trace-summary-bar">
-        <span className="trace-summary-title">Trace · {traceEvents?.length ?? 0} events</span>
+        <span className="trace-summary-title">处理过程 · {traceEvents?.length ?? 0} 条记录</span>
         <span className="trace-summary-id">
           {String(selectedRun.trace_id || "-").substring(0, 12)}
         </span>
@@ -123,7 +123,7 @@ export function TraceDetailPanel({ traceEvents, selectedRun }: Props) {
       {/* ── Tool decision fold ── */}
       {selectedRun.tool_decision && (
         <details className="trace-decision-fold">
-          <summary className="trace-decision-summary">tool_decision</summary>
+          <summary className="trace-decision-summary">工具选择依据</summary>
           <pre className="trace-decision-pre">
             {JSON.stringify(selectedRun.tool_decision, null, 2)}
           </pre>
@@ -140,7 +140,7 @@ export function TraceDetailPanel({ traceEvents, selectedRun }: Props) {
       </div>
 
       <input
-        className="input trace-search-input" type="text" placeholder="搜索 event…" value={search}
+        className="input trace-search-input" type="text" placeholder="搜索处理记录…" value={search}
         onChange={(e) => setSearch(e.target.value)}
       />
 
@@ -181,11 +181,11 @@ export function TraceDetailPanel({ traceEvents, selectedRun }: Props) {
                     {e.summary && !e.message && <div className="trace-detail-summary">{e.summary}</div>}
                     {e.message && <div className="trace-detail-message">{e.message}</div>}
                     {e.error && <div className="trace-detail-error">{e.error}</div>}
-                    {e.duration_ms && <div className="trace-detail-duration">耗时: {e.duration_ms}ms</div>}
-                    {e.approval_id && <div className="trace-detail-approval">审批: {e.approval_id} ({e.approval_status || "pending"})</div>}
+                    {e.duration_ms && <div className="trace-detail-duration">耗时：{e.duration_ms} 毫秒</div>}
+                    {e.approval_id && <div className="trace-detail-approval">审批：{e.approval_id}（{approvalStatusLabel(e.approval_status)}）</div>}
                     {e.input_preview && (
                       <details className="trace-detail-fold">
-                        <summary className="trace-detail-fold-summary">input</summary>
+                        <summary className="trace-detail-fold-summary">输入内容</summary>
                         <pre className="trace-detail-pre">
                           {typeof e.input_preview === "string" ? e.input_preview : JSON.stringify(e.input_preview, null, 2)}
                         </pre>
@@ -193,7 +193,7 @@ export function TraceDetailPanel({ traceEvents, selectedRun }: Props) {
                     )}
                     {e.output_preview && (
                       <details className="trace-detail-fold">
-                        <summary className="trace-detail-fold-summary">output</summary>
+                        <summary className="trace-detail-fold-summary">输出内容</summary>
                         <pre className="trace-detail-pre">
                           {typeof e.output_preview === "string" ? e.output_preview : JSON.stringify(e.output_preview, null, 2)}
                         </pre>
@@ -216,7 +216,7 @@ export function TraceDetailPanel({ traceEvents, selectedRun }: Props) {
       {/* ── Full metadata ── */}
       <div className="trace-metadata-section">
         <button className="btn sm" onClick={() => setShowMeta(!showMeta)}>
-          {showMeta ? "收起 metadata" : "完整 metadata"}
+          {showMeta ? "收起技术信息" : "查看完整技术信息"}
         </button>
         {showMeta && (
           <div className="trace-metadata-actions">
@@ -259,7 +259,7 @@ function evTypeLabel(rawType: string, ev: RuntimeEvent): string {
   // Model/LLM events
   if (t.includes("model_request") || t.includes("llm_request")) return "模型请求";
   if (t.includes("model_response") || t.includes("llm_response")) return "模型响应";
-  if (t.includes("model") || t.includes("llm")) return "LLM";
+  if (t.includes("model") || t.includes("llm")) return "模型处理";
   // Turn lifecycle
   if (t.includes("turn_start")) return "开始处理";
   if (t.includes("turn_finish") || t.includes("turn_end")) return "处理完成";
@@ -267,11 +267,11 @@ function evTypeLabel(rawType: string, ev: RuntimeEvent): string {
   // Context
   if (t.includes("context_built")) return "构建上下文";
   // Agent/node
-  if (t.includes("agent_start")) return "Agent 启动";
-  if (t.includes("agent_end")) return "Agent 结束";
+  if (t.includes("agent_start")) return "智能体启动";
+  if (t.includes("agent_end")) return "智能体结束";
   if (t.includes("node_start")) return "节点开始";
   if (t.includes("node_end")) return "节点完成";
-  if (t.includes("agent") || t.includes("node")) return "Agent";
+  if (t.includes("agent") || t.includes("node")) return "智能体处理";
   // capability call
   if (t.includes("capability_call")) return "能力调用";
   if (t.includes("module_call")) return "模块调用";
@@ -286,4 +286,8 @@ function evTypeLabel(rawType: string, ev: RuntimeEvent): string {
   if (ev?.summary) return ev.summary.length > 10 ? ev.summary.slice(0, 10) + "…" : ev.summary;
   // Last resort: show original type truncated
   return rawType.length > 14 ? rawType.slice(0, 14) + "…" : rawType;
+}
+
+function approvalStatusLabel(status?: string): string {
+  return ({ pending: "待审批", approved: "已批准", rejected: "已拒绝", expired: "已过期" } as Record<string, string>)[status || ""] || status || "待审批";
 }

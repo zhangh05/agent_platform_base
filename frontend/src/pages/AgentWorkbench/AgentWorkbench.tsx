@@ -64,7 +64,7 @@ function safeRemoveSession(key: string): void {
 // Stage label table mirrors core.runtime_engine/stage_events.py
 // so we can translate backend events to friendly Chinese text.
 const STAGE_LABELS: Record<string, string> = {
-  turn_started:        "轮次开始",
+  turn_started:        "开始处理",
   planner_started:     "正在分析任务…",
   planner_completed:   "已规划执行图",
   graph_compiled:      "构建执行图…",
@@ -81,7 +81,7 @@ const STAGE_LABELS: Record<string, string> = {
   merge_completed:     "汇总执行结果",
   response_started:    "整理回复…",
   response_completed:  "回复已就绪",
-  turn_completed:      "轮次完成",
+  turn_completed:      "处理完成",
   heartbeat:           "仍在处理…",
 };
 
@@ -817,8 +817,8 @@ export function TaskWorkbench() {
   }, []);
 
   const llmStatusLabel = llmHealth.connected
-    ? llmHealth.recentFailure ? "LLM 可用 · 最近一次请求超时，可重试" : `LLM 可用 · ${llmHealth.model || llmHealth.provider || "在线"}`
-    : "LLM 离线";
+    ? llmHealth.recentFailure ? "模型可用 · 最近一次请求超时，可重试" : `模型可用 · ${llmHealth.model || llmHealth.provider || "在线"}`
+    : "模型不可用";
 
   useEffect(() => {
     keepAtBottom();
@@ -881,7 +881,7 @@ export function TaskWorkbench() {
         ) : (visibleHistory?.length ?? 0) === 0 && !sending ? (
           <div className="wb-empty" data-testid="workbench-empty">
             <h2>任务工作台</h2>
-            <p>输入故障现象、配置片段或排查目标，AI Agent 按事件时间线组织执行过程。</p>
+            <p>输入故障现象、配置片段或排查目标，智能体会按时间顺序展示处理过程。</p>
             <div className="wb-empty-chips">
               {QUICK_CHIPS.map((c) => (
                 <button key={c.label} className="wb-input-chip" type="button" onClick={() => pickChip(c.prompt)} title={c.prompt}>

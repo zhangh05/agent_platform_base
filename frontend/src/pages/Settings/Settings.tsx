@@ -258,8 +258,8 @@ export function Settings() {
       setTestResult(res);
       toast({
         kind: res.llm_used ? "success" : "warning",
-        title: res.llm_used ? "LLM 可用" : "LLM 不可用",
-        body: res.fallback_reason ? `fallback_reason=${res.fallback_reason}` : `model=${res.model ?? "?"}`,
+        title: res.llm_used ? "模型服务可用" : "模型服务不可用",
+        body: res.fallback_reason ? `原因：${res.fallback_reason}` : `模型：${res.model ?? "未知"}`,
       });
     } catch (e: unknown) {
       toast({ kind: "error", title: "测试请求失败", body: isApiError(e) ? e.message : String(e) });
@@ -345,7 +345,7 @@ export function Settings() {
     return (
       <div className="page" data-testid="page-settings">
         <PageHeader />
-        <div className="page-body"><EmptyState text="后端未返回 LLM 配置" /></div>
+        <div className="page-body"><EmptyState text="未读取到模型服务配置" /></div>
       </div>
     );
   }
@@ -357,13 +357,13 @@ export function Settings() {
         <details className="settings-help">
           <summary>💡 使用帮助</summary>
           <div className="settings-help-body">
-            左侧选择 LLM 厂商 → 填写 API Key 和参数 → 保存生效。支持 DeepSeek、OpenAI、Claude 等。
+            左侧选择模型服务商 → 填写访问密钥和参数 → 保存生效。支持 DeepSeek、OpenAI、Anthropic 等。
           </div>
         </details>
         <div className="settings-layout">
           {/* ── Left: Provider sidebar ── */}
           <aside className="provider-sidebar" data-testid="provider-sidebar">
-            <div className="provider-sidebar-label">LLM 厂商</div>
+            <div className="provider-sidebar-label">模型服务商</div>
             {PROVIDER_PRESETS.map((preset) => {
               const prov = providers.find((p) => p.provider === preset.id);
               const active = preset.id === activeId;
@@ -383,9 +383,9 @@ export function Settings() {
                   <div className="provider-card-hint">{preset.hint}</div>
                   <div className="provider-card-meta">
                     {prov?.key_configured ? (
-                      <span className="success-text text-xs">✓ key 已配置</span>
+                      <span className="success-text text-xs">✓ 密钥已配置</span>
                     ) : (
-                      <span className="muted text-xs">未配置 key</span>
+                      <span className="muted text-xs">未配置密钥</span>
                     )}
                   </div>
                 </button>
@@ -411,7 +411,7 @@ export function Settings() {
                   <div className="settings-toggle-row">
                     <ToggleField
                       label="启用"
-                      hint={draft.enabled ? "LLM 已启用" : "LLM 已关闭"}
+                      hint={draft.enabled ? "模型服务已启用" : "模型服务已关闭"}
                       checked={!!draft.enabled}
                       onChange={(v) => setDraft({ ...draft, enabled: v })}
                       testid="toggle-enabled"
@@ -421,11 +421,11 @@ export function Settings() {
 
                 {/* Fields */}
                 <div className="settings-row">
-                  <TextField label="base_url" value={draft.base_url ?? ""} onChange={(v) => setDraft({ ...draft, base_url: v })} testid="field-base_url" placeholder="http:// 或 https://" />
+                  <TextField label="服务地址" value={draft.base_url ?? ""} onChange={(v) => setDraft({ ...draft, base_url: v })} testid="field-base_url" placeholder="http:// 或 https://" />
                 </div>
 
                 <div className="settings-row">
-                  <TextField label="model" value={draft.model ?? ""} onChange={(v) => setDraft({ ...draft, model: v })} testid="field-model" placeholder="模型名称" />
+                  <TextField label="模型名称" value={draft.model ?? ""} onChange={(v) => setDraft({ ...draft, model: v })} testid="field-model" placeholder="模型名称" />
                 </div>
 
                 <div className="settings-row">
@@ -445,13 +445,13 @@ export function Settings() {
                 </div>
 
                 <div className="settings-row-grid">
-                  <NumberField label="temperature" value={draft.temperature ?? 0.2} min={0} max={2} step={0.1} onChange={(v) => setDraft({ ...draft, temperature: v })} testid="field-temperature" />
-                  <NumberField label="max_tokens" value={draft.max_tokens ?? 4096} min={1} max={128000} step={100} onChange={(v) => setDraft({ ...draft, max_tokens: v })} testid="field-max_tokens" />
+                  <NumberField label="生成随机度" value={draft.temperature ?? 0.2} min={0} max={2} step={0.1} onChange={(v) => setDraft({ ...draft, temperature: v })} testid="field-temperature" />
+                  <NumberField label="最大输出长度" value={draft.max_tokens ?? 4096} min={1} max={128000} step={100} onChange={(v) => setDraft({ ...draft, max_tokens: v })} testid="field-max_tokens" />
                 </div>
 
                 <div className="settings-row settings-row-compact">
                   <ToggleField
-                    label="safe_mode"
+                    label="安全模式"
                     hint="阻止伪造执行结果或泄露敏感输出"
                     checked={!!draft.safe_mode}
                     onChange={(v) => setDraft({ ...draft, safe_mode: v })}
@@ -466,13 +466,13 @@ export function Settings() {
                     data-testid="test-result"
                   >
                     <div className="mb-1">
-                      <strong>{testResult.llm_used ? "✓ LLM 可用" : "✗ LLM 不可用"}</strong>
+                      <strong>{testResult.llm_used ? "✓ 模型服务可用" : "✗ 模型服务不可用"}</strong>
                       <span className="muted ml-2">
-                        provider={testResult.provider ?? "?"} · model={testResult.model ?? "?"} · source={testResult.config_source}
+                        服务商：{testResult.provider ?? "未知"} · 模型：{testResult.model ?? "未知"} · 配置来源：{testResult.config_source}
                       </span>
                     </div>
                     {testResult.fallback_reason && (
-                      <div className="muted mb-1">fallback: {testResult.fallback_reason}</div>
+                      <div className="muted mb-1">备用处理原因：{testResult.fallback_reason}</div>
                     )}
                     {testResult.response && (
                       <pre className="test-result-pre">
@@ -481,7 +481,7 @@ export function Settings() {
                     )}
                     {testResult.warnings?.length > 0 && (
                       <div className="muted text-xs mt-1">
-                        warnings: {testResult.warnings.join("; ")}
+                        提示：{testResult.warnings.join("；")}
                       </div>
                     )}
                   </div>
@@ -534,9 +534,9 @@ function PageHeader({ activeId }: { activeId?: string }) {
   return (
     <div className="page-header">
       <div>
-        <h1>系统设置<span className="title-suffix"> · Settings</span></h1>
+        <h1>系统设置</h1>
         <div className="subtitle">
-          LLM Provider 配置
+          配置模型服务、访问密钥和长期记忆
           {activePreset && (
             <span className="badge ok ml-2 text-xs">
               {activePreset.label}
@@ -602,10 +602,10 @@ function ApiKeyField({
   onClearToggle: (v: boolean) => void;
 }) {
   const placeholder = configured
-    ? revealed ? "粘贴新 key 替换当前" : "已配置 · 输入新 key 替换"
-    : "粘贴 API key";
+    ? revealed ? "粘贴新密钥替换当前密钥" : "已配置 · 输入新密钥进行替换"
+    : "粘贴访问密钥";
   return (
-    <FormField label="api_key">
+    <FormField label="访问密钥">
       <div className="row-flex-sm">
         <Input
           type={revealed ? "text" : "password"}
@@ -629,7 +629,7 @@ function ApiKeyField({
         {configured && (
           <label className="row-flex-xs">
             <input type="checkbox" checked={clearRequested} onChange={(e) => onClearToggle(e.target.checked)} data-testid="cb-clear-key" />
-            <span className="muted text-xs">保存时清空 key</span>
+            <span className="muted text-xs">保存时清空密钥</span>
           </label>
         )}
       </div>
@@ -653,7 +653,7 @@ function LongTermMemoryCard({
         <div className="flex-1">
           <div className="text-md memory-gating-title-text">长期记忆</div>
           <div className="muted text-xs memory-gating-desc">
-            Agent 自动学习明确偏好、项目规则、稳定事实和可复用经验；你只需要管理结果。
+            智能体自动学习明确偏好、项目规则、稳定事实和可复用经验；你只需要管理结果。
           </div>
         </div>
         <div className="row-flex-sm">
@@ -683,7 +683,7 @@ function LongTermMemoryCard({
             系统会先判断本轮是否发生了值得学习的事件；没有记忆信号会直接跳过，不会每轮硬写。
           </div>
           <div className="memory-gating-body">
-            命中后由 LLM 生成 create/update/ignore/expire/conflict 提案，规则负责拦截密钥、垃圾内容和冲突风险。
+            发现值得记忆的内容后，模型会提出新增、更新、忽略、过期或冲突处理建议；规则会拦截密钥、无效内容和冲突风险。
           </div>
           <div className="memory-gating-footer">
             <span className="opacity-60">⏱</span>

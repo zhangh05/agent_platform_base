@@ -15,13 +15,13 @@ const G_KIND: Record<ToolGovernanceStatus, "ok" | "info" | "warn" | "muted"> = {
 
 type ToolFilter = "all" | "planner" | "active" | "disabled" | "internal" | "forbidden" | "high" | "host" | "workspace" | "knowledge";
 const T_FILTERS: { id: ToolFilter; label: string }[] = [
-  { id: "all", label: "全部" }, { id: "planner", label: "可见" }, { id: "active", label: "活跃" },
-  { id: "disabled", label: "停用" }, { id: "internal", label: "内部" }, { id: "forbidden", label: "禁止" },
-  { id: "high", label: "高风险" }, { id: "host", label: "Host" }, { id: "workspace", label: "空间" },
+  { id: "all", label: "全部" }, { id: "planner", label: "AI 可用" }, { id: "active", label: "可使用" },
+  { id: "disabled", label: "已停用" }, { id: "internal", label: "系统内部" }, { id: "forbidden", label: "已禁止" },
+  { id: "high", label: "需确认" }, { id: "host", label: "本机" }, { id: "workspace", label: "工作区" },
   { id: "knowledge", label: "知识" },
 ];
 
-const CAP_TITLES: Record<string, string> = { knowledge: "知识问答", knowledge_qa: "知识问答", memory_lookup: "记忆检索", workspace_read: "工作区读取", report_drafting: "报告草拟", runtime_diagnostics: "运行诊断", agent_delegation: "Agent 协作", browser: "浏览器自动化", artifact: "制品管理" };
+const CAP_TITLES: Record<string, string> = { knowledge: "知识问答", knowledge_qa: "知识问答", memory_lookup: "记忆检索", workspace_read: "工作区读取", report_drafting: "报告生成", runtime_diagnostics: "运行检查", agent_delegation: "智能体协作", browser: "浏览器操作", artifact: "任务产出管理" };
 
 export function CapabilityCenter() {
   const [tq, setTq] = useState("");
@@ -39,8 +39,8 @@ export function CapabilityCenter() {
     <div className="page" data-testid="page-capabilities">
       <div className="page-header cc-page-header">
         <div>
-          <h1>能力矩阵<span className="cc-title-aux">· Capabilities</span></h1>
-          <p className="subtitle">查看当前可用能力、风险边界和人工复核要求；规划中能力不提供调用入口</p>
+          <h1>工具与能力</h1>
+          <p className="subtitle">查看系统可以做什么、哪些操作需要确认，以及哪些功能暂不可用</p>
         </div>
         <div className="cc-pill-row">
           <span className="status-pill"><span className="dot accent" />{counts.tot} 项</span>
@@ -57,9 +57,9 @@ export function CapabilityCenter() {
           </div>
           <div className="cc-controls">
             <span className="cc-controls-desc">
-              {catalog.state.kind === "success" && <>Planner 可见 {catalog.state.data.planner_visible_count ?? 0} 个工具</>}
+              {catalog.state.kind === "success" && <>AI 可使用 {catalog.state.data.planner_visible_count ?? 0} 个工具</>}
             </span>
-            <input className="input cc-search-input" value={tq} onChange={(e) => setTq(e.target.value)} placeholder="搜索 canonical / action…" />
+            <input className="input cc-search-input" value={tq} onChange={(e) => setTq(e.target.value)} placeholder="搜索工具名称或功能…" />
           </div>
           <div className="segmented cc-segmented">
             {T_FILTERS.map((f) => (
@@ -174,8 +174,8 @@ function TRow({ tool }: { tool: ToolCatalogItem }) {
             <Badge kind={needsApproval ? "warn" : "ok"}>{needsApproval ? "需要审批" : "无需审批"}</Badge>
           </div>
           <div className="tool-info-item">
-            <span className="tool-info-label">Planner 可见</span>
-            <Badge kind={tool.planner_visible ? "ok" : "muted"}>{tool.planner_visible ? "对 AI 可见" : "对 AI 隐藏"}</Badge>
+            <span className="tool-info-label">AI 是否可用</span>
+            <Badge kind={tool.planner_visible ? "ok" : "muted"}>{tool.planner_visible ? "可以使用" : "不可使用"}</Badge>
           </div>
           <div className="tool-info-item">
             <span className="tool-info-label">运行状态</span>
@@ -259,7 +259,7 @@ function CapCard({ cap }: { cap: BusinessCapability }) {
         <SR label="风险等级">{<Badge kind={R_KIND[cap.risk_level]}>{R_LABEL[cap.risk_level]}</Badge>}</SR>
         <SR label="敏感输出">{cap.can_create_sensitive_output ? <Badge kind="warn">需复核</Badge> : <Badge kind="ok" withDot>不产生</Badge>}</SR>
         <SR label="评审要求">{cap.requires_verification ? <Badge kind="warn">需要</Badge> : <Badge kind="ok" withDot>无需</Badge>}</SR>
-        <SR label="LLM 调用"><Badge kind="ok" withDot>可</Badge></SR>
+        <SR label="模型调用"><Badge kind="ok" withDot>可用</Badge></SR>
       </div>
 
       <details className="collapse cap-collapse">

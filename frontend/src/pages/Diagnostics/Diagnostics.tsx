@@ -70,17 +70,17 @@ type DiagnosticsCache = {
 /* ── 内部组件名 → 用户友好名称 ── */
 const COMP_LABELS: Record<string, string> = {
   workspace: "工作空间", registry: "能力注册", runs: "运行记录",
-  artifacts: "制品管理", jobs: "作业调度", agent: "智能体核心",
-  tool_runtime: "工具引擎", llm: "大模型服务", archive: "归档存储",
+  artifacts: "任务产出管理", jobs: "任务调度", agent: "智能体核心",
+  tool_runtime: "工具服务", llm: "模型服务", archive: "归档存储",
   memory: "记忆系统", context: "上下文", knowledge: "知识库",
   web: "Web 能力", browser: "浏览器", data: "数据处理",
 };
 
 const COMP_DESC: Record<string, string> = {
   workspace: "当前工作区配置与状态", registry: "模块与技能注册表",
-  runs: "历史执行记录追踪", artifacts: "制品与输出文件",
-  jobs: "定时/触发作业管理", agent: "Agent 主进程状态",
-  tool_runtime: "外部工具调用引擎", llm: "LLM 连通性与配额",
+  runs: "历史执行记录", artifacts: "任务产出与输出文件",
+  jobs: "定时任务与触发任务", agent: "智能体主服务状态",
+  tool_runtime: "外部工具调用服务", llm: "模型服务连通性与用量",
   archive: "历史数据归档策略", memory: "长期记忆存储状态",
   context: "对话上下文窗口", knowledge: "知识检索服务",
 };
@@ -275,10 +275,10 @@ export function Diagnostics() {
   return (
     <div className="page" data-testid="page-diagnostics">
       <PageHeader
-        title="系统诊断"
+        title="系统状态"
         subtitle={
           <span>
-            健康跟踪 · 用量 · 自检 · 策略
+            服务健康 · 模型用量 · 自动检查 · 数据策略
             {lastCheck && (
               <span className="ml-2 faint">上次检测：{formatDate(lastCheck, "compact")}</span>
             )}
@@ -385,7 +385,7 @@ export function Diagnostics() {
               ) : <Dim>暂无数据</Dim>}
             </Section>
 
-            <Section title="自检结果" badge={selfcheck?.status === "healthy" ? <span className="diag-section-badge diag-text-ok">通过</span> : (selfcheck?.issues?.length ?? 0) > 0 ? <span className="diag-section-badge diag-text-warn">{(selfcheck?.issues?.length ?? 0)} 项问题</span> : null}>
+            <Section title="自动检查结果" badge={selfcheck?.status === "healthy" ? <span className="diag-section-badge diag-text-ok">通过</span> : (selfcheck?.issues?.length ?? 0) > 0 ? <span className="diag-section-badge diag-text-warn">{(selfcheck?.issues?.length ?? 0)} 项问题</span> : null}>
               {selfcheck ? (
                 selfcheck.issues && selfcheck.issues.length > 0 ? (
                   <div className="diag-issues-list">
@@ -443,8 +443,8 @@ export function Diagnostics() {
 
             <Section title="数据策略">
               <div className="diag-policy-management">
-                <span>此处只显示当前策略，数据操作统一在数据中心完成。</span>
-                <Link className="btn sm" to="/data" viewTransition>打开数据中心</Link>
+                <span>此处只显示当前策略，文件和归档操作统一在数据管理中完成。</span>
+                <Link className="btn sm" to="/data" viewTransition>打开数据管理</Link>
               </div>
               <div className="diag-policy-grid">
                 {retention?.policy && (
@@ -505,10 +505,10 @@ function Dim({ children }: { children: React.ReactNode }) {
 function fmtKey(k: string): string {
   const m: Record<string, string> = {
     runs_max_age_days: "运行保留", runs_max_count: "最大运行",
-    traces_max_age_days: "追踪保留", traces_max_count: "最大追踪",
-    jobs_max_age_days: "作业保留", artifacts_temp_max_age_days: "临时制品",
+    traces_max_age_days: "过程记录保留", traces_max_count: "最大过程记录",
+    jobs_max_age_days: "任务保留", artifacts_temp_max_age_days: "临时任务产出",
     prune_reports: "清理报告",
-    runs_older_than_days: "运行>天数", traces_older_than_days: "追踪>天数",
+    runs_older_than_days: "执行记录超过天数", traces_older_than_days: "过程记录超过天数",
     temp_older_than_days: "临时>天数", runs_keep_latest: "保留最近运行",
   };
   return m[k] ?? k.replace(/_/g, " ");

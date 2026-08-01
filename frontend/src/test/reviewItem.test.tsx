@@ -55,6 +55,6 @@ describe("ReviewCenter — review item status", () => {
     render(<ReviewCenter />);
 
     expect(await screen.findByTestId("review-empty-state")).toHaveTextContent("当前没有待处理评审");
-    expect(screen.getByText("2. 有风险的制品会自动进入这里")).toBeInTheDocument();
+    expect(screen.getByText("2. 有风险的任务产出会自动进入这里")).toBeInTheDocument();
   });
 });

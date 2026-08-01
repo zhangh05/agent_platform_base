@@ -233,7 +233,7 @@ describe("Settings — LLM Provider configuration v2", () => {
     });
 
     await waitFor(() => {
-      expect(screen.getByTestId("test-result").textContent).toMatch(/LLM 可用/);
+      expect(screen.getByTestId("test-result").textContent).toMatch(/模型服务可用/);
     });
     expect(screen.getByTestId("test-result").textContent).toContain("pong");
   });

@@ -278,8 +278,8 @@ export const ResultInline = memo(function ResultInline({
               {tracking.done && (
                 <div className="tracking-summary">
                   设备 {String(tracking.taskSummary.succeeded_devices ?? 0)} 成功 / {String(tracking.taskSummary.failed_devices ?? 0)} 失败 / {String(tracking.taskSummary.skipped_devices ?? 0)} 跳过；
-                  发现 {String(tracking.taskSummary.findings_critical ?? 0)} critical · {String(tracking.taskSummary.findings_warning ?? 0)} warning · {String(tracking.taskSummary.findings_info ?? 0)} info。
-                  {tracking.suggestedNextAction === "analyze_artifacts" ? " 下一步：读取原始采集制品并分析。" : ""}
+                  发现 {String(tracking.taskSummary.findings_critical ?? 0)} 个严重问题 · {String(tracking.taskSummary.findings_warning ?? 0)} 个警告 · {String(tracking.taskSummary.findings_info ?? 0)} 条提示。
+                  {tracking.suggestedNextAction === "analyze_artifacts" ? " 下一步：读取原始采集结果并分析。" : ""}
                 </div>
               )}
             </div>

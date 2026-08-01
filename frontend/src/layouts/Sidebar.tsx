@@ -13,6 +13,22 @@ import { formatDate } from "../utils/format";
 
 const SESSION_PREVIEW_LIMIT = 12;
 
+const INTENT_LABELS: Record<string, string> = {
+  assistant_chat: "智能对话",
+  network_diagnosis: "网络诊断",
+  knowledge_query: "知识查询",
+  report_generation: "报告生成",
+};
+
+function intentLabel(intent?: string): string {
+  if (!intent) return "";
+  return INTENT_LABELS[intent] || intent.replace(/_/g, " ");
+}
+
+function runStatusLabel(status?: string): string {
+  return ({ ok: "成功", failed: "失败", running: "执行中", pending: "等待中", cancelled: "已取消" } as Record<string, string>)[status || ""] || status || "未知";
+}
+
 interface AgentRunDetail {
   status?: string;
   final_response?: string;
@@ -421,14 +437,14 @@ export function Sidebar() {
                 const label = summary ? (summary.length > 24 ? summary.slice(0, 24) + "…" : summary) : runId;
                 const intentBadge = r.intent ? (
                   <span className="run-intent">
-                    {r.intent}
+                    {intentLabel(r.intent)}
                   </span>
                 ) : null;
                 return (
                   <div
                     className="list-item run-item cursor-pointer"
                     key={runId}
-                    title={`${summary || runId}\nstatus: ${r.status || "?"}\ntime: ${r.created_at || "?"}`}
+                    title={`${summary || runId}\n状态：${runStatusLabel(r.status)}\n时间：${r.created_at || "未知"}`}
                     onClick={() => inspectRun(r)}
                   >
                     <div className="run-title-row">

@@ -62,7 +62,7 @@ export function ReviewCenter() {
       toast({
         kind: "error",
         title: "无法更新",
-        body: "review item 缺少 artifact_id（后端不提供 list 返回值的 artifact 范围时无法定位）",
+        body: "这条复核记录缺少关联产出，暂时无法定位原始内容。",
       });
       return;
     }
@@ -73,7 +73,7 @@ export function ReviewCenter() {
         workspace_id: currentWorkspaceId,
         artifact_id,
       });
-      toast({ kind: "success", title: "review item 已更新", body: editing.item_id });
+      toast({ kind: "success", title: "复核记录已更新", body: editing.item_id });
       setEditing(null);
       setNote("");
       list.reload();
@@ -90,8 +90,8 @@ export function ReviewCenter() {
   return (
     <div className="page" data-testid="page-reviews">
       <PageHeader
-        title={<>评审中心 <span className="title-suffix">· Review Center</span></>}
-        subtitle={<>只记录人工判断和备注，<strong>不</strong>修改原始制品</>}
+        title="人工复核"
+        subtitle={<>记录人工判断和备注，<strong>不</strong>修改原始任务产出</>}
       />
       <div className="page-body">
         <FilterBar className="mb-2">
@@ -118,8 +118,8 @@ export function ReviewCenter() {
           <AsyncView
             state={list.state}
             onRetry={list.reload}
-            emptyText="无 review item"
-            emptyHint="切换过滤条件或等待 agent run 触发 review"
+            emptyText="暂无复核记录"
+            emptyHint="切换筛选条件，或等待需要人工确认的任务结果"
           >
             {(d) => (
               <DataTable
@@ -127,7 +127,7 @@ export function ReviewCenter() {
                 rows={d.items ?? []}
                 keyExtractor={(it) => it.item_id}
                 rowDataTestId={(it) => `review-${it.item_id}`}
-                empty={{ text: "无 review item", hint: "切换过滤条件或等待 agent run 触发 review" }}
+                empty={{ text: "暂无复核记录", hint: "切换筛选条件，或等待需要人工确认的任务结果" }}
                 columns={[
                   {
                     key: "reason",
@@ -140,10 +140,10 @@ export function ReviewCenter() {
                           <details className="collapse mt-1">
                             <summary className="text-xs muted">技术详情</summary>
                             <div className="text-xs muted mt-1">
-                              item: <InlineCode>{it.item_id}</InlineCode>
-                              {artifactId && <> · artifact: <InlineCode>{artifactId}</InlineCode></>}
+                              记录：<InlineCode>{it.item_id}</InlineCode>
+                              {artifactId && <> · 关联产出：<InlineCode>{artifactId}</InlineCode></>}
                               {it.category && (
-                                <> · category: {it.category}</>
+                                <> · 类型：{it.category}</>
                               )}
                             </div>
                           </details>
@@ -204,7 +204,7 @@ export function ReviewCenter() {
               rows={4}
               value={note}
               onChange={(e) => setNote(e.target.value)}
-              placeholder="user_note（可选）"
+              placeholder="填写复核备注（可选）"
               data-testid="review-note-input"
             />
             <div className="row-flex mt-3 review-modal-actions">
@@ -268,12 +268,12 @@ function ReviewEmptyState({
       <div>
         <h2>{isPending ? "当前没有待处理评审" : "这个筛选下没有评审项"}</h2>
         <p>
-          评审中心只收集需要人工确认的结果，例如高风险动作、敏感摘录或需要复核的制品。
+          这里只收集需要人工确认的结果，例如高风险动作、敏感内容或需要复核的任务产出。
         </p>
       </div>
       <div className="review-empty-steps">
         <span>1. 在工作台发起一次网络任务</span>
-        <span>2. 有风险的制品会自动进入这里</span>
+        <span>2. 有风险的任务产出会自动进入这里</span>
         <span>3. 人工接受、忽略或备注后再继续</span>
       </div>
       <div className="row-flex review-empty-actions">

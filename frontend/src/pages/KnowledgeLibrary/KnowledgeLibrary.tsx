@@ -372,12 +372,8 @@ export function KnowledgeLibrary() {
   return (
     <div className="page" data-testid="page-knowledge">
       <PageHeader
-        title={
-          <>
-            知识库 <span>· Knowledge Library</span>
-          </>
-        }
-        subtitle={`文档检索 / 安全摘录 / 重新整理 · 当前范围: ${
+        title="知识库"
+        subtitle={`管理和搜索已导入的文档 · 当前范围：${
           scope === "workspace" ? "工作区" : scope === "global" ? "全局" : "会话"
         }`}
       >
@@ -400,7 +396,7 @@ export function KnowledgeLibrary() {
           <summary className="kl-help-summary">💡 使用帮助</summary>
           <div className="kl-help-content">
             <strong>搜索</strong> — 输入关键词检索已导入的文档和知识片段；<br />
-            <strong>上传</strong> — 支持 TXT / PDF / Markdown / JSON，也可从数据中心导入已有制品；<br />
+            <strong>上传</strong> — 支持 TXT / PDF / Markdown / JSON，也可从数据管理导入已有任务产出；<br />
             <strong>知识源</strong> — 列表中展示已导入的文档，可预览内容或重新索引。
           </div>
         </details>
@@ -472,7 +468,7 @@ export function KnowledgeLibrary() {
             <span className="count">{artifacts.state.kind === "success" ? (artifacts.state.data.artifacts ?? []).length : "—"}</span>
           </div>
           <div className="text-xs muted mb-3">
-            选择一个制品建立可检索知识源。只索引安全摘录，机密内容不会进入搜索结果。
+            选择一项任务产出建立可检索文档。系统只提取安全内容，机密信息不会进入搜索结果。
           </div>
           <div className="row-flex kl-import-row">
             <select
@@ -503,7 +499,7 @@ export function KnowledgeLibrary() {
           </div>
           {artifacts.state.kind === "empty" && (
             <div className="text-xs muted mt-2">
-              当前工作区没有可导入的制品。请先到「数据中心」导入文件或运行任务。
+              当前工作区没有可导入的任务产出。请先到「数据管理」导入文件或运行任务。
             </div>
           )}
         </div>
@@ -697,7 +693,7 @@ function SearchResults({
 
 function sourceTypeLabel(type?: string): string {
   const labels: Record<string, string> = {
-    artifact: "制品文档",
+    artifact: "任务产出文档",
     markdown: "Markdown",
     text: "文本",
     config: "配置",

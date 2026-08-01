@@ -149,7 +149,7 @@ export function MemoryPage() {
   if (!loading && !err && display.length === 0) {
     return (
       <div className="page">
-        <PageHeader title="记忆管理" subtitle="核心规则、稳定事实、故障案例与操作方法分层管理">
+        <PageHeader title="长期记忆" subtitle="管理系统记住的偏好、事实、案例和操作方法">
           <button className="btn sm" onClick={() => setShowCreate(!showCreate)}>
             <IconPlus size={14} /> 新建记忆
           </button>
@@ -175,7 +175,7 @@ export function MemoryPage() {
               </svg>
             </div>
             <h2 className="hero-title">暂无记忆数据</h2>
-            <p className="hero-sub">Agent 在处理任务时会自动记录重要的决策、偏好和知识。你也可以手动创建新的记忆条目。</p>
+            <p className="hero-sub">智能体处理任务时会自动记录重要的决策、偏好和知识。你也可以手动创建记忆。</p>
             <button className="btn primary hero-create-btn" onClick={() => setShowCreate(true)}>
               <IconPlus size={14} /> 创建第一条记忆
             </button>
@@ -187,7 +187,7 @@ export function MemoryPage() {
 
   return (
     <div className="page">
-      <PageHeader title="记忆管理" subtitle="核心规则、稳定事实、故障案例与操作方法分层管理">
+      <PageHeader title="长期记忆" subtitle="管理系统记住的偏好、事实、案例和操作方法">
         <button className="btn sm" onClick={() => setShowCreate(!showCreate)}>
           <IconPlus size={14} /> 新建
         </button>
@@ -407,7 +407,7 @@ function memoryOriginLabel(origin: string): string {
   const value = String(origin || "");
   if (value.includes("task_reflection") || value.includes("memory_consolidator")) return "任务反思";
   if (value.includes("user")) return "用户明确设置";
-  if (value.includes("llm")) return "Agent 反思";
+  if (value.includes("llm")) return "智能体总结";
   return value;
 }
 
@@ -428,7 +428,7 @@ function memoryAuthorityLabel(authority: string): string {
     explicit_user: "用户明确规则",
     manual_confirm: "人工确认",
     verified_tool: "工具证据确认",
-    agent_inference: "Agent 推断",
+    agent_inference: "智能体推断",
   };
   return map[authority] || authority;
 }
