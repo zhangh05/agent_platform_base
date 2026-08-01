@@ -16,6 +16,7 @@ BACKEND_PORT="${BACKEND_PORT:-8011}"
 FRONTEND_PORT="${FRONTEND_PORT:-5273}"
 BACKEND_HOST="${BACKEND_HOST:-0.0.0.0}"
 FRONTEND_HOST="${FRONTEND_HOST:-0.0.0.0}"
+FRONTEND_MODE="${FRONTEND_MODE:-preview}"
 INSTALL_DEPS="${INSTALL_DEPS:-auto}"
 LOG_DIR="${LOG_DIR:-$ROOT/logs}"
 BACKEND_PID_FILE="$ROOT/.backend.pid"
@@ -266,15 +267,25 @@ start_frontend() {
         return
     fi
 
-    log "[frontend] Starting on $FRONTEND_HOST:$FRONTEND_PORT..."
+    local vite_args=("preview" "--host" "$FRONTEND_HOST" "--port" "$FRONTEND_PORT")
+    if [ "$FRONTEND_MODE" = "dev" ]; then
+        vite_args=("--host" "$FRONTEND_HOST" "--port" "$FRONTEND_PORT")
+    else
+        log "[frontend] Building production assets..."
+        (cd "$ROOT/frontend" && "$NPM_BIN" run build) || fail "Frontend production build failed."
+    fi
+
+    log "[frontend] Starting in $FRONTEND_MODE mode on $FRONTEND_HOST:$FRONTEND_PORT..."
     local dev_api_target="http://127.0.0.1:$BACKEND_PORT"
+    local vite_command
+    printf -v vite_command ' %q' "${vite_args[@]}"
     : > "$LOG_DIR/frontend-$FRONTEND_PORT.log"
     stop_screen "$FRONTEND_SCREEN"
     if command -v screen >/dev/null 2>&1; then
         screen -dmS "$FRONTEND_SCREEN" /bin/bash -lc \
-            "cd '$ROOT/frontend' && export VITE_DEV_API_TARGET='$dev_api_target' && exec '$VITE_BIN' --host '$FRONTEND_HOST' --port '$FRONTEND_PORT' >> '$LOG_DIR/frontend-$FRONTEND_PORT.log' 2>&1"
+            "cd '$ROOT/frontend' && export VITE_DEV_API_TARGET='$dev_api_target' && exec '$VITE_BIN'$vite_command >> '$LOG_DIR/frontend-$FRONTEND_PORT.log' 2>&1"
     else
-        (cd "$ROOT/frontend" && export VITE_DEV_API_TARGET="$dev_api_target" && nohup "$VITE_BIN" --host "$FRONTEND_HOST" --port "$FRONTEND_PORT" >> "$LOG_DIR/frontend-$FRONTEND_PORT.log" 2>&1 </dev/null &)
+        (cd "$ROOT/frontend" && export VITE_DEV_API_TARGET="$dev_api_target" && nohup "$VITE_BIN" "${vite_args[@]}" >> "$LOG_DIR/frontend-$FRONTEND_PORT.log" 2>&1 </dev/null &)
     fi
     wait_for_url frontend "http://127.0.0.1:$FRONTEND_PORT" || { stop_started_services; fail "Frontend failed to start. See $LOG_DIR/frontend-$FRONTEND_PORT.log"; }
     write_port_pid "$FRONTEND_PORT" "$FRONTEND_PID_FILE"

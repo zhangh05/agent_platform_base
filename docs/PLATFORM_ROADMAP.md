@@ -49,3 +49,6 @@ The current adapters support a production-shaped single service and worker
 deployment. Full horizontal multi-tenant operation still needs versioned SQL
 migrations, an external secret manager, distributed leases, OIDC/SSO and
 broader migration of workspace metadata from files to PostgreSQL.
+
+`start.sh` serves a production build through Vite preview by default; use
+`FRONTEND_MODE=dev` only for local hot-reload development.
