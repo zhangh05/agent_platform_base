@@ -5,22 +5,13 @@ import time, sys, os, traceback
 
 from jobs.schemas import JobRecord, JobEvent
 from jobs.store import get_job, update_job, append_event, append_log
-from jobs.manager import mark_running, mark_succeeded, mark_failed, update_progress
+from jobs.manager import mark_running, mark_succeeded, mark_failed, mark_cancelled, update_progress
 
 
 def run_job(ws_id: str, job_id: str):
     """Execute a job. Entry point called by worker/API."""
     rec = get_job(ws_id, job_id)
     if not rec:
-        return
-
-    # Planned job types: go through queued→running→succeeded
-    if rec.job_type not in ("agent_run", "generic_agent_task", "export_report", "knowledge_index"):
-        try:
-            mark_running(ws_id, job_id)
-        except Exception:
-            pass
-        mark_succeeded(ws_id, job_id, {"status": "coming_soon", "planned": True, "job_type": rec.job_type})
         return
 
     try:
@@ -36,6 +27,8 @@ def run_job(ws_id: str, job_id: str):
 
         # Fresh-get final job for accurate summary
         final = get_job(ws_id, job_id)
+        if not final or final.status in {"failed", "cancelled"}:
+            return
         mark_succeeded(ws_id, job_id, {
             "run_count": len(final.run_ids) if final else 0,
             "artifact_count": len(final.output_artifacts) if final else 0,
@@ -116,9 +109,40 @@ def _run_knowledge_index(rec: JobRecord):
     jid = rec.job_id
     if _cancel_check(rec):
         return
-    append_log(ws, jid, "Knowledge index job is available to downstream implementations")
-    update_progress(ws, jid, current=1, total=1, message="Knowledge index placeholder completed")
-    update_job(ws, jid, {"result_summary": {"status": "completed", "job_type": "knowledge_index"}})
+    payload = dict(rec.payload or {})
+    source_id = str(payload.get("source_id") or "").strip()
+    file_id = str(payload.get("file_id") or "").strip()
+    from agent.modules.knowledge.service import import_file, reindex_source
+
+    update_progress(ws, jid, current=0, total=1, message="正在构建知识索引")
+    if source_id:
+        result = reindex_source(ws, source_id)
+    elif file_id:
+        raw_tags = payload.get("tags") or []
+        if not isinstance(raw_tags, list):
+            raise ValueError("knowledge_index tags must be a list")
+        result = import_file(
+            workspace_id=ws,
+            source="",
+            file_id=file_id,
+            title=str(payload.get("title") or ""),
+            source_type=str(payload.get("source_type") or "project_doc"),
+            scope=str(payload.get("scope") or "workspace"),
+            language=str(payload.get("language") or "zh"),
+            tags=[str(tag) for tag in raw_tags if str(tag).strip()],
+        )
+    else:
+        raise ValueError("knowledge_index requires source_id or file_id")
+    if not result.get("ok"):
+        errors = result.get("errors") or [result.get("error") or "knowledge_index_failed"]
+        raise RuntimeError(str(errors[0]))
+    update_progress(ws, jid, current=1, total=1, message="知识索引已更新")
+    update_job(ws, jid, {"result_summary": {
+        "status": "completed",
+        "job_type": "knowledge_index",
+        "source_id": result.get("source_id") or source_id,
+        "chunk_count": int(result.get("chunk_count") or 0),
+    }})
 
 
 def _cancel_check(rec: JobRecord) -> bool:
@@ -126,5 +150,7 @@ def _cancel_check(rec: JobRecord) -> bool:
     from jobs.store import get_job
     freshest = get_job(rec.workspace_id, rec.job_id)
     if freshest and freshest.cancel_requested:
+        if freshest.status == "running":
+            mark_cancelled(rec.workspace_id, rec.job_id)
         return True
     return False

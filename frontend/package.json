@@ -1,8 +1,8 @@
 {
   "name": "agent-platform-base-workbench",
   "private": true,
-  "version": "3.28.2",
-  "description": "Capability-driven Agent Workbench for Agent Platform Base v3.28.2",
+  "version": "3.29.0",
+  "description": "Capability-driven Agent Workbench for Agent Platform Base v3.29.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -23,7 +23,6 @@
     "highlight.js": "^11.11.1",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
-    "react-router-dom": "^6.27.0",
     "web-vitals": "^5.3.0",
     "zustand": "^4.5.5"
   },
@@ -35,10 +34,10 @@
     "@types/node": "^22.19.21",
     "@types/react": "^18.3.11",
     "@types/react-dom": "^18.3.0",
-    "@vitejs/plugin-react": "^4.3.2",
-    "happy-dom": "^15.7.4",
+    "@vitejs/plugin-react": "^6.0.5",
+    "happy-dom": "^20.11.1",
     "typescript": "^5.6.3",
-    "vite": "^5.4.8",
-    "vitest": "^2.1.2"
+    "vite": "^8.2.0",
+    "vitest": "^4.1.10"
   }
 }

@@ -95,7 +95,7 @@
 }
 
 .abp-actions .btn.primary {
-  background: var(--primary, #2563eb);
+  background: var(--accent, #2563eb);
   color: #fff;
   border: none;
   padding: 4px 14px;
@@ -109,7 +109,7 @@
 
 .abp-actions .btn.ghost {
   background: transparent;
-  color: var(--fg-muted, #666);
+  color: var(--text-3, #666);
   border: 1px solid var(--line, #ddd);
   padding: 4px 12px;
   border-radius: 6px;

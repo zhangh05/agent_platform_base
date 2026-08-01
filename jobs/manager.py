@@ -116,7 +116,6 @@ def mark_succeeded(ws_id, job_id, result_summary=None) -> JobRecord:
     if result:
         append_event(ws_id, job_id, JobEvent(job_id=job_id, workspace_id=ws_id,
                      event_type="job_succeeded", message="Job succeeded"))
-        _write_job_summary_memory(result)
     return result
 
 
@@ -130,7 +129,26 @@ def mark_failed(ws_id, job_id, error="") -> JobRecord:
     if result:
         append_event(ws_id, job_id, JobEvent(job_id=job_id, workspace_id=ws_id,
                      event_type="job_failed", message=f"Job failed: {error[:100]}"))
-        _write_job_summary_memory(result)
+    return result
+
+
+def mark_cancelled(ws_id, job_id, message="Job cancelled") -> JobRecord:
+    rec = get_job(ws_id, job_id)
+    if not rec:
+        return None
+    _check_transition(rec.status, "cancelled")
+    result = update_job(ws_id, job_id, {
+        "status": "cancelled",
+        "finished_at": now_iso(),
+        "cancel_requested": True,
+    })
+    if result:
+        append_event(ws_id, job_id, JobEvent(
+            job_id=job_id,
+            workspace_id=ws_id,
+            event_type="job_cancelled",
+            message=message,
+        ))
     return result
 
 
@@ -157,12 +175,3 @@ def _transition(ws_id, job_id, target, evt_type, msg=""):
         append_event(ws_id, job_id, JobEvent(job_id=job_id, workspace_id=ws_id,
                      event_type=evt_type, message=msg))
     return rec
-
-
-def _write_job_summary_memory(job):
-    try:
-        from storage.memory_governance import MemoryRecord, MemoryWriteGate
-        # write_job_summary deprecated — use MemoryWriteGate
-        pass
-    except Exception:
-        pass

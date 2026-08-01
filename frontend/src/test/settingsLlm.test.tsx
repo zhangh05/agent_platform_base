@@ -93,13 +93,13 @@ function mockApi(overrides: Partial<{
     updateWorkspaceSettings: overrides.updateWorkspaceSettings ?? vi.fn().mockResolvedValue({ ok: true, workspace: { memory_enabled: false } }),
   };
   vi.spyOn(settingsApi, "providersList").mockImplementation(spy.providersList);
-  vi.spyOn(settingsApi, "providerSave").mockImplementation(spy.providerSave);
-  vi.spyOn(settingsApi, "providerGet").mockImplementation(spy.providerGet);
-  vi.spyOn(settingsApi, "providerDelete").mockImplementation(spy.providerDelete);
-  vi.spyOn(settingsApi, "llmActivate").mockImplementation(spy.llmActivate);
-  vi.spyOn(settingsApi, "llmTest").mockImplementation(spy.llmTest);
-  vi.spyOn(settingsApi, "workspaceSettings").mockImplementation(spy.workspaceSettings);
-  vi.spyOn(settingsApi, "updateWorkspaceSettings").mockImplementation(spy.updateWorkspaceSettings);
+  vi.spyOn(settingsApi, "providerSave").mockImplementation(spy.providerSave as typeof settingsApi.providerSave);
+  vi.spyOn(settingsApi, "providerGet").mockImplementation(spy.providerGet as typeof settingsApi.providerGet);
+  vi.spyOn(settingsApi, "providerDelete").mockImplementation(spy.providerDelete as typeof settingsApi.providerDelete);
+  vi.spyOn(settingsApi, "llmActivate").mockImplementation(spy.llmActivate as typeof settingsApi.llmActivate);
+  vi.spyOn(settingsApi, "llmTest").mockImplementation(spy.llmTest as typeof settingsApi.llmTest);
+  vi.spyOn(settingsApi, "workspaceSettings").mockImplementation(spy.workspaceSettings as typeof settingsApi.workspaceSettings);
+  vi.spyOn(settingsApi, "updateWorkspaceSettings").mockImplementation(spy.updateWorkspaceSettings as typeof settingsApi.updateWorkspaceSettings);
   return spy;
 }
 

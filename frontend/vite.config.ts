@@ -65,7 +65,7 @@ export default defineConfig(({ mode }) => {
           manualChunks(id) {
             if (id.includes("node_modules")) {
               if (
-                /[\\/]node_modules[\\/](react|react-dom|react-router|react-router-dom|scheduler)[\\/]/.test(
+                /[\\/]node_modules[\\/](react|react-dom|scheduler)[\\/]/.test(
                   id,
                 )
               ) {

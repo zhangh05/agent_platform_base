@@ -15,8 +15,8 @@ The dev server listens on port `5273` and proxies `/api` to `VITE_DEV_API_TARGET
 
 - React 18
 - TypeScript
-- Vite 5
-- React Router
+- Vite 8
+- Same-origin application router (`src/router.tsx`)
 - Zustand
 - Axios
 - Vitest
@@ -24,11 +24,12 @@ The dev server listens on port `5273` and proxies `/api` to `VITE_DEV_API_TARGET
 
 ## Source Layout
 
-- `src/app/App.tsx`: routes and top-level shell
+- `src/app/App.tsx`: route table and top-level shell
+- `src/router.tsx`: same-origin navigation and search parameters
 - `src/api/client.ts`: Axios wrapper and timeout policy
 - `src/api/index.ts`: API modules
 - `src/pages/`: route pages
-- `src/layouts/`: sidebar, inspector, app layout
+- `src/layouts/`: sidebar and app layout
 - `src/stores/`: session, workbench, toast state
 - `src/types/index.ts`: shared API-facing types
 - `src/styles/global.css`: design system and interaction polish
@@ -49,4 +50,3 @@ npm run e2e
 - Agent turns use `TIMEOUTS.agentTurn = 180_000`.
 - Workbench messages are stored per session.
 - Capability state and tool counts come from backend APIs.
-- Pcap analysis sessions are restored from `/packet?sid=...`.

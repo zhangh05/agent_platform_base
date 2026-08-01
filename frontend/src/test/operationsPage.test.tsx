@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter } from "../router";
 import { OperationsPage } from "../pages/Operations/OperationsPage";
 import { enqueue, getRequests, installMockApi, resetMocks } from "./mockServer";
 import { useSessionStore } from "../stores/session";

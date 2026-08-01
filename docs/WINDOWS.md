@@ -9,7 +9,7 @@ Packaged Windows releases should include:
 
 For source development:
 
-1. Install Python 3.12+ and Node.js 18+.
+1. Install Python 3.12+ and Node.js 20.19+ or 22.12+.
 2. Install backend and frontend dependencies.
 3. Run `start.bat` or use the platform-specific development commands.
 

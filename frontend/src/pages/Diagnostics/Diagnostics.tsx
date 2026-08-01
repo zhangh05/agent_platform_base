@@ -6,7 +6,7 @@
  * 无缓存时显示空骨架 + 醒目的检测按钮。
  */
 import { useEffect, useRef, useState, useCallback, useMemo, useSyncExternalStore } from "react";
-import { Link } from "react-router-dom";
+import { Link } from "../../router";
 import { runtimeApi, agentUsageApi, retentionApi, archiveApi, contextApi, promptsApi } from "../../api";
 import { useSessionStore } from "../../stores/session";
 import { LoadingState } from "../../components/common";

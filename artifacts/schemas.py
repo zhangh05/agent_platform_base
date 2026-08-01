@@ -57,7 +57,7 @@ class ArtifactRecord:
     derived_from: list = field(default_factory=list)
     references: list = field(default_factory=list)
 
-    def as_dict(self, include_content: bool = False) -> dict:
+    def as_dict(self) -> dict:
         d = {
             "artifact_id": self.artifact_id, "workspace_id": self.workspace_id,
             "session_id": self.session_id,
@@ -74,14 +74,9 @@ class ArtifactRecord:
             "parent_artifact_id": self.parent_artifact_id,
             "created_by": self.created_by,
         }
-        # Always include metadata in the meta file so that
-        # callers can recover the original metadata (e.g. review service
-        # needs manual_review_items). The include_content flag still
-        # controls the larger content body. Existing consumers that use
-        # sanitize_record() for the API surface are unaffected.
+        # Metadata is part of the canonical artifact record. Large content is
+        # stored by the artifact content store and referenced by relative_path.
         d["metadata"] = self.metadata
-        if include_content:
-            pass  # placeholder for future larger content body
         return d
 
     def as_summary(self) -> dict:

@@ -32,7 +32,7 @@ agent_platform_base/
 │   ├── runtime/                # Diagnostics/Selfcheck/Retention
 │   ├── runtime_engine/         # SSOT QueryLoop runtime, budgets, tracking, audit
 │   ├── time/
-│   ├── tools/                  # 24 agent-platform-base tools, manifest, policy, executor
+│   ├── tools/                  # Canonical platform tools, manifest, policy, executor
 │   └── workspaces/             # Workspace abstractions
 ├── workspaces/                 # Local workspace data; not committed
 ├── start.sh

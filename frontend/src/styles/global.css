@@ -136,18 +136,6 @@ body,
   --region-amber: #a16207;
   --region-amber-soft: #fef3c7;
 
-  /* Legacy aliases used by downstream components; keep until refactor. */
-  --brand: var(--accent);
-  --brand-soft: var(--accent-soft);
-  --border-1: var(--line-2);
-  --border-2: var(--line);
-  --primary: var(--accent);
-  --line-1: var(--line);
-  --text-hint: var(--text-4);
-  --text-soft: var(--text-3);
-  --text-5: var(--text-4);
-  --fs-28: 28px;
-  --fg-muted: var(--text-3);
 }
 
 [data-theme="dark"] {
@@ -1493,7 +1481,7 @@ pre code {
   font-size: 12px;
   line-height: 1.7;
   background: var(--surface-2);
-  border: 1px solid var(--border-2);
+  border: 1px solid var(--line);
 }
 
 .memory-gating-box.ok {
@@ -2865,7 +2853,7 @@ details.collapse[open] summary::before {
 .confirm-dialog-body {
   margin-bottom: 16px;
   font-size: var(--fs-13);
-  color: var(--text-soft);
+  color: var(--text-3);
   line-height: 1.5;
 }
 
@@ -3342,7 +3330,7 @@ details.collapse[open] summary::before {
 }
 
 .markdown-body thead {
-  border-bottom: 2px solid var(--line-1);
+  border-bottom: 2px solid var(--line);
 }
 
 .markdown-body th,
@@ -3408,7 +3396,7 @@ details.collapse[open] summary::before {
 }
 
 .markdown-body .pipe-row-separator {
-  color: var(--text-hint);
+  color: var(--text-4);
   padding: 0 3px;
 }
 
@@ -3574,7 +3562,7 @@ details.collapse[open] summary::before {
   height: 15px;
   place-items: center;
   margin-top: 4px;
-  border: 1px solid var(--line-1);
+  border: 1px solid var(--line);
   border-radius: 4px;
   color: var(--accent-text);
   font-size: 10px;
@@ -3595,7 +3583,7 @@ details.collapse[open] summary::before {
   margin: 12px 0 14px;
   padding: 10px 14px;
   border-left: 3px solid var(--line-3);
-  color: var(--text-soft);
+  color: var(--text-3);
   background: var(--surface-2);
   border-radius: 0 6px 6px 0;
 }
@@ -5104,7 +5092,7 @@ details.collapse[open] summary::before {
   width: 32px; height: 32px;
   background: var(--surface-2);
   color: var(--text-2);
-  border: 1px solid var(--border-2);
+  border: 1px solid var(--line);
   border-radius: 50%;
   cursor: pointer;
   box-shadow: 0 2px 8px rgba(0,0,0,0.12);
@@ -5112,16 +5100,16 @@ details.collapse[open] summary::before {
   transition: all var(--dur-2);
 }
 .scroll-bottom-btn:hover {
-  background: var(--brand);
+  background: var(--accent);
   color: #fff;
-  border-color: var(--brand);
+  border-color: var(--accent);
   box-shadow: 0 4px 14px rgba(0,0,0,0.18);
 }
 
 /* ── Regenerate button ── */
 .regenerate-btn {
   background: none;
-  border: 1px solid var(--border-2);
+  border: 1px solid var(--line);
   border-radius: 4px;
   color: var(--text-4);
   cursor: pointer;
@@ -5131,8 +5119,8 @@ details.collapse[open] summary::before {
   transition: all var(--dur-1);
 }
 .regenerate-btn:hover {
-  color: var(--brand);
-  border-color: var(--brand);
+  color: var(--accent);
+  border-color: var(--accent);
   background: var(--surface-3);
 }
 
@@ -5141,7 +5129,7 @@ details.collapse[open] summary::before {
   width: 4px;
 }
 .wb-chat-list::-webkit-scrollbar-thumb {
-  background: var(--border-2);
+  background: var(--line);
   border-radius: 2px;
 }
 
@@ -5154,7 +5142,7 @@ details.collapse[open] summary::before {
 }
 
 .tool-call-card {
-  border: 1px solid var(--border-2);
+  border: 1px solid var(--line);
   border-radius: 6px;
   padding: 4px 8px;
   cursor: pointer;
@@ -5166,7 +5154,7 @@ details.collapse[open] summary::before {
 }
 .tool-call-card.ok { border-left: 3px solid var(--ok); }
 .tool-call-card.fail { border-left: 3px solid var(--danger); }
-.tool-call-card:hover { border-color: var(--brand); }
+.tool-call-card:hover { border-color: var(--accent); }
 
 .tool-call-card-header {
   display: flex;
@@ -5181,7 +5169,7 @@ details.collapse[open] summary::before {
 .tool-call-card-body {
   margin-top: 4px;
   padding-top: 4px;
-  border-top: 1px solid var(--border-1);
+  border-top: 1px solid var(--line-2);
 }
 .tc-summary { color: var(--text-2); font-size: var(--fs-11); margin-bottom: 2px; }
 .tc-error { color: var(--danger); font-size: 10px; margin-bottom: 2px; }
@@ -5254,20 +5242,20 @@ details.collapse[open] summary::before {
   border-radius: 12px;
   font-size: var(--fs-11);
   background: var(--surface-3);
-  border: 1px solid var(--border-2);
+  border: 1px solid var(--line);
 }
-.live-tool-chip.running { border-color: var(--brand); animation: pulseBorder 1.5s infinite; }
+.live-tool-chip.running { border-color: var(--accent); animation: pulseBorder 1.5s infinite; }
 .live-tool-chip.done { border-color: var(--ok); }
 .live-tool-chip.fail { border-color: var(--danger); }
 .live-tool-dot {
   display: inline-block; width: 6px; height: 6px; border-radius: 50%;
 }
-.live-tool-dot.running { background: var(--brand); animation: pulse 1s infinite; }
+.live-tool-dot.running { background: var(--accent); animation: pulse 1s infinite; }
 .live-tool-dot.done { background: var(--ok); }
 .live-tool-dot.fail { background: var(--danger); }
 .live-tool-summary { color: var(--text-4); font-size: 10px; margin-left: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.3; } }
-@keyframes pulseBorder { 0%,100% { border-color: var(--brand); } 50% { border-color: var(--brand-soft); } }
+@keyframes pulseBorder { 0%,100% { border-color: var(--accent); } 50% { border-color: var(--accent-soft); } }
 
 /* ── Remote terminal (xterm) ── */
 .remote-terminal-host {
@@ -5892,7 +5880,7 @@ summary:focus-visible,
 
 .stat-sub {
   font-size: 10px;
-  color: var(--text-5);
+  color: var(--text-4);
   margin-top: 1px;
   white-space: nowrap;
 }

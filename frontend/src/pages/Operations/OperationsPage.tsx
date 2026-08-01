@@ -7,7 +7,7 @@
  *          运行记录中点击某 run → 内联展开 trace / 事件时间线 / 失败原因
  */
 import { useEffect, useRef, useState, useCallback, useMemo } from "react";
-import { useSearchParams } from "react-router-dom";
+import { useSearchParams } from "../../router";
 import { jobsApi, workspacesApi, sessionExtApi, runtimeAuditApi } from "../../api";
 import { useSessionStore } from "../../stores/session";
 import { APP_EVENTS } from "../../utils/appEvents";

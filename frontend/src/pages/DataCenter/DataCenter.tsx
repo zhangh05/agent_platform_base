@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
-import { useSearchParams } from "react-router-dom";
+import { useSearchParams } from "../../router";
 import { apiRequest } from "../../api/client";
 import {
   archiveApi,

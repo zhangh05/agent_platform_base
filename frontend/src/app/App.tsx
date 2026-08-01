@@ -1,6 +1,6 @@
-import { BrowserRouter, Link, Navigate, NavLink, Route, Routes, useLocation } from "react-router-dom";
+import { BrowserRouter, Link, Navigate, NavLink, useLocation } from "../router";
 import { Suspense, memo, useCallback, useEffect, useState } from "react";
-import type { FormEvent } from "react";
+import type { FormEvent, ReactNode } from "react";
 import { ErrorBoundary } from "../components/ErrorBoundary";
 import { SkeletonList, SkeletonTable } from "../components/common";
 import { AppLayout } from "../layouts/AppLayout";
@@ -87,34 +87,33 @@ function RouteFallback() {
 
 function AppRoutes() {
   const location = useLocation();
+  const routes: Record<string, ReactNode> = {
+    "/workbench": <ErrorBoundary><TaskWorkbench /></ErrorBoundary>,
+    "/knowledge": <ErrorBoundary><KnowledgeLibrary /></ErrorBoundary>,
+    "/data": <ErrorBoundary><DataCenter /></ErrorBoundary>,
+    "/memory": <ErrorBoundary><MemoryPage /></ErrorBoundary>,
+    "/capabilities": <ErrorBoundary><CapabilityCenter /></ErrorBoundary>,
+    "/diagnostics": <ErrorBoundary><Diagnostics /></ErrorBoundary>,
+    "/settings": <ErrorBoundary><Settings /></ErrorBoundary>,
+    "/runs": <ErrorBoundary><OperationsPage /></ErrorBoundary>,
+    "/audit": <ErrorBoundary><RuntimeAudit /></ErrorBoundary>,
+    "/reviews": <ErrorBoundary><ReviewCenter /></ErrorBoundary>,
+  };
+  const content = location.pathname === "/" ? (
+    <Navigate to="/workbench" replace />
+  ) : routes[location.pathname] ?? (
+    <ErrorBoundary>
+      <div className="hero">
+        <div className="hero-mark">404</div>
+        <h1 className="hero-title">页面不存在</h1>
+        <p className="hero-sub">请通过顶栏导航回到工作台</p>
+      </div>
+    </ErrorBoundary>
+  );
   return (
     <Suspense fallback={<RouteFallback />}>
       <div className="route-view" key={location.pathname} data-route={location.pathname}>
-        <Routes location={location}>
-          <Route path="/workbench" element={<ErrorBoundary><TaskWorkbench /></ErrorBoundary>} />
-          <Route path="/knowledge" element={<ErrorBoundary><KnowledgeLibrary /></ErrorBoundary>} />
-          <Route path="/data" element={<ErrorBoundary><DataCenter /></ErrorBoundary>} />
-          <Route path="/memory" element={<ErrorBoundary><MemoryPage /></ErrorBoundary>} />
-          <Route path="/capabilities" element={<ErrorBoundary><CapabilityCenter /></ErrorBoundary>} />
-          <Route path="/diagnostics" element={<ErrorBoundary><Diagnostics /></ErrorBoundary>} />
-          <Route path="/settings" element={<ErrorBoundary><Settings /></ErrorBoundary>} />
-          <Route path="/runs" element={<ErrorBoundary><OperationsPage /></ErrorBoundary>} />
-          <Route path="/audit" element={<ErrorBoundary><RuntimeAudit /></ErrorBoundary>} />
-          <Route path="/reviews" element={<ErrorBoundary><ReviewCenter /></ErrorBoundary>} />
-          <Route path="/" element={<Navigate to="/workbench" replace />} />
-          <Route
-            path="*"
-            element={
-              <ErrorBoundary>
-                <div className="hero">
-                  <div className="hero-mark">404</div>
-                  <h1 className="hero-title">页面不存在</h1>
-                  <p className="hero-sub">请通过顶栏导航回到工作台</p>
-                </div>
-              </ErrorBoundary>
-            }
-          />
-        </Routes>
+        {content}
       </div>
     </Suspense>
   );
@@ -365,7 +364,7 @@ export function App() {
   }
 
   return (
-    <BrowserRouter future={{ v7_relativeSplatPath: true, v7_startTransition: true }}>
+    <BrowserRouter>
       <AppShell canLogout={authState === "authenticated"} onLogout={handleLogout} username={username} />
     </BrowserRouter>
   );

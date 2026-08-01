@@ -22,7 +22,7 @@ def test_unix_scripts_are_executable():
 def test_unix_start_requires_supported_runtime_versions():
     script = _read("start.sh")
     assert "Python 3.12+" in script
-    assert "Node.js 18+" in script
+    assert "Node.js 20.19+ or 22.12+" in script
     assert "check_version" in script
 
 

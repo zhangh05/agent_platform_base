@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import { memo, useCallback, useEffect, useRef } from "react";
-import { NavLink, useLocation } from "react-router-dom";
+import { NavLink, useLocation } from "../router";
 import { useUIStore } from "../stores/session";
 import { Sidebar } from "./Sidebar";
 import { NAV_ITEMS } from "../config/nav";
