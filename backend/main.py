@@ -48,6 +48,7 @@ from backend.api.state_routes import register_state_routes
 from backend.api.storage_routes import register_storage_routes
 from backend.api.identity_routes import handle_identity_users
 from backend.api.extension_routes import register_extensions
+from backend.api.admin_routes import register_admin_routes
 from backend.core.settings import UNIFIED_PORT, API_MODE, BUILD_COMMIT
 from backend.core.rate_limit import rate_limit_middleware
 from storage.ids import validate_workspace_id
@@ -71,6 +72,8 @@ def create_app():
     app.config["PORT"] = UNIFIED_PORT
     from agent.runtime.memory_hooks import install_memory_governance_hooks
     install_memory_governance_hooks()
+    from observability.metrics import install_http_metrics
+    install_http_metrics(app)
 
     # ── CORS: allow configured workbench origins (Vite / LAN access) ──
     def _allowed_cors_origin():
@@ -122,6 +125,12 @@ def create_app():
             "capabilities_loaded": len(_catalog.list_all()),
         })
         return jsonify(body)
+
+    @app.route("/api/ready")
+    def api_ready():
+        from core.runtime.production import production_readiness
+        report = production_readiness()
+        return jsonify(report), 200 if report["ready"] else 503
 
     # ── Browser login ──
     @app.route("/api/auth/status")
@@ -295,6 +304,7 @@ def create_app():
     register_workspace_status_routes(app)  # /api/workspaces/<ws>/status, /storage/health
     register_state_routes(app)     # /api/runtime/tasks/* (Phase 2 Durable State)
     register_extensions(app)       # /api/extensions + namespaced extension routes
+    register_admin_routes(app)     # /api/admin/production and verified backups
 
     # Reconcile durable jobs/subagent tasks that were running when a previous
     # backend process stopped. Domain modules can register their own startup

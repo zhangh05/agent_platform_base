@@ -53,7 +53,7 @@ jobs:
             @{ Name = "3.12"; Python = "${{ steps.python312.outputs.python-path }}" },
             @{ Name = "3.13"; Python = "${{ steps.python313.outputs.python-path }}" }
           )) {
-            $venv = Join-Path $env:RUNNER_TEMP "network-agent-wheelhouse-$($runtime.Name)"
+            $venv = Join-Path $env:RUNNER_TEMP "agent-platform-base-wheelhouse-$($runtime.Name)"
             $runtimePython = $runtime.Python
             & $runtimePython -m venv $venv
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
@@ -88,7 +88,7 @@ jobs:
       - name: Assemble Windows package
         shell: pwsh
         run: |
-          $stage = Join-Path $PWD "release/network-agent"
+          $stage = Join-Path $PWD "release/agent-platform-base"
           New-Item -ItemType Directory -Force $stage | Out-Null
           robocopy $PWD $stage /E /XD .git .github .venv .runtime node_modules logs data workspaces reports release frontend\test-results frontend\playwright-report /XF .backend.pid .frontend.pid *.log | Out-Null
           $robocopyExitCode = $LASTEXITCODE
@@ -117,7 +117,6 @@ jobs:
           & $bundledPython -c "import flask, flask_sock, yaml, bs4, lxml, pdfplumber, scapy, paramiko"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-          $env:NETWORK_AGENT_NO_PAUSE = "1"
           & (Get-Command pwsh.exe -ErrorAction Stop).Source -NoProfile -File (Join-Path $stage "start.ps1") -NoBrowser -ValidateOnly
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
@@ -129,11 +128,11 @@ jobs:
           # code so GitHub's pwsh wrapper does not mark the step as failed.
           $global:LASTEXITCODE = 0
           $version = "${{ github.ref_name }}"
-          Compress-Archive -Path $stage -DestinationPath "release/network-agent-$version-windows-x64.zip" -Force
+          Compress-Archive -Path $stage -DestinationPath "release/agent-platform-base-$version-windows-x64.zip" -Force
           exit 0
 
       - name: Publish release asset
         uses: softprops/action-gh-release@v2
         with:
-          files: release/network-agent-*-windows-x64.zip
+          files: release/agent-platform-base-*-windows-x64.zip
           generate_release_notes: true

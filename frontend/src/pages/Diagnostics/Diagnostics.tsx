@@ -74,6 +74,8 @@ const COMP_LABELS: Record<string, string> = {
   tool_runtime: "工具服务", llm: "模型服务", archive: "归档存储",
   memory: "记忆系统", context: "上下文", knowledge: "知识库",
   web: "Web 能力", browser: "浏览器", data: "数据处理",
+  production_record_storage: "业务记录存储", production_object_storage: "文件对象存储",
+  production_job_queue: "任务队列", production_job_worker: "任务工作进程",
 };
 
 const COMP_DESC: Record<string, string> = {
@@ -83,6 +85,10 @@ const COMP_DESC: Record<string, string> = {
   tool_runtime: "外部工具调用服务", llm: "模型服务连通性与用量",
   archive: "历史数据归档策略", memory: "长期记忆存储状态",
   context: "对话上下文窗口", knowledge: "知识检索服务",
+  production_record_storage: "本地文件或 PostgreSQL 记录存储的实际连通状态",
+  production_object_storage: "本地文件或 S3 对象存储的实际连通状态",
+  production_job_queue: "本地队列或 Redis 队列的实际连通状态",
+  production_job_worker: "工作进程心跳、任务租约与失联状态",
 };
 
 /* ──────────────────────── Cache helpers ──────────────────────── */

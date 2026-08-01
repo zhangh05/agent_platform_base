@@ -19,6 +19,9 @@ class JobQueue(Protocol):
     def claim(self, worker_id: str) -> QueueReceipt | None: ...
     def ack(self, receipt: QueueReceipt) -> None: ...
     def retry(self, receipt: QueueReceipt, reason: str = "") -> None: ...
+    def heartbeat(self, receipt: QueueReceipt, worker_id: str) -> bool: ...
+    def reclaim_stale(self, max_age_seconds: int) -> int: ...
+    def health(self) -> dict[str, Any]: ...
 
 
 def queue_mode() -> str:
@@ -48,14 +51,24 @@ class FileJobQueue:
     def retry(self, receipt: QueueReceipt, reason: str = "") -> None:
         return None
 
+    def heartbeat(self, receipt: QueueReceipt, worker_id: str) -> bool:
+        return True
+
+    def reclaim_stale(self, max_age_seconds: int) -> int:
+        return 0
+
+    def health(self) -> dict[str, Any]:
+        return {"ok": True, "mode": "filesystem"}
+
 
 class RedisJobQueue:
     QUEUED = "agent-platform:jobs:queued"
     PROCESSING = "agent-platform:jobs:processing"
+    LEASES = "agent-platform:jobs:leases"
 
     def __init__(self, url: str):
         import redis
-        self.client = redis.Redis.from_url(url, decode_responses=True)
+        self.client = redis.Redis.from_url(url, decode_responses=True, socket_connect_timeout=3, socket_timeout=3)
 
     @staticmethod
     def _payload(workspace_id: str, job_id: str, attempt: int = 1) -> str:
@@ -69,18 +82,55 @@ class RedisJobQueue:
 
     def claim(self, worker_id: str) -> QueueReceipt | None:
         import json
+        import time
         payload = self.client.rpoplpush(self.QUEUED, self.PROCESSING)
         if not payload:
             return None
         data = json.loads(payload)
-        return QueueReceipt(data["workspace_id"], data["job_id"], payload, int(data.get("attempt", 1)))
+        receipt = QueueReceipt(data["workspace_id"], data["job_id"], payload, int(data.get("attempt", 1)))
+        self.client.hset(self.LEASES, payload, json.dumps({"worker_id": worker_id, "heartbeat_at": time.time()}))
+        return receipt
 
     def ack(self, receipt: QueueReceipt) -> None:
         self.client.lrem(self.PROCESSING, 1, receipt.lease_id)
+        self.client.hdel(self.LEASES, receipt.lease_id)
 
     def retry(self, receipt: QueueReceipt, reason: str = "") -> None:
         self.ack(receipt)
         self.client.lpush(self.QUEUED, self._payload(receipt.workspace_id, receipt.job_id, receipt.attempt + 1))
+
+    def heartbeat(self, receipt: QueueReceipt, worker_id: str) -> bool:
+        import json
+        import time
+        if not self.client.hexists(self.LEASES, receipt.lease_id):
+            return False
+        self.client.hset(self.LEASES, receipt.lease_id, json.dumps({"worker_id": worker_id, "heartbeat_at": time.time()}))
+        return True
+
+    def reclaim_stale(self, max_age_seconds: int) -> int:
+        import json
+        import time
+        reclaimed = 0
+        now = time.time()
+        for payload, raw in self.client.hgetall(self.LEASES).items():
+            try:
+                lease = json.loads(raw)
+                stale = now - float(lease.get("heartbeat_at") or 0) > max(1, max_age_seconds)
+                data = json.loads(payload)
+            except (TypeError, ValueError, json.JSONDecodeError):
+                stale = True
+                data = {}
+            if not stale:
+                continue
+            self.client.lrem(self.PROCESSING, 1, payload)
+            self.client.hdel(self.LEASES, payload)
+            if data.get("workspace_id") and data.get("job_id"):
+                self.client.lpush(self.QUEUED, self._payload(data["workspace_id"], data["job_id"], int(data.get("attempt", 1)) + 1))
+                reclaimed += 1
+        return reclaimed
+
+    def health(self) -> dict[str, Any]:
+        return {"ok": bool(self.client.ping()), "mode": "redis"}
 
 
 def get_job_queue():

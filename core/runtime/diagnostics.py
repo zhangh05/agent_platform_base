@@ -122,6 +122,20 @@ def get_diagnostics(workspace_id: str = "default") -> DiagnosticReport:
     except Exception:
         components.append(ComponentStatus("memory", "warning", "Memory status unavailable"))
 
+    # 11. Production dependencies
+    try:
+        from core.runtime.production import production_readiness
+        readiness = production_readiness()
+        for item in readiness["components"]:
+            components.append(ComponentStatus(
+                f"production_{item['name']}",
+                "ok" if item["status"] == "ok" else "error",
+                f"{item['mode']} · {item.get('latency_ms', 0)} ms",
+                item.get("details") or {},
+            ))
+    except Exception as e:
+        components.append(ComponentStatus("production", "error", str(e)[:100]))
+
     report.components = components
     report.summary = {
         "total": len(components),

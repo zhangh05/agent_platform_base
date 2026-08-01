@@ -45,13 +45,21 @@ class LocalObjectStore:
         data = self.get(key)
         return hashlib.sha256(data).hexdigest() if data is not None else None
 
+    def health(self) -> dict:
+        self.root.mkdir(parents=True, exist_ok=True)
+        probe = self.root / ".readiness"
+        atomic_write_bytes(probe, b"ok")
+        probe.unlink(missing_ok=True)
+        return {"root_writable": True}
+
 
 class S3ObjectStore:
     def __init__(self, bucket: str, prefix: str = ""):
         import boto3
+        from botocore.config import Config
         self.bucket = bucket
         self.prefix = prefix.strip("/")
-        self.client = boto3.client("s3")
+        self.client = boto3.client("s3", config=Config(connect_timeout=3, read_timeout=3, retries={"max_attempts": 1}))
 
     def _key(self, key: str) -> str:
         LocalObjectStore(Path("/tmp"))._path(key)
@@ -78,10 +86,23 @@ class S3ObjectStore:
         self.client.delete_object(Bucket=self.bucket, Key=self._key(key))
         return True
 
+    def health(self) -> dict:
+        self.client.head_bucket(Bucket=self.bucket)
+        return {"connected": True}
+
+
+def object_store_mode() -> str:
+    import os
+    explicit = os.environ.get("AGENT_PLATFORM_OBJECT_STORE_MODE", "").strip().lower()
+    if explicit:
+        return "s3" if explicit in {"s3", "object"} else "local"
+    legacy = os.environ.get("AGENT_PLATFORM_STORAGE_MODE", "filesystem").strip().lower()
+    return "s3" if legacy in {"s3", "object"} else "local"
+
 
 def get_object_store():
     import os
-    if backend_mode() in {"s3", "object"}:
+    if object_store_mode() == "s3":
         bucket = os.environ.get("AGENT_PLATFORM_OBJECT_STORE_BUCKET", "").strip()
         if not bucket:
             raise RuntimeError("AGENT_PLATFORM_OBJECT_STORE_BUCKET is required")

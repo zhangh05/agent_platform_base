@@ -23,7 +23,11 @@ extension that owns them.
 
 The filesystem adapter remains the development default. Concrete adapters now
 cover PostgreSQL JSON runtime records, S3-compatible objects, Redis
-cross-process events and durable jobs, plus OTLP trace export. They are selected
+cross-process events and durable jobs, plus OTLP trace export. Record and object
+storage are independently selectable, so PostgreSQL and S3 can run together.
+Redis workers use renewable leases and reclaim stale work with at-least-once
+semantics. Verified snapshots, readiness probes, Prometheus HTTP metrics, and
+immutable release slots with rollback complete the production operations path. They are selected
 through environment variables, while local mode remains zero-infrastructure.
 `scripts/platform_runtime_check.py` validates required production environment
 variables without making network calls.
@@ -45,10 +49,11 @@ per-call configuration remains authoritative.
 
 ## Remaining scale-out work
 
-The current adapters support a production-shaped single service and worker
-deployment. Full horizontal multi-tenant operation still needs versioned SQL
-migrations, an external secret manager, distributed leases, OIDC/SSO and
-broader migration of workspace metadata from files to PostgreSQL.
+The current adapters support multiple web and worker processes. Larger enterprise
+installations still need an external secret manager, OIDC/SSO, database-native
+schema migrations, and broader migration of workspace metadata from files to
+PostgreSQL. Cross-extension workflows and organization-level tenancy are the v2
+control-plane scope.
 
 `start.sh` serves a production build through Vite preview by default; use
 `FRONTEND_MODE=dev` only for local hot-reload development.

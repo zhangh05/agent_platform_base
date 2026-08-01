@@ -75,6 +75,7 @@ _API_TOKEN = _get_api_token()
 # ── Public endpoints (no auth required) ──
 _PUBLIC_PREFIXES = frozenset([
     "/api/health",
+    "/api/ready",
     "/api/auth/login",
     "/api/auth/status",
     "/health",
@@ -87,6 +88,8 @@ _PUBLIC_EXACT = frozenset([
 
 def is_public_path(path: str) -> bool:
     """Check if a request path is public (no auth required)."""
+    if path == "/metrics":
+        return False
     # Exact matches
     if path in _PUBLIC_EXACT:
         return True
@@ -401,6 +404,8 @@ def _authorize_identity_request():
         return flask.jsonify({"ok": False, "error": "forbidden"}), 403
     if path == "/api/workspaces/batch-delete" and not _role_at_least(role, "admin"):
         return flask.jsonify({"ok": False, "error": "forbidden"}), 403
+    if path.startswith("/api/admin/") and not _role_at_least(role, "admin"):
+        return flask.jsonify({"ok": False, "error": "admin_required"}), 403
     if path.startswith("/api/agent/llm/") and flask.request.method not in {"GET", "HEAD"} and not _role_at_least(role, "admin"):
         return flask.jsonify({"ok": False, "error": "forbidden"}), 403
     if path.startswith("/api/extensions/"):
