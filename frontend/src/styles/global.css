@@ -8829,3 +8829,23 @@ summary:focus-visible,
   .data-file-filters { grid-template-columns: 1fr auto; }
   .data-file-filters .input { grid-column: 1 / -1; }
 }
+
+/* Extension Center */
+.extension-center-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 14px; }
+.extension-center-error { margin-bottom: 14px; padding: 10px 12px; border: 1px solid color-mix(in srgb, var(--danger) 25%, var(--line-2)); border-radius: var(--r-8); color: var(--danger); font-size: var(--fs-11); background: color-mix(in srgb, var(--danger) 6%, var(--surface)); }
+.extension-card { display: flex; min-width: 0; flex-direction: column; gap: 14px; padding: 18px; border: 1px solid var(--line-2); border-radius: var(--r-8); background: var(--surface); }
+.extension-card-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; }
+.extension-card-head h2 { margin: 0; color: var(--text-1); font-size: var(--fs-15); }
+.extension-card-head p, .extension-description { margin: 4px 0 0; color: var(--text-4); font-size: var(--fs-11); }
+.extension-description { min-height: 34px; line-height: 1.55; }
+.extension-state { padding: 4px 8px; border-radius: 999px; color: var(--ok); font-size: var(--fs-10); font-weight: 700; background: color-mix(in srgb, var(--ok) 10%, var(--surface)); }
+.extension-state.disabled, .extension-state.quarantined { color: var(--danger); background: color-mix(in srgb, var(--danger) 9%, var(--surface)); }
+.extension-state.degraded { color: var(--warning); background: color-mix(in srgb, var(--warning) 9%, var(--surface)); }
+.extension-contract { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); margin: 0; overflow: hidden; border: 1px solid var(--line-2); border-radius: 7px; }
+.extension-contract > div { padding: 10px; border-right: 1px solid var(--line-2); }
+.extension-contract > div:last-child { border-right: 0; }
+.extension-contract dt { color: var(--text-4); font-size: var(--fs-10); }
+.extension-contract dd { margin: 4px 0 0; overflow: hidden; color: var(--text-1); font-size: var(--fs-13); font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
+.extension-error { margin: 0; padding: 8px 10px; border-radius: 6px; color: var(--danger); font-size: var(--fs-11); background: color-mix(in srgb, var(--danger) 7%, var(--surface)); }
+.extension-card-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: auto; }
+@media (max-width: 760px) { .extension-center-grid { grid-template-columns: 1fr; } .extension-contract { grid-template-columns: repeat(2, 1fr); } }

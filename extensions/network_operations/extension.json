@@ -35,5 +35,10 @@
       "order": 30
     }
   ],
-  "entrypoint": "backend.py:register"
+  "entrypoint": "backend.py:register",
+  "metadata": {
+    "minimum_role": "viewer",
+    "minimum_write_role": "operator",
+    "quotas": {"daily_calls": 500, "max_concurrency": 5, "max_assets": 1000}
+  }
 }

@@ -108,9 +108,13 @@ def _build_tools(manifest: ExtensionManifest, contribution: dict[str, Any]) -> t
             if not state["enabled"]:
                 return {"ok": False, "error": "extension_disabled"}
             try:
-                result = _handler(invocation)
+                from extensions.quota import ExtensionQuotaError, extension_quota
+                with extension_quota(manifest.extension_id, invocation.workspace_id, manifest.metadata.get("quotas")):
+                    result = _handler(invocation)
                 record_extension_success(manifest.extension_id)
                 return result
+            except ExtensionQuotaError as exc:
+                return {"ok": False, "error": str(exc)}
             except Exception as exc:
                 record_extension_failure(manifest.extension_id, str(exc))
                 raise
@@ -215,6 +219,8 @@ def public_extension_catalog() -> list[dict[str, Any]]:
         "capabilities": list(manifest.capabilities),
         "tools": list(manifest.tools),
         "frontend_routes": list(manifest.frontend_routes),
+        "permissions": list(manifest.permissions),
+        "metadata": {key: value for key, value in manifest.metadata.items() if key in {"minimum_role", "minimum_write_role", "quotas"}},
         "lifecycle": get_extension_state(manifest.extension_id, default_enabled=manifest.enabled),
     } for manifest in manifests]
 

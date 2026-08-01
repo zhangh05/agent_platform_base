@@ -26,4 +26,5 @@ export const NAV_ITEMS: NavItem[] = [
   { to: "/memory", label: "长期记忆", testid: "nav-memory", Icon: IconBrain },
   { to: "/diagnostics", label: "系统状态", testid: "nav-diagnostics", Icon: IconProbe },
   { to: "/settings", label: "系统设置", testid: "nav-settings", Icon: IconSettings },
+  { to: "/extensions", label: "扩展管理", testid: "nav-extensions", Icon: IconLayers },
 ];

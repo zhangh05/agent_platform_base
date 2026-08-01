@@ -65,7 +65,7 @@ export function ExtensionRegistryProvider({ children }: { children: ReactNode })
   }, []);
 
   const value = useMemo<RegistryState>(() => {
-    const records = extensions.flatMap((extension) =>
+    const records = extensions.filter((extension) => extension.lifecycle?.enabled !== false).flatMap((extension) =>
       (extension.frontend_routes || []).flatMap((route) => {
         const loader = loaderFor(extension.extension_id, route.module);
         if (!loader) return [];

@@ -29,3 +29,27 @@ test("builds navigation from an installed bundled extension", async () => {
   render(<ExtensionRegistryProvider><Probe /></ExtensionRegistryProvider>);
   await waitFor(() => expect(screen.getByText("扩展示例")).toBeInTheDocument());
 });
+
+test("does not expose routes from a disabled extension", async () => {
+  vi.spyOn(extensionsApi, "list").mockResolvedValue({
+    ok: true,
+    count: 1,
+    extensions: [{
+      extension_id: "reference.insights",
+      name: "文本洞察示例扩展",
+      version: "1.0.0",
+      description: "",
+      capabilities: ["text_insights"],
+      tools: ["reference.insights.summarize"],
+      lifecycle: { enabled: false, status: "disabled", failure_count: 0, last_error: "", updated_at: "" },
+      frontend_routes: [{
+        path: "/extensions/reference.insights/overview",
+        module: "frontend/ReferenceInsights.tsx",
+        label: "扩展示例",
+      }],
+    }],
+  });
+  render(<ExtensionRegistryProvider><Probe /></ExtensionRegistryProvider>);
+  await waitFor(() => expect(screen.queryByText("loading")).not.toBeInTheDocument());
+  expect(screen.queryByText("扩展示例")).not.toBeInTheDocument();
+});

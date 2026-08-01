@@ -30,6 +30,7 @@ import {
   MemoryPage,
   ReviewCenter,
   RuntimeAudit,
+  ExtensionCenter,
   preloadRoute,
   preloadAppRoutes,
 } from "../routes";
@@ -100,6 +101,7 @@ function AppRoutes() {
     "/runs": <ErrorBoundary><OperationsPage /></ErrorBoundary>,
     "/audit": <ErrorBoundary><RuntimeAudit /></ErrorBoundary>,
     "/reviews": <ErrorBoundary><ReviewCenter /></ErrorBoundary>,
+    "/extensions": <ErrorBoundary><ExtensionCenter /></ErrorBoundary>,
   };
   const extensionRoute = extensionRegistry.routes.find((route) => route.path === location.pathname);
   const content = location.pathname === "/" ? (

@@ -65,6 +65,9 @@ export interface InstalledExtension {
   capabilities: string[];
   tools: string[];
   frontend_routes: ExtensionRouteDefinition[];
+  permissions?: string[];
+  metadata?: { minimum_role?: string; minimum_write_role?: string; quotas?: Record<string, number> };
+  lifecycle?: { enabled: boolean; status: string; failure_count: number; last_error: string; updated_at: string };
 }
 
 export const extensionsApi = {
@@ -73,6 +76,12 @@ export const extensionsApi = {
       { method: "GET", url: "/extensions" },
       signal,
     ),
+  enable: (extensionId: string) =>
+    apiRequest<{ ok: boolean }>({ method: "POST", url: `/extensions/${extensionId}/enable` }),
+  disable: (extensionId: string) =>
+    apiRequest<{ ok: boolean }>({ method: "POST", url: `/extensions/${extensionId}/disable` }),
+  migrate: (extensionId: string, workspace_id: string) =>
+    apiRequest<{ ok: boolean; schema_version: number }>({ method: "POST", url: `/extensions/${extensionId}/migrate`, data: { workspace_id } }),
 };
 
 export interface AuthStatus {

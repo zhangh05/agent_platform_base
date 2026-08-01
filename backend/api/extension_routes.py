@@ -48,4 +48,16 @@ def register_extensions(app) -> None:
         version = run_migrations(extension_id, workspace_id, list(loaded.migrations))
         return jsonify({"ok": True, "extension_id": extension_id, "workspace_id": workspace_id, "schema_version": version})
 
+    @app.route("/api/extensions/<extension_id>/quota")
+    def extension_quota_status(extension_id):
+        from extensions.quota import quota_status
+        from extensions.registry import ExtensionRegistry
+        workspace_id = str(request.args.get("workspace_id") or "").strip()
+        manifest = next((item for item in ExtensionRegistry().discover() if item.extension_id == extension_id), None)
+        if not manifest:
+            return jsonify({"ok": False, "error": "extension_not_found"}), 404
+        if not workspace_id:
+            return jsonify({"ok": False, "error": "workspace_id is required"}), 400
+        return jsonify({"ok": True, "quota": quota_status(extension_id, workspace_id, manifest.metadata.get("quotas"))})
+
     register_extension_routes(app)

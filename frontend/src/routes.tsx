@@ -55,6 +55,9 @@ export const ReviewCenter = lazyWithPreload(() =>
 export const RuntimeAudit = lazyWithPreload(() =>
   import("./pages/RuntimeAudit/RuntimeAudit").then((m) => ({ default: m.RuntimeAudit })),
 );
+export const ExtensionCenter = lazyWithPreload(() =>
+  import("./pages/ExtensionCenter/ExtensionCenter").then((m) => ({ default: m.ExtensionCenter })),
+);
 // Path → preload thunk. Keys match `NAV_ITEMS.to` plus the secondary routes.
 const PRELOAD: Record<string, () => PageModule> = {
   "/workbench": TaskWorkbench.preload,
@@ -67,6 +70,7 @@ const PRELOAD: Record<string, () => PageModule> = {
   "/runs": OperationsPage.preload,
   "/audit": RuntimeAudit.preload,
   "/reviews": ReviewCenter.preload,
+  "/extensions": ExtensionCenter.preload,
 };
 
 const ROUTE_PATHS = Object.keys(PRELOAD);

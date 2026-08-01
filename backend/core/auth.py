@@ -403,6 +403,10 @@ def _authorize_identity_request():
         return flask.jsonify({"ok": False, "error": "forbidden"}), 403
     if path.startswith("/api/agent/llm/") and flask.request.method not in {"GET", "HEAD"} and not _role_at_least(role, "admin"):
         return flask.jsonify({"ok": False, "error": "forbidden"}), 403
+    if path.startswith("/api/extensions/"):
+        extension_denied = _authorize_extension_request(path, role)
+        if extension_denied:
+            return extension_denied
     workspace_id = _request_workspace_id()
     if not workspace_id:
         return None
@@ -433,3 +437,33 @@ def _request_workspace_id() -> str:
 def _role_at_least(role: str, minimum: str) -> bool:
     from backend.core.identity import has_role
     return has_role(role, minimum)
+
+
+def _authorize_extension_request(path: str, role: str):
+    import re
+    lifecycle = re.match(r"^/api/extensions/([^/]+)/(enable|disable|migrate|install|upgrade|uninstall)", path)
+    if lifecycle and not _role_at_least(role, "admin"):
+        return flask.jsonify({"ok": False, "error": "extension_admin_required"}), 403
+    match = re.match(r"^/api/extensions/([^/]+)", path)
+    if not match:
+        return None
+    extension_id = match.group(1)
+    try:
+        from extensions.registry import ExtensionRegistry
+        manifest = next((item for item in ExtensionRegistry().discover() if item.extension_id == extension_id), None)
+    except Exception:
+        manifest = None
+    if manifest is None:
+        return None
+    if not lifecycle:
+        from extensions.state import get_extension_state
+        if not get_extension_state(extension_id, default_enabled=manifest.enabled)["enabled"]:
+            return flask.jsonify({"ok": False, "error": "extension_disabled"}), 409
+    minimum = str(manifest.metadata.get("minimum_role") or "viewer")
+    if not _role_at_least(role, minimum):
+        return flask.jsonify({"ok": False, "error": "extension_role_forbidden"}), 403
+    if flask.request.method not in {"GET", "HEAD"}:
+        write_role = str(manifest.metadata.get("minimum_write_role") or "developer")
+        if not _role_at_least(role, write_role):
+            return flask.jsonify({"ok": False, "error": "extension_write_forbidden"}), 403
+    return None

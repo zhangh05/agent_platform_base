@@ -73,7 +73,10 @@ def save_asset(workspace_id: str, payload: dict[str, Any]) -> dict[str, Any]:
         raise ValueError("invalid port")
     asset_id = str(payload.get("asset_id") or _id("asset"))
     existing = _store(workspace_id).get("assets", asset_id) or {}
-    for item in _store(workspace_id).list("assets", limit=1000):
+    existing_assets = _store(workspace_id).list("assets", limit=1001)
+    if not existing and len(existing_assets) >= 1000:
+        raise ValueError("extension_asset_quota_exceeded")
+    for item in existing_assets:
         if item.get("asset_id") != asset_id and item.get("host") == host and int(item.get("port") or 22) == port:
             raise ValueError("host and port already exist")
     credential_ref = str(existing.get("credential_ref") or payload.get("credential_ref") or "")
