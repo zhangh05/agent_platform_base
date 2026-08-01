@@ -23,7 +23,7 @@ def test_version_endpoint_uses_the_platform_package_version():
     from agent import __version__
     from backend.api.version import get_version
 
-    assert get_version()["version"] == __version__ == "1.0.0"
+    assert get_version()["version"] == __version__ == "1.1.0"
 
 
 def test_reference_tool_runs_through_default_tool_runtime():
@@ -66,7 +66,7 @@ def test_extension_routes_and_catalog_are_registered():
     client = app.test_client()
     catalog = client.get("/api/extensions")
     assert catalog.status_code == 200
-    assert catalog.get_json()["extensions"][0]["extension_id"] == "reference.insights"
+    assert "reference.insights" in {item["extension_id"] for item in catalog.get_json()["extensions"]}
     status = client.get("/api/extensions/reference.insights/status?workspace_id=default")
     assert status.status_code == 200
     assert status.get_json()["status"] == "ready"

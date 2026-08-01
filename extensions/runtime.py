@@ -19,6 +19,7 @@ class LoadedExtension:
     root: Path
     tools: tuple[tuple[ToolSpec, Callable[[ToolInvocation], dict]], ...] = ()
     register_routes: Callable[[Any], None] | None = None
+    migrations: tuple[tuple[int, Callable], ...] = ()
 
 
 _CACHE: tuple[LoadedExtension, ...] | None = None
@@ -102,7 +103,17 @@ def _build_tools(manifest: ExtensionManifest, contribution: dict[str, Any]) -> t
         def workspace_scoped_handler(invocation: ToolInvocation, *, _handler=handler) -> dict:
             if not invocation.workspace_id:
                 return {"ok": False, "error": "workspace_id is required"}
-            return _handler(invocation)
+            from extensions.state import get_extension_state, record_extension_failure, record_extension_success
+            state = get_extension_state(manifest.extension_id, default_enabled=manifest.enabled)
+            if not state["enabled"]:
+                return {"ok": False, "error": "extension_disabled"}
+            try:
+                result = _handler(invocation)
+                record_extension_success(manifest.extension_id)
+                return result
+            except Exception as exc:
+                record_extension_failure(manifest.extension_id, str(exc))
+                raise
 
         built.append((ToolSpec(
             tool_id=tool_id,
@@ -137,7 +148,9 @@ def load_extensions(*, registry: ExtensionRegistry | None = None, refresh: bool 
         raise ExtensionValidationError("; ".join(errors))
     loaded: list[LoadedExtension] = []
     for manifest in manifests:
-        if not manifest.enabled:
+        from extensions.state import get_extension_state
+        lifecycle = get_extension_state(manifest.extension_id, default_enabled=manifest.enabled)
+        if not lifecycle["enabled"]:
             continue
         _assert_compatible(manifest)
         root = _manifest_root(registry, manifest.extension_id)
@@ -150,6 +163,7 @@ def load_extensions(*, registry: ExtensionRegistry | None = None, refresh: bool 
             root=root,
             tools=_build_tools(manifest, contribution),
             register_routes=route_registrar,
+            migrations=tuple(contribution.get("migrations") or ()),
         ))
     result = tuple(loaded)
     if use_default_registry and not refresh:
@@ -189,15 +203,20 @@ def register_extension_routes(app: Any) -> None:
 
 
 def public_extension_catalog() -> list[dict[str, Any]]:
+    from extensions.state import get_extension_state
+    errors, manifests = ExtensionRegistry().validate_all()
+    if errors:
+        raise ExtensionValidationError("; ".join(errors))
     return [{
-        "extension_id": item.manifest.extension_id,
-        "name": item.manifest.name,
-        "version": item.manifest.version,
-        "description": item.manifest.description,
-        "capabilities": list(item.manifest.capabilities),
-        "tools": list(item.manifest.tools),
-        "frontend_routes": list(item.manifest.frontend_routes),
-    } for item in load_extensions()]
+        "extension_id": manifest.extension_id,
+        "name": manifest.name,
+        "version": manifest.version,
+        "description": manifest.description,
+        "capabilities": list(manifest.capabilities),
+        "tools": list(manifest.tools),
+        "frontend_routes": list(manifest.frontend_routes),
+        "lifecycle": get_extension_state(manifest.extension_id, default_enabled=manifest.enabled),
+    } for manifest in manifests]
 
 
 def reset_extension_cache_for_tests() -> None:

@@ -1,0 +1,47 @@
+.network-ops-body { display: flex; flex-direction: column; gap: 14px; background: var(--bg); }
+.network-ops-actions { display: flex; gap: 8px; }
+.network-ops-error { padding: 10px 14px; border: 1px solid var(--danger); border-radius: var(--r-8); color: var(--danger); background: color-mix(in srgb, var(--danger) 7%, var(--surface)); }
+.network-ops-summary { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); overflow: hidden; border: 1px solid var(--line-2); border-radius: var(--r-8); background: var(--surface); }
+.network-ops-summary > div { display: flex; min-width: 0; flex-direction: column; gap: 4px; padding: 16px 18px; border-right: 1px solid var(--line-2); }
+.network-ops-summary > div:last-child { border-right: 0; }
+.network-ops-summary strong { overflow: hidden; color: var(--text-1); font-size: var(--fs-18); text-overflow: ellipsis; white-space: nowrap; }
+.network-ops-summary span { color: var(--text-4); font-size: var(--fs-11); }
+.network-ops-tabs { display: flex; gap: 4px; align-self: flex-start; padding: 4px; border: 1px solid var(--line-2); border-radius: var(--r-8); background: var(--surface); }
+.network-ops-tabs button { padding: 7px 13px; border: 0; border-radius: 6px; color: var(--text-3); background: transparent; cursor: pointer; }
+.network-ops-tabs button.active { color: #fff; background: var(--accent); }
+.network-assets-layout { display: grid; grid-template-columns: minmax(280px, 360px) minmax(0, 1fr); gap: 14px; min-height: 0; }
+.network-asset-form, .network-list-panel { border: 1px solid var(--line-2); border-radius: var(--r-8); background: var(--surface); }
+.network-asset-form { display: flex; flex-direction: column; gap: 12px; padding: 18px; }
+.network-asset-form label { display: flex; min-width: 0; flex: 1; flex-direction: column; gap: 5px; }
+.network-asset-form label > span { color: var(--text-3); font-size: var(--fs-11); font-weight: 650; }
+.network-asset-form input, .network-asset-form select { width: 100%; height: 36px; padding: 0 10px; border: 1px solid var(--line-2); border-radius: 6px; color: var(--text-1); background: var(--surface); }
+.network-form-row { display: flex; gap: 10px; }
+.network-form-row .network-port { max-width: 92px; }
+.network-section-head { padding: 16px 18px 12px; border-bottom: 1px solid var(--line-2); }
+.network-asset-form .network-section-head { margin: -18px -18px 2px; }
+.network-section-head h2 { margin: 0; color: var(--text-1); font-size: var(--fs-14); }
+.network-section-head p { margin: 4px 0 0; color: var(--text-4); font-size: var(--fs-11); }
+.network-list-panel { min-width: 0; overflow: hidden; }
+.network-list-panel.full { flex: 1; }
+.network-empty { display: grid; min-height: 180px; place-items: center; color: var(--text-4); }
+.network-asset-row { display: grid; grid-template-columns: auto minmax(160px, 1fr) minmax(140px, auto) auto; align-items: center; gap: 12px; padding: 12px 16px; border-bottom: 1px solid var(--line-2); }
+.network-asset-main, .network-asset-meta, .network-task-row > div:first-child, .network-baseline-row > div:first-child { display: flex; min-width: 0; flex-direction: column; gap: 3px; }
+.network-asset-main strong, .network-task-row strong, .network-baseline-row strong { color: var(--text-1); font-size: var(--fs-13); }
+.network-asset-main span, .network-asset-meta span, .network-task-row span, .network-baseline-row span { color: var(--text-4); font-size: var(--fs-11); }
+.network-asset-meta .ok, .network-counts .ok { color: var(--ok); }
+.network-asset-meta .warn { color: var(--warning); }
+.network-delete { border: 0; color: var(--danger); background: transparent; cursor: pointer; }
+.network-task-row { display: grid; grid-template-columns: minmax(220px, 1fr) minmax(120px, 240px) auto auto; align-items: center; gap: 16px; padding: 14px 18px; border-bottom: 1px solid var(--line-2); }
+.network-progress { height: 6px; overflow: hidden; border-radius: 999px; background: var(--surface-3); }
+.network-progress span { display: block; height: 100%; background: var(--accent); transition: width 180ms ease; }
+.network-counts { display: flex; gap: 9px; }
+.network-counts .danger { color: var(--danger); }
+.network-status { padding: 4px 8px; border-radius: 999px; color: var(--text-3); background: var(--surface-3); }
+.network-status.succeeded { color: var(--ok); }
+.network-status.partial { color: var(--warning); }
+.network-panel-actions { display: flex; justify-content: flex-end; padding: 14px 18px; }
+.network-baseline-row { display: grid; grid-template-columns: minmax(220px, 1fr) auto auto; align-items: center; gap: 20px; padding: 14px 18px; border-bottom: 1px solid var(--line-2); }
+.network-baseline-row.current { box-shadow: inset 3px 0 var(--ok); background: color-mix(in srgb, var(--ok) 5%, var(--surface)); }
+.network-current { color: var(--ok) !important; font-weight: 700; }
+.network-history { color: var(--text-4); }
+@media (max-width: 900px) { .network-ops-summary { grid-template-columns: repeat(2, 1fr); } .network-assets-layout { grid-template-columns: 1fr; } .network-task-row { grid-template-columns: 1fr; } }
