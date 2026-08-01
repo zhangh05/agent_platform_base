@@ -276,7 +276,7 @@ def _handle_memory(inv: ToolInvocation) -> dict:
 
 
 def _handle_skill(inv: ToolInvocation) -> dict:
-    from core.tools.general_tools.skill_tools import handle_skill_find, handle_skill_inspect, handle_skill_list, handle_skill_load
+    from core.tools.general_tools.skill_tools import handle_mcp_call, handle_mcp_list_tools, handle_skill_find, handle_skill_inspect, handle_skill_list, handle_skill_load
 
     action = _action(inv) or "list"
     return {
@@ -285,7 +285,9 @@ def _handle_skill(inv: ToolInvocation) -> dict:
         "search": handle_skill_find,
         "load": handle_skill_load,
         "inspect": handle_skill_inspect,
-    }.get(action, lambda x: _unsupported(x, "list|search|load|inspect"))(inv)
+        "mcp_list_tools": handle_mcp_list_tools,
+        "mcp_call": handle_mcp_call,
+    }.get(action, lambda x: _unsupported(x, "list|search|load|inspect|mcp_list_tools|mcp_call"))(inv)
 
 
 def _handle_agent(inv: ToolInvocation) -> dict:
@@ -478,7 +480,7 @@ _RAW_REGISTRY: list[CanonicalToolEntry] = [
     _entry("report.manage", _handle_report, {**_COMMON, "action": {"type": "string", "enum": ["save", "diff", "document"]}, "left": {"type": "string"}, "right": {"type": "string"}}, required=["action"], description="Report save, diff and document rendering."),
     _entry("knowledge.manage", _handle_knowledge, {**_COMMON, "action": {"type": "string", "enum": ["search", "read", "list", "chunk", "import", "manage"]}, "level": {"type": "string"}, "chunk_id": {"type": "string"}, "source_id": {"type": "string"}}, required=["action"], risk="medium", description="Knowledge search/read/import/manage."),
     _entry("memory.manage", _handle_memory, {**_COMMON, "action": {"type": "string", "enum": ["search", "review", "confirm", "create", "update", "delete", "profile_get", "profile_set"]}, "memory_id": {"type": "string"}, "scope": {"type": "string"}, "field": {"type": "string"}, "value": {"type": "string"}}, required=["action"], risk="medium", description="Memory search and management."),
-    _entry("skill.manage", _handle_skill, {**_COMMON, "action": {"type": "string", "enum": ["list", "find", "load", "inspect"]}, "skill_name": {"type": "string"}}, required=["action"], description="Skill discovery."),
+    _entry("skill.manage", _handle_skill, {**_COMMON, "action": {"type": "string", "enum": ["list", "find", "load", "inspect", "mcp_list_tools", "mcp_call"]}, "skill_name": {"type": "string"}, "provider_id": {"type": "string"}, "tool_name": {"type": "string"}, "arguments": {"type": "object"}, "confirm": {"type": "boolean"}}, required=["action"], risk="medium", permission="exec", description="Skill discovery and governed MCP access."),
     _entry("agent.manage", _handle_agent, {**_COMMON, "action": {"type": "string", "enum": ["spawn", "list", "get", "status", "cancel", "merge"]}, "session_id": {"type": "string"}, "child_session_id": {"type": "string"}, "subtask_id": {"type": "string"}}, required=["action"], description="Subagent task management."),
     _entry("system.manage", _handle_system, {**_COMMON, "action": {"type": "string", "enum": ["diagnostics", "health", "selfcheck", "local_info", "tasks", "audit_log", "run_get", "session_get", "session_checkpoint", "session_rewind", "session_export", "session_snapshot", "review_list", "review_update"]}, "run_id": {"type": "string"}, "session_id": {"type": "string"}, "review_id": {"type": "string"}}, required=["action"], risk="medium", description="Runtime diagnostics and session operations."),
     _entry("text.analyze", _handle_text, {**_COMMON, "action": {"type": "string", "enum": ["redact", "extract_entities", "match"]}, "text": {"type": "string"}, "pattern": {"type": "string"}}, required=["action"], description="Text redact, extract and match."),

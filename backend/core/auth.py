@@ -151,7 +151,24 @@ def _request_has_valid_api_token() -> bool:
 
 def is_current_session_authenticated() -> bool:
     if _is_identity_enabled():
-        return bool(flask.session.get("agent_platform_user"))
+        username = str(flask.session.get("agent_platform_user") or "")
+        if not username:
+            return False
+        from backend.core.identity import get_user
+        identity_user = get_user(username)
+        if identity_user:
+            flask.session["agent_platform_role"] = identity_user.get("role", "viewer")
+            flask.session["agent_platform_org"] = identity_user.get("organization_id", "default")
+            flask.session["agent_platform_workspaces"] = list(identity_user.get("workspace_ids") or [])
+            return True
+        configured_username = _get_login_username()
+        if configured_username and hmac.compare_digest(username, configured_username):
+            flask.session["agent_platform_role"] = "admin"
+            flask.session["agent_platform_org"] = "default"
+            flask.session["agent_platform_workspaces"] = ["default"]
+            return True
+        flask.session.clear()
+        return False
     if not _is_login_enabled():
         return False
     username = _get_login_username()
@@ -185,6 +202,7 @@ def handle_auth_login():
             flask.session["agent_platform_user"] = identity_user["username"]
             flask.session["agent_platform_role"] = identity_user.get("role", "viewer")
             flask.session["agent_platform_org"] = identity_user.get("organization_id", "default")
+            flask.session["agent_platform_workspaces"] = list(identity_user.get("workspace_ids") or [identity_user.get("organization_id", "default")])
             return flask.jsonify({"ok": True, "username": identity_user["username"], "role": identity_user.get("role", "viewer")})
     if (
         configured_username
@@ -197,6 +215,7 @@ def handle_auth_login():
         if _is_identity_enabled():
             flask.session["agent_platform_role"] = "admin"
             flask.session["agent_platform_org"] = "default"
+            flask.session["agent_platform_workspaces"] = ["default"]
         return flask.jsonify({"ok": True, "username": configured_username})
     logger.warning("login_denied: username=%s", username[:64])
     return _unauthorized_response("Invalid username or password")
@@ -332,7 +351,8 @@ def register_auth_middleware(app: flask.Flask) -> None:
             if is_public_path(path):
                 return None
             if is_current_session_authenticated() or _request_has_valid_api_token():
-                return None
+                denied = _authorize_identity_request()
+                return denied
             logger.warning("auth_denied: path=%s reason=no_login_session", path)
             return _unauthorized_response("Login required")
 
@@ -367,3 +387,49 @@ def register_auth_middleware(app: flask.Flask) -> None:
     @app.teardown_request
     def _auth_teardown(exc=None):
         pass  # No persistent auth state to clean up
+
+
+def _authorize_identity_request():
+    """Enforce workspace and control-plane RBAC after authentication."""
+    if not _is_identity_enabled() or _request_has_valid_api_token():
+        return None
+    path = flask.request.path
+    role = str(flask.session.get("agent_platform_role") or "viewer")
+    if path.startswith("/api/identity/") and not _role_at_least(role, "admin"):
+        return flask.jsonify({"ok": False, "error": "forbidden"}), 403
+    if path == "/api/workspaces" and flask.request.method == "POST" and not _role_at_least(role, "admin"):
+        return flask.jsonify({"ok": False, "error": "forbidden"}), 403
+    if path == "/api/workspaces/batch-delete" and not _role_at_least(role, "admin"):
+        return flask.jsonify({"ok": False, "error": "forbidden"}), 403
+    if path.startswith("/api/agent/llm/") and flask.request.method not in {"GET", "HEAD"} and not _role_at_least(role, "admin"):
+        return flask.jsonify({"ok": False, "error": "forbidden"}), 403
+    workspace_id = _request_workspace_id()
+    if not workspace_id:
+        return None
+    try:
+        from backend.core.identity import can_access_workspace
+        allowed = can_access_workspace(role, list(flask.session.get("agent_platform_workspaces") or []), workspace_id, write=flask.request.method not in {"GET", "HEAD"})
+    except Exception:
+        allowed = False
+    if not allowed:
+        return flask.jsonify({"ok": False, "error": "workspace_forbidden"}), 403
+    return None
+
+
+def _request_workspace_id() -> str:
+    import re
+    match = re.match(r"^/api/workspaces/([^/]+)", flask.request.path)
+    if match and match.group(1) not in {"batch-delete"}:
+        return match.group(1)
+    value = flask.request.args.get("workspace_id", "")
+    if value:
+        return str(value)
+    if flask.request.is_json:
+        data = flask.request.get_json(silent=True) or {}
+        return str(data.get("workspace_id") or "")
+    return ""
+
+
+def _role_at_least(role: str, minimum: str) -> bool:
+    from backend.core.identity import has_role
+    return has_role(role, minimum)

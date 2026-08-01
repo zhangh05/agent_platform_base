@@ -50,9 +50,12 @@ def invoke_llm(
     cfg = resolve_provider_config()
     if config_override:
         cfg = {**cfg, **config_override}
+    provider_candidates = [cfg]
     try:
-        from agent.llm.router import resolve_model_route
-        cfg = resolve_model_route(task, cfg)
+        if not config_override:
+            from agent.llm.router import resolve_model_candidates
+            provider_candidates = resolve_model_candidates(task, cfg)
+            cfg = provider_candidates[0]
     except Exception:
         logger.warning("model route resolution failed; using active provider", exc_info=True)
 
@@ -113,57 +116,19 @@ def invoke_llm(
         metadata=req_metadata,
     )
 
-    # ── Call provider with retry (ONLY place that calls generate()) ──
-    from agent.llm.provider import generate, ERROR_TYPE_PROVIDER_TIMEOUT, ERROR_TYPE_PROVIDER_UNKNOWN
-    import time
-
-    max_retries = 3
-    for attempt in range(max_retries + 1):
-        try:
-            resp = generate(req, cfg)
-        except (OSError, TimeoutError, ConnectionError) as e:
-            # Transport-level errors: retry if attempts remain.
-            error_msg = _redact(str(e))
-            if attempt < max_retries:
-                wait = min(2 ** attempt * 0.5, 8)
-                time.sleep(wait)
-                continue
-            return LLMResponse(
-                error=error_msg,
-                metadata={
-                    "error_type": ERROR_TYPE_PROVIDER_TIMEOUT,
-                    "error_detail": error_msg[:200],
-                    "http_status": None,
-                    "retryable": True,
-                    "retries_exhausted": True,
-                },
-            )
-
-        # Check for provider errors that should trigger retry
-        if resp.error:
-            error_lower = resp.error.lower()
-            retryable = any(k in error_lower for k in (
-                "rate_limit", "rate limit", "overload", "429", "503",
-                "timeout", "timed out",
-            ))
-            if attempt < max_retries and retryable:
-                wait = 2.0 ** attempt
-                time.sleep(wait)
-                continue
-            # Non-retryable or exhausted
-            error_type = resp.metadata.get("error_type", ERROR_TYPE_PROVIDER_UNKNOWN) if resp.metadata else ERROR_TYPE_PROVIDER_UNKNOWN
-            return LLMResponse(
-                error=resp.error,
-                metadata={
-                    "error_type": error_type,
-                    "error_detail": (resp.metadata or {}).get("error_detail", resp.error[:200]),
-                    "http_status": (resp.metadata or {}).get("http_status"),
-                    "retryable": retryable,
-                    **({"retries_exhausted": True} if attempt >= max_retries else {}),
-                },
-            )
-
-        break  # Success
+    # ── Call provider candidates with retry and real fallback ──
+    attempts: list[str] = []
+    resp = None
+    for candidate in provider_candidates:
+        req.model = candidate.get("model", req.model)
+        attempts.append(str(candidate.get("provider") or candidate.get("default_provider") or "unknown"))
+        resp = _generate_with_retry(req, candidate)
+        if not resp.error:
+            break
+    assert resp is not None
+    resp.metadata = {**(resp.metadata or {}), "provider_attempts": attempts, "fallback_used": len(attempts) > 1 and not resp.error}
+    if resp.error:
+        return resp
 
     finish_reason = str(resp.finish_reason or "").lower()
     if finish_reason in {"length", "max_tokens", "content_length"}:
@@ -179,6 +144,30 @@ def invoke_llm(
             "truncation_reason": "timeout",
         }
     return resp
+
+
+def _generate_with_retry(req: LLMRequest, cfg: dict, max_retries: int = 3) -> LLMResponse:
+    from agent.llm.provider import generate, ERROR_TYPE_PROVIDER_TIMEOUT, ERROR_TYPE_PROVIDER_UNKNOWN
+    import time
+    for attempt in range(max_retries + 1):
+        try:
+            resp = generate(req, cfg)
+        except (OSError, TimeoutError, ConnectionError) as exc:
+            error_msg = _redact(str(exc))
+            if attempt < max_retries:
+                time.sleep(min(2 ** attempt * 0.5, 8))
+                continue
+            return LLMResponse(error=error_msg, metadata={"error_type": ERROR_TYPE_PROVIDER_TIMEOUT, "error_detail": error_msg[:200], "http_status": None, "retryable": True, "retries_exhausted": True})
+        if not resp.error:
+            return resp
+        error_lower = resp.error.lower()
+        retryable = any(key in error_lower for key in ("rate_limit", "rate limit", "overload", "429", "503", "timeout", "timed out"))
+        if attempt < max_retries and retryable:
+            time.sleep(2.0 ** attempt)
+            continue
+        error_type = resp.metadata.get("error_type", ERROR_TYPE_PROVIDER_UNKNOWN) if resp.metadata else ERROR_TYPE_PROVIDER_UNKNOWN
+        return LLMResponse(error=resp.error, provider=resp.provider, model=resp.model, metadata={"error_type": error_type, "error_detail": (resp.metadata or {}).get("error_detail", resp.error[:200]), "http_status": (resp.metadata or {}).get("http_status"), "retryable": retryable, **({"retries_exhausted": True} if attempt >= max_retries else {})})
+    return LLMResponse(error="provider_unknown_error", metadata={"error_type": ERROR_TYPE_PROVIDER_UNKNOWN})
 
 
 def safe_generate(

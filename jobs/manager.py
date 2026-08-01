@@ -54,7 +54,10 @@ def enqueue_job(ws_id, job_id) -> JobRecord:
     rec = get_job(ws_id, job_id)
     if not rec: raise ValueError("job not found")
     _check_transition(rec.status, "queued")
-    return _transition(ws_id, job_id, "queued", "job_queued", "Job queued")
+    result = _transition(ws_id, job_id, "queued", "job_queued", "Job queued")
+    from jobs.queue import get_job_queue
+    get_job_queue().enqueue(ws_id, job_id)
+    return result
 
 
 def cancel_job(ws_id, job_id) -> JobRecord:
@@ -84,6 +87,8 @@ def retry_job(ws_id, job_id, force=False) -> JobRecord:
         raise ValueError("retry_limit_exceeded")
     patch = {"retry_count": rec.retry_count + 1, "status": "queued", "error": "", "cancel_requested": False}
     result = update_job(ws_id, job_id, patch)
+    from jobs.queue import get_job_queue
+    get_job_queue().enqueue(ws_id, job_id)
     append_event(ws_id, job_id, JobEvent(job_id=job_id, workspace_id=ws_id,
                  event_type="job_retried", message=f"Retry #{rec.retry_count + 1}"))
     return result

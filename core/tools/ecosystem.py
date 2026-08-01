@@ -53,6 +53,7 @@ class ExternalProvider:
     version: str = ""
     source: str = ""
     root_path: str = ""
+    command: list = field(default_factory=list)
     status: str = "installed"  # installed | enabled | disabled | blocked
     trust_level: TrustLevel = "untrusted"
     tools: list = field(default_factory=list)
@@ -199,6 +200,7 @@ def apply_import(data: dict, ws_id: str, confirm: bool = False) -> dict:
                     provider_type=p.get("provider_type","skill"),
                     name=p.get("name",""), version=p.get("version",""),
                     source=p.get("source","import"), trust_level="untrusted",
+                    command=list(p.get("command") or []),
                     tools=p.get("tools",[]), permissions=p.get("permissions",[]),
                 )
                 reg.save_provider(ws_id, prov)

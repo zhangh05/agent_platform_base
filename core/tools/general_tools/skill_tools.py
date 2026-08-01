@@ -126,9 +126,57 @@ def handle_skill_inspect(inv: ToolInvocation) -> dict:
     return _error_inv(inv, f"skill '{skill_name}' not found")
 
 
+def _mcp_provider(inv: ToolInvocation):
+    from core.tools.ecosystem import EcoRegistry
+    args = inv.arguments or {}
+    provider_id = str(args.get("provider_id") or "").strip()
+    provider = EcoRegistry().get_provider(_caller_workspace(inv), provider_id)
+    if not provider or provider.provider_type != "mcp":
+        raise ValueError("MCP provider not found")
+    if provider.status != "enabled" or provider.trust_level not in {"local", "verified"}:
+        raise ValueError("MCP provider must be enabled and trusted")
+    if not provider.command:
+        raise ValueError("MCP provider command is required")
+    return provider
+
+
+def handle_mcp_list_tools(inv: ToolInvocation) -> dict:
+    try:
+        provider = _mcp_provider(inv)
+        from core.tools.mcp_client import McpServerConfig, StdioMcpClient
+        with StdioMcpClient(McpServerConfig(provider.provider_id, tuple(provider.command), cwd=provider.root_path or None)) as client:
+            discovered = client.list_tools()
+        declared = {str(item.get("tool_id") or item.get("name") or "") for item in provider.tools}
+        tools = [item for item in discovered if str(item.get("name") or "") in declared]
+        return _ok(inv, "", {"provider_id": provider.provider_id, "tools": tools, "count": len(tools)})
+    except Exception as exc:
+        return _error_inv(inv, str(exc)[:200])
+
+
+def handle_mcp_call(inv: ToolInvocation) -> dict:
+    args = inv.arguments or {}
+    try:
+        provider = _mcp_provider(inv)
+        tool_name = str(args.get("tool_name") or "").strip()
+        declared = next((item for item in provider.tools if str(item.get("tool_id") or item.get("name") or "") == tool_name and item.get("enabled", True)), None)
+        if not declared:
+            raise ValueError("MCP tool is not declared or enabled")
+        permissions = set(declared.get("permissions") or provider.permissions or [])
+        if permissions.intersection({"write", "exec", "network"}) and not bool(args.get("confirm")):
+            raise ValueError("confirm=true required for MCP write/exec/network tools")
+        from core.tools.mcp_client import McpServerConfig, StdioMcpClient
+        with StdioMcpClient(McpServerConfig(provider.provider_id, tuple(provider.command), cwd=provider.root_path or None)) as client:
+            result = client.call_tool(tool_name, dict(args.get("arguments") or {}))
+        return _ok(inv, "", {"provider_id": provider.provider_id, "tool_name": tool_name, "result": result})
+    except Exception as exc:
+        return _error_inv(inv, str(exc)[:200])
+
+
 __all__ = [
     "handle_skill_list",
     "handle_skill_load",
     "handle_skill_find",
     "handle_skill_inspect",
+    "handle_mcp_list_tools",
+    "handle_mcp_call",
 ]

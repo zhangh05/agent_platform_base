@@ -10,6 +10,7 @@ Active provider selection is tracked in:
 """
 
 from pathlib import Path
+import os
 from typing import Optional
 
 from agent.runtime.utils import now_iso
@@ -102,9 +103,12 @@ def _build_provider_config(provider_id: str, data: Optional[dict] = None) -> dic
     }
     if data:
         for key in ("enabled", "base_url", "model", "temperature", "max_tokens",
-                     "safe_mode", "api_key", "label"):
+                     "safe_mode", "api_key", "secret_ref", "label"):
             if key in data:
                 cfg[key] = data[key]
+        if cfg.get("secret_ref"):
+            from storage.secret_store import get_secret
+            cfg["api_key"] = get_secret(cfg["secret_ref"])
         if data.get("updated_at"):
             cfg["updated_at"] = data["updated_at"]
     return cfg
@@ -112,7 +116,15 @@ def _build_provider_config(provider_id: str, data: Optional[dict] = None) -> dic
 
 def _write_json(provider_id: str, data: dict):
     data["updated_at"] = now_iso()
-    write_provider_config(PROVIDERS_DIR, provider_id, data)
+    persisted = dict(data)
+    if persisted.get("api_key") and os.environ.get("AGENT_PLATFORM_MASTER_KEY"):
+        from storage.secret_store import set_secret
+        persisted["secret_ref"] = set_secret(f"llm/{provider_id}", persisted["api_key"])
+        persisted["api_key"] = ""
+        data["secret_ref"] = persisted["secret_ref"]
+    elif persisted.get("api_key") and os.environ.get("AGENT_PLATFORM_IDENTITY_ENABLED", "false").lower() in {"1", "true", "yes", "on"}:
+        raise RuntimeError("AGENT_PLATFORM_MASTER_KEY is required before saving provider keys in identity mode")
+    write_provider_config(PROVIDERS_DIR, provider_id, persisted)
 
 
 def _write_active(provider_id: str):
@@ -179,6 +191,10 @@ def save_provider_config(provider_id: str, data: dict) -> dict:
     if "api_key" in data and data["api_key"]:
         existing["api_key"] = data["api_key"]
     elif data.get("clear_api_key"):
+        secret_ref = existing.pop("secret_ref", "")
+        if secret_ref:
+            from storage.secret_store import delete_secret
+            delete_secret(secret_ref)
         existing["api_key"] = ""
 
     _write_json(provider_id, existing)

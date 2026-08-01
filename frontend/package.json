@@ -1,8 +1,8 @@
 {
   "name": "agent-platform-base-workbench",
   "private": true,
-  "version": "3.26.2",
-  "description": "Capability-driven Agent Workbench for Agent Platform Base v3.26.2",
+  "version": "3.28.0",
+  "description": "Capability-driven Agent Workbench for Agent Platform Base v3.28.0",
   "type": "module",
   "scripts": {
     "dev": "vite",

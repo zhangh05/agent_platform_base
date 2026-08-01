@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import select
 import subprocess
 from dataclasses import dataclass
 from typing import Any
@@ -19,6 +20,7 @@ class McpServerConfig:
     command: tuple[str, ...]
     env: dict[str, str] | None = None
     cwd: str | None = None
+    timeout_seconds: float = 30.0
 
 
 class StdioMcpClient:
@@ -36,7 +38,7 @@ class StdioMcpClient:
     def __enter__(self) -> "StdioMcpClient":
         self._process = subprocess.Popen(
             list(self.config.command), stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE, text=True, bufsize=1, cwd=self.config.cwd,
+            stderr=subprocess.DEVNULL, text=True, bufsize=1, cwd=self.config.cwd,
             env={**os.environ, **(self.config.env or {})},
         )
         self.request("initialize", {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "agent-platform-base", "version": "1"}})
@@ -46,9 +48,7 @@ class StdioMcpClient:
     def __exit__(self, *_: Any) -> None:
         if self._process and self._process.stdin:
             self._process.stdin.close()
-        if self._process:
-            self._process.terminate()
-            self._process = None
+        self._terminate()
 
     def request(self, method: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
         if not self._process or not self._process.stdin or not self._process.stdout:
@@ -57,6 +57,10 @@ class StdioMcpClient:
         request_id = self._next_id
         self._send({"jsonrpc": "2.0", "id": request_id, "method": method, "params": params or {}})
         while True:
+            ready, _, _ = select.select([self._process.stdout], [], [], self.config.timeout_seconds)
+            if not ready:
+                self._terminate()
+                raise McpProtocolError(f"MCP request timed out after {self.config.timeout_seconds:g}s: {method}")
             line = self._process.stdout.readline()
             if not line:
                 raise McpProtocolError("MCP server closed stdout")
@@ -80,3 +84,16 @@ class StdioMcpClient:
         assert self._process and self._process.stdin
         self._process.stdin.write(json.dumps(message, ensure_ascii=False) + "\n")
         self._process.stdin.flush()
+
+    def _terminate(self) -> None:
+        process = self._process
+        self._process = None
+        if not process:
+            return
+        if process.poll() is None:
+            process.terminate()
+            try:
+                process.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait(timeout=2)

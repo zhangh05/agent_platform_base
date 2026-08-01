@@ -20,6 +20,13 @@ def write_trace(trace, ws_id: str = "default") -> str:
 
     atomic_save_json(ws_id, ("runs", f"{run_id}.trace.json"), data)
 
+    try:
+        from observability.exporters import export_configured_trace
+        export_configured_trace(data)
+    except Exception:
+        import logging
+        logging.getLogger(__name__).warning("OTLP trace export failed", exc_info=True)
+
     return trace_id
 
 

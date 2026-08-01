@@ -27,6 +27,9 @@ jobs:
       - name: Run tests
         run: |
           python -m pytest harness/ -q --tb=short
+          python scripts/platform_contract.py > /tmp/platform-contract.json
+          python scripts/platform_runtime_check.py
+          python scripts/run_platform_eval.py
 
   lint:
     runs-on: ubuntu-latest

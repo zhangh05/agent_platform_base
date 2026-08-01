@@ -22,7 +22,7 @@ def handle_identity_users():
         return jsonify({"ok": True, "users": list_users()})
     data = request.get_json(silent=True) or {}
     try:
-        user = upsert_user(str(data.get("username", "")), str(data.get("password", "")), str(data.get("role", "viewer")), str(data.get("organization_id", "default")))
+        user = upsert_user(str(data.get("username", "")), str(data.get("password", "")), str(data.get("role", "viewer")), str(data.get("organization_id", "default")), data.get("workspace_ids"))
     except ValueError as exc:
         return jsonify({"ok": False, "error": str(exc)}), 400
     return jsonify({"ok": True, "user": user}), 201

@@ -155,7 +155,17 @@ def register_workspace_routes(app):
     @app.route("/api/workspaces")
     def api_workspaces_list():
         from storage.workspace_store import list_workspaces
-        return jsonify({"workspaces": list_workspaces()})
+        workspaces = list_workspaces()
+        try:
+            from flask import session
+            from backend.core.auth import _request_has_valid_api_token
+            from backend.core.identity import identity_enabled, has_role
+            if identity_enabled() and not _request_has_valid_api_token() and not has_role(str(session.get("agent_platform_role") or "viewer"), "admin"):
+                allowed = set(session.get("agent_platform_workspaces") or [])
+                workspaces = [item for item in workspaces if item.get("workspace_id") in allowed]
+        except Exception:
+            workspaces = []
+        return jsonify({"workspaces": workspaces})
 
     @app.route("/api/workspaces", methods=["POST"])
     def api_workspace_create():

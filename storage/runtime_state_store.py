@@ -8,14 +8,27 @@ from storage.records import atomic_save_json_path, delete_record_path, read_json
 
 
 def save_runtime_record(name: str, value: dict[str, Any]) -> None:
+    from storage.backend import get_record_backend
+    backend = get_record_backend()
+    if backend:
+        backend.write(f"runtime/{_safe_name(name)}", value)
+        return
     atomic_save_json_path(_runtime_path(name, create_parent=True), value)
 
 
 def read_runtime_record(name: str) -> dict[str, Any] | None:
+    from storage.backend import get_record_backend
+    backend = get_record_backend()
+    if backend:
+        return backend.read(f"runtime/{_safe_name(name)}")
     return read_json_record_path(_runtime_path(name, create_parent=False))
 
 
 def delete_runtime_record(name: str) -> bool:
+    from storage.backend import get_record_backend
+    backend = get_record_backend()
+    if backend:
+        return backend.delete(f"runtime/{_safe_name(name)}")
     return delete_record_path(_runtime_path(name, create_parent=False))
 
 

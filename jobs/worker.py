@@ -39,20 +39,31 @@ def stop_worker():
 
 def run_once() -> dict:
     """Poll and execute one queued job. Returns result."""
-    from jobs.store import get_next_queued_job
     from jobs.runner import run_job
+    from jobs.queue import get_job_queue
 
     lock_path = _lock_path()
 
     try:
         with FileLock(lock_path, timeout=0):
-            job = get_next_queued_job()
-            if not job:
+            queue_backend = get_job_queue()
+            receipt = queue_backend.claim("local-worker")
+            if not receipt:
                 _write_state({"status": "idle", "message": "No queued jobs"})
                 return {"status": "idle", "message": "No queued jobs"}
 
+            from jobs.store import get_job
+            job = get_job(receipt.workspace_id, receipt.job_id)
+            if not job:
+                queue_backend.ack(receipt)
+                return {"status": "missing", "job_id": receipt.job_id}
             _write_state({"status": "running", "job_id": job.job_id, "job_type": job.job_type})
-            run_job(job.workspace_id, job.job_id)
+            try:
+                run_job(job.workspace_id, job.job_id)
+                queue_backend.ack(receipt)
+            except Exception:
+                queue_backend.retry(receipt, "worker_error")
+                raise
             _write_state({"status": "completed", "job_id": job.job_id, "job_type": job.job_type})
             return {"status": "completed", "job_id": job.job_id}
     except TimeoutError:

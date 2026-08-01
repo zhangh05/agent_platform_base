@@ -13,7 +13,7 @@ def _configured_provider(task: str) -> str:
     return os.environ.get(key, "").strip()
 
 
-def resolve_model_route(task: str, active_config: dict) -> dict:
+def resolve_model_candidates(task: str, active_config: dict) -> list[dict]:
     """Return the selected provider config and routing metadata.
 
     No route override means the existing active-provider behavior is preserved.
@@ -21,6 +21,17 @@ def resolve_model_route(task: str, active_config: dict) -> dict:
     """
     requested = _configured_provider(task)
     if requested not in PROVIDER_PRESETS:
-        return {**active_config, "routing": {"task": task, "selected_by": "active_provider", "fallbacks": []}}
+        return [{**active_config, "routing": {"task": task, "selected_by": "active_provider"}}]
     selected = resolve_provider_llm_config(requested)
-    return {**selected, "routing": {"task": task, "selected_by": "task_policy", "fallbacks": [active_config.get("provider", "")]}}
+    candidates = [{**selected, "routing": {"task": task, "selected_by": "task_policy"}}]
+    if active_config.get("provider") and active_config.get("provider") != selected.get("provider"):
+        candidates.append({**active_config, "routing": {"task": task, "selected_by": "active_fallback"}})
+    return candidates
+
+
+def resolve_model_route(task: str, active_config: dict) -> dict:
+    """Compatibility helper returning the first selected candidate."""
+    candidates = resolve_model_candidates(task, active_config)
+    selected = dict(candidates[0])
+    selected["routing"] = {**selected.get("routing", {}), "fallbacks": [item.get("provider", "") for item in candidates[1:]]}
+    return selected

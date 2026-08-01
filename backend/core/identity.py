@@ -16,6 +16,7 @@ from typing import Any
 
 from storage.atomic_io import atomic_write_json
 from storage.records import runtime_record_file
+from storage.locking import FileLock
 
 _ROLES = {"owner", "admin", "developer", "operator", "viewer"}
 
@@ -56,22 +57,34 @@ def _verify_password(password: str, encoded: str) -> bool:
         return False
 
 
-def upsert_user(username: str, password: str, role: str = "viewer", organization_id: str = "default") -> dict[str, Any]:
+def upsert_user(username: str, password: str, role: str = "viewer", organization_id: str = "default", workspace_ids: list[str] | None = None) -> dict[str, Any]:
     username = username.strip()
     if not username or not password or role not in _ROLES:
         raise ValueError("username, password and a valid role are required")
-    data = _read()
-    users = [item for item in data["users"] if item.get("username") != username]
-    record = {"username": username, "password_hash": _hash_password(password), "role": role, "organization_id": organization_id}
-    users.append(record)
-    data["users"] = users
-    atomic_write_json(_path(), data)
+    if workspace_ids is not None and not isinstance(workspace_ids, list):
+        raise ValueError("workspace_ids must be a list")
+    from storage.ids import validate_workspace_id
+    allowed = sorted({validate_workspace_id(item) for item in (workspace_ids or [organization_id])})
+    with FileLock(_path().with_name("users.lock")):
+        data = _read()
+        users = [item for item in data["users"] if item.get("username") != username]
+        record = {"username": username, "password_hash": _hash_password(password), "role": role, "organization_id": organization_id, "workspace_ids": allowed}
+        users.append(record)
+        data["users"] = users
+        atomic_write_json(_path(), data)
     return {key: value for key, value in record.items() if key != "password_hash"}
 
 
 def verify_user(username: str, password: str) -> dict[str, Any] | None:
     for user in _read().get("users", []):
         if user.get("username") == username and _verify_password(password, str(user.get("password_hash", ""))):
+            return {key: value for key, value in user.items() if key != "password_hash"}
+    return None
+
+
+def get_user(username: str) -> dict[str, Any] | None:
+    for user in _read().get("users", []):
+        if user.get("username") == username:
             return {key: value for key, value in user.items() if key != "password_hash"}
     return None
 
@@ -83,3 +96,11 @@ def list_users() -> list[dict[str, Any]]:
 def has_role(role: str, minimum: str) -> bool:
     order = {"viewer": 0, "operator": 1, "developer": 2, "admin": 3, "owner": 4}
     return order.get(role, -1) >= order.get(minimum, 99)
+
+
+def can_access_workspace(role: str, workspace_ids: list[str], workspace_id: str, *, write: bool = False) -> bool:
+    if has_role(role, "admin"):
+        return True
+    if write and role == "viewer":
+        return False
+    return workspace_id in set(workspace_ids or [])
