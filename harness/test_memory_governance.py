@@ -63,6 +63,23 @@ class TestLayeredSchema:
         assert MemoryStore().list_retrievable("ws_old_disk") == []
 
 
+class TestMemoryStatus:
+    def test_status_uses_workspace_memory_setting(self, isolated_memory):
+        from flask import Flask
+
+        from backend.api.memory import handle_memory_status
+        from storage.workspace_store import ensure_workspace, update_workspace_state
+
+        ensure_workspace("ws_memory_status")
+        update_workspace_state("ws_memory_status", {"memory_enabled": False})
+
+        app = Flask(__name__)
+        with app.test_request_context("/api/memory/status?workspace_id=ws_memory_status"):
+            response = handle_memory_status()
+
+        assert response.get_json()["enabled"] is False
+
+
 class TestAuthorityGate:
     def test_explicit_user_core_rule_is_active(self, isolated_memory):
         record = MemoryRecord(

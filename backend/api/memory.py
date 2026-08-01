@@ -28,7 +28,7 @@ def handle_memory_status():
     if err:
         return jsonify({"ok": False, "error": err}), 400
     try:
-        from storage.memory_governance import MemoryStore
+        from storage.memory_governance import MemoryStore, is_auto_memory_enabled
         store = MemoryStore()
         records = store.list_retrievable(ws_id)
         all_records = store.list_all(ws_id)
@@ -37,7 +37,7 @@ def handle_memory_status():
             status_counts[record.status] = status_counts.get(record.status, 0) + 1
         return jsonify({
             "ok": True,
-            "enabled": True,
+            "enabled": is_auto_memory_enabled(ws_id),
             "backend": "governed_context_store",
             "workspace_id": ws_id,
             "records": len(records),
