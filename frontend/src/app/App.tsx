@@ -309,8 +309,15 @@ export function App() {
         }
         setAuthState("login");
       })
-      .catch(() => {
+      .catch((err) => {
         clearTimeout(loadingTimer);
+        // React StrictMode intentionally mounts, cleans up, and mounts effects
+        // again in development. The first auth request is therefore aborted on
+        // refresh; treating that cancellation as an authentication failure
+        // briefly mounts LoginScreen before the second request succeeds.
+        if (ctrl.signal.aborted || (isApiError(err) && err.code === "aborted")) {
+          return;
+        }
         setAuthState("login");
       });
     return () => {
