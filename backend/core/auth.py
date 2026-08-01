@@ -180,11 +180,25 @@ def is_current_session_authenticated() -> bool:
 
 
 def handle_auth_status():
+    authenticated = is_current_session_authenticated()
+    platform_admin = False
+    if authenticated and _is_identity_enabled():
+        try:
+            from backend.core.identity import get_user
+            current = get_user(str(flask.session.get("agent_platform_user") or ""))
+            platform_admin = current is None or str(flask.session.get("agent_platform_role") or "") == "owner"
+        except Exception:
+            platform_admin = False
     return flask.jsonify({
         "ok": True,
         "login_enabled": _is_login_enabled() or _is_identity_enabled(),
-        "authenticated": is_current_session_authenticated(),
-        "username": flask.session.get("agent_platform_user") if is_current_session_authenticated() else "",
+        "authenticated": authenticated,
+        "username": flask.session.get("agent_platform_user") if authenticated else "",
+        "role": flask.session.get("agent_platform_role", "") if authenticated else "",
+        "organization_id": flask.session.get("agent_platform_org", "") if authenticated else "",
+        "workspace_ids": list(flask.session.get("agent_platform_workspaces") or []) if authenticated else [],
+        "identity_enabled": _is_identity_enabled(),
+        "platform_admin": platform_admin,
     })
 
 
@@ -406,6 +420,12 @@ def _authorize_identity_request():
         return flask.jsonify({"ok": False, "error": "forbidden"}), 403
     if path.startswith("/api/admin/") and not _role_at_least(role, "admin"):
         return flask.jsonify({"ok": False, "error": "admin_required"}), 403
+    if path == "/api/workflows" and flask.request.method == "POST" and not _role_at_least(role, "developer"):
+        return flask.jsonify({"ok": False, "error": "workflow_developer_required"}), 403
+    if path.startswith("/api/workflows/") and flask.request.method in {"PUT", "DELETE"} and not _role_at_least(role, "developer"):
+        return flask.jsonify({"ok": False, "error": "workflow_developer_required"}), 403
+    if (path.startswith("/api/workflows/") and path.endswith("/runs") or path.startswith("/api/workflow-runs/")) and flask.request.method == "POST" and not _role_at_least(role, "operator"):
+        return flask.jsonify({"ok": False, "error": "workflow_operator_required"}), 403
     if path.startswith("/api/agent/llm/") and flask.request.method not in {"GET", "HEAD"} and not _role_at_least(role, "admin"):
         return flask.jsonify({"ok": False, "error": "forbidden"}), 403
     if path.startswith("/api/extensions/"):

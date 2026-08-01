@@ -159,8 +159,8 @@ def register_workspace_routes(app):
         try:
             from flask import session
             from backend.core.auth import _request_has_valid_api_token
-            from backend.core.identity import identity_enabled, has_role
-            if identity_enabled() and not _request_has_valid_api_token() and not has_role(str(session.get("agent_platform_role") or "viewer"), "admin"):
+            from backend.core.identity import identity_enabled
+            if identity_enabled() and not _request_has_valid_api_token():
                 allowed = set(session.get("agent_platform_workspaces") or [])
                 workspaces = [item for item in workspaces if item.get("workspace_id") in allowed]
         except Exception:
@@ -180,8 +180,17 @@ def register_workspace_routes(app):
         except ValueError:
             return jsonify({"ok": False, "error": "invalid_workspace_id"}), 400
         ensure_workspace(ws_id)
-        from storage.workspace_store import get_workspace_state
-        state = get_workspace_state(ws_id)
+        from flask import session
+        from backend.core.identity import identity_enabled
+        organization_id = str(session.get("agent_platform_org") or data.get("organization_id") or "default")
+        from storage.workspace_store import update_workspace_state
+        state = update_workspace_state(ws_id, {"organization_id": organization_id})
+        if identity_enabled():
+            from backend.core.identity import assign_workspace
+            try:
+                assign_workspace(organization_id, ws_id)
+            except ValueError as exc:
+                return jsonify({"ok": False, "error": str(exc)}), 400
         return jsonify({"ok": True, "workspace": state})
 
     @app.route("/api/workspaces/<ws_id>/state")

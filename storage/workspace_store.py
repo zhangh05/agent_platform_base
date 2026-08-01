@@ -94,6 +94,7 @@ def list_workspaces() -> list[dict]:
         workspaces.append(
             {
                 "workspace_id": ws_id,
+                "organization_id": _workspace_organization(ws_id),
                 "name": _workspace_display_name(ws_id),
                 "created_at": _workspace_created_at(ws_id),
                 "is_default": ws_id == "default",
@@ -137,6 +138,11 @@ def rename_workspace(old_id: str, new_id: str) -> dict:
     try:
         old_path.rename(new_path)
         _rewrite_workspace_identity(new_path, new_id)
+        try:
+            from backend.core.identity import replace_workspace
+            replace_workspace(old_id, new_id)
+        except Exception:
+            _LOG.warning("workspace identity mapping rename failed", exc_info=True)
         return {"ok": True, "workspace_id": new_id}
     except Exception as exc:
         return {"ok": False, "error": str(exc)}
@@ -151,6 +157,11 @@ def delete_workspace(ws_id: str) -> dict:
         return {"ok": False, "error": "workspace not found"}
     try:
         shutil.rmtree(ws_path)
+        try:
+            from backend.core.identity import replace_workspace
+            replace_workspace(ws_id)
+        except Exception:
+            _LOG.warning("workspace identity mapping delete failed", exc_info=True)
         return {"ok": True}
     except Exception as exc:
         return {"ok": False, "error": str(exc)}
@@ -203,6 +214,7 @@ def get_run(run_id: str, ws_id: str = "default") -> Optional[dict]:
 def _default_state(ws_id: str) -> dict:
     return {
         "workspace_id": ws_id,
+        "organization_id": "default",
         "name": ws_id,
         "last_run_id": "",
         "last_intent": "",
@@ -219,6 +231,14 @@ def _default_state(ws_id: str) -> dict:
         "artifacts_count": 0,
         "updated_at": "",
     }
+
+
+def _workspace_organization(ws_id: str) -> str:
+    try:
+        value = json.loads((workspace_root(ws_id) / "sys" / "state.json").read_text(encoding="utf-8"))
+        return str(value.get("organization_id") or "default")
+    except (OSError, json.JSONDecodeError, AttributeError):
+        return "default"
 
 
 def _count_runs(ws_id: str) -> int:

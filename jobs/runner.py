@@ -24,12 +24,15 @@ def run_job(ws_id: str, job_id: str):
             _run_export_report(rec)
         elif rec.job_type == "knowledge_index":
             _run_knowledge_index(rec)
+        elif rec.job_type == "workflow_run":
+            _run_workflow(rec)
 
         # Fresh-get final job for accurate summary
         final = get_job(ws_id, job_id)
         if not final or final.status in {"failed", "cancelled"}:
             return
         mark_succeeded(ws_id, job_id, {
+            **dict(final.result_summary or {}),
             "run_count": len(final.run_ids) if final else 0,
             "artifact_count": len(final.output_artifacts) if final else 0,
         })
@@ -143,6 +146,28 @@ def _run_knowledge_index(rec: JobRecord):
         "source_id": result.get("source_id") or source_id,
         "chunk_count": int(result.get("chunk_count") or 0),
     }})
+
+
+def _run_workflow(rec: JobRecord):
+    from workflows.service import execute_workflow
+    payload = dict(rec.payload or {})
+    result = execute_workflow(
+        rec.workspace_id,
+        str(payload.get("workflow_id") or ""),
+        payload.get("inputs") or {},
+        approvals=payload.get("approvals") or {},
+        job_id=rec.job_id,
+    )
+    update_job(rec.workspace_id, rec.job_id, {"result_summary": {
+        "workflow_id": result["workflow_id"],
+        "workflow_run_id": result["run_id"],
+        "status": result["status"],
+    }})
+    if result["status"] == "cancelled":
+        from jobs.manager import mark_cancelled
+        mark_cancelled(rec.workspace_id, rec.job_id, "Workflow run cancelled")
+    elif result["status"] != "succeeded":
+        raise RuntimeError("workflow_run_failed")
 
 
 def _cancel_check(rec: JobRecord) -> bool:

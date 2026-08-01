@@ -7,8 +7,8 @@ from dataclasses import dataclass, field
 from agent.runtime.utils import now_iso
 
 JOB_STATUSES = {"created", "queued", "running", "succeeded", "failed", "cancelled", "paused"}
-JOB_TYPES = {"agent_run", "export_report", "knowledge_index", "generic_agent_task"}
-ENABLED_JOB_TYPES = {"agent_run", "export_report", "knowledge_index", "generic_agent_task"}
+JOB_TYPES = {"agent_run", "export_report", "knowledge_index", "generic_agent_task", "workflow_run"}
+ENABLED_JOB_TYPES = {"agent_run", "export_report", "knowledge_index", "generic_agent_task", "workflow_run"}
 EVENT_TYPES = {"job_created", "job_queued", "job_started", "job_progress", "job_step_started",
                "job_step_finished", "job_run_started", "job_run_finished",
                "job_artifact_saved", "job_report_created",

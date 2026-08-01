@@ -47,13 +47,25 @@ Task-specific model routing is available through variables such as
 first and real invocation failures fall back to the active provider. Explicit
 per-call configuration remains authoritative.
 
-## Remaining scale-out work
+## Stage 4: multi-application control plane
+
+Workspace-scoped DAG workflows compose core and extension tools through the
+governed runtime. Durable workflow jobs, cancellation, safe output projections,
+template/dependency validation, and the 应用编排 workbench make multi-application
+orchestration a platform feature rather than application-specific glue.
+
+Organizations now own workspaces uniquely. Membership-derived roles and workspace
+sets are refreshed on every authenticated request; organization administrators no
+longer bypass tenant scope. The 组织与成员 workbench exposes the control plane.
+
+## Further scale-out work
 
 The current adapters support multiple web and worker processes. Larger enterprise
 installations still need an external secret manager, OIDC/SSO, database-native
 schema migrations, and broader migration of workspace metadata from files to
-PostgreSQL. Cross-extension workflows and organization-level tenancy are the v2
-control-plane scope.
+PostgreSQL. OIDC/SCIM, database row-level security, scheduler clustering, and a
+visual drag-and-drop workflow canvas remain optional enterprise follow-on work,
+not blockers for the v2 platform contract.
 
 `start.sh` serves a production build through Vite preview by default; use
 `FRONTEND_MODE=dev` only for local hot-reload development.

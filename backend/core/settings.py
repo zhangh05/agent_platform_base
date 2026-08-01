@@ -32,4 +32,4 @@ BUILD_COMMIT = _resolve_build_commit()
 APP_NAME = "agent_platform_base"
 APP_VERSION = os.environ.get("AGENT_PLATFORM_VERSION", PACKAGE_VERSION)
 API_MODE = "unified"
-PRODUCT_READY = False
+PRODUCT_READY = True

@@ -1,6 +1,6 @@
 # Agent Platform Base
 
-Agent Platform Base 是从原业务项目剥离出来的通用本地 Agent 底座。它保留运行时、工具边界、工作区、制品、记忆、知识库、作业、审批、诊断和前端工作台；不包含任何特定行业或特定产品能力。
+Agent Platform Base v2 是可二次开发的多应用 Agent 底座。它提供运行时、工具治理、组织与工作区隔离、制品、记忆、知识库、作业、审批、诊断、扩展分发、跨扩展流程和前端工作台；不把任何特定行业能力写死在平台内核中。
 
 ## 快速启动
 
@@ -35,6 +35,9 @@ bash stop.sh
 | `artifacts/` | 制品生命周期、来源关系和当前证据投影 |
 | `jobs/` | 后台作业管理 |
 | `observability/` | trace/event 记录 |
+| `extensions/` | 扩展清单、生命周期、权限、配额、签名与 SDK |
+| `workflows/` | 核心工具与扩展工具的 DAG 编排 |
+| `deployment/` | 不可变发布槽、切换与回退 |
 
 ## 16 个通用工具
 
@@ -42,14 +45,15 @@ bash stop.sh
 
 工具名、manifest、runtime contract 和 canonical registry 必须保持一致。新业务项目要加能力时，从这四处同步扩展，不要恢复旧业务工具名。
 
-## 扩展方式
+## 二次开发方式
 
-1. 在 `agent/modules/` 添加业务模块。
-2. 在 `core/tools/canonical_registry.py` 注册新的 canonical tool。
-3. 在 `core/tools/tool_namespace_data.py`、`core/tools/manifest_registry.py`、`core/runtime_engine/contracts.py` 同步工具元数据。
-4. 在 `agent/capabilities/catalog.py` 添加业务能力描述。
-5. 在 `frontend/src/config/nav.ts` 和 `frontend/src/routes.tsx` 添加业务页面。
-6. 增加聚焦测试，确认工具面、API 面和前端入口一致。
+1. 使用 `python3 scripts/extension_cli.py create ...` 创建业务扩展。
+2. 在扩展清单中声明工具、权限、路由和前端页面，不修改平台内核工具表。
+3. 使用 Ed25519 签名 `.apx` 包发布到私有扩展仓库。
+4. 在“应用编排”中把平台与扩展工具连接成工作区级流程。
+5. 增加聚焦兼容性测试，确认工具面、API 面、权限和实际前端入口一致。
+
+详细说明见 [扩展开发](docs/EXTENSIONS.md)、[流程编排](docs/WORKFLOWS.md)、[组织隔离](docs/TENANCY.md) 和 [生产运维](docs/PRODUCTION.md)。
 
 ## 产品能力接入原则
 
@@ -69,4 +73,4 @@ print(validate_all())
 PY
 ```
 
-日常修复优先跑受影响路径测试；只有发布前再做全量回归。
+日常修复和阶段发布均优先跑受影响路径测试；只有出现跨域基础设施变更且聚焦测试不足以覆盖风险时才运行全量回归。

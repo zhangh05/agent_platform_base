@@ -31,6 +31,8 @@ import {
   ReviewCenter,
   RuntimeAudit,
   ExtensionCenter,
+  WorkflowStudio,
+  OrganizationCenter,
   preloadRoute,
   preloadAppRoutes,
 } from "../routes";
@@ -102,6 +104,8 @@ function AppRoutes() {
     "/audit": <ErrorBoundary><RuntimeAudit /></ErrorBoundary>,
     "/reviews": <ErrorBoundary><ReviewCenter /></ErrorBoundary>,
     "/extensions": <ErrorBoundary><ExtensionCenter /></ErrorBoundary>,
+    "/workflows": <ErrorBoundary><WorkflowStudio /></ErrorBoundary>,
+    "/organizations": <ErrorBoundary><OrganizationCenter /></ErrorBoundary>,
   };
   const extensionRoute = extensionRegistry.routes.find((route) => route.path === location.pathname);
   const content = location.pathname === "/" ? (

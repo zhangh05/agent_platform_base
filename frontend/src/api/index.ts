@@ -110,6 +110,11 @@ export interface AuthStatus {
   login_enabled: boolean;
   authenticated: boolean;
   username: string;
+  role?: string;
+  organization_id?: string;
+  workspace_ids?: string[];
+  identity_enabled?: boolean;
+  platform_admin?: boolean;
 }
 
 export const authApi = {
@@ -123,6 +128,38 @@ export const authApi = {
     }),
   logout: (): Promise<{ ok: boolean }> =>
     apiRequest<{ ok: boolean }>({ method: "POST", url: "/auth/logout" }),
+};
+
+export interface WorkflowNode {
+  node_id: string; name: string; tool_id: string; arguments: Record<string, unknown>;
+  depends_on: string[]; when?: unknown;
+}
+export interface WorkflowDefinition {
+  workflow_id: string; name: string; description: string; version: number; status: string;
+  failure_policy: "fail_fast" | "continue"; nodes: WorkflowNode[]; execution_order?: string[];
+  created_at?: string; updated_at?: string;
+}
+export interface WorkflowRun {
+  run_id: string; workflow_id: string; status: string; started_at: string; finished_at?: string;
+  nodes: Array<{ node_id: string; tool_id: string; status: string; summary?: string; duration_ms?: number }>;
+}
+export const workflowsApi = {
+  list: (workspace_id: string) => apiRequest<{ ok: boolean; workflows: WorkflowDefinition[] }>({ method: "GET", url: "/workflows", params: { workspace_id } }),
+  save: (workspace_id: string, workflow: Partial<WorkflowDefinition>) => apiRequest<{ ok: boolean; workflow: WorkflowDefinition }>({ method: "POST", url: "/workflows", data: { ...workflow, workspace_id } }),
+  update: (workspace_id: string, workflow: WorkflowDefinition) => apiRequest<{ ok: boolean; workflow: WorkflowDefinition }>({ method: "PUT", url: `/workflows/${workflow.workflow_id}`, data: { ...workflow, workspace_id } }),
+  run: (workspace_id: string, workflowId: string, inputs: Record<string, unknown>) => apiRequest<{ ok: boolean; run: WorkflowRun }>({ method: "POST", url: `/workflows/${workflowId}/runs`, data: { workspace_id, inputs } }),
+  runs: (workspace_id: string, workflowId: string) => apiRequest<{ ok: boolean; runs: WorkflowRun[] }>({ method: "GET", url: `/workflows/${workflowId}/runs`, params: { workspace_id } }),
+};
+
+export interface OrganizationRecord { organization_id: string; name: string; workspace_ids: string[] }
+export interface IdentityUser { username: string; role: string; organization_id: string; workspace_ids: string[] }
+export interface MembershipRecord { username: string; role: string; organization_id: string; workspace_ids: string[] }
+export const identityApi = {
+  organizations: () => apiRequest<{ ok: boolean; organizations: OrganizationRecord[] }>({ method: "GET", url: "/identity/organizations" }),
+  createOrganization: (organization_id: string, name: string) => apiRequest<{ ok: boolean; organization: OrganizationRecord }>({ method: "POST", url: "/identity/organizations", data: { organization_id, name } }),
+  users: () => apiRequest<{ ok: boolean; users: IdentityUser[] }>({ method: "GET", url: "/identity/users" }),
+  saveUser: (user: IdentityUser & { password: string }) => apiRequest<{ ok: boolean; user: IdentityUser }>({ method: "POST", url: "/identity/users", data: user }),
+  memberships: (organizationId: string) => apiRequest<{ ok: boolean; memberships: MembershipRecord[] }>({ method: "GET", url: `/identity/organizations/${organizationId}/memberships` }),
 };
 
 /* ──────────────────────── 1. agent ──────────────────────── */

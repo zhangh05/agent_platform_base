@@ -11,6 +11,7 @@ import base64
 import hashlib
 import hmac
 import os
+import re
 import secrets
 from typing import Any
 
@@ -36,7 +37,9 @@ def _read() -> dict[str, Any]:
     import json
     try:
         value = json.loads(path.read_text(encoding="utf-8"))
-        return value if isinstance(value, dict) else {"users": [], "organizations": [], "memberships": []}
+        if not isinstance(value, dict):
+            return {"users": [], "organizations": [], "memberships": []}
+        return {"users": list(value.get("users") or []), "organizations": list(value.get("organizations") or []), "memberships": list(value.get("memberships") or [])}
     except (OSError, ValueError):
         return {"users": [], "organizations": [], "memberships": []}
 
@@ -63,34 +66,48 @@ def upsert_user(username: str, password: str, role: str = "viewer", organization
         raise ValueError("username, password and a valid role are required")
     if workspace_ids is not None and not isinstance(workspace_ids, list):
         raise ValueError("workspace_ids must be a list")
+    organization_id = _organization_id(organization_id)
     from storage.ids import validate_workspace_id
     allowed = sorted({validate_workspace_id(item) for item in (workspace_ids or [organization_id])})
     with FileLock(_path().with_name("users.lock")):
         data = _read()
+        existing_organization = next((item for item in data["organizations"] if item.get("organization_id") == organization_id), None)
+        if existing_organization is not None and not set(allowed).issubset(set(existing_organization.get("workspace_ids") or [])):
+            raise ValueError("workspace is not assigned to the organization")
+        if existing_organization is None and any(set(allowed) & set(item.get("workspace_ids") or []) for item in data["organizations"]):
+            raise ValueError("workspace is already assigned to another organization")
         users = [item for item in data["users"] if item.get("username") != username]
         record = {"username": username, "password_hash": _hash_password(password), "role": role, "organization_id": organization_id, "workspace_ids": allowed}
         users.append(record)
         data["users"] = users
+        if existing_organization is None:
+            data["organizations"].append({"organization_id": organization_id, "name": organization_id, "workspace_ids": list(allowed)})
+        memberships = [item for item in data["memberships"] if not (item.get("username") == username and item.get("organization_id") == organization_id)]
+        memberships.append({"username": username, "organization_id": organization_id, "role": role, "workspace_ids": list(allowed)})
+        data["memberships"] = memberships
         atomic_write_json(_path(), data)
-    return {key: value for key, value in record.items() if key != "password_hash"}
+    return _project_user(data, record)
 
 
 def verify_user(username: str, password: str) -> dict[str, Any] | None:
-    for user in _read().get("users", []):
+    data = _read()
+    for user in data.get("users", []):
         if user.get("username") == username and _verify_password(password, str(user.get("password_hash", ""))):
-            return {key: value for key, value in user.items() if key != "password_hash"}
+            return _project_user(data, user)
     return None
 
 
 def get_user(username: str) -> dict[str, Any] | None:
-    for user in _read().get("users", []):
+    data = _read()
+    for user in data.get("users", []):
         if user.get("username") == username:
-            return {key: value for key, value in user.items() if key != "password_hash"}
+            return _project_user(data, user)
     return None
 
 
 def list_users() -> list[dict[str, Any]]:
-    return [{key: value for key, value in user.items() if key != "password_hash"} for user in _read().get("users", [])]
+    data = _read()
+    return [_project_user(data, user) for user in data.get("users", [])]
 
 
 def has_role(role: str, minimum: str) -> bool:
@@ -99,8 +116,114 @@ def has_role(role: str, minimum: str) -> bool:
 
 
 def can_access_workspace(role: str, workspace_ids: list[str], workspace_id: str, *, write: bool = False) -> bool:
-    if has_role(role, "admin"):
-        return True
     if write and role == "viewer":
         return False
     return workspace_id in set(workspace_ids or [])
+
+
+def _organization_id(value: str) -> str:
+    organization_id = str(value or "").strip()
+    if not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", organization_id):
+        raise ValueError("invalid organization_id")
+    return organization_id
+
+
+def _project_user(data: dict[str, Any], user: dict[str, Any]) -> dict[str, Any]:
+    organization_id = str(user.get("organization_id") or "default")
+    membership = next((item for item in data.get("memberships", []) if item.get("username") == user.get("username") and item.get("organization_id") == organization_id), {})
+    role = str(membership.get("role") or user.get("role") or "viewer")
+    workspace_ids = set(user.get("workspace_ids") or []) | set(membership.get("workspace_ids") or [])
+    organization = next((item for item in data.get("organizations", []) if item.get("organization_id") == organization_id), {})
+    if has_role(role, "admin"):
+        workspace_ids.update(organization.get("workspace_ids") or [])
+    return {
+        "username": str(user.get("username") or ""),
+        "role": role,
+        "organization_id": organization_id,
+        "workspace_ids": sorted(workspace_ids),
+    }
+
+
+def create_organization(organization_id: str, name: str) -> dict[str, Any]:
+    organization_id = _organization_id(organization_id)
+    name = str(name or "").strip()
+    if not name:
+        raise ValueError("organization name is required")
+    with FileLock(_path().with_name("users.lock")):
+        data = _read()
+        if any(item.get("organization_id") == organization_id for item in data["organizations"]):
+            raise ValueError("organization already exists")
+        record = {"organization_id": organization_id, "name": name[:120], "workspace_ids": []}
+        data["organizations"].append(record)
+        atomic_write_json(_path(), data)
+    return record
+
+
+def list_organizations() -> list[dict[str, Any]]:
+    return [dict(item) for item in _read().get("organizations", [])]
+
+
+def list_memberships(organization_id: str) -> list[dict[str, Any]]:
+    organization_id = _organization_id(organization_id)
+    return [dict(item) for item in _read().get("memberships", []) if item.get("organization_id") == organization_id]
+
+
+def upsert_membership(organization_id: str, username: str, role: str, workspace_ids: list[str] | None = None) -> dict[str, Any]:
+    organization_id = _organization_id(organization_id)
+    username = str(username or "").strip()
+    if not username or role not in _ROLES:
+        raise ValueError("username and a valid role are required")
+    from storage.ids import validate_workspace_id
+    allowed = sorted({validate_workspace_id(item) for item in (workspace_ids or [])})
+    with FileLock(_path().with_name("users.lock")):
+        data = _read()
+        organization = next((item for item in data["organizations"] if item.get("organization_id") == organization_id), None)
+        if organization is None:
+            raise ValueError("organization not found")
+        if not any(item.get("username") == username for item in data["users"]):
+            raise ValueError("user not found")
+        if not set(allowed).issubset(set(organization.get("workspace_ids") or [])):
+            raise ValueError("workspace is not assigned to the organization")
+        memberships = [item for item in data["memberships"] if not (item.get("username") == username and item.get("organization_id") == organization_id)]
+        record = {"username": username, "organization_id": organization_id, "role": role, "workspace_ids": allowed}
+        memberships.append(record)
+        data["memberships"] = memberships
+        for user in data["users"]:
+            if user.get("username") == username:
+                user["organization_id"] = organization_id
+                user["role"] = role
+                user["workspace_ids"] = allowed
+        atomic_write_json(_path(), data)
+    return record
+
+
+def assign_workspace(organization_id: str, workspace_id: str) -> dict[str, Any]:
+    organization_id = _organization_id(organization_id)
+    from storage.ids import validate_workspace_id
+    workspace_id = validate_workspace_id(workspace_id)
+    with FileLock(_path().with_name("users.lock")):
+        data = _read()
+        organization = next((item for item in data["organizations"] if item.get("organization_id") == organization_id), None)
+        if organization is None:
+            raise ValueError("organization not found")
+        if any(item is not organization and workspace_id in set(item.get("workspace_ids") or []) for item in data["organizations"]):
+            raise ValueError("workspace is already assigned to another organization")
+        organization["workspace_ids"] = sorted(set(organization.get("workspace_ids") or []) | {workspace_id})
+        atomic_write_json(_path(), data)
+        return dict(organization)
+
+
+def replace_workspace(old_workspace_id: str, new_workspace_id: str | None = None) -> None:
+    from storage.ids import validate_workspace_id
+    old_workspace_id = validate_workspace_id(old_workspace_id)
+    replacement = validate_workspace_id(new_workspace_id) if new_workspace_id else None
+    with FileLock(_path().with_name("users.lock")):
+        data = _read()
+        for collection in (data["organizations"], data["memberships"], data["users"]):
+            for item in collection:
+                workspaces = set(item.get("workspace_ids") or [])
+                if old_workspace_id in workspaces:
+                    workspaces.remove(old_workspace_id)
+                    if replacement: workspaces.add(replacement)
+                    item["workspace_ids"] = sorted(workspaces)
+        atomic_write_json(_path(), data)

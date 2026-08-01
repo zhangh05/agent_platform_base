@@ -46,9 +46,10 @@ from backend.api.review_routes import register_review_routes
 from backend.api.workspace_status_routes import register_workspace_status_routes
 from backend.api.state_routes import register_state_routes
 from backend.api.storage_routes import register_storage_routes
-from backend.api.identity_routes import handle_identity_users
+from backend.api.identity_routes import register_identity_routes
 from backend.api.extension_routes import register_extensions
 from backend.api.admin_routes import register_admin_routes
+from backend.api.workflow_routes import register_workflow_routes
 from backend.core.settings import UNIFIED_PORT, API_MODE, BUILD_COMMIT
 from backend.core.rate_limit import rate_limit_middleware
 from storage.ids import validate_workspace_id
@@ -147,10 +148,6 @@ def create_app():
     def api_auth_logout():
         from backend.core.auth import handle_auth_logout
         return handle_auth_logout()
-
-    @app.route("/api/identity/users", methods=["GET", "POST"])
-    def api_identity_users():
-        return handle_identity_users()
 
     # ── Version ──
     @app.route("/api/version")
@@ -305,6 +302,8 @@ def create_app():
     register_state_routes(app)     # /api/runtime/tasks/* (Phase 2 Durable State)
     register_extensions(app)       # /api/extensions + namespaced extension routes
     register_admin_routes(app)     # /api/admin/production and verified backups
+    register_identity_routes(app)  # /api/identity users, organizations, memberships
+    register_workflow_routes(app)  # /api/workflows cross-extension DAG orchestration
 
     # Reconcile durable jobs/subagent tasks that were running when a previous
     # backend process stopped. Domain modules can register their own startup
