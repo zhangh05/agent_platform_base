@@ -22,6 +22,9 @@ const MobileNavItem = memo(function MobileNavItem({ to, label, testid, Icon }: N
       className={({ isActive }) => "mobile-nav-item" + (isActive ? " active" : "")}
       onMouseEnter={handleEnter}
       onFocus={handleFocus}
+      onPointerDown={handleEnter}
+      onTouchStart={handleEnter}
+      viewTransition
     >
       <Icon size={15} />
       <span>{label}</span>

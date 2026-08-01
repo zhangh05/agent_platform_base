@@ -1,5 +1,5 @@
 import React from "react";
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "../app/App";
 import { authApi } from "../api";
@@ -17,6 +17,7 @@ describe("authenticated refresh", () => {
   beforeEach(() => {
     resetMocks();
     installMockApi();
+    window.history.replaceState({}, "", "/workbench");
   });
 
   it("never flashes the login screen when StrictMode cancels the first status request", async () => {
@@ -64,5 +65,26 @@ describe("authenticated refresh", () => {
 
     expect(await screen.findByRole("button", { name: "退出登录" })).toBeInTheDocument();
     expect(screen.queryByText("登录工作台")).not.toBeInTheDocument();
+  });
+
+  it("remounts the route stage so every page switch gets a transition", async () => {
+    render(<App />);
+
+    const dataLink = await screen.findByTestId("nav-data");
+    const previousStage = await waitFor(() => {
+      const node = document.querySelector<HTMLElement>('[data-route="/workbench"]');
+      expect(node).not.toBeNull();
+      return node as HTMLElement;
+    });
+
+    fireEvent.click(dataLink);
+
+    const nextStage = await waitFor(() => {
+      const node = document.querySelector<HTMLElement>('[data-route="/data"]');
+      expect(node).not.toBeNull();
+      return node as HTMLElement;
+    });
+    expect(nextStage).not.toBe(previousStage);
+    expect(window.location.pathname).toBe("/data");
   });
 });

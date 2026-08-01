@@ -30,6 +30,7 @@ import {
   ReviewCenter,
   RuntimeAudit,
   preloadRoute,
+  preloadAppRoutes,
 } from "../routes";
 
 function formatVersion(version: string): string {
@@ -47,6 +48,9 @@ const NavItem = memo(function NavItem({ to, label, testid, Icon }: import("../co
       className={({ isActive }) => "app-nav-item" + (isActive ? " active" : "")}
       onMouseEnter={handleEnter}
       onFocus={handleFocus}
+      onPointerDown={handleEnter}
+      onTouchStart={handleEnter}
+      viewTransition
     >
       <Icon size={14} />
       <span>{label}</span>
@@ -78,6 +82,41 @@ function RouteFallback() {
       </div>
       <span className="sr-only">页面加载中…</span>
     </div>
+  );
+}
+
+function AppRoutes() {
+  const location = useLocation();
+  return (
+    <Suspense fallback={<RouteFallback />}>
+      <div className="route-view" key={location.pathname} data-route={location.pathname}>
+        <Routes location={location}>
+          <Route path="/workbench" element={<ErrorBoundary><TaskWorkbench /></ErrorBoundary>} />
+          <Route path="/knowledge" element={<ErrorBoundary><KnowledgeLibrary /></ErrorBoundary>} />
+          <Route path="/data" element={<ErrorBoundary><DataCenter /></ErrorBoundary>} />
+          <Route path="/memory" element={<ErrorBoundary><MemoryPage /></ErrorBoundary>} />
+          <Route path="/capabilities" element={<ErrorBoundary><CapabilityCenter /></ErrorBoundary>} />
+          <Route path="/diagnostics" element={<ErrorBoundary><Diagnostics /></ErrorBoundary>} />
+          <Route path="/settings" element={<ErrorBoundary><Settings /></ErrorBoundary>} />
+          <Route path="/runs" element={<ErrorBoundary><OperationsPage /></ErrorBoundary>} />
+          <Route path="/audit" element={<ErrorBoundary><RuntimeAudit /></ErrorBoundary>} />
+          <Route path="/reviews" element={<ErrorBoundary><ReviewCenter /></ErrorBoundary>} />
+          <Route path="/" element={<Navigate to="/workbench" replace />} />
+          <Route
+            path="*"
+            element={
+              <ErrorBoundary>
+                <div className="hero">
+                  <div className="hero-mark">404</div>
+                  <h1 className="hero-title">页面不存在</h1>
+                  <p className="hero-sub">请通过顶栏导航回到工作台</p>
+                </div>
+              </ErrorBoundary>
+            }
+          />
+        </Routes>
+      </div>
+    </Suspense>
   );
 }
 
@@ -181,6 +220,13 @@ function AppShell({ canLogout, onLogout, username }: { canLogout: boolean; onLog
     setMobileNavOpen(false);
   }, [location.pathname, setMobileNavOpen]);
 
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      void preloadAppRoutes(location.pathname);
+    }, 700);
+    return () => window.clearTimeout(timer);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
   return (
     <div className="app-shell">
       <header className="app-header">
@@ -196,7 +242,7 @@ function AppShell({ canLogout, onLogout, username }: { canLogout: boolean; onLog
           {mobileNavOpen ? <IconChevronLeft size={16} /> : <IconMenu size={16} />}
         </button>
 
-        <Link className="brand" to="/" aria-label="Agent Platform Base">
+        <Link className="brand" to="/workbench" aria-label="Agent Platform Base" viewTransition>
           <span className="brand-text">
             <span>Agent Platform Base</span>
             <small>Agent App Starter{version ? ` · ${formatVersion(version)}` : ""}</small>
@@ -249,35 +295,7 @@ function AppShell({ canLogout, onLogout, username }: { canLogout: boolean; onLog
             Suspense boundary keeps it visible while a route's chunk loads,
             so navigation never tears down the shell. */}
         <AppLayout>
-          <Suspense fallback={<RouteFallback />}>
-            <div className="route-view">
-              <Routes>
-                <Route path="/workbench" element={<ErrorBoundary><TaskWorkbench /></ErrorBoundary>} />
-                <Route path="/knowledge" element={<ErrorBoundary><KnowledgeLibrary /></ErrorBoundary>} />
-                <Route path="/data" element={<ErrorBoundary><DataCenter /></ErrorBoundary>} />
-                <Route path="/memory" element={<ErrorBoundary><MemoryPage /></ErrorBoundary>} />
-                <Route path="/capabilities" element={<ErrorBoundary><CapabilityCenter /></ErrorBoundary>} />
-                <Route path="/diagnostics" element={<ErrorBoundary><Diagnostics /></ErrorBoundary>} />
-                <Route path="/settings" element={<ErrorBoundary><Settings /></ErrorBoundary>} />
-                <Route path="/runs" element={<ErrorBoundary><OperationsPage /></ErrorBoundary>} />
-                <Route path="/audit" element={<ErrorBoundary><RuntimeAudit /></ErrorBoundary>} />
-                <Route path="/reviews" element={<ErrorBoundary><ReviewCenter /></ErrorBoundary>} />
-                <Route path="/" element={<Navigate to="/workbench" replace />} />
-                <Route
-                  path="*"
-                  element={
-                    <ErrorBoundary>
-                      <div className="hero">
-                        <div className="hero-mark">404</div>
-                        <h1 className="hero-title">页面不存在</h1>
-                        <p className="hero-sub">请通过顶栏导航回到工作台</p>
-                      </div>
-                    </ErrorBoundary>
-                  }
-                />
-              </Routes>
-            </div>
-          </Suspense>
+          <AppRoutes />
         </AppLayout>
       </div>
       <ToastHost />

@@ -359,7 +359,7 @@ export function DataCenter() {
       </FilterBar>
 
       {error && <div className="callout error">{error}</div>}
-      {loading && !overview ? <LoadingState text="正在读取数据平面…" /> : null}
+      {loading && !overview ? <LoadingState text="正在读取数据平面…" skeleton="table" /> : null}
 
       {tab === "overview" && <Overview overview={overview} files={files} onOpenFiles={() => setTab("files")} onOpenLifecycle={() => setTab("lifecycle")} />}
       {tab === "files" && (

@@ -5362,17 +5362,50 @@ details.collapse[open] summary::before {
 .route-view {
   height: 100%;
   min-height: 0;
-  animation: routeIn 0.26s var(--ease-out) both;
+  view-transition-name: route-content;
+  animation: routeIn var(--dur-2) var(--ease-out) both;
 }
 
 @keyframes routeIn {
-  from { opacity: 0; transform: translateY(8px); }
-  to { opacity: 1; transform: translateY(0); }
+  from { opacity: 0.72; }
+  to { opacity: 1; }
+}
+
+@supports (view-transition-name: route-content) {
+  ::view-transition-old(root),
+  ::view-transition-new(root) {
+    animation: none;
+  }
+
+  ::view-transition-group(route-content) {
+    animation-duration: var(--dur-2);
+    animation-timing-function: var(--ease-out);
+  }
+
+  ::view-transition-old(route-content) {
+    animation: route-out var(--dur-1) var(--ease) both;
+  }
+
+  ::view-transition-new(route-content) {
+    animation: routeIn var(--dur-2) var(--ease-out) both;
+  }
+}
+
+@keyframes route-out {
+  from { opacity: 1; }
+  to { opacity: 0.78; }
 }
 
 @media (prefers-reduced-motion: reduce) {
   .route-view { animation: none; }
   .spinner { animation-duration: 1.4s; }
+
+  ::view-transition-old(root),
+  ::view-transition-new(root),
+  ::view-transition-old(route-content),
+  ::view-transition-new(route-content) {
+    animation: none;
+  }
 }
 
 /* ── Utility helpers for inline-style cleanup ── */

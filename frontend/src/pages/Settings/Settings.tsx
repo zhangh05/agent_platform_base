@@ -325,7 +325,7 @@ export function Settings() {
     return (
       <div className="page" data-testid="page-settings">
         <PageHeader />
-        <div className="page-body"><LoadingState /></div>
+        <div className="page-body"><LoadingState skeleton="list" /></div>
       </div>
     );
   }

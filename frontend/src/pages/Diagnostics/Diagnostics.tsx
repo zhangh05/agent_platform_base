@@ -444,7 +444,7 @@ export function Diagnostics() {
             <Section title="数据策略">
               <div className="diag-policy-management">
                 <span>此处只显示当前策略，数据操作统一在数据中心完成。</span>
-                <Link className="btn sm" to="/data">打开数据中心</Link>
+                <Link className="btn sm" to="/data" viewTransition>打开数据中心</Link>
               </div>
               <div className="diag-policy-grid">
                 {retention?.policy && (

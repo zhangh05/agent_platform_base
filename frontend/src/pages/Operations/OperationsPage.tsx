@@ -411,7 +411,7 @@ export function OperationsPage() {
       )}
 
       {loading ? (
-        <div className="page-body"><LoadingState text="加载作业列表…" /></div>
+        <div className="page-body"><LoadingState text="加载作业列表…" skeleton="list" /></div>
       ) : (
         <div className="split-shell operations-split">
           {/* ══════ 左侧 作业列表 ══════ */}

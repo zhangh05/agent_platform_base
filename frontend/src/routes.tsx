@@ -69,7 +69,24 @@ const PRELOAD: Record<string, () => PageModule> = {
   "/reviews": ReviewCenter.preload,
 };
 
+const ROUTE_PATHS = Object.keys(PRELOAD);
+
 /** Warm a route's chunk ahead of navigation (call on hover/focus). */
-export function preloadRoute(path: string): void {
-  PRELOAD[path]?.();
+export function preloadRoute(path: string): Promise<void> {
+  const loader = PRELOAD[path];
+  return loader ? loader().then(() => undefined) : Promise.resolve();
+}
+
+/** Warm every remaining page chunk once the initial screen is settled. */
+export async function preloadAppRoutes(currentPath = ""): Promise<void> {
+  const paths = ROUTE_PATHS.filter((path) => path !== currentPath);
+  // Load sequentially so background warming never competes with the active
+  // page's API requests on slower links.
+  for (const path of paths) {
+    try {
+      await preloadRoute(path);
+    } catch {
+      // Navigation can retry the import normally; warming is best-effort.
+    }
+  }
 }
