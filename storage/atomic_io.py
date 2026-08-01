@@ -43,6 +43,36 @@ def atomic_write_text(path: Path, text: str) -> None:
         raise
 
 
+def atomic_write_bytes(path: Path, data: bytes) -> None:
+    """Atomically replace a binary payload."""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = _unique_tmp(path)
+    fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
+    try:
+        with os.fdopen(fd, "wb") as f:
+            f.write(data)
+            f.flush()
+            try:
+                os.fsync(f.fileno())
+            except OSError:
+                pass
+    except Exception:
+        try:
+            tmp.unlink()
+        except OSError:
+            pass
+        raise
+    try:
+        os.replace(tmp, path)
+    except Exception:
+        try:
+            tmp.unlink()
+        except OSError:
+            pass
+        raise
+
+
 def atomic_write_json(path: Path, obj: Any, *, indent: Optional[int] = 2) -> None:
     text = json.dumps(obj, ensure_ascii=False, indent=indent, default=str)
     atomic_write_text(Path(path), text)

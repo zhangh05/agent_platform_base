@@ -60,6 +60,14 @@ def _is_login_enabled() -> bool:
     return bool(_get_login_username() and _get_login_password())
 
 
+def _is_identity_enabled() -> bool:
+    try:
+        from backend.core.identity import identity_enabled
+        return identity_enabled()
+    except Exception:
+        return False
+
+
 # ── Module-level defaults (used for logging) ──
 _AUTH_ENABLED = _is_auth_enabled()
 _API_TOKEN = _get_api_token()
@@ -142,6 +150,8 @@ def _request_has_valid_api_token() -> bool:
 
 
 def is_current_session_authenticated() -> bool:
+    if _is_identity_enabled():
+        return bool(flask.session.get("agent_platform_user"))
     if not _is_login_enabled():
         return False
     username = _get_login_username()
@@ -152,20 +162,30 @@ def is_current_session_authenticated() -> bool:
 def handle_auth_status():
     return flask.jsonify({
         "ok": True,
-        "login_enabled": _is_login_enabled(),
+        "login_enabled": _is_login_enabled() or _is_identity_enabled(),
         "authenticated": is_current_session_authenticated(),
         "username": flask.session.get("agent_platform_user") if is_current_session_authenticated() else "",
     })
 
 
 def handle_auth_login():
-    if not _is_login_enabled():
+    if not (_is_login_enabled() or _is_identity_enabled()):
         return _login_disabled_response()
     payload = flask.request.get_json(silent=True) or {}
     username = str(payload.get("username", ""))
     password = str(payload.get("password", ""))
     configured_username = _get_login_username()
     configured_password = _get_login_password()
+    identity_user = None
+    if _is_identity_enabled():
+        from backend.core.identity import verify_user
+        identity_user = verify_user(username, password)
+        if identity_user:
+            flask.session.clear()
+            flask.session["agent_platform_user"] = identity_user["username"]
+            flask.session["agent_platform_role"] = identity_user.get("role", "viewer")
+            flask.session["agent_platform_org"] = identity_user.get("organization_id", "default")
+            return flask.jsonify({"ok": True, "username": identity_user["username"], "role": identity_user.get("role", "viewer")})
     if (
         configured_username
         and configured_password
@@ -174,6 +194,9 @@ def handle_auth_login():
     ):
         flask.session.clear()
         flask.session["agent_platform_user"] = configured_username
+        if _is_identity_enabled():
+            flask.session["agent_platform_role"] = "admin"
+            flask.session["agent_platform_org"] = "default"
         return flask.jsonify({"ok": True, "username": configured_username})
     logger.warning("login_denied: username=%s", username[:64])
     return _unauthorized_response("Invalid username or password")
@@ -270,7 +293,7 @@ def register_auth_middleware(app: flask.Flask) -> None:
 
     Call after all routes are defined but before first request.
     """
-    if _is_login_enabled():
+    if _is_login_enabled() or _is_identity_enabled():
         app.secret_key = os.environ.get("AGENT_PLATFORM_SESSION_SECRET", "").strip() or _get_api_token() or secrets.token_urlsafe(32)
         app.config.update(
             SESSION_COOKIE_HTTPONLY=True,
@@ -305,7 +328,7 @@ def register_auth_middleware(app: flask.Flask) -> None:
             return _csrf_response()
 
         # Re-evaluate env vars each request (for test monkeypatching)
-        if _is_login_enabled():
+        if _is_login_enabled() or _is_identity_enabled():
             if is_public_path(path):
                 return None
             if is_current_session_authenticated() or _request_has_valid_api_token():

@@ -50,6 +50,11 @@ def invoke_llm(
     cfg = resolve_provider_config()
     if config_override:
         cfg = {**cfg, **config_override}
+    try:
+        from agent.llm.router import resolve_model_route
+        cfg = resolve_model_route(task, cfg)
+    except Exception:
+        logger.warning("model route resolution failed; using active provider", exc_info=True)
 
     if not cfg.get("enabled") or cfg.get("provider_type") == "disabled":
         return LLMResponse(
