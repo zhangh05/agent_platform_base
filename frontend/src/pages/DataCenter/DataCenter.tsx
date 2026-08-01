@@ -361,7 +361,13 @@ export function DataCenter() {
       {error && <div className="callout error">{error}</div>}
       {loading && !overview ? <LoadingState text="正在读取数据平面…" skeleton="table" /> : null}
 
-      {tab === "overview" && <Overview overview={overview} files={files} onOpenFiles={() => setTab("files")} onOpenLifecycle={() => setTab("lifecycle")} />}
+      {tab === "overview" && <Overview
+        overview={overview}
+        files={files}
+        onImport={() => uploadRef.current?.click()}
+        onOpenFiles={() => setTab("files")}
+        onOpenLifecycle={() => setTab("lifecycle")}
+      />}
       {tab === "files" && (
         <FilesView
           files={filteredFiles} search={search} onSearch={setSearch}
@@ -391,66 +397,76 @@ export function DataCenter() {
   );
 }
 
-function Overview({ overview, files, onOpenFiles, onOpenLifecycle }: { overview: DataOverview | null; files: ManagedFile[]; onOpenFiles: () => void; onOpenLifecycle: () => void }) {
+function Overview({ overview, files, onImport, onOpenFiles, onOpenLifecycle }: {
+  overview: DataOverview | null;
+  files: ManagedFile[];
+  onImport: () => void;
+  onOpenFiles: () => void;
+  onOpenLifecycle: () => void;
+}) {
   if (!overview) return <EmptyState text="暂无数据概览" />;
   const healthSummary = `断链 ${overview.health.missing_on_disk} · 孤儿 ${overview.health.orphan_files}`;
+  const typeEntries = Object.entries(overview.types).sort((a, b) => b[1] - a[1]);
   return <div className="data-overview">
-    <div className="data-overview-lead">
-      <div>
-        <span className="data-section-kicker">工作区概览</span>
-        <h2>数据状态一览</h2>
-        <p>集中查看文件、证据产出和生命周期状态。</p>
+    <section className="data-summary-panel" aria-label="数据摘要">
+      <div className="data-summary-head">
+        <div className="data-summary-title">
+          <h2>工作区数据</h2>
+          <span>{formatFileSize(overview.files.size_bytes)} 总存储</span>
+        </div>
+        <div className={`data-health-inline ${overview.health.ok ? "ok" : "err"}`}>
+          <span className="data-health-dot" />
+          <strong>{overview.health.ok ? "数据关系正常" : "发现数据问题"}</strong>
+          <small>{healthSummary}</small>
+        </div>
       </div>
-      <div className={`data-health-summary ${overview.health.ok ? "ok" : "err"}`}>
-        <span>数据健康</span>
-        <strong>{overview.health.ok ? "正常" : "需要关注"}</strong>
-        <small>{healthSummary}</small>
+      <div className="data-metric-row">
+        <Stat label="活跃文件" value={overview.files.active} hint="当前可用" />
+        <Stat label="证据与制品" value={overview.artifacts.active} hint="业务产出" />
+        <Stat label="已有引用" value={overview.files.referenced} hint="关系保护" />
+        <Stat label="独立文件" value={overview.files.unreferenced} hint="可直接管理" />
+        <Stat label="已归档" value={overview.files.archived} hint="可恢复" />
       </div>
-    </div>
-    <div className="data-stat-grid">
-      <Stat label="活跃文件" value={overview.files.active} hint={formatFileSize(overview.files.size_bytes)} />
-      <Stat label="证据与制品" value={overview.artifacts.active} hint="可追溯业务产出" />
-      <Stat label="已有业务引用" value={overview.files.referenced} hint="受关系保护" />
-      <Stat label="独立文件" value={overview.files.unreferenced} hint="可直接管理" />
-      <Stat label="已归档" value={overview.files.archived} hint="可恢复历史数据" />
-    </div>
-    <div className="data-overview-grid">
-      <section className="card data-overview-card">
-        <div className="data-card-heading">
-          <div><span className="data-section-kicker">结构</span><h3>数据构成</h3><p>按数据类型查看工作区内容。</p></div>
-          <span className="data-card-count">{overview.files.active} 项</span>
+    </section>
+
+    <div className="data-overview-layout">
+      <section className="data-main-panel">
+        <div className="data-panel-head">
+          <div><h3>最近数据</h3><p>最近进入当前工作区的文件与任务产出。</p></div>
+          {files.length > 0 && <Button size="sm" onClick={onOpenFiles}>查看全部</Button>}
         </div>
-        {Object.entries(overview.types).length ? Object.entries(overview.types).sort((a, b) => b[1] - a[1]).map(([type, count]) => (
-          <div className="data-breakdown-row" key={type}><span>{typeLabel(type)}</span><b>{count}</b></div>
-        )) : <EmptyState text="尚无数据" hint="导入文件或运行任务后会显示在这里" />}
-        <Button size="sm" onClick={onOpenFiles}>查看全部数据</Button>
+        {files.length > 0 ? <div className="data-recent-list">
+          {files.slice(0, 8).map((file) => <div className="data-recent-row" key={file.file_id}>
+            <span><b>{file.original_name || file.file_id}</b><small>{typeLabel(file.logical_type)} · {sourceLabel(file.source)}</small></span>
+            <span><b>{formatFileSize(file.size_bytes)}</b><small>{formatDate(file.created_at, "short")}</small></span>
+          </div>)}
+        </div> : <div className="data-onboarding-empty">
+          <div className="data-empty-mark">＋</div>
+          <div><strong>还没有数据</strong><p>导入文件，或运行一次会产生制品的任务。</p></div>
+          <Button variant="primary" size="sm" onClick={onImport}>导入第一份数据</Button>
+        </div>}
       </section>
-      <section className="card data-overview-card">
-        <div className="data-card-heading">
-          <div><span className="data-section-kicker">活动</span><h3>最近数据</h3><p>最近进入工作区的文件。</p></div>
-          <span className="data-card-count">{files.length} 项</span>
-        </div>
-        {files.slice(0, 6).map((file) => <div className="data-recent-row" key={file.file_id}>
-          <span><b>{file.original_name || file.file_id}</b><small>{typeLabel(file.logical_type)} · {sourceLabel(file.source)}</small></span>
-          <span>{formatFileSize(file.size_bytes)}</span>
-        </div>)}
-        {!files.length && <EmptyState text="暂无文件" />}
-      </section>
-      <section className="card data-overview-card">
-        <div className="data-card-heading">
-          <div><span className="data-section-kicker">治理</span><h3>生命周期</h3><p>清理和归档前会保护仍被引用的数据。</p></div>
-        </div>
-        <p className="text-sm dim">清理和归档执行前会计算候选项，并保护仍被会话、任务和制品引用的数据。</p>
-        <div className="data-breakdown-row"><span>待处理软删除</span><b>{overview.files.soft_deleted}</b></div>
-        <div className="data-breakdown-row"><span>已归档文件</span><b>{overview.files.archived}</b></div>
-        <Button size="sm" onClick={onOpenLifecycle}>管理生命周期</Button>
-      </section>
+
+      <aside className="data-governance-panel" aria-label="数据治理">
+        <section className="data-governance-section">
+          <div className="data-panel-head"><div><h3>数据构成</h3><p>按类型汇总</p></div><span className="status-pill">{overview.files.active} 项</span></div>
+          {typeEntries.length ? typeEntries.map(([type, count]) => (
+            <div className="data-breakdown-row" key={type}><span>{typeLabel(type)}</span><b>{count}</b></div>
+          )) : <p className="data-compact-empty">导入数据后将在这里显示类型分布。</p>}
+        </section>
+        <section className="data-governance-section">
+          <div className="data-panel-head"><div><h3>生命周期</h3><p>归档与清理</p></div></div>
+          <div className="data-breakdown-row"><span>待处理软删除</span><b>{overview.files.soft_deleted}</b></div>
+          <div className="data-breakdown-row"><span>已归档文件</span><b>{overview.files.archived}</b></div>
+          <Button size="sm" onClick={onOpenLifecycle}>管理生命周期</Button>
+        </section>
+      </aside>
     </div>
   </div>;
 }
 
 function Stat({ label, value, hint, tone = "" }: { label: string; value: string | number; hint: string; tone?: string }) {
-  return <div className={`card data-stat ${tone}`}><span className="data-stat-label">{label}</span><strong>{value}</strong><small>{hint}</small></div>;
+  return <div className={`data-stat ${tone}`}><span className="data-stat-label">{label}</span><strong>{value}</strong><small>{hint}</small></div>;
 }
 
 function FilesView({ files, search, onSearch, typeFilter, typeOptions, onTypeFilter, busy, selected, onSelect, selectedIds, onSelectedIds, onDelete, onBulkDelete, detail }: {
