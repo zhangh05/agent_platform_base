@@ -48,6 +48,33 @@ export const systemApi = {
     apiRequest<AppVersion>({ method: "GET", url: "/version" }, signal),
 };
 
+export interface ExtensionRouteDefinition {
+  path: string;
+  module: string;
+  label: string;
+  description?: string;
+  icon?: string;
+  order?: number;
+}
+
+export interface InstalledExtension {
+  extension_id: string;
+  name: string;
+  version: string;
+  description: string;
+  capabilities: string[];
+  tools: string[];
+  frontend_routes: ExtensionRouteDefinition[];
+}
+
+export const extensionsApi = {
+  list: (signal?: AbortSignal): Promise<{ ok: boolean; extensions: InstalledExtension[]; count: number }> =>
+    apiRequest<{ ok: boolean; extensions: InstalledExtension[]; count: number }>(
+      { method: "GET", url: "/extensions" },
+      signal,
+    ),
+};
+
 export interface AuthStatus {
   ok: boolean;
   login_enabled: boolean;

@@ -528,6 +528,12 @@ def to_tool_specs() -> list[tuple[ToolSpec, Callable[[ToolInvocation], dict]]]:
             metadata=ns_entry.metadata(),
         )
         out.append((spec, entry.handler))
+    from extensions.runtime import get_extension_tool_specs
+    extension_specs = get_extension_tool_specs()
+    duplicate_ids = {spec.tool_id for spec, _ in extension_specs} & set(CANONICAL_REGISTRY)
+    if duplicate_ids:
+        raise ValueError(f"extension tools conflict with core tools: {sorted(duplicate_ids)}")
+    out.extend(extension_specs)
     return out
 
 

@@ -19,6 +19,8 @@ agent_platform_base/
 ├── config/                     # Local provider/runtime config; secrets ignored
 ├── docs/                       # Current architecture and API docs
 ├── frontend/                   # React 18 + TypeScript + Vite app
+├── extensions/                 # Bundled extensions + manifest/runtime SDK
+├── plugins/                    # Locally installed extensions (optional)
 ├── harness/                    # Backend contract/architecture tests
 ├── jobs/                       # Job records, lifecycle, runner, worker
 ├── observability/              # Trace/event persistence
@@ -42,6 +44,7 @@ agent_platform_base/
 ## Ownership Rules
 
 - Tool execution belongs to `core/tools/`.
+- Extension contributions are declared by `extension.json`; tools and routes stay inside the extension namespace.
 - Business capability descriptions belong to `agent/capabilities/catalog.py`.
 - Durable runtime state belongs to `agent/runtime/durable/`.
 - User-visible workbench state belongs to `frontend/src/stores/`.

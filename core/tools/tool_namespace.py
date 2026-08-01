@@ -139,6 +139,13 @@ def enrich_spec(spec):
     tool_id = getattr(spec, "tool_id", "")
     base = dict(getattr(spec, "metadata", {}) or {})
     base.update(metadata_for_tool(tool_id))
+    if getattr(spec, "metadata", {}).get("extension_id"):
+        base.update({
+            "category": getattr(spec, "category", "general"),
+            "governance_status": "active",
+            "governance_reason": "validated extension contribution",
+            "planner_visible": bool(getattr(spec, "callable_by_llm", True)),
+        })
     spec.metadata = base
     return spec
 

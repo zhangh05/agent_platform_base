@@ -18,6 +18,7 @@ import {
   IconMenu,
 } from "../components/Icon";
 import { NAV_ITEMS } from "../config/nav";
+import { ExtensionRegistryProvider, useExtensionRegistry } from "../extensions/registry";
 import {
   TaskWorkbench,
   CapabilityCenter,
@@ -87,6 +88,7 @@ function RouteFallback() {
 
 function AppRoutes() {
   const location = useLocation();
+  const extensionRegistry = useExtensionRegistry();
   const routes: Record<string, ReactNode> = {
     "/workbench": <ErrorBoundary><TaskWorkbench /></ErrorBoundary>,
     "/knowledge": <ErrorBoundary><KnowledgeLibrary /></ErrorBoundary>,
@@ -99,8 +101,13 @@ function AppRoutes() {
     "/audit": <ErrorBoundary><RuntimeAudit /></ErrorBoundary>,
     "/reviews": <ErrorBoundary><ReviewCenter /></ErrorBoundary>,
   };
+  const extensionRoute = extensionRegistry.routes.find((route) => route.path === location.pathname);
   const content = location.pathname === "/" ? (
     <Navigate to="/workbench" replace />
+  ) : extensionRoute ? (
+    <ErrorBoundary><extensionRoute.Component /></ErrorBoundary>
+  ) : !extensionRegistry.ready && location.pathname.startsWith("/extensions/") ? (
+    <RouteFallback />
   ) : routes[location.pathname] ?? (
     <ErrorBoundary>
       <div className="hero">
@@ -195,6 +202,8 @@ function AppShell({ canLogout, onLogout, username }: { canLogout: boolean; onLog
   const setMobileNavOpen = useUIStore((s) => s.setMobileNavOpen);
 
   const location = useLocation();
+  const extensionRegistry = useExtensionRegistry();
+  const navigationItems = [...NAV_ITEMS, ...extensionRegistry.navItems];
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -249,7 +258,7 @@ function AppShell({ canLogout, onLogout, username }: { canLogout: boolean; onLog
         </Link>
 
         <nav className="app-nav" aria-label="主导航">
-          {NAV_ITEMS.map((item) => <NavItem key={item.to} {...item} />)}
+          {navigationItems.map((item) => <NavItem key={item.to} {...item} />)}
         </nav>
 
         <div className="app-spacer" />
@@ -365,7 +374,9 @@ export function App() {
 
   return (
     <BrowserRouter>
-      <AppShell canLogout={authState === "authenticated"} onLogout={handleLogout} username={username} />
+      <ExtensionRegistryProvider>
+        <AppShell canLogout={authState === "authenticated"} onLogout={handleLogout} username={username} />
+      </ExtensionRegistryProvider>
     </BrowserRouter>
   );
 }

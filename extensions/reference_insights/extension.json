@@ -1,0 +1,24 @@
+{
+  "extension_id": "reference.insights",
+  "name": "文本洞察示例扩展",
+  "version": "1.0.0",
+  "api_version": "1",
+  "min_platform_version": "3.29.0",
+  "description": "验证工具、接口和前端页面可以通过扩展契约端到端接入。",
+  "capabilities": ["text_insights"],
+  "tools": ["reference.insights.summarize"],
+  "permissions": ["workspace:read"],
+  "routes": ["/api/extensions/reference.insights/status"],
+  "frontend_modules": ["frontend/ReferenceInsights.tsx"],
+  "frontend_routes": [
+    {
+      "path": "/extensions/reference.insights/overview",
+      "module": "frontend/ReferenceInsights.tsx",
+      "label": "扩展示例",
+      "description": "查看扩展接入状态",
+      "icon": "box",
+      "order": 90
+    }
+  ],
+  "entrypoint": "backend.py:register"
+}

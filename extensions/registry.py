@@ -10,7 +10,10 @@ from .manifest import ExtensionManifest, ExtensionValidationError
 
 
 class ExtensionRegistry:
-    def __init__(self, roots: Iterable[str | Path] = ("extensions", "plugins")):
+    def __init__(self, roots: Iterable[str | Path] | None = None):
+        if roots is None:
+            project_root = Path(__file__).resolve().parent.parent
+            roots = (project_root / "extensions", project_root / "plugins")
         self.roots = tuple(Path(root) for root in roots)
 
     def discover(self) -> list[ExtensionManifest]:

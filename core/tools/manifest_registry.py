@@ -198,11 +198,44 @@ MANIFESTS: dict[str, CapabilityManifest] = {
 
 
 def get_manifest(tool_id: str) -> CapabilityManifest | None:
-    return MANIFESTS.get(tool_id)
+    manifest = MANIFESTS.get(tool_id)
+    if manifest is not None:
+        return manifest
+    try:
+        from extensions.runtime import get_extension_tool_specs
+        for spec, _handler in get_extension_tool_specs():
+            if spec.tool_id == tool_id:
+                return CapabilityManifest(
+                    tool_id=spec.tool_id,
+                    category=spec.category or "general",
+                    display_name=spec.name or spec.tool_id,
+                    description=spec.description,
+                    action_class="execute" if spec.permission_action == "exec" else (
+                        spec.permission_action if spec.permission_action in {"read", "write", "network"} else "read"
+                    ),
+                    risk_level=spec.risk_level,
+                    requires_approval=spec.requires_approval,
+                    side_effects="write" if spec.permission_action == "write" else "none",
+                    idempotency="safe_to_retry" if spec.permission_action == "read" else "unknown",
+                    timeout_seconds=spec.timeout_seconds,
+                    input_schema=spec.input_schema,
+                )
+    except Exception:
+        return None
+    return None
 
 
 def get_all_manifests() -> dict[str, CapabilityManifest]:
-    return dict(MANIFESTS)
+    manifests = dict(MANIFESTS)
+    try:
+        from extensions.runtime import get_extension_tool_specs
+        for spec, _handler in get_extension_tool_specs():
+            extension_manifest = get_manifest(spec.tool_id)
+            if extension_manifest:
+                manifests[spec.tool_id] = extension_manifest
+    except Exception:
+        pass
+    return manifests
 
 
 def validate_all() -> tuple[list[str], int]:

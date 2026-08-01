@@ -6,6 +6,7 @@ import { Sidebar } from "./Sidebar";
 import { NAV_ITEMS } from "../config/nav";
 import { preloadRoute } from "../routes";
 import type { NavItem } from "../config/nav";
+import { useExtensionRegistry } from "../extensions/registry";
 
 interface AppLayoutProps {
   children: ReactNode;
@@ -46,6 +47,8 @@ export function AppLayout({ children }: AppLayoutProps) {
   const mobileNavOpen = useUIStore((s) => s.mobileNavOpen);
   const setMobileNavOpen = useUIStore((s) => s.setMobileNavOpen);
   const location = useLocation();
+  const extensionRegistry = useExtensionRegistry();
+  const navigationItems = [...NAV_ITEMS, ...extensionRegistry.navItems];
   const mainRef = useRef<HTMLElement | null>(null);
 
   // On route change, move focus to the main region so keyboard / screen-reader
@@ -139,7 +142,7 @@ export function AppLayout({ children }: AppLayoutProps) {
         {(sidebarOpen || mobileNavOpen) && (
           <div className="sidebar-scroll">
             <nav className="mobile-nav" aria-label="页面导航">
-              {NAV_ITEMS.map((item) => <MobileNavItem key={item.to} {...item} />)}
+              {navigationItems.map((item) => <MobileNavItem key={item.to} {...item} />)}
             </nav>
             <Sidebar />
           </div>

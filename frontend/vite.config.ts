@@ -2,6 +2,7 @@
 /// <reference types="node" />
 import { defineConfig, loadEnv } from "vite";
 import react from "@vitejs/plugin-react";
+import { resolve } from "node:path";
 
 /**
  * Vite config.
@@ -33,9 +34,21 @@ export default defineConfig(({ mode }) => {
 
   return {
     plugins: [react()],
+    resolve: {
+      // Extension source lives outside `frontend/`, while the platform owns
+      // the shared browser runtime. Resolve framework packages from this app
+      // so extensions never bundle a second React/Zustand instance.
+      alias: {
+        react: resolve(process.cwd(), "node_modules/react"),
+        "react-dom": resolve(process.cwd(), "node_modules/react-dom"),
+        zustand: resolve(process.cwd(), "node_modules/zustand"),
+      },
+      dedupe: ["react", "react-dom", "zustand"],
+    },
     server: {
       host: "0.0.0.0",
       port: 5273,
+      fs: { allow: [resolve(process.cwd(), "..")] },
       proxy,
     },
     preview: {
