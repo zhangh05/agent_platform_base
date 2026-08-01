@@ -289,12 +289,15 @@ function AppShell({ canLogout, onLogout, username }: { canLogout: boolean; onLog
 export function App() {
   const [authState, setAuthState] = useState<"checking" | "public" | "authenticated" | "login">("checking");
   const [username, setUsername] = useState("");
+  const [showAuthLoading, setShowAuthLoading] = useState(false);
 
   useEffect(() => {
     const ctrl = new AbortController();
+    const loadingTimer = window.setTimeout(() => setShowAuthLoading(true), 280);
     authApi
       .status(ctrl.signal)
       .then((res) => {
+        clearTimeout(loadingTimer);
         if (!res.login_enabled) {
           setAuthState("public");
           return;
@@ -306,8 +309,14 @@ export function App() {
         }
         setAuthState("login");
       })
-      .catch(() => setAuthState("login"));
-    return () => ctrl.abort();
+      .catch(() => {
+        clearTimeout(loadingTimer);
+        setAuthState("login");
+      });
+    return () => {
+      clearTimeout(loadingTimer);
+      ctrl.abort();
+    };
   }, []);
 
   const handleLogin = useCallback((nextUsername: string) => {
@@ -323,7 +332,7 @@ export function App() {
   }, []);
 
   if (authState === "checking") {
-    return <div className="auth-loading" role="status">正在检查登录状态…</div>;
+    return <div className={`auth-loading${showAuthLoading ? " visible" : ""}`} role="status" aria-label="加载中" />;
   }
 
   if (authState === "login") {

@@ -198,8 +198,23 @@ body {
   min-height: 100%;
   display: grid;
   place-items: center;
-  color: var(--text-3);
   background: var(--bg);
+  opacity: 0;
+  transition: opacity var(--dur-2) var(--ease);
+}
+
+.auth-loading.visible {
+  opacity: 1;
+}
+
+.auth-loading::after {
+  width: 24px;
+  height: 24px;
+  content: "";
+  border: 2px solid var(--line);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 760ms linear infinite;
 }
 
 .login-page {
