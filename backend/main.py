@@ -121,6 +121,22 @@ def create_app():
         })
         return jsonify(body)
 
+    # ── Browser login ──
+    @app.route("/api/auth/status")
+    def api_auth_status():
+        from backend.core.auth import handle_auth_status
+        return handle_auth_status()
+
+    @app.route("/api/auth/login", methods=["POST"])
+    def api_auth_login():
+        from backend.core.auth import handle_auth_login
+        return handle_auth_login()
+
+    @app.route("/api/auth/logout", methods=["POST"])
+    def api_auth_logout():
+        from backend.core.auth import handle_auth_logout
+        return handle_auth_logout()
+
     # ── Version ──
     @app.route("/api/version")
     def api_version():

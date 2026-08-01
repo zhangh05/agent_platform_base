@@ -22,12 +22,12 @@ export default defineConfig(({ mode }) => {
   const proxy = {
     "/api": {
       target: devApiTarget,
-      changeOrigin: true,
+      changeOrigin: false,
     },
     "/ws": {
       target: devApiTarget,
       ws: true,
-      changeOrigin: true,
+      changeOrigin: false,
     },
   };
 

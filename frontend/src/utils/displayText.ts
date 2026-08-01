@@ -17,10 +17,33 @@ export function sanitizeAssistantText(text: string): string {
     .replace(/^\s*(exec|knowledge|workspace|web|memory|agent|browser|system|data|text|report|skill)\.\w+\s*:\s*\{.*\}\s*$/gm, "")
     .replace(/^\{[\s\S]*"canonical_tool_id"[\s\S]*\}$\s*/gm, "")
     .replace(/^\s*<function_calls>[\s\S]*?<\/function_calls>\s*$/gm, "");
-  return stripThinkTags(cleaned)
+  return normalizeAssistantMarkdown(stripThinkTags(cleaned))
     .replace(/^\s*(reasoning|思考过程)\s*[:：][\s\S]*?(?=\n\s*(answer|回答|结论)\s*[:：]|\s*$)/gim, "")
     .replace(/\n{4,}/g, "\n\n")
     .trim();
+}
+
+function normalizeAssistantMarkdown(text: string): string {
+  let normalized = text
+    .replace(/\\r\\n/g, "\n")
+    .replace(/\\n/g, "\n")
+    .replace(/\\t/g, "  ")
+    .replace(/\\`/g, "`");
+
+  normalized = normalized.replace(/(^|\n)(\s*(?:[^|\n]*[：:]\s*)?)((?:\|[^\n]*\|\s*\n?){2,})/g, (_match, prefix: string, intro: string, tableBlock: string) => {
+    const table = tableBlock
+      .split("\n")
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .join("\n");
+    const lead = intro.trim() ? `${intro.trim()}\n` : "";
+    return `${prefix}${lead}${table}`;
+  });
+
+  normalized = normalized.replace(/(\S)\s+(\|[^\n]*\|)\n(\|?\s*:?-{2,})/g, "$1\n$2\n$3");
+  normalized = normalized.replace(/\n{3,}/g, "\n\n");
+
+  return normalized;
 }
 
 /**

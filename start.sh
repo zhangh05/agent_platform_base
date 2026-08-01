@@ -4,6 +4,14 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
+CONFIG_ALLOWED_ORIGINS=""
+if [ -f "$ROOT/.env.local" ]; then
+    CONFIG_ALLOWED_ORIGINS="$(sed -n 's/^AGENT_PLATFORM_ALLOWED_ORIGINS=//p' "$ROOT/.env.local" | tail -n 1)"
+    set -a
+    # shellcheck disable=SC1091
+    . "$ROOT/.env.local"
+    set +a
+fi
 BACKEND_PORT="${BACKEND_PORT:-8011}"
 FRONTEND_PORT="${FRONTEND_PORT:-5273}"
 BACKEND_HOST="${BACKEND_HOST:-0.0.0.0}"
@@ -231,6 +239,9 @@ start_backend() {
     for ip in $(local_ips); do
         allowed_origins="$allowed_origins,http://$ip:$FRONTEND_PORT"
     done
+    if [ -n "$CONFIG_ALLOWED_ORIGINS" ]; then
+        allowed_origins="$allowed_origins,$CONFIG_ALLOWED_ORIGINS"
+    fi
     export AGENT_PLATFORM_ALLOWED_ORIGINS="$allowed_origins"
 
     log "[backend] Starting on $BACKEND_HOST:$BACKEND_PORT..."

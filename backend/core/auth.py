@@ -4,9 +4,13 @@
 Environment variables:
   AGENT_PLATFORM_AUTH_ENABLED  — "true" or "false" (default: false)
   AGENT_PLATFORM_API_TOKEN     — shared secret for Bearer / X-API-Key auth
+  AGENT_PLATFORM_LOGIN_ENABLED — "true" or "false" (default: true when username/password are set)
+  AGENT_PLATFORM_LOGIN_USERNAME — web login username
+  AGENT_PLATFORM_LOGIN_PASSWORD — web login password
 
 Public endpoints (no auth required even when enabled):
   - /api/health, /health
+  - /api/auth/login, /api/auth/status
   - Static frontend resources (non-/api/* paths)
 
 Auth methods:
@@ -21,6 +25,7 @@ import os
 import logging
 import hmac
 import ipaddress
+import secrets
 from functools import wraps
 from urllib.parse import urlparse
 
@@ -40,6 +45,21 @@ def _get_api_token() -> str:
     return os.environ.get("AGENT_PLATFORM_API_TOKEN", "").strip()
 
 
+def _get_login_username() -> str:
+    return os.environ.get("AGENT_PLATFORM_LOGIN_USERNAME", "").strip()
+
+
+def _get_login_password() -> str:
+    return os.environ.get("AGENT_PLATFORM_LOGIN_PASSWORD", "")
+
+
+def _is_login_enabled() -> bool:
+    raw = os.environ.get("AGENT_PLATFORM_LOGIN_ENABLED", "").strip().lower()
+    if raw:
+        return raw in ("true", "1", "yes", "on")
+    return bool(_get_login_username() and _get_login_password())
+
+
 # ── Module-level defaults (used for logging) ──
 _AUTH_ENABLED = _is_auth_enabled()
 _API_TOKEN = _get_api_token()
@@ -47,6 +67,8 @@ _API_TOKEN = _get_api_token()
 # ── Public endpoints (no auth required) ──
 _PUBLIC_PREFIXES = frozenset([
     "/api/health",
+    "/api/auth/login",
+    "/api/auth/status",
     "/health",
 ])
 
@@ -80,6 +102,15 @@ def _unauthorized_response(message: str = "Missing or invalid API token") -> fla
     }), 401
 
 
+def _login_disabled_response() -> flask.Response:
+    return flask.jsonify({
+        "ok": False,
+        "error": "login_disabled",
+        "message": "Login is not enabled on this server.",
+        "status": 404,
+    }), 404
+
+
 def _extract_token_from_request() -> str | None:
     """Extract bearer or API-key token from request headers.
 
@@ -102,6 +133,55 @@ def _extract_token_from_request() -> str | None:
         return query_token
 
     return None
+
+
+def _request_has_valid_api_token() -> bool:
+    api_token = _get_api_token()
+    token = _extract_token_from_request()
+    return bool(api_token and token and hmac.compare_digest(str(token), str(api_token)))
+
+
+def is_current_session_authenticated() -> bool:
+    if not _is_login_enabled():
+        return False
+    username = _get_login_username()
+    session_user = flask.session.get("agent_platform_user")
+    return bool(username and session_user and hmac.compare_digest(str(session_user), username))
+
+
+def handle_auth_status():
+    return flask.jsonify({
+        "ok": True,
+        "login_enabled": _is_login_enabled(),
+        "authenticated": is_current_session_authenticated(),
+        "username": flask.session.get("agent_platform_user") if is_current_session_authenticated() else "",
+    })
+
+
+def handle_auth_login():
+    if not _is_login_enabled():
+        return _login_disabled_response()
+    payload = flask.request.get_json(silent=True) or {}
+    username = str(payload.get("username", ""))
+    password = str(payload.get("password", ""))
+    configured_username = _get_login_username()
+    configured_password = _get_login_password()
+    if (
+        configured_username
+        and configured_password
+        and hmac.compare_digest(username, configured_username)
+        and hmac.compare_digest(password, configured_password)
+    ):
+        flask.session.clear()
+        flask.session["agent_platform_user"] = configured_username
+        return flask.jsonify({"ok": True, "username": configured_username})
+    logger.warning("login_denied: username=%s", username[:64])
+    return _unauthorized_response("Invalid username or password")
+
+
+def handle_auth_logout():
+    flask.session.clear()
+    return flask.jsonify({"ok": True})
 
 
 def _configured_dev_origins() -> set[str]:
@@ -190,6 +270,15 @@ def register_auth_middleware(app: flask.Flask) -> None:
 
     Call after all routes are defined but before first request.
     """
+    if _is_login_enabled():
+        app.secret_key = os.environ.get("AGENT_PLATFORM_SESSION_SECRET", "").strip() or _get_api_token() or secrets.token_urlsafe(32)
+        app.config.update(
+            SESSION_COOKIE_HTTPONLY=True,
+            SESSION_COOKIE_SAMESITE=os.environ.get("AGENT_PLATFORM_SESSION_SAMESITE", "Lax"),
+            SESSION_COOKIE_SECURE=os.environ.get("AGENT_PLATFORM_SESSION_SECURE", "false").strip().lower() in ("true", "1", "yes", "on"),
+        )
+        logger.info("Web login authentication enabled")
+
     if not _AUTH_ENABLED:
         logger.info("API token authentication disabled; CSRF origin checks remain enabled")
     elif not _API_TOKEN:
@@ -216,6 +305,14 @@ def register_auth_middleware(app: flask.Flask) -> None:
             return _csrf_response()
 
         # Re-evaluate env vars each request (for test monkeypatching)
+        if _is_login_enabled():
+            if is_public_path(path):
+                return None
+            if is_current_session_authenticated() or _request_has_valid_api_token():
+                return None
+            logger.warning("auth_denied: path=%s reason=no_login_session", path)
+            return _unauthorized_response("Login required")
+
         if not _is_auth_enabled():
             return None
 

@@ -40,6 +40,7 @@ const baseURL = envBase
 export const apiClient: AxiosInstance = axios.create({
   baseURL,
   timeout: TIMEOUTS.default,
+  withCredentials: true,
   headers: {
     Accept: "application/json",
   },

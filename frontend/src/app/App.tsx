@@ -1,5 +1,6 @@
 import { BrowserRouter, Link, Navigate, NavLink, Route, Routes, useLocation } from "react-router-dom";
 import { Suspense, memo, useCallback, useEffect, useState } from "react";
+import type { FormEvent } from "react";
 import { ErrorBoundary } from "../components/ErrorBoundary";
 import { SkeletonList, SkeletonTable } from "../components/common";
 import { AppLayout } from "../layouts/AppLayout";
@@ -7,7 +8,8 @@ import { ToastHost } from "../components/ToastHost";
 import { ConfirmHost } from "../components/ConfirmDialog";
 import { useUIStore } from "../stores/session";
 import { initWebVitals } from "../utils/webVitals";
-import { systemApi } from "../api";
+import { authApi, systemApi } from "../api";
+import { isApiError } from "../types";
 import {
   IconChevronLeft,
   IconChevronRight,
@@ -79,7 +81,72 @@ function RouteFallback() {
   );
 }
 
-function AppShell() {
+function LoginScreen({ onLogin }: { onLogin: (username: string) => void }) {
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setError("");
+    setSubmitting(true);
+    try {
+      const res = await authApi.login(username.trim(), password);
+      onLogin(res.username || username.trim());
+    } catch (err) {
+      if (isApiError(err) && err.status === 403) {
+        setError("当前访问地址未被后端允许，请联系管理员检查访问地址配置");
+      } else if (isApiError(err) && err.code === "network") {
+        setError("无法连接后端服务，请检查访问地址或端口是否放通");
+      } else {
+        setError("账号或密码不正确");
+      }
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <main className="login-page">
+      <section className="login-panel" aria-labelledby="login-title">
+        <div className="login-brand">
+          <span className="login-kicker">Agent Platform Base</span>
+          <h1 id="login-title">登录工作台</h1>
+          <p>请输入管理员凭据继续。</p>
+        </div>
+        <form className="login-form" onSubmit={handleSubmit}>
+          <label>
+            <span>账户</span>
+            <input
+              autoComplete="username"
+              value={username}
+              onChange={(event) => setUsername(event.target.value)}
+              disabled={submitting}
+            />
+          </label>
+          <label>
+            <span>密码</span>
+            <input
+              autoComplete="current-password"
+              type="password"
+              value={password}
+              onChange={(event) => setPassword(event.target.value)}
+              disabled={submitting}
+              autoFocus
+            />
+          </label>
+          {error ? <div className="login-error" role="alert">{error}</div> : null}
+          <button type="submit" className="login-submit" disabled={submitting || !username.trim() || !password}>
+            {submitting ? "正在登录…" : "登录"}
+          </button>
+        </form>
+      </section>
+    </main>
+  );
+}
+
+function AppShell({ canLogout, onLogout, username }: { canLogout: boolean; onLogout: () => void; username: string }) {
   const [version, setVersion] = useState<string | null>(null);
   const theme = useUIStore((s) => s.theme);
   const setTheme = useUIStore((s) => s.setTheme);
@@ -163,6 +230,18 @@ function AppShell() {
         >
           {theme === "dark" ? <IconSun size={14} /> : <IconMoon size={14} />}
         </button>
+
+        {canLogout ? (
+          <button
+            type="button"
+            className="logout-btn"
+            aria-label="退出登录"
+            title={username ? `当前用户：${username}` : "退出登录"}
+            onClick={onLogout}
+          >
+            退出
+          </button>
+        ) : null}
       </header>
 
       <div className="app-main">
@@ -208,9 +287,52 @@ function AppShell() {
 }
 
 export function App() {
+  const [authState, setAuthState] = useState<"checking" | "public" | "authenticated" | "login">("checking");
+  const [username, setUsername] = useState("");
+
+  useEffect(() => {
+    const ctrl = new AbortController();
+    authApi
+      .status(ctrl.signal)
+      .then((res) => {
+        if (!res.login_enabled) {
+          setAuthState("public");
+          return;
+        }
+        if (res.authenticated) {
+          setUsername(res.username || "");
+          setAuthState("authenticated");
+          return;
+        }
+        setAuthState("login");
+      })
+      .catch(() => setAuthState("login"));
+    return () => ctrl.abort();
+  }, []);
+
+  const handleLogin = useCallback((nextUsername: string) => {
+    setUsername(nextUsername);
+    setAuthState("authenticated");
+  }, []);
+
+  const handleLogout = useCallback(() => {
+    authApi.logout().finally(() => {
+      setUsername("");
+      setAuthState("login");
+    });
+  }, []);
+
+  if (authState === "checking") {
+    return <div className="auth-loading" role="status">正在检查登录状态…</div>;
+  }
+
+  if (authState === "login") {
+    return <LoginScreen onLogin={handleLogin} />;
+  }
+
   return (
     <BrowserRouter future={{ v7_relativeSplatPath: true, v7_startTransition: true }}>
-      <AppShell />
+      <AppShell canLogout={authState === "authenticated"} onLogout={handleLogout} username={username} />
     </BrowserRouter>
   );
 }

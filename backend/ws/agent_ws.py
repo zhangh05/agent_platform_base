@@ -94,10 +94,16 @@ def register_ws_routes(app):
                 # middleware does not protect them. Authenticate the first
                 # frame regardless of whether it is a ping or an agent turn.
                 if not _auth_checked:
-                    from backend.core.auth import _is_auth_enabled, _get_api_token
+                    from backend.core.auth import _is_auth_enabled, _is_login_enabled, _get_api_token, is_current_session_authenticated
                     import hmac as _hmac
-                    if _is_auth_enabled() and _get_api_token():
-                        if not _hmac.compare_digest(str(msg.get("auth_token", "")), _get_api_token()):
+                    if not is_current_session_authenticated():
+                        api_token = _get_api_token()
+                        frame_token = str(msg.get("auth_token", ""))
+                        has_valid_token = bool(api_token and _hmac.compare_digest(frame_token, api_token))
+                        if _is_login_enabled() and not has_valid_token:
+                            ws.send(json.dumps({"type": "error", "message": "unauthorized"}))
+                            return
+                        if _is_auth_enabled() and api_token and not has_valid_token:
                             ws.send(json.dumps({"type": "error", "message": "unauthorized"}))
                             return
                     _auth_checked = True

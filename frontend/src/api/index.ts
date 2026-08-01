@@ -48,6 +48,26 @@ export const systemApi = {
     apiRequest<AppVersion>({ method: "GET", url: "/version" }, signal),
 };
 
+export interface AuthStatus {
+  ok: boolean;
+  login_enabled: boolean;
+  authenticated: boolean;
+  username: string;
+}
+
+export const authApi = {
+  status: (signal?: AbortSignal): Promise<AuthStatus> =>
+    apiRequest<AuthStatus>({ method: "GET", url: "/auth/status" }, signal),
+  login: (username: string, password: string): Promise<{ ok: boolean; username: string }> =>
+    apiRequest<{ ok: boolean; username: string }>({
+      method: "POST",
+      url: "/auth/login",
+      data: { username, password },
+    }),
+  logout: (): Promise<{ ok: boolean }> =>
+    apiRequest<{ ok: boolean }>({ method: "POST", url: "/auth/logout" }),
+};
+
 /* ──────────────────────── 1. agent ──────────────────────── */
 
 export interface AgentRunRequest {
