@@ -423,8 +423,9 @@ def start_subagent_task(subtask_id: str, ws_id: str) -> dict:
         task.status = "running"
         task.started_at = task.started_at or _now()
         _save_task(task)
+        from storage.principal import bind_storage_principal
         worker = threading.Thread(
-            target=run_subagent_task,
+            target=bind_storage_principal(run_subagent_task),
             args=(subtask_id, ws_id),
             name=f"subagent-{subtask_id}",
             daemon=True,
@@ -663,8 +664,9 @@ def _run_ssot_runtime_with_timeout(
     """
     import concurrent.futures
     executor = concurrent.futures.ThreadPoolExecutor(max_workers=1, thread_name_prefix="subagent")
+    from storage.principal import bind_storage_principal
     future = executor.submit(
-        run_fn,
+        bind_storage_principal(run_fn),
         session,
         turn,
         None,

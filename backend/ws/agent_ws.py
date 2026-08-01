@@ -34,7 +34,7 @@ _MAX_WS_METADATA_JSON = 16384
 
 # v3.16: Global connection registry for broadcasting system events
 # (job_updated, run_status) to all active clients.
-_active_ws_connections: dict[str, tuple[str, object]] = {}  # ws_key → (workspace_id, ws)
+_active_ws_connections: dict[str, tuple[str, str, object]] = {}  # key → (username, workspace_id, ws)
 _active_ws_lock = threading.Lock()
 
 
@@ -45,12 +45,14 @@ def broadcast_ws_event(event: dict) -> None:
     if not workspace_id:
         _log.warning("Dropped WebSocket broadcast without workspace_id: %s", event.get("name"))
         return
+    from storage.principal import current_storage_principal
+    username = current_storage_principal()
     payload = json.dumps({"type": "event", "name": event["name"], "data": event.get("data", {})}, ensure_ascii=True, default=str)
     dead: list[str] = []
     with _active_ws_lock:
         recipients = [
-            (key, ws) for key, (ws_id, ws) in _active_ws_connections.items()
-            if ws_id == workspace_id
+            (key, ws) for key, (owner, ws_id, ws) in _active_ws_connections.items()
+            if ws_id == workspace_id and owner == username
         ]
     for key, ws in recipients:
         try:
@@ -75,6 +77,9 @@ def register_ws_routes(app):
 
         # When auth is enabled, enforce token on the first message
         _auth_checked = False
+        authenticated_username = ""
+        authenticated_role = ""
+        authenticated_workspaces: list[str] = []
         ws_key = ""
         active_cancel_event = None
 
@@ -94,18 +99,23 @@ def register_ws_routes(app):
                 # middleware does not protect them. Authenticate the first
                 # frame regardless of whether it is a ping or an agent turn.
                 if not _auth_checked:
-                    from backend.core.auth import _is_auth_enabled, _is_login_enabled, _get_api_token, is_current_session_authenticated
+                    from backend.core.auth import _is_auth_enabled, _is_identity_enabled, _is_login_enabled, _get_api_token, is_current_session_authenticated
                     import hmac as _hmac
                     if not is_current_session_authenticated():
                         api_token = _get_api_token()
                         frame_token = str(msg.get("auth_token", ""))
                         has_valid_token = bool(api_token and _hmac.compare_digest(frame_token, api_token))
-                        if _is_login_enabled() and not has_valid_token:
+                        if (_is_login_enabled() or _is_identity_enabled()) and not has_valid_token:
                             ws.send(json.dumps({"type": "error", "message": "unauthorized"}))
                             return
                         if _is_auth_enabled() and api_token and not has_valid_token:
                             ws.send(json.dumps({"type": "error", "message": "unauthorized"}))
                             return
+                    else:
+                        from flask import session
+                        authenticated_username = str(session.get("agent_platform_user") or "")
+                        authenticated_role = str(session.get("agent_platform_role") or "viewer")
+                        authenticated_workspaces = list(session.get("agent_platform_workspaces") or [])
                     _auth_checked = True
 
                 # System WebSocket — register for broadcasts, skip agent turn
@@ -117,9 +127,18 @@ def register_ws_routes(app):
                     except ValueError:
                         ws.send(json.dumps({"type": "error", "message": "invalid_workspace_id"}))
                         continue
+                    if not _ws_workspace_allowed(
+                        authenticated_username,
+                        authenticated_role,
+                        authenticated_workspaces,
+                        workspace_id,
+                        write=False,
+                    ):
+                        ws.send(json.dumps({"type": "error", "message": "workspace_forbidden"}))
+                        continue
                     ws_key = f"{id(ws)}_{threading.current_thread().ident}"
                     with _active_ws_lock:
-                        _active_ws_connections[ws_key] = (workspace_id, ws)
+                        _active_ws_connections[ws_key] = (authenticated_username, workspace_id, ws)
                     ws.send(json.dumps({"type": "pong", "message": "connected"}, ensure_ascii=True))
                     continue
 
@@ -151,6 +170,15 @@ def register_ws_routes(app):
                         "message": "Invalid session_id or workspace_id",
                     }, ensure_ascii=True))
                     continue
+                if not _ws_workspace_allowed(
+                    authenticated_username,
+                    authenticated_role,
+                    authenticated_workspaces,
+                    workspace_id,
+                    write=True,
+                ):
+                    ws.send(json.dumps({"type": "error", "message": "workspace_forbidden"}))
+                    continue
 
                 metadata = msg.get("metadata", {})
                 if not isinstance(metadata, dict):
@@ -177,6 +205,7 @@ def register_ws_routes(app):
                     args=(
                         user_input, session_id, workspace_id, metadata,
                         event_queue, error_holder, stats, active_cancel_event,
+                        authenticated_username,
                     ),
                     daemon=True,
                 )
@@ -231,9 +260,23 @@ def _same_origin_ws_request() -> bool:
     return is_allowed_browser_origin(origin, request.host)
 
 
+def _ws_workspace_allowed(username: str, role: str, allowed: list[str], workspace_id: str, *, write: bool) -> bool:
+    """Mirror HTTP workspace RBAC for the WebSocket transport."""
+    if not username:
+        return True  # platform API token
+    try:
+        from backend.core.identity import can_access_workspace, get_user
+        current = get_user(username)
+        if current is None or role == "owner":
+            return True
+        return can_access_workspace(role, allowed, workspace_id, write=write)
+    except Exception:
+        return False
+
+
 def _run_agent_thread(
     user_input, session_id, workspace_id, metadata, event_queue, error_holder,
-    stats, cancel_event=None,
+    stats, cancel_event=None, username="",
 ):
     """Run agent in background thread through the shared AgentApp contract."""
     from agent.runtime.stream_emitter import StreamEmitter
@@ -291,7 +334,10 @@ def _run_agent_thread(
         except Exception:
             _log.warning("realtime_callback event push failed seq=%s", stats.get("event_seq"), exc_info=True)
 
+    from storage.principal import storage_principal
     try:
+        principal_scope = storage_principal(username)
+        principal_scope.__enter__()
         # StreamEmitter stores callbacks thread-locally, so it must be set in
         # the same worker thread that runs AgentApp.submit_user_message().
         StreamEmitter.set_realtime_callback(realtime_callback)
@@ -377,6 +423,10 @@ def _run_agent_thread(
         error_holder["error"] = str(e)[:500]
         put_terminal({"type": "error", "message": str(e)[:500]})
     finally:
+        try:
+            principal_scope.__exit__(None, None, None)
+        except Exception:
+            pass
         try:
             StreamEmitter.clear_realtime_callback()
         except Exception:

@@ -19,6 +19,7 @@ import "../../components/RuntimeEventTimeline.css";
 import { formatFileSize } from "../../utils/format";
 import { QUICK_CHIPS } from "./WorkbenchQuickChips";
 import { MessageRow } from "./components/MessageRow";
+import { scopedLocalStorageKey } from "../../utils/userScope";
 
 /* ── View mode ── */
 type ViewMode = "chat" | "timeline";
@@ -262,7 +263,7 @@ export function TaskWorkbench() {
   }, [currentWorkspaceId]);
 
   // Input draft persistence: save to localStorage debounced, restore on mount
-  const draftKey = `draft-${currentSessionId ?? "_scratch"}`;
+  const draftKey = scopedLocalStorageKey(`draft-${currentSessionId ?? "_scratch"}`);
   useEffect(() => {
     const saved = safeGetLocal(draftKey);
     if (saved) setInput(saved);

@@ -52,9 +52,9 @@ def _get_max_size() -> int:
     return MAX_FILE_SIZE
 
 
-def _get_ws_root():
-    from storage.paths import get_workspace_root
-    return get_workspace_root()
+def _workspace_path(workspace_id: str):
+    from storage.paths import workspace_root
+    return workspace_root(workspace_id)
 
 
 def _safe_name(name: str) -> str:
@@ -167,7 +167,6 @@ def _validate_source_path(source_path: str, workspace_id: str = "") -> bool:
 
     allowed_parents = []
     root_path = ROOT.resolve()
-    ws_root = _get_ws_root().resolve()
 
     allowed_parents.extend([
         runtime_root() / "uploads",
@@ -177,7 +176,7 @@ def _validate_source_path(source_path: str, workspace_id: str = "") -> bool:
         root_path / "shared" / "samples",
     ])
     if workspace_id:
-        ws = ws_root / workspace_id
+        ws = _workspace_path(workspace_id).resolve()
         for rel in ALLOWED_SOURCE_DIRS:
             if rel.startswith("shared"):
                 continue
@@ -364,7 +363,7 @@ def save_artifact(workspace_id: str, content: str = "", source_path: str = "",
         # If FileStore fails, artifact creation fails.
         return None
 
-    ws = _get_ws_root() / workspace_id
+    ws = _workspace_path(workspace_id)
     fpath = (ws / file_rec.path).resolve()
     fname = file_rec.path
     title = title or f"{artifact_type}: {art_id}"
@@ -555,10 +554,10 @@ def delete_artifact(workspace_id: str, artifact_id: str, hard: bool = False) -> 
                 and item.relative_path == relative_path
                 for item in records
             ):
-                workspace_root = (_get_ws_root() / workspace_id).resolve()
-                candidate = (workspace_root / relative_path).resolve()
+                scoped_root = _workspace_path(workspace_id).resolve()
+                candidate = (scoped_root / relative_path).resolve()
                 try:
-                    candidate.relative_to(workspace_root)
+                    candidate.relative_to(scoped_root)
                     candidate.unlink(missing_ok=True)
                 except (OSError, ValueError):
                     _LOG.warning("artifact payload cleanup failed: %s", candidate, exc_info=True)

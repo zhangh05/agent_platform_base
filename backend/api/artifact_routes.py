@@ -8,7 +8,7 @@ from artifacts.store import (
     list_artifacts, get_artifact, read_artifact_content,
     delete_artifact, promote_artifact, summarize_artifact_content,
     get_run_artifacts, get_artifact_governance, artifact_governance_summary,
-    _get_max_size, _get_ws_root,
+    _get_max_size,
 )
 
 

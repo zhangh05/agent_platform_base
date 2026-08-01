@@ -241,8 +241,9 @@ def _schedule_session_memory_reflection(ws_id: str, session_id: str) -> None:
                 exc_info=True,
             )
 
+    from storage.principal import bind_storage_principal
     threading.Thread(
-        target=run,
+        target=bind_storage_principal(run),
         name=f"memory-reflect-{session_id[:16]}",
         daemon=True,
     ).start()

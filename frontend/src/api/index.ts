@@ -113,6 +113,7 @@ export interface AuthStatus {
   role?: string;
   organization_id?: string;
   workspace_ids?: string[];
+  home_workspace_id?: string;
   identity_enabled?: boolean;
   platform_admin?: boolean;
 }
@@ -152,13 +153,14 @@ export const workflowsApi = {
 };
 
 export interface OrganizationRecord { organization_id: string; name: string; workspace_ids: string[] }
-export interface IdentityUser { username: string; role: string; organization_id: string; workspace_ids: string[] }
+export interface IdentityUser { username: string; role: string; organization_id: string; workspace_ids: string[]; home_workspace_id?: string; enabled?: boolean }
 export interface MembershipRecord { username: string; role: string; organization_id: string; workspace_ids: string[] }
 export const identityApi = {
   organizations: () => apiRequest<{ ok: boolean; organizations: OrganizationRecord[] }>({ method: "GET", url: "/identity/organizations" }),
   createOrganization: (organization_id: string, name: string) => apiRequest<{ ok: boolean; organization: OrganizationRecord }>({ method: "POST", url: "/identity/organizations", data: { organization_id, name } }),
   users: () => apiRequest<{ ok: boolean; users: IdentityUser[] }>({ method: "GET", url: "/identity/users" }),
   saveUser: (user: IdentityUser & { password: string }) => apiRequest<{ ok: boolean; user: IdentityUser }>({ method: "POST", url: "/identity/users", data: user }),
+  updateUser: (username: string, user: Omit<IdentityUser, "username"> & { password?: string }) => apiRequest<{ ok: boolean; user: IdentityUser }>({ method: "PUT", url: `/identity/users/${encodeURIComponent(username)}`, data: user }),
   memberships: (organizationId: string) => apiRequest<{ ok: boolean; memberships: MembershipRecord[] }>({ method: "GET", url: `/identity/organizations/${organizationId}/memberships` }),
 };
 

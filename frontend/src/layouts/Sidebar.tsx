@@ -65,6 +65,7 @@ interface RecentRunSummary {
 export function Sidebar() {
   const currentWorkspaceId = useSessionStore((s) => s.currentWorkspaceId);
   const currentSessionId = useSessionStore((s) => s.currentSessionId);
+  const setCurrentWorkspace = useSessionStore((s) => s.setCurrentWorkspace);
   const setCurrentSession = useSessionStore((s) => s.setCurrentSession);
   const switchWbSession = useWorkbenchStore((s) => s.switchSession);
   const toast = useToastStore((s) => s.show);
@@ -157,6 +158,11 @@ export function Sidebar() {
     (s) => sessionsApi.list(currentWorkspaceId, "active", s),
     [currentWorkspaceId],
     (d) => (d.sessions ?? []).length === 0,
+  );
+  const workspaceList = useAsync<Awaited<ReturnType<typeof workspacesApi.list>>>(
+    (s) => workspacesApi.list(s),
+    [],
+    (d) => (d.workspaces ?? []).length === 0,
   );
   const recentRuns = useAsync<{ runs: RecentRunSummary[] }>(
     (s) =>
@@ -286,19 +292,31 @@ export function Sidebar() {
 
   return (
     <div data-testid="sidebar" className="sidebar-content">
-      {/* 工作区 — 固定 default */}
+      {/* 工作区 — 后端已按当前用户过滤授权范围 */}
       <div className="sidebar-panel">
         <div className="sidebar-panel-title">
           <IconWorkspace size={12} />
           <span>工作区</span>
         </div>
-        <div className="list" data-testid="ws-list">
-          <div className="list-item active cursor-default">
-            <span className="status-dot ok" />
-            <span className="title">默认工作区</span>
-            <span className="meta">default</span>
-          </div>
-        </div>
+        <AsyncView state={workspaceList.state} onRetry={workspaceList.reload} skeleton="list" emptyText="暂无可用工作区">
+          {(data) => (
+            <div className="list" data-testid="ws-list">
+              {(data.workspaces ?? []).map((workspace) => (
+                <button
+                  type="button"
+                  key={workspace.workspace_id}
+                  className={`list-item${workspace.workspace_id === currentWorkspaceId ? " active" : ""}`}
+                  onClick={() => setCurrentWorkspace(workspace.workspace_id)}
+                  aria-label={`工作区：${workspace.name || workspace.workspace_id}`}
+                >
+                  <span className="status-dot ok" />
+                  <span className="title">{workspace.name || workspace.workspace_id}</span>
+                  <span className="meta">{workspace.workspace_id}</span>
+                </button>
+              ))}
+            </div>
+          )}
+        </AsyncView>
       </div>
 
       {/* 会话 */}

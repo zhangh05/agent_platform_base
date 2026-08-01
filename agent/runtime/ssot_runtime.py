@@ -304,8 +304,9 @@ def _record_experience_and_maybe_reflect(
             return
         pending = pending_experiences(workspace_id, session_id, limit=12)
         if should_consolidate(pending):
+            from storage.principal import bind_storage_principal
             future = _MEMORY_WRITE_EXECUTOR.submit(
-                consolidate_experiences,
+                bind_storage_principal(consolidate_experiences),
                 workspace_id=workspace_id,
                 session_id=session_id,
                 task_id=task_id,
@@ -655,7 +656,8 @@ def _run_async(awaitable):
 
     import threading
 
-    thread = threading.Thread(target=_target, daemon=True)
+    from storage.principal import bind_storage_principal
+    thread = threading.Thread(target=bind_storage_principal(_target), daemon=True)
     thread.start()
     thread.join()
     if "error" in box:

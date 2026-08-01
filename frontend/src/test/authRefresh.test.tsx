@@ -4,6 +4,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "../app/App";
 import { authApi } from "../api";
 import { installMockApi, resetMocks } from "./mockServer";
+import { useSessionStore } from "../stores/session";
+import { useWorkbenchStore } from "../stores/workbench";
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -17,6 +19,8 @@ describe("authenticated refresh", () => {
   beforeEach(() => {
     resetMocks();
     installMockApi();
+    useSessionStore.getState().resetForUser("default");
+    useWorkbenchStore.getState().resetForUser();
     window.history.replaceState({}, "", "/workbench");
   });
 
@@ -86,5 +90,44 @@ describe("authenticated refresh", () => {
     });
     expect(nextStage).not.toBe(previousStage);
     expect(window.location.pathname).toBe("/data");
+  });
+
+  it("shows user management only to the platform administrator", async () => {
+    vi.spyOn(authApi, "status").mockResolvedValue({
+      ok: true,
+      login_enabled: true,
+      authenticated: true,
+      username: "Admin",
+      role: "admin",
+      identity_enabled: true,
+      platform_admin: true,
+    });
+    render(<App />);
+    expect(await screen.findByTestId("nav-users")).toHaveTextContent("用户与权限");
+  });
+
+  it("hides and guards user management for an ordinary user", async () => {
+    window.history.replaceState({}, "", "/users");
+    localStorage.setItem("agent_platform_active_user", "Admin");
+    useSessionStore.getState().setCurrentWorkspace("default");
+    useWorkbenchStore.getState().switchSession("admin-session");
+    useWorkbenchStore.getState().appendUser("管理员的私有内容", "admin-session");
+    vi.spyOn(authApi, "status").mockResolvedValue({
+      ok: true,
+      login_enabled: true,
+      authenticated: true,
+      username: "alice",
+      role: "viewer",
+      identity_enabled: true,
+      platform_admin: false,
+      workspace_ids: ["team_a"],
+      home_workspace_id: "team_a",
+    });
+    render(<App />);
+    await waitFor(() => expect(window.location.pathname).toBe("/workbench"));
+    expect(screen.queryByTestId("nav-users")).not.toBeInTheDocument();
+    expect(useSessionStore.getState().currentWorkspaceId).toBe("team_a");
+    expect(useSessionStore.getState().currentSessionId).toBeNull();
+    expect(useWorkbenchStore.getState().bySession).toEqual({});
   });
 });

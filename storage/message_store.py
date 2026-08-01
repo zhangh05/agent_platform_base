@@ -23,10 +23,10 @@ from storage.redaction import redact_text
 from storage.ids import validate_workspace_id, validate_session_id
 from storage.workspace_store import ensure_workspace
 
-from storage.paths import get_workspace_root
+from storage.paths import workspace_root
 
-def _ws_root() -> Path:
-    return get_workspace_root()
+def _ws_root(ws_id: str) -> Path:
+    return workspace_root(validate_workspace_id(ws_id))
 
 # Content > this value is stored as an artifact, not inline.
 ARTIFACT_THRESHOLD = 50_000  # characters, not bytes — 50K chars ≈ 150KB for CJK  # 50 KB
@@ -67,12 +67,12 @@ class SessionMessageStore:
 
     def _session_path(self) -> Path:
         safe = _safe_run_id(self.session_id)
-        return _ws_root() / self.ws_id / "sessions" / f"{safe}.json"
+        return _ws_root(self.ws_id) / "sessions" / f"{safe}.json"
 
     def _messages_dir(self) -> Path:
         """Directory holding independent full-message files."""
         safe = _safe_run_id(self.session_id)
-        return _ws_root() / self.ws_id / "sessions" / safe / "messages"
+        return _ws_root(self.ws_id) / "sessions" / safe / "messages"
 
     def _msg_path(self, run_id: str, role: str) -> Path:
         """File path for a single full message."""

@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Optional
 
 from storage.atomic_io import atomic_write_json, atomic_write_text
-from storage.paths import ensure_workspace_storage_dirs, get_workspace_root, workspace_root
+from storage.paths import ensure_workspace_storage_dirs, get_workspace_root, workspace_catalog_root, workspace_root
 from storage.run_record_store import is_run_record_file
 from storage.ids import is_valid_workspace_id, validate_workspace_id
 from storage.locking import FileLock
@@ -95,6 +95,7 @@ def list_workspaces() -> list[dict]:
             {
                 "workspace_id": ws_id,
                 "organization_id": _workspace_organization(ws_id),
+                "owner_username": _workspace_owner(ws_id),
                 "name": _workspace_display_name(ws_id),
                 "created_at": _workspace_created_at(ws_id),
                 "is_default": ws_id == "default",
@@ -235,10 +236,18 @@ def _default_state(ws_id: str) -> dict:
 
 def _workspace_organization(ws_id: str) -> str:
     try:
-        value = json.loads((workspace_root(ws_id) / "sys" / "state.json").read_text(encoding="utf-8"))
+        value = json.loads((workspace_catalog_root(ws_id) / "sys" / "state.json").read_text(encoding="utf-8"))
         return str(value.get("organization_id") or "default")
     except (OSError, json.JSONDecodeError, AttributeError):
         return "default"
+
+
+def _workspace_owner(ws_id: str) -> str:
+    try:
+        value = json.loads((workspace_catalog_root(ws_id) / "sys" / "state.json").read_text(encoding="utf-8"))
+        return str(value.get("owner_username") or "")
+    except (OSError, json.JSONDecodeError, AttributeError):
+        return ""
 
 
 def _count_runs(ws_id: str) -> int:
@@ -329,7 +338,7 @@ def _count_context_items(ws_id: str, item_type: str) -> int:
 
 
 def _workspace_display_name(ws_id: str) -> str:
-    yaml_path = workspace_root(ws_id) / "sys" / "workspace.yaml"
+    yaml_path = workspace_catalog_root(ws_id) / "sys" / "workspace.yaml"
     if yaml_path.is_file():
         try:
             for line in yaml_path.read_text(encoding="utf-8").splitlines():
@@ -342,7 +351,7 @@ def _workspace_display_name(ws_id: str) -> str:
 
 
 def _workspace_created_at(ws_id: str) -> str:
-    yaml_path = workspace_root(ws_id) / "sys" / "workspace.yaml"
+    yaml_path = workspace_catalog_root(ws_id) / "sys" / "workspace.yaml"
     if yaml_path.is_file():
         try:
             for line in yaml_path.read_text(encoding="utf-8").splitlines():

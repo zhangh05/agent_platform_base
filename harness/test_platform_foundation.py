@@ -46,7 +46,7 @@ def test_local_object_store_is_atomic_and_scoped(tmp_path):
 def test_identity_uses_hashed_password_and_role(monkeypatch, tmp_path):
     monkeypatch.setenv("AGENT_PLATFORM_WORKSPACE_DIR", str(tmp_path))
     user = upsert_user("alice", "correct horse", "admin")
-    assert user == {"username": "alice", "role": "admin", "organization_id": "default", "workspace_ids": ["default"]}
+    assert user == {"username": "alice", "role": "admin", "organization_id": "default", "workspace_ids": ["default"], "home_workspace_id": "", "enabled": True}
     assert verify_user("alice", "correct horse")["role"] == "admin"
     assert verify_user("alice", "wrong") is None
     assert "password_hash" not in json.dumps(list_users())
@@ -89,6 +89,73 @@ def test_identity_viewer_is_workspace_scoped(monkeypatch, tmp_path):
     all_workspaces = client.get("/api/workspaces", headers=service_headers).get_json()["workspaces"]
     assert {item["workspace_id"] for item in all_workspaces} >= {"tenant_a", "tenant_b"}
     assert client.post("/api/workspaces", json={"workspace_id": "service_created"}, headers=service_headers).status_code == 200
+
+
+def test_admin_exclusively_manages_ordinary_user_access(monkeypatch, tmp_path):
+    monkeypatch.setenv("NA_WORKSPACE_ROOT", str(tmp_path / "workspaces"))
+    monkeypatch.setenv("AGENT_PLATFORM_IDENTITY_ENABLED", "true")
+    monkeypatch.setenv("AGENT_PLATFORM_LOGIN_USERNAME", "Admin")
+    monkeypatch.setenv("AGENT_PLATFORM_LOGIN_PASSWORD", "admin-password")
+    monkeypatch.setenv("AGENT_PLATFORM_SESSION_SECRET", "admin-session-secret")
+    from storage.workspace_store import ensure_workspace
+    ensure_workspace("default")
+    ensure_workspace("team_a")
+    from backend.main import create_app
+    app = create_app()
+    app.config.update(TESTING=True)
+    headers = {"Origin": "http://localhost:5273"}
+
+    admin = app.test_client()
+    assert admin.post("/api/auth/login", json={"username": "Admin", "password": "admin-password"}, headers=headers).status_code == 200
+    status = admin.get("/api/auth/status", headers=headers).get_json()
+    assert status["platform_admin"] is True
+    assert {item["workspace_id"] for item in admin.get("/api/workspaces", headers=headers).get_json()["workspaces"]} >= {"default", "team_a"}
+
+    created = admin.post("/api/identity/users", json={"username": "alice", "password": "user-password", "role": "operator", "organization_id": "default", "workspace_ids": ["team_a"]}, headers=headers)
+    assert created.status_code == 201
+    assert created.get_json()["user"]["enabled"] is True
+    home_workspace_id = created.get_json()["user"]["home_workspace_id"]
+    assert home_workspace_id == "team_a"
+    assert created.get_json()["user"]["workspace_ids"] == ["team_a"]
+    assert admin.post("/api/identity/users", json={"username": "another_admin", "password": "password", "role": "admin", "organization_id": "default", "workspace_ids": ["default"]}, headers=headers).status_code == 400
+
+    ordinary = app.test_client()
+    assert ordinary.post("/api/auth/login", json={"username": "alice", "password": "user-password"}, headers=headers).status_code == 200
+    ordinary_status = ordinary.get("/api/auth/status", headers=headers).get_json()
+    assert ordinary_status["platform_admin"] is False
+    assert ordinary_status["home_workspace_id"] == home_workspace_id
+    assert [item["workspace_id"] for item in ordinary.get("/api/workspaces", headers=headers).get_json()["workspaces"]] == ["team_a"]
+    assert ordinary.get("/api/identity/users", headers=headers).status_code == 403
+    from backend.ws.agent_ws import _ws_workspace_allowed
+    assert _ws_workspace_allowed("alice", "operator", ["team_a"], "team_a", write=True) is True
+    assert _ws_workspace_allowed("alice", "operator", ["team_a"], "default", write=False) is False
+
+    alice_session = ordinary.post(
+        "/api/sessions",
+        json={"workspace_id": "team_a", "title": "alice-only"},
+        headers=headers,
+    )
+    assert alice_session.status_code == 200
+    assert [item["title"] for item in ordinary.get("/api/sessions?workspace_id=team_a", headers=headers).get_json()["sessions"]] == ["alice-only"]
+
+    bob_created = admin.post(
+        "/api/identity/users",
+        json={"username": "bob", "password": "bob-password", "role": "operator", "organization_id": "default", "workspace_ids": ["team_a"]},
+        headers=headers,
+    )
+    assert bob_created.status_code == 201
+    bob = app.test_client()
+    assert bob.post("/api/auth/login", json={"username": "bob", "password": "bob-password"}, headers=headers).status_code == 200
+    assert bob.get("/api/sessions?workspace_id=team_a", headers=headers).get_json()["sessions"] == []
+    assert bob.post("/api/sessions", json={"workspace_id": "team_a", "title": "bob-only"}, headers=headers).status_code == 200
+    assert [item["title"] for item in bob.get("/api/sessions?workspace_id=team_a", headers=headers).get_json()["sessions"]] == ["bob-only"]
+    assert [item["title"] for item in ordinary.get("/api/sessions?workspace_id=team_a", headers=headers).get_json()["sessions"]] == ["alice-only"]
+
+    updated = admin.put("/api/identity/users/alice", json={"role": "operator", "organization_id": "default", "workspace_ids": ["team_a"], "enabled": False}, headers=headers)
+    assert updated.status_code == 200
+    assert updated.get_json()["user"]["enabled"] is False
+    ordinary.post("/api/auth/logout", headers=headers)
+    assert ordinary.post("/api/auth/login", json={"username": "alice", "password": "user-password"}, headers=headers).status_code == 401
 
 
 def test_model_candidates_include_active_fallback(monkeypatch):

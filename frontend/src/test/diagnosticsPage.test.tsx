@@ -3,12 +3,14 @@ import { describe, expect, it } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { MemoryRouter } from "../router";
 import { Diagnostics } from "../pages/Diagnostics/Diagnostics";
+import { scopedLocalStorageKey, setActiveUserScope } from "../utils/userScope";
 import { useSessionStore } from "../stores/session";
 
 describe("Diagnostics page", () => {
   it("renders cached diagnostics without loops and does not hide selfcheck warnings", () => {
     useSessionStore.setState({ currentWorkspaceId: "default" });
-    localStorage.setItem("diagnostics_v1", JSON.stringify({
+    setActiveUserScope("Admin", "default");
+    localStorage.setItem(scopedLocalStorageKey("diagnostics_v1"), JSON.stringify({
       ts: "2026-07-22T00:00:00.000Z",
       health: {
         summary: { ok: 1, warning: 0, error: 0 },

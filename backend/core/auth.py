@@ -159,16 +159,18 @@ def is_current_session_authenticated() -> bool:
             return False
         from backend.core.identity import get_user
         identity_user = get_user(username)
-        if identity_user:
+        if identity_user and identity_user.get("enabled", True):
             flask.session["agent_platform_role"] = identity_user.get("role", "viewer")
             flask.session["agent_platform_org"] = identity_user.get("organization_id", "default")
             flask.session["agent_platform_workspaces"] = list(identity_user.get("workspace_ids") or [])
+            flask.session["agent_platform_home_workspace"] = identity_user.get("home_workspace_id", "")
             return True
         configured_username = _get_login_username()
         if configured_username and hmac.compare_digest(username, configured_username):
             flask.session["agent_platform_role"] = "admin"
             flask.session["agent_platform_org"] = "default"
             flask.session["agent_platform_workspaces"] = ["default"]
+            flask.session["agent_platform_home_workspace"] = "default"
             return True
         flask.session.clear()
         return False
@@ -197,6 +199,7 @@ def handle_auth_status():
         "role": flask.session.get("agent_platform_role", "") if authenticated else "",
         "organization_id": flask.session.get("agent_platform_org", "") if authenticated else "",
         "workspace_ids": list(flask.session.get("agent_platform_workspaces") or []) if authenticated else [],
+        "home_workspace_id": flask.session.get("agent_platform_home_workspace", "") if authenticated else "",
         "identity_enabled": _is_identity_enabled(),
         "platform_admin": platform_admin,
     })
@@ -220,6 +223,7 @@ def handle_auth_login():
             flask.session["agent_platform_role"] = identity_user.get("role", "viewer")
             flask.session["agent_platform_org"] = identity_user.get("organization_id", "default")
             flask.session["agent_platform_workspaces"] = list(identity_user.get("workspace_ids") or [identity_user.get("organization_id", "default")])
+            flask.session["agent_platform_home_workspace"] = identity_user.get("home_workspace_id", "")
             return flask.jsonify({"ok": True, "username": identity_user["username"], "role": identity_user.get("role", "viewer")})
     if (
         configured_username
@@ -233,6 +237,7 @@ def handle_auth_login():
             flask.session["agent_platform_role"] = "admin"
             flask.session["agent_platform_org"] = "default"
             flask.session["agent_platform_workspaces"] = ["default"]
+            flask.session["agent_platform_home_workspace"] = "default"
         return flask.jsonify({"ok": True, "username": configured_username})
     logger.warning("login_denied: username=%s", username[:64])
     return _unauthorized_response("Invalid username or password")
@@ -367,7 +372,13 @@ def register_auth_middleware(app: flask.Flask) -> None:
         if _is_login_enabled() or _is_identity_enabled():
             if is_public_path(path):
                 return None
-            if is_current_session_authenticated() or _request_has_valid_api_token():
+            session_authenticated = is_current_session_authenticated()
+            if session_authenticated or _request_has_valid_api_token():
+                if session_authenticated:
+                    from storage.principal import set_storage_principal
+                    flask.g._storage_principal_token = set_storage_principal(
+                        str(flask.session.get("agent_platform_user") or "")
+                    )
                 denied = _authorize_identity_request()
                 return denied
             logger.warning("auth_denied: path=%s reason=no_login_session", path)
@@ -403,7 +414,10 @@ def register_auth_middleware(app: flask.Flask) -> None:
     # Register teardown to clean up any auth state if needed
     @app.teardown_request
     def _auth_teardown(exc=None):
-        pass  # No persistent auth state to clean up
+        token = getattr(flask.g, "_storage_principal_token", None)
+        if token is not None:
+            from storage.principal import reset_storage_principal
+            reset_storage_principal(token)
 
 
 def _authorize_identity_request():
@@ -412,6 +426,9 @@ def _authorize_identity_request():
         return None
     path = flask.request.path
     role = str(flask.session.get("agent_platform_role") or "viewer")
+    from backend.core.identity import get_user
+    current_user = get_user(str(flask.session.get("agent_platform_user") or ""))
+    platform_admin = current_user is None or role == "owner"
     if path.startswith("/api/identity/") and not _role_at_least(role, "admin"):
         return flask.jsonify({"ok": False, "error": "forbidden"}), 403
     if path == "/api/workspaces" and flask.request.method == "POST" and not _role_at_least(role, "admin"):
@@ -434,6 +451,8 @@ def _authorize_identity_request():
             return extension_denied
     workspace_id = _request_workspace_id()
     if not workspace_id:
+        return None
+    if platform_admin:
         return None
     try:
         from backend.core.identity import can_access_workspace

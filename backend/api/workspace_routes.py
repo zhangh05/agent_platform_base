@@ -159,10 +159,12 @@ def register_workspace_routes(app):
         try:
             from flask import session
             from backend.core.auth import _request_has_valid_api_token
-            from backend.core.identity import identity_enabled
+            from backend.core.identity import get_user, identity_enabled
             if identity_enabled() and not _request_has_valid_api_token():
-                allowed = set(session.get("agent_platform_workspaces") or [])
-                workspaces = [item for item in workspaces if item.get("workspace_id") in allowed]
+                current = get_user(str(session.get("agent_platform_user") or ""))
+                if current is not None and str(session.get("agent_platform_role") or "") != "owner":
+                    allowed = set(session.get("agent_platform_workspaces") or [])
+                    workspaces = [item for item in workspaces if item.get("workspace_id") in allowed]
         except Exception:
             workspaces = []
         return jsonify({"workspaces": workspaces})

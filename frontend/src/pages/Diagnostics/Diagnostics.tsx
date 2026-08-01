@@ -13,6 +13,7 @@ import { LoadingState } from "../../components/common";
 import { IconRefresh } from "../../components/Icon";
 import { formatDate } from "../../utils/format";
 import { PageHeader, DataTable } from "../../components/ui";
+import { scopedLocalStorageKey } from "../../utils/userScope";
 
 const CACHE_KEY = "diagnostics_v1";
 
@@ -99,6 +100,7 @@ const COMP_DESC: Record<string, string> = {
 // external store changed forever and causes "Maximum update depth exceeded".
 const cacheStore = (() => {
   let snapshot: DiagnosticsCache | null | undefined;
+  let snapshotKey = "";
   const listeners = new Set<() => void>();
   return {
     subscribe(listener: () => void): () => void {
@@ -106,10 +108,15 @@ const cacheStore = (() => {
       return () => listeners.delete(listener);
     },
     getSnapshot(): DiagnosticsCache | null {
-      if (snapshot === undefined) snapshot = readCache();
+      const currentKey = scopedLocalStorageKey(CACHE_KEY);
+      if (snapshot === undefined || snapshotKey !== currentKey) {
+        snapshotKey = currentKey;
+        snapshot = readCache();
+      }
       return snapshot;
     },
     publish(next: DiagnosticsCache) {
+      snapshotKey = scopedLocalStorageKey(CACHE_KEY);
       snapshot = next;
       listeners.forEach((listener) => listener());
     },
@@ -123,13 +130,13 @@ function parseCache(json: string | null): DiagnosticsCache | null {
 
 function readCache(): DiagnosticsCache | null {
   if (typeof localStorage === "undefined") return null;
-  return parseCache(localStorage.getItem(CACHE_KEY));
+  return parseCache(localStorage.getItem(scopedLocalStorageKey(CACHE_KEY)));
 }
 
 function writeCache(data: Omit<DiagnosticsCache, "ts">) {
   try {
     const entry: DiagnosticsCache = { ts: new Date().toISOString(), ...data };
-    localStorage.setItem(CACHE_KEY, JSON.stringify(entry));
+    localStorage.setItem(scopedLocalStorageKey(CACHE_KEY), JSON.stringify(entry));
     cacheStore.publish(entry);
   } catch { /* quota exceeded — silently ignore */ }
 }

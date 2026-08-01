@@ -15,6 +15,7 @@ export interface NavItem {
   label: string;
   testid: string;
   Icon: ComponentType<{ size?: number }>;
+  adminOnly?: boolean;
 }
 
 export const NAV_ITEMS: NavItem[] = [
@@ -28,5 +29,5 @@ export const NAV_ITEMS: NavItem[] = [
   { to: "/settings", label: "系统设置", testid: "nav-settings", Icon: IconSettings },
   { to: "/extensions", label: "扩展管理", testid: "nav-extensions", Icon: IconLayers },
   { to: "/workflows", label: "应用编排", testid: "nav-workflows", Icon: IconLayers },
-  { to: "/organizations", label: "组织与成员", testid: "nav-organizations", Icon: IconSettings },
+  { to: "/users", label: "用户与权限", testid: "nav-users", Icon: IconSettings, adminOnly: true },
 ];

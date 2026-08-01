@@ -10,7 +10,15 @@
  */
 
 import { create } from "zustand";
-import { persist } from "zustand/middleware";
+import { createJSONStorage, persist } from "zustand/middleware";
+import type { StateStorage } from "zustand/middleware";
+import { scopedLocalStorageKey, setActiveWorkspaceScope } from "../utils/userScope";
+
+const userSessionStorage: StateStorage = {
+  getItem: () => localStorage.getItem(scopedLocalStorageKey("na_session", false)),
+  setItem: (_name, value) => localStorage.setItem(scopedLocalStorageKey("na_session", false), value),
+  removeItem: () => localStorage.removeItem(scopedLocalStorageKey("na_session", false)),
+};
 
 export function isInternalSessionId(id: string | null | undefined): boolean {
   const value = (id || "").trim();
@@ -27,6 +35,7 @@ interface SessionState {
 
   setCurrentWorkspace: (id: string) => void;
   setCurrentSession: (id: string | null) => void;
+  resetForUser: (workspaceId: string) => void;
   reset: () => void;
 }
 
@@ -37,8 +46,12 @@ export const useSessionStore = create<SessionState>()(
       currentSessionId: null,
       sessionListVersion: 0,
       bumpSessionList: () => set((s) => ({ sessionListVersion: s.sessionListVersion + 1 })),
-      setCurrentWorkspace: (id) => set({ currentWorkspaceId: id, currentSessionId: null }),
+      setCurrentWorkspace: (id) => {
+        setActiveWorkspaceScope(id);
+        set({ currentWorkspaceId: id, currentSessionId: null });
+      },
       setCurrentSession: (id) => set({ currentSessionId: isInternalSessionId(id) ? null : id }),
+      resetForUser: (workspaceId) => set({ currentWorkspaceId: workspaceId, currentSessionId: null }),
       reset: () =>
         set({
           currentSessionId: null,
@@ -46,6 +59,7 @@ export const useSessionStore = create<SessionState>()(
     }),
     {
       name: "na_session",
+      storage: createJSONStorage(() => userSessionStorage),
       partialize: (s) => ({
         currentWorkspaceId: s.currentWorkspaceId,
         currentSessionId: isInternalSessionId(s.currentSessionId) ? null : s.currentSessionId,

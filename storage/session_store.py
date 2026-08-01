@@ -18,16 +18,16 @@ from storage.ids import validate_session_id, validate_workspace_id
 from storage.workspace_store import ensure_workspace
 from storage.atomic_io import atomic_write_json
 
-from storage.paths import get_workspace_root
+from storage.paths import workspace_root
 
-def _ws_root() -> Path:
-    return get_workspace_root()
+def _ws_root(ws_id: str) -> Path:
+    return workspace_root(validate_workspace_id(ws_id))
 _LOG = logging.getLogger(__name__)
 
 
 def _session_dir(ws_id: str) -> Path:
     """Return the sessions directory for a workspace."""
-    return _ws_root() / ws_id / "sessions"
+    return _ws_root(ws_id) / "sessions"
 
 
 def _session_path(session_id: str, ws_id: str) -> Path:
@@ -242,7 +242,7 @@ def delete_session_permanently(
         _log.debug("run scan failed for session=%s ws=%s", session_id, ws_id)
 
     # ── Delete run records and trace files ──
-    runs_dir = _ws_root() / ws_id / "runs"
+    runs_dir = _ws_root(ws_id) / "runs"
     for rid in run_ids:
         # Delete run record
         run_file = runs_dir / f"{rid}.json"
@@ -431,7 +431,7 @@ def get_session_messages(session_id: str, ws_id: str = "default") -> List[Dict[s
 def _tool_only_assistant_projection(ws_id: str, run_id: str) -> str:
     """Build a readable assistant message for historical tool-only turns."""
     try:
-        decision_path = _ws_root() / ws_id / "runs" / f"{run_id}.decision.json"
+        decision_path = _ws_root(ws_id) / "runs" / f"{run_id}.decision.json"
         if decision_path.is_file():
             decision = json.loads(decision_path.read_text(encoding="utf-8"))
             summary = decision.get("tool_execution_summary") or {}

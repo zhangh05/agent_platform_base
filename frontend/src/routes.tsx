@@ -61,8 +61,8 @@ export const ExtensionCenter = lazyWithPreload(() =>
 export const WorkflowStudio = lazyWithPreload(() =>
   import("./pages/WorkflowStudio/WorkflowStudio").then((m) => ({ default: m.WorkflowStudio })),
 );
-export const OrganizationCenter = lazyWithPreload(() =>
-  import("./pages/OrganizationCenter/OrganizationCenter").then((m) => ({ default: m.OrganizationCenter })),
+export const UserManagement = lazyWithPreload(() =>
+  import("./pages/UserManagement/UserManagement").then((m) => ({ default: m.UserManagement })),
 );
 // Path → preload thunk. Keys match `NAV_ITEMS.to` plus the secondary routes.
 const PRELOAD: Record<string, () => PageModule> = {
@@ -78,7 +78,7 @@ const PRELOAD: Record<string, () => PageModule> = {
   "/reviews": ReviewCenter.preload,
   "/extensions": ExtensionCenter.preload,
   "/workflows": WorkflowStudio.preload,
-  "/organizations": OrganizationCenter.preload,
+  "/users": UserManagement.preload,
 };
 
 const ROUTE_PATHS = Object.keys(PRELOAD);
@@ -90,8 +90,9 @@ export function preloadRoute(path: string): Promise<void> {
 }
 
 /** Warm every remaining page chunk once the initial screen is settled. */
-export async function preloadAppRoutes(currentPath = ""): Promise<void> {
-  const paths = ROUTE_PATHS.filter((path) => path !== currentPath);
+export async function preloadAppRoutes(currentPath = "", allowedPaths?: string[]): Promise<void> {
+  const allowed = allowedPaths ? new Set(allowedPaths) : null;
+  const paths = ROUTE_PATHS.filter((path) => path !== currentPath && (!allowed || allowed.has(path)));
   // Load sequentially so background warming never competes with the active
   // page's API requests on slower links.
   for (const path of paths) {

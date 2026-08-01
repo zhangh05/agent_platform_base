@@ -5,15 +5,15 @@ import json, time as _time, hashlib, logging, re, uuid
 from dataclasses import dataclass, field, asdict
 from pathlib import Path
 from typing import Any, Callable, Optional, Literal
-from storage.paths import get_workspace_root
+from storage.paths import workspace_root
 from storage.atomic_io import atomic_write_json
 from storage.time_utils import from_iso, now_iso, to_iso
 from storage.redaction import contains_secret as storage_contains_secret
 from storage.redaction import redact_dict, redact_text
 
 
-def _ws_root() -> Path:
-    return get_workspace_root()
+def _ws_root(ws_id: str) -> Path:
+    return workspace_root(ws_id)
 
 Scope = Literal["global","workspace","session","task"]
 MemoryType = Literal[
@@ -129,7 +129,8 @@ class MemoryStore:
         return validate_workspace_id(ws_id)
 
     def _dir(self, ws_id: str) -> Path:
-        return _ws_root() / self._validated_ws_id(ws_id) / "memory"
+        validated = self._validated_ws_id(ws_id)
+        return _ws_root(validated) / "memory"
 
     def _path(self, ws_id: str, memory_id: str) -> Path:
         memory_id = str(memory_id or "")

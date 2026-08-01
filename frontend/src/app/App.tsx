@@ -6,10 +6,12 @@ import { SkeletonList, SkeletonTable } from "../components/common";
 import { AppLayout } from "../layouts/AppLayout";
 import { ToastHost } from "../components/ToastHost";
 import { ConfirmHost } from "../components/ConfirmDialog";
-import { useUIStore } from "../stores/session";
+import { useSessionStore, useUIStore } from "../stores/session";
+import { useWorkbenchStore } from "../stores/workbench";
 import { initWebVitals } from "../utils/webVitals";
 import { authApi, systemApi } from "../api";
 import { isApiError } from "../types";
+import { ACTIVE_USER_KEY, scopedLocalStorageKey, setActiveUserScope, setActiveWorkspaceScope } from "../utils/userScope";
 import {
   IconChevronLeft,
   IconChevronRight,
@@ -32,13 +34,45 @@ import {
   RuntimeAudit,
   ExtensionCenter,
   WorkflowStudio,
-  OrganizationCenter,
+  UserManagement,
   preloadRoute,
   preloadAppRoutes,
 } from "../routes";
 
 function formatVersion(version: string): string {
   return version.startsWith("v") ? version : `v${version}`;
+}
+
+function clearUserScopedFrontendState(nextSession?: Awaited<ReturnType<typeof authApi.status>>) {
+  const allowed = nextSession?.workspace_ids || [];
+  const currentWorkspace = useSessionStore.getState().currentWorkspaceId;
+  const nextWorkspace = nextSession?.platform_admin
+    ? (currentWorkspace || nextSession.home_workspace_id || "default")
+    : (nextSession?.home_workspace_id || (allowed.includes(currentWorkspace) ? currentWorkspace : allowed[0]) || "");
+  setActiveUserScope(nextSession?.username || "", nextWorkspace);
+  useSessionStore.getState().resetForUser(nextWorkspace);
+  if (nextSession?.username) void useWorkbenchStore.persist.rehydrate();
+  else {
+    try {
+      localStorage.removeItem(scopedLocalStorageKey("na_workbench"));
+      localStorage.removeItem(scopedLocalStorageKey("na_session", false));
+    } catch { /* storage can be unavailable */ }
+    void useWorkbenchStore.persist.rehydrate();
+  }
+  try { sessionStorage.removeItem("workbench_auto_prompt"); } catch { /* noop */ }
+}
+
+function applyAuthenticatedSession(nextSession: Awaited<ReturnType<typeof authApi.status>>) {
+  let previousUsername = "";
+  try { previousUsername = localStorage.getItem(ACTIVE_USER_KEY) || ""; } catch { /* noop */ }
+  const currentWorkspace = useSessionStore.getState().currentWorkspaceId;
+  const allowed = nextSession.workspace_ids || [];
+  const invalidWorkspace = !nextSession.platform_admin && !allowed.includes(currentWorkspace);
+  if (previousUsername !== nextSession.username || invalidWorkspace) {
+    clearUserScopedFrontendState(nextSession);
+  } else if (nextSession.home_workspace_id && !currentWorkspace) {
+    useSessionStore.getState().setCurrentWorkspace(nextSession.home_workspace_id);
+  }
 }
 
 const NavItem = memo(function NavItem({ to, label, testid, Icon }: import("../config/nav").NavItem) {
@@ -89,7 +123,7 @@ function RouteFallback() {
   );
 }
 
-function AppRoutes() {
+function AppRoutes({ canManageUsers }: { canManageUsers: boolean }) {
   const location = useLocation();
   const extensionRegistry = useExtensionRegistry();
   const routes: Record<string, ReactNode> = {
@@ -105,7 +139,8 @@ function AppRoutes() {
     "/reviews": <ErrorBoundary><ReviewCenter /></ErrorBoundary>,
     "/extensions": <ErrorBoundary><ExtensionCenter /></ErrorBoundary>,
     "/workflows": <ErrorBoundary><WorkflowStudio /></ErrorBoundary>,
-    "/organizations": <ErrorBoundary><OrganizationCenter /></ErrorBoundary>,
+    "/users": canManageUsers ? <ErrorBoundary><UserManagement /></ErrorBoundary> : <Navigate to="/workbench" replace />,
+    "/organizations": <Navigate to={canManageUsers ? "/users" : "/workbench"} replace />,
   };
   const extensionRoute = extensionRegistry.routes.find((route) => route.path === location.pathname);
   const content = location.pathname === "/" ? (
@@ -132,7 +167,7 @@ function AppRoutes() {
   );
 }
 
-function LoginScreen({ onLogin }: { onLogin: (username: string) => void }) {
+function LoginScreen({ onLogin }: { onLogin: (status: Awaited<ReturnType<typeof authApi.status>>) => void }) {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
@@ -143,8 +178,8 @@ function LoginScreen({ onLogin }: { onLogin: (username: string) => void }) {
     setError("");
     setSubmitting(true);
     try {
-      const res = await authApi.login(username.trim(), password);
-      onLogin(res.username || username.trim());
+      await authApi.login(username.trim(), password);
+      onLogin(await authApi.status());
     } catch (err) {
       if (isApiError(err) && err.status === 403) {
         setError("当前访问地址未被后端允许，请联系管理员检查访问地址配置");
@@ -164,7 +199,7 @@ function LoginScreen({ onLogin }: { onLogin: (username: string) => void }) {
         <div className="login-brand">
           <span className="login-kicker">Agent Platform Base</span>
           <h1 id="login-title">登录工作台</h1>
-          <p>请输入管理员凭据继续。</p>
+          <p>请输入账户凭据继续。</p>
         </div>
         <form className="login-form" onSubmit={handleSubmit}>
           <label>
@@ -197,7 +232,7 @@ function LoginScreen({ onLogin }: { onLogin: (username: string) => void }) {
   );
 }
 
-function AppShell({ canLogout, onLogout, username }: { canLogout: boolean; onLogout: () => void; username: string }) {
+function AppShell({ canLogout, onLogout, session }: { canLogout: boolean; onLogout: () => void; session: Awaited<ReturnType<typeof authApi.status>> | null }) {
   const [version, setVersion] = useState<string | null>(null);
   const theme = useUIStore((s) => s.theme);
   const setTheme = useUIStore((s) => s.setTheme);
@@ -206,10 +241,12 @@ function AppShell({ canLogout, onLogout, username }: { canLogout: boolean; onLog
   const mobileNavOpen = useUIStore((s) => s.mobileNavOpen);
   const toggleMobileNav = useUIStore((s) => s.toggleMobileNav);
   const setMobileNavOpen = useUIStore((s) => s.setMobileNavOpen);
+  const currentWorkspaceId = useSessionStore((s) => s.currentWorkspaceId);
 
   const location = useLocation();
   const extensionRegistry = useExtensionRegistry();
-  const navigationItems = [...NAV_ITEMS, ...extensionRegistry.navItems];
+  const canManageUsers = session?.platform_admin === true;
+  const navigationItems = [...NAV_ITEMS.filter((item) => !item.adminOnly || canManageUsers), ...extensionRegistry.navItems];
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -235,11 +272,17 @@ function AppShell({ canLogout, onLogout, username }: { canLogout: boolean; onLog
   }, [location.pathname, setMobileNavOpen]);
 
   useEffect(() => {
+    if (!session?.username || !currentWorkspaceId) return;
+    setActiveWorkspaceScope(currentWorkspaceId);
+    void useWorkbenchStore.persist.rehydrate();
+  }, [session?.username, currentWorkspaceId]);
+
+  useEffect(() => {
     const timer = window.setTimeout(() => {
-      void preloadAppRoutes(location.pathname);
+      void preloadAppRoutes(location.pathname, navigationItems.map((item) => item.to));
     }, 700);
     return () => window.clearTimeout(timer);
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [canManageUsers]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <div className="app-shell">
@@ -296,7 +339,7 @@ function AppShell({ canLogout, onLogout, username }: { canLogout: boolean; onLog
             type="button"
             className="logout-btn"
             aria-label="退出登录"
-            title={username ? `当前用户：${username}` : "退出登录"}
+            title={session?.username ? `当前用户：${session.username}` : "退出登录"}
             onClick={onLogout}
           >
             退出
@@ -308,8 +351,8 @@ function AppShell({ canLogout, onLogout, username }: { canLogout: boolean; onLog
         {/* AppLayout renders the persistent sidebar + main grid once; the
             Suspense boundary keeps it visible while a route's chunk loads,
             so navigation never tears down the shell. */}
-        <AppLayout>
-          <AppRoutes />
+        <AppLayout navigationItems={navigationItems}>
+          <AppRoutes canManageUsers={canManageUsers} />
         </AppLayout>
       </div>
       <ToastHost />
@@ -320,7 +363,7 @@ function AppShell({ canLogout, onLogout, username }: { canLogout: boolean; onLog
 
 export function App() {
   const [authState, setAuthState] = useState<"checking" | "public" | "authenticated" | "login">("checking");
-  const [username, setUsername] = useState("");
+  const [session, setSession] = useState<Awaited<ReturnType<typeof authApi.status>> | null>(null);
   const [showAuthLoading, setShowAuthLoading] = useState(false);
 
   useEffect(() => {
@@ -331,11 +374,13 @@ export function App() {
       .then((res) => {
         clearTimeout(loadingTimer);
         if (!res.login_enabled) {
+          setSession(res);
           setAuthState("public");
           return;
         }
         if (res.authenticated) {
-          setUsername(res.username || "");
+          applyAuthenticatedSession(res);
+          setSession(res);
           setAuthState("authenticated");
           return;
         }
@@ -358,14 +403,16 @@ export function App() {
     };
   }, []);
 
-  const handleLogin = useCallback((nextUsername: string) => {
-    setUsername(nextUsername);
+  const handleLogin = useCallback((nextSession: Awaited<ReturnType<typeof authApi.status>>) => {
+    applyAuthenticatedSession(nextSession);
+    setSession(nextSession);
     setAuthState("authenticated");
   }, []);
 
   const handleLogout = useCallback(() => {
     authApi.logout().finally(() => {
-      setUsername("");
+      clearUserScopedFrontendState();
+      setSession(null);
       setAuthState("login");
     });
   }, []);
@@ -381,7 +428,7 @@ export function App() {
   return (
     <BrowserRouter>
       <ExtensionRegistryProvider>
-        <AppShell canLogout={authState === "authenticated"} onLogout={handleLogout} username={username} />
+        <AppShell canLogout={authState === "authenticated"} onLogout={handleLogout} session={session} />
       </ExtensionRegistryProvider>
     </BrowserRouter>
   );

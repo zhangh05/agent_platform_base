@@ -20,22 +20,24 @@ import type { StateStorage } from "zustand/middleware";
 import type { AgentResult, SessionMessage, MessageStatus, InlineToolCall, RuntimeEvent } from "../types";
 import { sanitizeAssistantText } from "../utils/displayText";
 import { runtimeAuditApi } from "../api";
+import { scopedLocalStorageKey } from "../utils/userScope";
 
 // ── Debounced localStorage — batched writes to avoid UI stutter ──
 function debouncedStorage(key: string, delayMs = 300): StateStorage {
   let timer: ReturnType<typeof setTimeout> | null = null;
   return {
-    getItem: () => localStorage.getItem(key),
+    getItem: () => localStorage.getItem(scopedLocalStorageKey(key)),
     setItem: (_: string, value: string) => {
       if (timer) clearTimeout(timer);
+      const targetKey = scopedLocalStorageKey(key);
       timer = setTimeout(() => {
-        try { localStorage.setItem(key, value); } catch {}
+        try { localStorage.setItem(targetKey, value); } catch {}
         timer = null;
       }, delayMs);
     },
     removeItem: () => {
       if (timer) clearTimeout(timer);
-      try { localStorage.removeItem(key); } catch {}
+      try { localStorage.removeItem(scopedLocalStorageKey(key)); } catch {}
     },
   };
 }
@@ -219,6 +221,7 @@ interface WorkbenchState {
   setLatestResult: (r: AgentResult, sid?: string) => void;
   /** Drop local history for current (or specified) session. */
   clear: (session_id?: string) => void;
+  resetForUser: () => void;
   mergeFromBackend: (session_id: string, serverMsgs: SessionMessage[]) => void;
   /**
    * Lazily fetch the full run detail (GET /runs/<id> + /runs/<id>/trace)
@@ -551,6 +554,16 @@ export const useWorkbenchStore = create<WorkbenchState>()(
         });
       },
 
+      resetForUser: () => set({
+        bySession: {},
+        currentSessionId: null,
+        sending: false,
+        lastUserInput: "",
+        runDetails: {},
+        runDetailLoading: {},
+        runDetailError: {},
+      }),
+
       mergeFromBackend: (session_id, serverMsgs) => {
         if (!session_id) return;
         const converted: ChatMsg[] = dedupeMessages(serverMsgs.map((m) => ({
@@ -656,7 +669,7 @@ export const useWorkbenchStore = create<WorkbenchState>()(
       merge: (persisted: unknown, current: WorkbenchState): WorkbenchState => {
         const p = persisted as Record<string, unknown> | null | undefined;
         const safe = p?.bySession;
-        const merged: Partial<WorkbenchState> = {};
+        const merged: Partial<WorkbenchState> = { bySession: {}, lastUserInput: "" };
         if (safe && typeof safe === "object" && !Array.isArray(safe)) {
           merged.bySession = safe as Record<string, ChatMsg[]>;
         }

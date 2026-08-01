@@ -23,10 +23,14 @@ def _get_ws_root():
     from storage.paths import get_workspace_root
     return get_workspace_root()
 
+def _workspace_path(ws_id):
+    from storage.paths import workspace_root
+    return workspace_root(validate_workspace_id(ws_id))
+
 def _job_dir(ws_id, job_id=""):
     ws_id = validate_workspace_id(ws_id)
     safe_job_id = validate_job_id(job_id) if job_id else ""
-    return _get_ws_root() / ws_id / "jobs" / safe_job_id
+    return _workspace_path(ws_id) / "jobs" / safe_job_id
 
 def _ensure(ws_id, job_id=""):
     d = _job_dir(ws_id, job_id)
@@ -35,13 +39,13 @@ def _ensure(ws_id, job_id=""):
 
 def _index_path(ws_id):
     ws_id = validate_workspace_id(ws_id)
-    return _get_ws_root() / ws_id / "sys" / "jobs.index.json"
+    return _workspace_path(ws_id) / "sys" / "jobs.index.json"
 
 
 def _job_lock_path(ws_id, job_id):
     ws_id = validate_workspace_id(ws_id)
     job_id = validate_job_id(job_id)
-    return _get_ws_root() / ws_id / "jobs" / ".locks" / f"{job_id}.lock"
+    return _workspace_path(ws_id) / "jobs" / ".locks" / f"{job_id}.lock"
 
 
 def create_job(rec: JobRecord) -> JobRecord:
@@ -110,7 +114,7 @@ def _session_exists(ws_id, session_id):
     """
     if not session_id:
         return False
-    base = _get_ws_root() / ws_id / "sessions"
+    base = _workspace_path(ws_id) / "sessions"
     meta_file = base / f"{session_id}.json"
     meta_dir  = base / str(session_id)
     
@@ -132,16 +136,18 @@ def _session_exists(ws_id, session_id):
 
 def list_jobs(ws_id=None, status=None, job_type=None, limit=100) -> list:
     results = []
-    ws_root = _get_ws_root()
     if ws_id:
         ws_id = validate_workspace_id(ws_id)
-    for wd in ws_root.iterdir() if not ws_id else [ws_root / ws_id]:
+    from storage.workspace_store import list_workspace_ids
+    workspace_ids = [ws_id] if ws_id else list_workspace_ids()
+    for logical_id in workspace_ids:
+        wd = _workspace_path(logical_id)
         if not wd.is_dir() or wd.name.startswith("."): continue
         jd = wd / "jobs"
         if not jd.is_dir(): continue
         for f in sorted(jd.glob("*/*.json"), reverse=True):
             if not f.name.endswith("_meta.json") and "events" not in str(f) and "log" not in str(f):
-                j = get_job(wd.name, f.stem)
+                j = get_job(logical_id, f.stem)
                 if not j: continue
                 if ws_id and j.workspace_id != ws_id: continue
                 if status and j.status != status: continue
@@ -149,7 +155,7 @@ def list_jobs(ws_id=None, status=None, job_type=None, limit=100) -> list:
                 # Filter out agent_run jobs whose session no longer exists
                 if j.job_type == "agent_run":
                     sid = (j.payload or {}).get("session_id", "")
-                    if sid and not _session_exists(wd.name, sid):
+                    if sid and not _session_exists(logical_id, sid):
                         continue
                 results.append(sanitize_job_record_for_api(j.as_dict()))
                 if len(results) >= limit: break
@@ -210,7 +216,7 @@ def reconcile_running_jobs(finished_at: str, started_before: str) -> int:
 
     reconciled = 0
     for ws_id in list_workspace_ids():
-        jobs_dir = _get_ws_root() / ws_id / "jobs"
+        jobs_dir = _workspace_path(ws_id) / "jobs"
         if not jobs_dir.is_dir():
             continue
         for path in jobs_dir.glob("*/*.json"):

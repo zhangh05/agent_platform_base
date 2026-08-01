@@ -30,7 +30,22 @@ def runtime_root() -> Path:
 
 
 def workspace_root(workspace_id: str) -> Path:
-    """Return the root directory for a specific workspace."""
+    """Return user-scoped data root for a logical workspace."""
+    from storage.ids import validate_workspace_id
+    from storage.principal import (
+        current_storage_principal,
+        principal_storage_key,
+        uses_legacy_admin_storage,
+    )
+    logical_root = get_workspace_root() / validate_workspace_id(workspace_id)
+    principal = current_storage_principal()
+    if not principal or uses_legacy_admin_storage(principal):
+        return logical_root
+    return logical_root / "users" / principal_storage_key(principal)
+
+
+def workspace_catalog_root(workspace_id: str) -> Path:
+    """Return the shared control-plane root for a logical workspace."""
     from storage.ids import validate_workspace_id
     return get_workspace_root() / validate_workspace_id(workspace_id)
 
