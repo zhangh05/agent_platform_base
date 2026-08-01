@@ -68,6 +68,16 @@ export interface InstalledExtension {
   permissions?: string[];
   metadata?: { minimum_role?: string; minimum_write_role?: string; quotas?: Record<string, number> };
   lifecycle?: { enabled: boolean; status: string; failure_count: number; last_error: string; updated_at: string };
+  source?: "bundled" | "installed";
+}
+
+export interface ExtensionPackageRecord {
+  extension_id: string;
+  version: string;
+  created_at: string;
+  published_at: string;
+  algorithm: string;
+  key_id: string;
 }
 
 export const extensionsApi = {
@@ -82,6 +92,17 @@ export const extensionsApi = {
     apiRequest<{ ok: boolean }>({ method: "POST", url: `/extensions/${extensionId}/disable` }),
   migrate: (extensionId: string, workspace_id: string) =>
     apiRequest<{ ok: boolean; schema_version: number }>({ method: "POST", url: `/extensions/${extensionId}/migrate`, data: { workspace_id } }),
+  repository: () =>
+    apiRequest<{ ok: boolean; packages: ExtensionPackageRecord[] }>({ method: "GET", url: "/extensions/repository" }),
+  publish: (file: File) => {
+    const form = new FormData();
+    form.append("package", file);
+    return apiRequest<{ ok: boolean; package: ExtensionPackageRecord }>({ method: "POST", url: "/extensions/repository/publish", data: form });
+  },
+  install: (extensionId: string, version: string, upgrade: boolean) =>
+    apiRequest<{ ok: boolean; restart_required: boolean }>({ method: "POST", url: `/extensions/repository/${extensionId}/${version}/install`, data: { upgrade } }),
+  uninstall: (extensionId: string) =>
+    apiRequest<{ ok: boolean; restart_required: boolean; recoverable_path: string }>({ method: "POST", url: `/extensions/${extensionId}/uninstall` }),
 };
 
 export interface AuthStatus {

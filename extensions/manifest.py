@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field, asdict
+import re
 from typing import Any
 
 
@@ -37,6 +38,8 @@ class ExtensionManifest:
             raise ExtensionValidationError("extension_id must be a dotted identifier")
         if not self.name.strip() or not self.version.strip():
             raise ExtensionValidationError("name and version are required")
+        if not re.fullmatch(r"(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:[-+][0-9A-Za-z.-]+)?", self.version):
+            raise ExtensionValidationError("version must use semantic versioning")
         for label, values in (("capabilities", self.capabilities), ("tools", self.tools), ("permissions", self.permissions)):
             if len(set(values)) != len(values):
                 raise ExtensionValidationError(f"{label} contains duplicates")

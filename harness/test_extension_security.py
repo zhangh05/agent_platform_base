@@ -66,9 +66,11 @@ def test_extension_routes_enforce_role_and_lifecycle(monkeypatch, tmp_path):
     }, headers=origin)
     assert created.status_code == 201
     assert operator.post("/api/extensions/network.operations/disable", headers=origin).status_code == 403
+    assert operator.post("/api/extensions/repository/publish", headers=origin).status_code == 403
 
     admin = app.test_client()
     admin.post("/api/auth/login", json={"username": "admin", "password": "password"}, headers=origin)
+    assert admin.post("/api/extensions/repository/publish", headers=origin).status_code == 400
     assert admin.post("/api/extensions/network.operations/disable", headers=origin).status_code == 200
     blocked = admin.get("/api/extensions/network.operations/assets?workspace_id=default", headers=origin)
     assert blocked.status_code == 409

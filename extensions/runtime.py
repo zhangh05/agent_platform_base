@@ -211,6 +211,7 @@ def public_extension_catalog() -> list[dict[str, Any]]:
     errors, manifests = ExtensionRegistry().validate_all()
     if errors:
         raise ExtensionValidationError("; ".join(errors))
+    registry = ExtensionRegistry()
     return [{
         "extension_id": manifest.extension_id,
         "name": manifest.name,
@@ -221,6 +222,7 @@ def public_extension_catalog() -> list[dict[str, Any]]:
         "frontend_routes": list(manifest.frontend_routes),
         "permissions": list(manifest.permissions),
         "metadata": {key: value for key, value in manifest.metadata.items() if key in {"minimum_role", "minimum_write_role", "quotas"}},
+        "source": "bundled" if _manifest_root(registry, manifest.extension_id).parent.name == "extensions" else "installed",
         "lifecycle": get_extension_state(manifest.extension_id, default_enabled=manifest.enabled),
     } for manifest in manifests]
 

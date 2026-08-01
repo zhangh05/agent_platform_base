@@ -8832,6 +8832,8 @@ summary:focus-visible,
 
 /* Extension Center */
 .extension-center-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 14px; }
+.extension-header-actions { display: flex; align-items: center; gap: 8px; }
+.extension-header-actions .disabled { pointer-events: none; opacity: .55; }
 .extension-center-error { margin-bottom: 14px; padding: 10px 12px; border: 1px solid color-mix(in srgb, var(--danger) 25%, var(--line-2)); border-radius: var(--r-8); color: var(--danger); font-size: var(--fs-11); background: color-mix(in srgb, var(--danger) 6%, var(--surface)); }
 .extension-card { display: flex; min-width: 0; flex-direction: column; gap: 14px; padding: 18px; border: 1px solid var(--line-2); border-radius: var(--r-8); background: var(--surface); }
 .extension-card-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; }
@@ -8848,4 +8850,15 @@ summary:focus-visible,
 .extension-contract dd { margin: 4px 0 0; overflow: hidden; color: var(--text-1); font-size: var(--fs-13); font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
 .extension-error { margin: 0; padding: 8px 10px; border-radius: 6px; color: var(--danger); font-size: var(--fs-11); background: color-mix(in srgb, var(--danger) 7%, var(--surface)); }
 .extension-card-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: auto; }
+.extension-repository { margin-top: 18px; padding: 18px; border: 1px solid var(--line-2); border-radius: var(--r-8); background: var(--surface); }
+.extension-section-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 14px; }
+.extension-section-head h2 { margin: 0; color: var(--text-1); font-size: var(--fs-15); }
+.extension-section-head p, .extension-section-head > span { margin: 4px 0 0; color: var(--text-4); font-size: var(--fs-11); }
+.extension-package-list { overflow: hidden; border: 1px solid var(--line-2); border-radius: 7px; }
+.extension-package-row { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 16px; padding: 11px 12px; border-bottom: 1px solid var(--line-2); }
+.extension-package-row:last-child { border-bottom: 0; }
+.extension-package-row > div { display: flex; min-width: 0; flex-direction: column; gap: 3px; }
+.extension-package-row b { overflow: hidden; color: var(--text-1); font-size: var(--fs-12); text-overflow: ellipsis; white-space: nowrap; }
+.extension-package-row small, .extension-package-row > span { color: var(--text-4); font-size: var(--fs-10); }
+.extension-repository-empty { padding: 28px; color: var(--text-4); font-size: var(--fs-11); text-align: center; background: var(--surface-2); border-radius: 7px; }
 @media (max-width: 760px) { .extension-center-grid { grid-template-columns: 1fr; } .extension-contract { grid-template-columns: repeat(2, 1fr); } }

@@ -1,6 +1,8 @@
 """Public discovery endpoint for installed UI and runtime extensions."""
 
 from flask import jsonify, request
+from pathlib import Path
+import tempfile
 
 from extensions.runtime import public_extension_catalog, register_extension_routes
 
@@ -59,5 +61,52 @@ def register_extensions(app) -> None:
         if not workspace_id:
             return jsonify({"ok": False, "error": "workspace_id is required"}), 400
         return jsonify({"ok": True, "quota": quota_status(extension_id, workspace_id, manifest.metadata.get("quotas"))})
+
+    @app.route("/api/extensions/repository")
+    def extension_repository():
+        from extensions.repository import list_packages
+        packages = [{key: value for key, value in item.items() if key != "package_path"} for item in list_packages()]
+        return jsonify({"ok": True, "packages": packages})
+
+    @app.route("/api/extensions/repository/publish", methods=["POST"])
+    def publish_extension_package():
+        from extensions.package import ExtensionPackageError, MAX_PACKAGE_BYTES
+        from extensions.repository import publish_package
+        if request.content_length and request.content_length > MAX_PACKAGE_BYTES + 1_048_576:
+            return jsonify({"ok": False, "error": "extension package is too large"}), 413
+        uploaded = request.files.get("package")
+        if uploaded is None or not uploaded.filename:
+            return jsonify({"ok": False, "error": "extension package is required"}), 400
+        with tempfile.TemporaryDirectory(prefix="extension-upload-") as directory:
+            package_path = Path(directory) / "upload.apx"
+            uploaded.save(package_path)
+            try:
+                record = publish_package(package_path)
+            except ExtensionPackageError as exc:
+                return jsonify({"ok": False, "error": str(exc)}), 400
+        public_record = {key: value for key, value in record.items() if key != "package_path"}
+        return jsonify({"ok": True, "package": public_record}), 201
+
+    @app.route("/api/extensions/repository/<extension_id>/<version>/install", methods=["POST"])
+    def install_repository_extension(extension_id, version):
+        from extensions.package import ExtensionPackageError, install_package
+        from extensions.repository import get_package
+        record = get_package(extension_id, version)
+        if not record:
+            return jsonify({"ok": False, "error": "extension_package_not_found"}), 404
+        try:
+            result = install_package(record["package_path"], upgrade=bool((request.get_json(silent=True) or {}).get("upgrade")))
+        except ExtensionPackageError as exc:
+            return jsonify({"ok": False, "error": str(exc)}), 400
+        return jsonify({**result, "restart_required": True})
+
+    @app.route("/api/extensions/<extension_id>/uninstall", methods=["POST"])
+    def uninstall_plugin_extension(extension_id):
+        from extensions.package import ExtensionPackageError, uninstall_extension
+        try:
+            result = uninstall_extension(extension_id)
+        except ExtensionPackageError as exc:
+            return jsonify({"ok": False, "error": str(exc)}), 400
+        return jsonify({**result, "restart_required": True})
 
     register_extension_routes(app)

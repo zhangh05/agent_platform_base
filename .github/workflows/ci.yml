@@ -46,6 +46,7 @@ jobs:
           python scripts/platform_contract.py > /tmp/platform-contract.json
           python scripts/platform_runtime_check.py
           python scripts/run_platform_eval.py
+          python scripts/check_extension_compatibility.py
           python scripts/verify_docs_runtime_consistency.py
 
   lint:

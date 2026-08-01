@@ -441,6 +441,8 @@ def _role_at_least(role: str, minimum: str) -> bool:
 
 def _authorize_extension_request(path: str, role: str):
     import re
+    if path.startswith("/api/extensions/repository") and flask.request.method not in {"GET", "HEAD"} and not _role_at_least(role, "admin"):
+        return flask.jsonify({"ok": False, "error": "extension_admin_required"}), 403
     lifecycle = re.match(r"^/api/extensions/([^/]+)/(enable|disable|migrate|install|upgrade|uninstall)", path)
     if lifecycle and not _role_at_least(role, "admin"):
         return flask.jsonify({"ok": False, "error": "extension_admin_required"}), 403
