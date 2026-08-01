@@ -393,25 +393,43 @@ export function DataCenter() {
 
 function Overview({ overview, files, onOpenFiles, onOpenLifecycle }: { overview: DataOverview | null; files: ManagedFile[]; onOpenFiles: () => void; onOpenLifecycle: () => void }) {
   if (!overview) return <EmptyState text="暂无数据概览" />;
+  const healthSummary = `断链 ${overview.health.missing_on_disk} · 孤儿 ${overview.health.orphan_files}`;
   return <div className="data-overview">
+    <div className="data-overview-lead">
+      <div>
+        <span className="data-section-kicker">工作区概览</span>
+        <h2>数据状态一览</h2>
+        <p>集中查看文件、证据产出和生命周期状态。</p>
+      </div>
+      <div className={`data-health-summary ${overview.health.ok ? "ok" : "err"}`}>
+        <span>数据健康</span>
+        <strong>{overview.health.ok ? "正常" : "需要关注"}</strong>
+        <small>{healthSummary}</small>
+      </div>
+    </div>
     <div className="data-stat-grid">
       <Stat label="活跃文件" value={overview.files.active} hint={formatFileSize(overview.files.size_bytes)} />
       <Stat label="证据与制品" value={overview.artifacts.active} hint="可追溯业务产出" />
       <Stat label="已有业务引用" value={overview.files.referenced} hint="受关系保护" />
       <Stat label="独立文件" value={overview.files.unreferenced} hint="可直接管理" />
       <Stat label="已归档" value={overview.files.archived} hint="可恢复历史数据" />
-      <Stat label="数据健康" value={overview.health.ok ? "正常" : "异常"} hint={`断链 ${overview.health.missing_on_disk} · 孤儿 ${overview.health.orphan_files}`} tone={overview.health.ok ? "ok" : "err"} />
     </div>
     <div className="data-overview-grid">
       <section className="card data-overview-card">
-        <div className="card-title">数据构成</div>
+        <div className="data-card-heading">
+          <div><span className="data-section-kicker">结构</span><h3>数据构成</h3><p>按数据类型查看工作区内容。</p></div>
+          <span className="data-card-count">{overview.files.active} 项</span>
+        </div>
         {Object.entries(overview.types).length ? Object.entries(overview.types).sort((a, b) => b[1] - a[1]).map(([type, count]) => (
           <div className="data-breakdown-row" key={type}><span>{typeLabel(type)}</span><b>{count}</b></div>
         )) : <EmptyState text="尚无数据" hint="导入文件或运行任务后会显示在这里" />}
         <Button size="sm" onClick={onOpenFiles}>查看全部数据</Button>
       </section>
       <section className="card data-overview-card">
-        <div className="card-title">最近数据</div>
+        <div className="data-card-heading">
+          <div><span className="data-section-kicker">活动</span><h3>最近数据</h3><p>最近进入工作区的文件。</p></div>
+          <span className="data-card-count">{files.length} 项</span>
+        </div>
         {files.slice(0, 6).map((file) => <div className="data-recent-row" key={file.file_id}>
           <span><b>{file.original_name || file.file_id}</b><small>{typeLabel(file.logical_type)} · {sourceLabel(file.source)}</small></span>
           <span>{formatFileSize(file.size_bytes)}</span>
@@ -419,7 +437,9 @@ function Overview({ overview, files, onOpenFiles, onOpenLifecycle }: { overview:
         {!files.length && <EmptyState text="暂无文件" />}
       </section>
       <section className="card data-overview-card">
-        <div className="card-title">生命周期</div>
+        <div className="data-card-heading">
+          <div><span className="data-section-kicker">治理</span><h3>生命周期</h3><p>清理和归档前会保护仍被引用的数据。</p></div>
+        </div>
         <p className="text-sm dim">清理和归档执行前会计算候选项，并保护仍被会话、任务和制品引用的数据。</p>
         <div className="data-breakdown-row"><span>待处理软删除</span><b>{overview.files.soft_deleted}</b></div>
         <div className="data-breakdown-row"><span>已归档文件</span><b>{overview.files.archived}</b></div>
@@ -430,7 +450,7 @@ function Overview({ overview, files, onOpenFiles, onOpenLifecycle }: { overview:
 }
 
 function Stat({ label, value, hint, tone = "" }: { label: string; value: string | number; hint: string; tone?: string }) {
-  return <div className={`card data-stat ${tone}`}><span>{label}</span><strong>{value}</strong><small>{hint}</small></div>;
+  return <div className={`card data-stat ${tone}`}><span className="data-stat-label">{label}</span><strong>{value}</strong><small>{hint}</small></div>;
 }
 
 function FilesView({ files, search, onSearch, typeFilter, typeOptions, onTypeFilter, busy, selected, onSelect, selectedIds, onSelectedIds, onDelete, onBulkDelete, detail }: {

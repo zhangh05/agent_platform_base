@@ -8411,25 +8411,79 @@ summary:focus-visible,
 .data-center > .data-relations-grid {
   flex: 1;
   min-height: 0;
-  padding: 18px 24px 30px;
+  padding: 24px 28px 36px;
   overflow: auto;
 }
 
+.data-overview-lead {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 24px;
+  margin-bottom: 18px;
+}
+
+.data-overview-lead h2 {
+  margin: 4px 0 4px;
+  color: var(--text);
+  font-size: var(--fs-20);
+  letter-spacing: -0.02em;
+}
+
+.data-overview-lead p,
+.data-card-heading p {
+  margin: 0;
+  color: var(--text-3);
+  font-size: var(--fs-12);
+}
+
+.data-section-kicker {
+  display: block;
+  color: var(--accent);
+  font-size: var(--fs-10);
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  line-height: 1.2;
+  text-transform: uppercase;
+}
+
+.data-health-summary {
+  display: grid;
+  grid-template-columns: auto auto;
+  align-items: baseline;
+  column-gap: 12px;
+  min-width: 170px;
+  padding: 12px 16px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--ok);
+  border-radius: var(--r-8);
+}
+
+.data-health-summary.err { border-left-color: var(--danger); }
+.data-health-summary span,
+.data-health-summary small { color: var(--text-3); font-size: var(--fs-11); }
+.data-health-summary strong { color: var(--ok); font-size: var(--fs-16); }
+.data-health-summary.err strong { color: var(--danger); }
+.data-health-summary small { grid-column: 1 / -1; margin-top: 3px; }
+
 .data-stat-grid {
   display: grid;
-  grid-template-columns: repeat(6, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 12px;
 }
 
 .data-stat {
   display: flex;
   flex-direction: column;
-  gap: 5px;
+  gap: 6px;
   min-width: 0;
   margin: 0;
+  padding: 16px 18px;
+  border-top: 2px solid var(--line);
 }
 
-.data-stat > span,
+.data-stat-label,
 .data-stat > small {
   color: var(--text-3);
   font-size: var(--fs-11);
@@ -8453,6 +8507,31 @@ summary:focus-visible,
 
 .data-overview-card {
   margin: 0;
+  padding: 18px 20px 20px;
+}
+
+.data-card-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  min-height: 48px;
+  margin-bottom: 14px;
+}
+
+.data-card-heading h3 {
+  margin: 4px 0 3px;
+  color: var(--text);
+  font-size: var(--fs-15);
+}
+
+.data-card-count {
+  flex: 0 0 auto;
+  padding: 4px 8px;
+  color: var(--text-2);
+  font-size: var(--fs-11);
+  background: var(--surface-2);
+  border-radius: 999px;
 }
 
 .data-breakdown-row,
@@ -8484,6 +8563,8 @@ summary:focus-visible,
   color: var(--text-3);
   font-size: var(--fs-11);
 }
+
+.data-recent-row { min-height: 48px; }
 
 .data-center > .ui-filter-bar:not(.data-center-tabs) {
   flex: 0 0 auto;
@@ -8705,7 +8786,16 @@ summary:focus-visible,
   .data-relations-grid { grid-template-columns: 1fr; }
 }
 
+@media (max-width: 1400px) and (min-width: 1181px) {
+  .data-stat-grid { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+}
+
 @media (max-width: 760px) {
+  .data-overview,
+  .data-center > .data-lifecycle-grid,
+  .data-center > .data-relations-grid { padding: 18px 14px 28px; }
+  .data-overview-lead { align-items: stretch; flex-direction: column; gap: 14px; }
+  .data-health-summary { width: 100%; }
   .data-center-tabs { padding-inline: 12px; overflow-x: auto; }
   .data-stat-grid,
   .data-overview-grid,
