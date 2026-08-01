@@ -4,6 +4,8 @@ import os
 import subprocess
 from pathlib import Path
 
+from agent import __version__ as PACKAGE_VERSION
+
 # Project roots
 AGENT_PLATFORM_ROOT = Path(__file__).resolve().parent.parent.parent
 
@@ -28,6 +30,6 @@ BUILD_COMMIT = _resolve_build_commit()
 
 # App identity
 APP_NAME = "agent_platform_base"
-APP_VERSION = os.environ.get("AGENT_PLATFORM_VERSION", "current")
+APP_VERSION = os.environ.get("AGENT_PLATFORM_VERSION", PACKAGE_VERSION)
 API_MODE = "unified"
 PRODUCT_READY = False

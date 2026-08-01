@@ -19,6 +19,13 @@ def test_reference_extension_loads_tool_and_frontend_contract():
     assert [spec.tool_id for spec, _ in reference.tools] == ["reference.insights.summarize"]
 
 
+def test_version_endpoint_uses_the_platform_package_version():
+    from agent import __version__
+    from backend.api.version import get_version
+
+    assert get_version()["version"] == __version__ == "1.0.0"
+
+
 def test_reference_tool_runs_through_default_tool_runtime():
     reset_extension_cache_for_tests()
     reset_default_client_for_tests()
