@@ -534,18 +534,19 @@ pre code {
 
 .app-nav {
   display: flex;
+  position: relative;
   align-self: stretch;
   align-items: center;
-  gap: 0;
+  gap: 2px;
   min-width: 0;
-  overflow-x: auto;
-  overflow-y: hidden;
-  scrollbar-width: none;
-  -ms-overflow-style: none;
+  overflow: visible;
 }
 
-.app-nav::-webkit-scrollbar {
-  display: none;
+.app-nav-group {
+  position: relative;
+  display: inline-flex;
+  align-self: stretch;
+  align-items: center;
 }
 
 .app-nav-item {
@@ -556,7 +557,7 @@ pre code {
   justify-content: center;
   gap: 5px;
   height: var(--h-header);
-  padding: 0 9px;
+  padding: 0 11px;
   color: var(--text-3);
   border-radius: 0;
   font-size: var(--fs-13);
@@ -567,6 +568,19 @@ pre code {
     color var(--dur-2) var(--ease),
     background var(--dur-2) var(--ease),
     transform var(--dur-2) var(--ease);
+}
+
+.app-nav-group.has-menu .app-nav-group-trigger::before {
+  position: absolute;
+  right: 3px;
+  bottom: 15px;
+  width: 4px;
+  height: 4px;
+  content: "";
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  opacity: 0.5;
+  transform: rotate(45deg);
 }
 
 .app-nav-item:hover {
@@ -594,6 +608,81 @@ pre code {
 .app-nav-item svg {
   width: 13px;
   height: 13px;
+  opacity: 0.75;
+}
+
+.app-nav-menu {
+  position: absolute;
+  top: calc(100% - 1px);
+  left: 0;
+  z-index: 80;
+  display: grid;
+  width: 210px;
+  padding: 8px;
+  visibility: hidden;
+  background: var(--surface);
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-8);
+  box-shadow: var(--shadow-menu);
+  opacity: 0;
+  transform: translateY(4px);
+  transition:
+    opacity var(--dur-2) var(--ease),
+    transform var(--dur-2) var(--ease),
+    visibility var(--dur-2) var(--ease);
+}
+
+.app-nav-group:hover .app-nav-menu,
+.app-nav-group:focus-within .app-nav-menu {
+  visibility: visible;
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.app-nav-menu-head {
+  display: grid;
+  gap: 3px;
+  padding: 7px 8px 8px;
+  border-bottom: 1px solid var(--line-2);
+  margin-bottom: 4px;
+}
+
+.app-nav-menu-head strong {
+  color: var(--text-1);
+  font-size: var(--fs-12);
+}
+
+.app-nav-menu-head span {
+  color: var(--text-4);
+  font-size: var(--fs-11);
+  line-height: 1.35;
+}
+
+.app-nav-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-height: 34px;
+  padding: 0 9px;
+  color: var(--text-3);
+  border-radius: var(--r-6);
+  font-size: var(--fs-13);
+  font-weight: 620;
+}
+
+.app-nav-menu-item:hover {
+  color: var(--text);
+  background: var(--surface-2);
+}
+
+.app-nav-menu-item.active {
+  color: var(--accent-2);
+  background: var(--accent-soft);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+.app-nav-menu-item svg {
+  flex: 0 0 auto;
   opacity: 0.75;
 }
 

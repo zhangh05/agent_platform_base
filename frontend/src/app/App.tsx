@@ -1,5 +1,5 @@
 import { BrowserRouter, Link, Navigate, NavLink, useLocation } from "../router";
-import { Suspense, memo, useCallback, useEffect, useState } from "react";
+import { Suspense, memo, useCallback, useEffect, useMemo, useState } from "react";
 import type { FormEvent, ReactNode } from "react";
 import { ErrorBoundary } from "../components/ErrorBoundary";
 import { SkeletonList, SkeletonTable } from "../components/common";
@@ -19,7 +19,8 @@ import {
   IconSun,
   IconMenu,
 } from "../components/Icon";
-import { NAV_ITEMS } from "../config/nav";
+import { NAV_ITEMS, buildNavGroups } from "../config/nav";
+import type { NavGroup } from "../config/nav";
 import { ExtensionRegistryProvider, useExtensionRegistry } from "../extensions/registry";
 import {
   TaskWorkbench,
@@ -75,24 +76,56 @@ function applyAuthenticatedSession(nextSession: Awaited<ReturnType<typeof authAp
   }
 }
 
-const NavItem = memo(function NavItem({ to, label, testid, Icon }: import("../config/nav").NavItem) {
-  const handleEnter = useCallback(() => preloadRoute(to), [to]);
-  const handleFocus = useCallback(() => preloadRoute(to), [to]);
+const NavGroupItem = memo(function NavGroupItem({ group, currentPath }: { group: NavGroup; currentPath: string }) {
+  const active = group.items.some((item) => item.to === currentPath);
+  const warmGroup = useCallback(() => {
+    void preloadRoute(group.to);
+    group.items.forEach((item) => void preloadRoute(item.to));
+  }, [group]);
+  const Icon = group.Icon;
+  const hasMenu = group.items.length > 1;
   return (
-    <NavLink
-      key={to}
-      to={to}
-      data-testid={testid}
-      className={({ isActive }) => "app-nav-item" + (isActive ? " active" : "")}
-      onMouseEnter={handleEnter}
-      onFocus={handleFocus}
-      onPointerDown={handleEnter}
-      onTouchStart={handleEnter}
-      viewTransition
-    >
-      <Icon size={14} />
-      <span>{label}</span>
-    </NavLink>
+    <div className={"app-nav-group" + (active ? " active" : "") + (hasMenu ? " has-menu" : "")} onMouseEnter={warmGroup} onFocus={warmGroup}>
+      <NavLink
+        to={group.to}
+        data-testid={group.testid}
+        className={() => "app-nav-item app-nav-group-trigger" + (active ? " active" : "")}
+        onPointerDown={warmGroup}
+        onTouchStart={warmGroup}
+        aria-haspopup={hasMenu ? "menu" : undefined}
+        aria-expanded={hasMenu ? (active ? "true" : "false") : undefined}
+        viewTransition
+      >
+        <Icon size={14} />
+        <span>{group.label}</span>
+      </NavLink>
+      {hasMenu ? (
+        <div className="app-nav-menu" role="menu" aria-label={group.label}>
+          <div className="app-nav-menu-head">
+            <strong>{group.label}</strong>
+            <span>{group.description}</span>
+          </div>
+          {group.items.map((item) => {
+            const ChildIcon = item.Icon;
+            return (
+              <NavLink
+                key={item.to}
+                to={item.to}
+                data-testid={item.testid}
+                className={({ isActive }) => "app-nav-menu-item" + (isActive ? " active" : "")}
+                onMouseEnter={() => preloadRoute(item.to)}
+                onFocus={() => preloadRoute(item.to)}
+                viewTransition
+                role="menuitem"
+              >
+                <ChildIcon size={14} />
+                <span>{item.label}</span>
+              </NavLink>
+            );
+          })}
+        </div>
+      ) : null}
+    </div>
   );
 });
 
@@ -247,6 +280,7 @@ function AppShell({ canLogout, onLogout, session }: { canLogout: boolean; onLogo
   const extensionRegistry = useExtensionRegistry();
   const canManageUsers = session?.platform_admin === true;
   const navigationItems = [...NAV_ITEMS.filter((item) => !item.adminOnly || canManageUsers), ...extensionRegistry.navItems];
+  const navigationGroups = useMemo(() => buildNavGroups(navigationItems), [navigationItems]);
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -307,7 +341,7 @@ function AppShell({ canLogout, onLogout, session }: { canLogout: boolean; onLogo
         </Link>
 
         <nav className="app-nav" aria-label="主导航">
-          {navigationItems.map((item) => <NavItem key={item.to} {...item} />)}
+          {navigationGroups.map((group) => <NavGroupItem key={group.id} group={group} currentPath={location.pathname} />)}
         </nav>
 
         <div className="app-spacer" />
