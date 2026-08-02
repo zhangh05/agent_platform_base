@@ -344,41 +344,41 @@ function AppShell({ canLogout, onLogout, session }: { canLogout: boolean; onLogo
           {navigationGroups.map((group) => <NavGroupItem key={group.id} group={group} currentPath={location.pathname} />)}
         </nav>
 
-        <div className="app-spacer" />
-
-        <button
-          type="button"
-          className="collapse-btn"
-          data-tip="切换侧栏"
-          data-testid="btn-toggle-sidebar"
-          aria-label="切换侧栏"
-          aria-expanded={sidebarOpen}
-          onClick={toggleSidebar}
-        >
-          {sidebarOpen ? <IconChevronLeft size={14} /> : <IconChevronRight size={14} />}
-        </button>
-
-        <button
-          type="button"
-          className="theme-toggle"
-          data-tip={theme === "dark" ? "切换浅色" : "切换深色"}
-          aria-label="切换主题"
-          onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
-        >
-          {theme === "dark" ? <IconSun size={14} /> : <IconMoon size={14} />}
-        </button>
-
-        {canLogout ? (
+        <div className="app-actions" aria-label="页面操作">
           <button
+            type="button"
+            className="collapse-btn"
+            data-tip="切换侧栏"
+            data-testid="btn-toggle-sidebar"
+            aria-label="切换侧栏"
+            aria-expanded={sidebarOpen}
+            onClick={toggleSidebar}
+          >
+            {sidebarOpen ? <IconChevronLeft size={14} /> : <IconChevronRight size={14} />}
+          </button>
+
+          <button
+            type="button"
+            className="theme-toggle"
+            data-tip={theme === "dark" ? "切换浅色" : "切换深色"}
+            aria-label="切换主题"
+            onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
+          >
+            {theme === "dark" ? <IconSun size={14} /> : <IconMoon size={14} />}
+          </button>
+
+          {canLogout ? (
+            <button
             type="button"
             className="logout-btn"
             aria-label="退出登录"
             title={session?.username ? `当前用户：${session.username}` : "退出登录"}
             onClick={onLogout}
-          >
-            退出
-          </button>
-        ) : null}
+            >
+              退出
+            </button>
+          ) : null}
+        </div>
       </header>
 
       <div className="app-main">

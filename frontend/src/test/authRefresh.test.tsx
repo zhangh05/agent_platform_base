@@ -71,6 +71,21 @@ describe("authenticated refresh", () => {
     expect(screen.queryByText("登录工作台")).not.toBeInTheDocument();
   });
 
+  it("keeps logout inside the fixed header action group", async () => {
+    vi.spyOn(authApi, "status").mockResolvedValue({
+      ok: true,
+      login_enabled: true,
+      authenticated: true,
+      username: "Admin",
+    });
+
+    render(<App />);
+
+    const logout = await screen.findByRole("button", { name: "退出登录" });
+    expect(logout).toHaveTextContent("退出");
+    expect(logout.closest(".app-actions")).not.toBeNull();
+  });
+
   it("remounts the route stage so every page switch gets a transition", async () => {
     render(<App />);
 

@@ -305,23 +305,6 @@ body {
   opacity: 0.58;
 }
 
-.logout-btn {
-  height: 32px;
-  padding: 0 12px;
-  border: 1px solid var(--line);
-  border-radius: var(--r-6);
-  color: var(--text-2);
-  background: var(--surface-2);
-  font-size: var(--fs-12);
-  font-weight: 680;
-}
-
-.logout-btn:hover {
-  border-color: var(--line-3);
-  color: var(--text);
-  background: var(--surface-3);
-}
-
 button,
 input,
 select,
@@ -691,6 +674,15 @@ pre code {
   min-width: 12px;
 }
 
+.app-actions {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+  min-width: max-content;
+}
+
 .collapse-btn,
 .theme-toggle {
   display: inline-grid;
@@ -713,6 +705,36 @@ pre code {
   color: var(--text);
   background: var(--surface-2);
   border-color: var(--line);
+  transform: translate3d(0, -1px, 0);
+}
+
+.logout-btn {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  min-width: 56px;
+  height: 32px;
+  padding: 0 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-6);
+  color: var(--text-2);
+  background: var(--surface-2);
+  font-size: var(--fs-12);
+  font-weight: 680;
+  line-height: 1;
+  white-space: nowrap;
+  transition:
+    background var(--dur-2) var(--ease),
+    border-color var(--dur-2) var(--ease),
+    color var(--dur-2) var(--ease),
+    transform var(--dur-2) var(--ease);
+}
+
+.logout-btn:hover {
+  border-color: var(--line-3);
+  color: var(--text);
+  background: var(--surface-3);
   transform: translate3d(0, -1px, 0);
 }
 
