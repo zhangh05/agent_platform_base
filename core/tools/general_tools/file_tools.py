@@ -254,11 +254,42 @@ def handle_ws_write_artifact_file(inv: ToolInvocation) -> dict:
             run_id=str(inv.run_id or ""),
             session_id=str(inv.session_id or ""),
         )
-        return _ok(inv, "", {
+        output = {
             "filepath": rec.path,
             "file_id": rec.file_id,
             "size": rec.size_bytes,
-        })
+        }
+        if str(inv.arguments.get("action") or "") == "write_artifact":
+            from storage.artifact_metadata_store import create_artifact_metadata
+            from storage.reference_index import add_reference
+
+            artifact = create_artifact_metadata(
+                workspace_id=ws,
+                file_record=rec,
+                artifact_type="agent_file",
+                title=safe_name,
+                scope="session" if inv.session_id else "workspace",
+                sensitivity="internal",
+                run_id=str(inv.run_id or ""),
+                session_id=str(inv.session_id or ""),
+                source="workspace.file",
+                metadata={"storage_managed": True},
+                created_by=str(inv.requested_by or "agent"),
+            )
+            add_reference(
+                ws,
+                rec.file_id,
+                "artifact",
+                artifact["artifact_id"],
+                "content",
+                metadata={"run_id": str(inv.run_id or "")},
+            )
+            output.update({
+                "artifact_id": artifact["artifact_id"],
+                "artifact_ids": [artifact["artifact_id"]],
+                "artifact_type": artifact["artifact_type"],
+            })
+        return _ok(inv, "", output)
     except Exception as e:
         return _error_inv(inv, str(e)[:200])
 

@@ -98,6 +98,36 @@ def test_write_agent_output_creates_file_and_index(tmp_workspace):
     assert found["file_id"] == rec.file_id
 
 
+def test_workspace_write_artifact_creates_lineaged_file_and_artifact(tmp_workspace):
+    from core.tools.general_tools.file_tools import handle_ws_write_artifact_file
+    from core.tools.schemas import ToolInvocation
+    from storage.artifact_metadata_store import list_artifact_records
+    from storage.file_store import get_file_record
+    from storage.reference_index import list_references_for_file
+
+    result = handle_ws_write_artifact_file(ToolInvocation(
+        tool_id="workspace.file",
+        workspace_id="test_ws",
+        session_id="session_1",
+        run_id="run_1",
+        requested_by="turn_runner",
+        arguments={
+            "action": "write_artifact",
+            "filename": "result.csv",
+            "content": "name,value\na,1\n",
+        },
+    ))
+
+    assert result["ok"] is True
+    assert result["filepath"].endswith("__result.csv")
+    assert result["artifact_ids"] == [result["artifact_id"]]
+    record = get_file_record("test_ws", result["file_id"])
+    assert record["run_id"] == "run_1"
+    assert record["session_id"] == "session_1"
+    assert any(item["artifact_id"] == result["artifact_id"] for item in list_artifact_records("test_ws"))
+    assert any(ref["owner_id"] == result["artifact_id"] for ref in list_references_for_file("test_ws", result["file_id"]))
+
+
 def test_import_user_upload_preserves_original(tmp_workspace):
     from storage.file_store import import_user_upload, get_file_record
 

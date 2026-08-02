@@ -23,7 +23,7 @@ def _permission_action(action_class: str) -> str:
 
 _WRITE_ACTIONS = {
     "add", "create", "update", "confirm", "review", "profile_set",
-    "save", "tag", "edit", "patch", "write_artifact", "import",
+    "save", "tag", "edit", "patch", "write", "write_artifact", "import",
     "session_checkpoint", "review_update", "baseline_create",
     "check", "topology_build", "impact", "incident_create",
     "incident_update", "change_create", "change_precheck",
