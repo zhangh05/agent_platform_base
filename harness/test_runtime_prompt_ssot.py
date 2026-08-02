@@ -144,3 +144,12 @@ def test_ssot_registry_feeds_action_profiles_to_llm_tools():
     tools = _build_cached_tool_definitions(registry)
     desc = tools[0]["function"]["description"]
     assert "delete=write/high/approval_required" in desc
+
+
+def test_workspace_file_schema_exposes_requested_filename():
+    from agent.runtime.ssot_runtime import _build_ssot_runtime_tool_registry
+
+    registry = _build_ssot_runtime_tool_registry(["workspace.file"])
+    properties = registry["workspace.file"]["args_schema"]["properties"]
+
+    assert "filename" in properties
