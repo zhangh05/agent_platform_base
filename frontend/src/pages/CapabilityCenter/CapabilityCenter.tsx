@@ -34,30 +34,50 @@ export function CapabilityCenter() {
     const c = list.state.data.capabilities ?? [];
     return { tot: c.length, hi: c.filter((x) => x.risk_level === "high" || x.risk_level === "forbidden").length, dep: c.filter((x) => x.can_create_sensitive_output).length };
   }, [list.state]);
+  const toolCount = catalog.state.kind === "success" ? (catalog.state.data.count ?? 0) : 0;
+  const plannerVisibleCount = catalog.state.kind === "success" ? (catalog.state.data.planner_visible_count ?? 0) : 0;
 
   return (
     <div className="page" data-testid="page-capabilities">
       <div className="page-header cc-page-header">
         <div>
-          <h1>工具与能力</h1>
-          <p className="subtitle">查看系统可以做什么、哪些操作需要确认，以及哪些功能暂不可用</p>
+          <h1>能力中心</h1>
+          <p className="subtitle">先看系统能做哪几类事，再按需展开底层可调用工具</p>
         </div>
         <div className="cc-pill-row">
-          <span className="status-pill"><span className="dot accent" />{counts.tot} 项</span>
+          <span className="status-pill"><span className="dot accent" />{counts.tot} 类能力</span>
+          <span className="status-pill"><span className="dot accent" />{toolCount} 个工具</span>
           {counts.dep > 0 && <span className="status-pill"><IconBolt size={10} />{counts.dep} 涉及产物</span>}
         </div>
       </div>
 
       <div className="page-body">
+        {/* Capability cards */}
+        <AsyncView state={list.state} onRetry={list.reload} emptyText="无业务能力" emptyHint="agent.capabilities.catalog 未返回能力">
+          {(d) => (
+            <div className="card cc-card-mb">
+              <div className="card-title">
+                能力概览
+                <span className="count">{d.capabilities?.length ?? 0} 类</span>
+              </div>
+              <p className="cc-section-hint">面向使用者的能力分类：告诉你系统适合做什么，以及哪些结果需要人工确认。</p>
+              <div className="capability-grid" data-testid="capability-list">
+                {(d.capabilities ?? []).map((cap) => <CapCard key={cap.capability_id} cap={cap} />)}
+              </div>
+            </div>
+          )}
+        </AsyncView>
+
         {/* Tool Catalog */}
         <div className="card cc-card-mb">
           <div className="card-title">
-            工具目录
-            {catalog.state.kind === "success" && <span className="count">{catalog.state.data.count ?? 0}</span>}
+            底层工具目录
+            {catalog.state.kind === "success" && <span className="count">{toolCount} 个</span>}
           </div>
+          <p className="cc-section-hint">给 AI 调用的具体工具明细：同一类能力下面可能包含多个工具，所以这里的数量会多于能力分类。</p>
           <div className="cc-controls">
             <span className="cc-controls-desc">
-              {catalog.state.kind === "success" && <>AI 可使用 {catalog.state.data.planner_visible_count ?? 0} 个工具</>}
+              {catalog.state.kind === "success" && <>AI 当前可调用 {plannerVisibleCount} 个底层工具</>}
             </span>
             <input className="input cc-search-input" value={tq} onChange={(e) => setTq(e.target.value)} placeholder="搜索工具名称或功能…" />
           </div>
@@ -70,15 +90,6 @@ export function CapabilityCenter() {
             {(d) => <ToolTree cats={d.categories ?? []} query={tq} filter={tf} />}
           </AsyncView>
         </div>
-
-        {/* Capability cards */}
-        <AsyncView state={list.state} onRetry={list.reload} emptyText="无业务能力" emptyHint="agent.capabilities.catalog 未返回能力">
-          {(d) => (
-            <div className="capability-grid" data-testid="capability-list">
-              {(d.capabilities ?? []).map((cap) => <CapCard key={cap.capability_id} cap={cap} />)}
-            </div>
-          )}
-        </AsyncView>
       </div>
     </div>
   );
