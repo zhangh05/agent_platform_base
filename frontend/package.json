@@ -1,8 +1,8 @@
 {
   "name": "agent-platform-base-workbench",
   "private": true,
-  "version": "2.1.1",
-  "description": "Multi-application Agent Workbench for Agent Platform Base v2.1.1",
+  "version": "2.1.2",
+  "description": "Multi-application Agent Workbench for Agent Platform Base v2.1.2",
   "type": "module",
   "scripts": {
     "dev": "vite",
