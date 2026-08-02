@@ -12,7 +12,7 @@ Responsibilities:
 import logging
 
 from jobs.store import get_job, update_job, list_jobs
-from jobs.manager import create_job, mark_running, update_progress
+from jobs.manager import create_job, mark_failed, mark_running, mark_succeeded, update_progress
 
 _log = logging.getLogger("jobs.lifecycle")
 
@@ -43,6 +43,8 @@ def attach_run_to_session_job(
     run_id: str,
     tool_call_count: int = 0,
     user_input: str = "",
+    run_ok: bool = True,
+    error: str = "",
 ) -> str | None:
     """Find or create the session's agent_run job and attach a run_id.
 
@@ -57,7 +59,33 @@ def attach_run_to_session_job(
 
     _ensure_running(ws_id, job_id)
     _merge_run_id(ws_id, job_id, session_id, run_id, tool_call_count)
+    _finish_turn(ws_id, job_id, session_id, run_id, run_ok=run_ok, error=error)
     return job_id
+
+
+def _finish_turn(
+    ws_id: str,
+    job_id: str,
+    session_id: str,
+    run_id: str,
+    *,
+    run_ok: bool,
+    error: str = "",
+) -> None:
+    """Close the current turn while retaining one reusable job per session.
+
+    Leaving session jobs in ``running`` between messages made every planned
+    backend restart look like an interrupted task.  Terminal turns are marked
+    succeeded/failed here; the next user message reactivates the same job.
+    """
+    try:
+        if run_ok:
+            mark_succeeded(ws_id, job_id, result_summary={"latest_run_id": run_id})
+        else:
+            mark_failed(ws_id, job_id, error=error or "agent_turn_failed")
+        _broadcast_job(job_id, ws_id, session_id)
+    except (TypeError, ValueError):
+        _log.exception("job turn finalization failed job=%s run=%s", job_id, run_id)
 
 
 def _find_or_create_job(ws_id: str, session_id: str, user_input: str) -> str | None:

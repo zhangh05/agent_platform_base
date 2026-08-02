@@ -145,6 +145,8 @@ def agent_message():
                     run_id=result_payload.get("turn_id", ""),
                     tool_call_count=len(result_payload.get("tool_calls", [])),
                     user_input=user_input,
+                    run_ok=bool(result_payload.get("ok", not result_payload.get("errors"))),
+                    error=str((result_payload.get("errors") or [""])[0]),
                 )
             except Exception:
                 _log.exception(

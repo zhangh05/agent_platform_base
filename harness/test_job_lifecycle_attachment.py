@@ -57,3 +57,57 @@ def test_failed_to_running_is_valid_session_transition():
     from jobs.manager import _check_transition
 
     assert _check_transition("failed", "running") is True
+
+
+def test_successful_turn_is_closed_after_attachment(monkeypatch):
+    import jobs.lifecycle as lifecycle
+
+    calls = []
+    monkeypatch.setattr(lifecycle, "_find_or_create_job", lambda *_args: "job_1")
+    monkeypatch.setattr(lifecycle, "_ensure_running", lambda *_args: calls.append("running"))
+    monkeypatch.setattr(lifecycle, "_merge_run_id", lambda *_args: calls.append("merged"))
+    monkeypatch.setattr(
+        lifecycle,
+        "_finish_turn",
+        lambda *_args, **kwargs: calls.append(("finished", kwargs["run_ok"])),
+    )
+
+    job_id = lifecycle.attach_run_to_session_job(
+        "default", "session_1", "run_1", run_ok=True,
+    )
+
+    assert job_id == "job_1"
+    assert calls == ["running", "merged", ("finished", True)]
+
+
+def test_failed_turn_closes_job_as_failed(monkeypatch):
+    import jobs.lifecycle as lifecycle
+
+    calls = []
+    monkeypatch.setattr(lifecycle, "mark_failed", lambda ws, job, error="": calls.append((ws, job, error)))
+    monkeypatch.setattr(lifecycle, "_broadcast_job", lambda *_args, **_kwargs: None)
+
+    lifecycle._finish_turn(
+        "default", "job_1", "session_1", "run_1",
+        run_ok=False, error="provider_failed",
+    )
+
+    assert calls == [("default", "job_1", "provider_failed")]
+
+
+def test_successful_turn_closes_job_as_succeeded(monkeypatch):
+    import jobs.lifecycle as lifecycle
+
+    calls = []
+    monkeypatch.setattr(
+        lifecycle,
+        "mark_succeeded",
+        lambda ws, job, result_summary=None: calls.append((ws, job, result_summary)),
+    )
+    monkeypatch.setattr(lifecycle, "_broadcast_job", lambda *_args, **_kwargs: None)
+
+    lifecycle._finish_turn(
+        "default", "job_1", "session_1", "run_1", run_ok=True,
+    )
+
+    assert calls == [("default", "job_1", {"latest_run_id": "run_1"})]
