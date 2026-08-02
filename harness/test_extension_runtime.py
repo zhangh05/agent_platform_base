@@ -23,7 +23,7 @@ def test_version_endpoint_uses_the_platform_package_version():
     from agent import __version__
     from backend.api.version import get_version
 
-    assert get_version()["version"] == __version__ == "2.0.1"
+    assert get_version()["version"] == __version__ == "2.1.0"
     assert get_version()["product_ready"] is True
 
 

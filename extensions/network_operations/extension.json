@@ -1,7 +1,7 @@
 {
   "extension_id": "network.operations",
   "name": "网络巡检",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "api_version": "1",
   "min_platform_version": "1.1.0",
   "description": "工作区级设备资产、只读 SSH 巡检、证据、状态基线与差异。",
@@ -9,6 +9,7 @@
   "tools": [
     "network.operations.assets_read",
     "network.operations.assets_write",
+    "network.operations.device_probe",
     "network.operations.inspection",
     "network.operations.baseline"
   ],
@@ -17,6 +18,7 @@
     "/api/extensions/network.operations/overview",
     "/api/extensions/network.operations/assets",
     "/api/extensions/network.operations/assets/<asset_id>",
+    "/api/extensions/network.operations/assets/<asset_id>/probe",
     "/api/extensions/network.operations/inspections",
     "/api/extensions/network.operations/inspections/<task_id>",
     "/api/extensions/network.operations/inspections/<task_id>/cancel",

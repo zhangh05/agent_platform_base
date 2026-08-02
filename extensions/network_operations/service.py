@@ -12,6 +12,7 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Callable
 
+from core.tools.general_tools.device_tools import DeviceCredential, DeviceTarget, probe_target
 from extensions.sdk import ExtensionDataStore, ExtensionSecretStore
 from storage.time_utils import now_iso
 
@@ -42,7 +43,10 @@ def _id(prefix: str) -> str:
 def _safe_asset(record: dict[str, Any]) -> dict[str, Any]:
     item = dict(record)
     item.pop("credential_ref", None)
-    item["credential_configured"] = bool(record.get("credential_ref"))
+    item.pop("key_ref", None)
+    item.pop("key_passphrase_ref", None)
+    item["credential_configured"] = bool(record.get("credential_ref") or record.get("key_ref"))
+    item["host_key_trusted"] = bool(record.get("host_key_fingerprint"))
     return item
 
 
@@ -80,20 +84,36 @@ def save_asset(workspace_id: str, payload: dict[str, Any]) -> dict[str, Any]:
         if item.get("asset_id") != asset_id and item.get("host") == host and int(item.get("port") or 22) == port:
             raise ValueError("host and port already exist")
     credential_ref = str(existing.get("credential_ref") or payload.get("credential_ref") or "")
+    key_ref = str(existing.get("key_ref") or payload.get("key_ref") or "")
+    key_passphrase_ref = str(existing.get("key_passphrase_ref") or payload.get("key_passphrase_ref") or "")
+    auth_method = str(payload.get("auth_method") or existing.get("auth_method") or "password").strip().lower()
     password = str(payload.get("password") or "")
+    private_key = str(payload.get("private_key") or "")
+    key_passphrase = str(payload.get("key_passphrase") or payload.get("passphrase") or "")
     if password:
         credential_ref = ExtensionSecretStore(EXTENSION_ID, workspace_id).set(f"asset_{asset_id}", password)
+    if private_key:
+        key_ref = ExtensionSecretStore(EXTENSION_ID, workspace_id).set(f"asset_{asset_id}_key", private_key)
+        auth_method = "private_key"
+    if key_passphrase:
+        key_passphrase_ref = ExtensionSecretStore(EXTENSION_ID, workspace_id).set(f"asset_{asset_id}_key_passphrase", key_passphrase)
+    if auth_method not in {"password", "private_key"}:
+        raise ValueError("invalid auth_method")
     record = {
         "asset_id": asset_id,
         "name": name,
         "host": host,
         "port": port,
         "username": username,
+        "auth_method": auth_method,
         "vendor": str(payload.get("vendor") or "generic").strip().lower(),
         "device_type": str(payload.get("device_type") or "switch").strip().lower(),
         "region": str(payload.get("region") or "").strip(),
         "tags": [str(item).strip() for item in (payload.get("tags") or []) if str(item).strip()],
         "credential_ref": credential_ref,
+        "key_ref": key_ref,
+        "key_passphrase_ref": key_passphrase_ref,
+        "host_key_fingerprint": str(payload.get("host_key_fingerprint") or existing.get("host_key_fingerprint") or "").strip(),
         "created_at": str(existing.get("created_at") or now_iso()),
         "updated_at": now_iso(),
     }
@@ -108,6 +128,12 @@ def delete_asset(workspace_id: str, asset_id: str) -> bool:
     reference = str(existing.get("credential_ref") or "")
     if reference:
         ExtensionSecretStore.delete(reference)
+    key_reference = str(existing.get("key_ref") or "")
+    if key_reference:
+        ExtensionSecretStore.delete(key_reference)
+    passphrase_reference = str(existing.get("key_passphrase_ref") or "")
+    if passphrase_reference:
+        ExtensionSecretStore.delete(passphrase_reference)
     return _store(workspace_id).delete("assets", asset_id)
 
 
@@ -132,30 +158,58 @@ def commands_for(asset: dict[str, Any], commands: list[str] | None = None) -> li
     return safe[:20]
 
 
-def collect_ssh(asset: dict[str, Any], commands: list[str], *, timeout: int = 15) -> dict[str, str]:
-    import paramiko
-
+def _target_for(asset: dict[str, Any]) -> DeviceTarget:
     password = ExtensionSecretStore.get(str(asset.get("credential_ref") or ""))
-    if not password:
-        raise RuntimeError("credential is not configured")
-    client = paramiko.SSHClient()
-    client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-    client.connect(
-        hostname=str(asset["host"]), port=int(asset.get("port") or 22),
-        username=str(asset["username"]), password=password,
-        timeout=timeout, auth_timeout=timeout, banner_timeout=timeout,
-        look_for_keys=False, allow_agent=False,
+    private_key = ExtensionSecretStore.get(str(asset.get("key_ref") or ""))
+    passphrase = ExtensionSecretStore.get(str(asset.get("key_passphrase_ref") or ""))
+    auth_method = str(asset.get("auth_method") or ("private_key" if private_key else "password")).lower()
+    credential = DeviceCredential(
+        auth_method=auth_method,
+        username=str(asset.get("username") or ""),
+        password=password,
+        private_key=private_key,
+        passphrase=passphrase,
     )
-    try:
-        output: dict[str, str] = {}
-        for command in commands:
-            _stdin, stdout, stderr = client.exec_command(command, timeout=timeout)
-            text = stdout.read().decode("utf-8", errors="replace")
-            error = stderr.read().decode("utf-8", errors="replace")
-            output[command] = (text + (f"\n{error}" if error else ""))[:200_000]
-        return output
-    finally:
-        client.close()
+    return DeviceTarget(
+        host=str(asset.get("host") or ""),
+        port=int(asset.get("port") or 22),
+        vendor=str(asset.get("vendor") or "generic"),
+        name=str(asset.get("name") or ""),
+        expected_fingerprint=str(asset.get("host_key_fingerprint") or ""),
+        credential=credential,
+    )
+
+
+def probe_asset(
+    workspace_id: str,
+    asset_id: str,
+    *,
+    commands: list[str] | None = None,
+    accept_host_key: bool = False,
+    read: bool = False,
+    timeout: int = 15,
+) -> dict[str, Any]:
+    asset = get_asset(workspace_id, asset_id, include_secret=True)
+    if not asset:
+        return {"ok": False, "status": "failed", "error": "asset_not_found"}
+    selected = commands_for(asset, commands) if read else []
+    result = probe_target(_target_for(asset), commands=selected, accept_host_key=accept_host_key, read=read, timeout=timeout)
+    fingerprint = str(result.get("fingerprint") or "")
+    if fingerprint and accept_host_key and result.get("status") == "succeeded" and not asset.get("host_key_fingerprint"):
+        asset["host_key_fingerprint"] = fingerprint
+        asset["updated_at"] = now_iso()
+        _store(workspace_id).save("assets", asset_id, asset)
+        result["host_key_saved"] = True
+    result["asset"] = _safe_asset(asset)
+    return result
+
+
+def collect_ssh(asset: dict[str, Any], commands: list[str], *, timeout: int = 15) -> dict[str, str]:
+    result = probe_target(_target_for(asset), commands=commands, read=True, timeout=timeout)
+    if not result.get("ok"):
+        raise RuntimeError(str(result.get("error") or "device connection failed"))
+    output = result.get("output") or {}
+    return {str(key): str(value) for key, value in output.items()}
 
 
 def start_inspection(

@@ -48,6 +48,23 @@ def register_routes(app):
         except (ValueError, RuntimeError) as exc:
             return jsonify({"ok": False, "error": str(exc)}), 400
 
+    @app.route("/api/extensions/network.operations/assets/<asset_id>/probe", methods=["POST"])
+    def network_asset_probe(asset_id):
+        ws = _workspace()
+        if not ws:
+            return jsonify({"ok": False, "error": "workspace_id is required"}), 400
+        data = _payload()
+        result = service.probe_asset(
+            ws,
+            asset_id,
+            accept_host_key=bool(data.get("accept_host_key")),
+            read=bool(data.get("read")),
+            commands=data.get("commands") or [],
+            timeout=int(data.get("timeout") or 15),
+        )
+        status = 200 if result.get("ok") or result.get("requires_host_key_acceptance") else 400
+        return jsonify(result), status
+
     @app.route("/api/extensions/network.operations/inspections", methods=["GET", "POST"])
     def network_inspections():
         ws = _workspace()
@@ -118,6 +135,18 @@ def assets_write(invocation):
     return {"ok": True, "asset": service.save_asset(invocation.workspace_id, dict(args.get("asset") or args))}
 
 
+def device_probe(invocation):
+    args = invocation.arguments or {}
+    return service.probe_asset(
+        invocation.workspace_id,
+        str(args.get("asset_id") or ""),
+        accept_host_key=bool(args.get("accept_host_key")),
+        read=bool(args.get("read")),
+        commands=args.get("commands") or [],
+        timeout=int(args.get("timeout") or 15),
+    )
+
+
 def inspection(invocation):
     args = invocation.arguments or {}
     action = str(args.get("action") or "list")
@@ -148,6 +177,7 @@ def register():
         "tools": [
             {"tool_id": "network.operations.assets_read", "name": "读取网络资产", "description": "列出或读取当前工作区网络设备。", "category": "ops", "permission_action": "read", "handler": assets_read, "input_schema": {"type": "object", "properties": {**common, "asset_id": {"type": "string"}}}},
             {"tool_id": "network.operations.assets_write", "name": "维护网络资产", "description": "新增、修改或删除当前工作区网络设备。", "category": "ops", "risk_level": "medium", "permission_action": "write", "handler": assets_write, "input_schema": {"type": "object", "properties": {**common, "action": {"type": "string", "enum": ["save", "delete"]}, "asset_id": {"type": "string"}, "asset": {"type": "object"}}, "required": ["action"]}},
+            {"tool_id": "network.operations.device_probe", "name": "设备连接测试", "description": "对当前工作区设备执行 TCP、SSH、主机指纹、认证和提示符探测。", "category": "ops", "risk_level": "medium", "permission_action": "network", "handler": device_probe, "timeout_seconds": 60, "input_schema": {"type": "object", "properties": {**common, "asset_id": {"type": "string"}, "accept_host_key": {"type": "boolean"}, "read": {"type": "boolean"}, "commands": {"type": "array", "items": {"type": "string"}}, "timeout": {"type": "integer"}}, "required": ["asset_id"]}},
             {"tool_id": "network.operations.inspection", "name": "执行只读巡检", "description": "启动、读取或取消只读 SSH 网络巡检。", "category": "ops", "risk_level": "medium", "permission_action": "network", "handler": inspection, "timeout_seconds": 120, "input_schema": {"type": "object", "properties": {**common, "action": {"type": "string", "enum": ["run", "list", "get", "cancel"]}, "asset_ids": {"type": "array", "items": {"type": "string"}}, "commands": {"type": "array", "items": {"type": "string"}}, "task_id": {"type": "string"}}, "required": ["action"]}},
             {"tool_id": "network.operations.baseline", "name": "管理巡检基线", "description": "创建、确认和比较状态基线。", "category": "ops", "risk_level": "medium", "permission_action": "write", "handler": baseline, "input_schema": {"type": "object", "properties": {**common, "action": {"type": "string", "enum": ["create", "confirm", "list", "diff"]}, "task_id": {"type": "string"}, "baseline_id": {"type": "string"}, "confirm": {"type": "boolean"}}, "required": ["action"]}}
         ],

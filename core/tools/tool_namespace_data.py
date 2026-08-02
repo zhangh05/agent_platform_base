@@ -29,6 +29,10 @@ CATEGORY_DEFS: dict[str, dict[str, str]] = {
         "name": "Knowledge 知识库",
         "description": "知识库问答、检索、导入和索引管理。",
     },
+    "ops": {
+        "name": "Ops 运维",
+        "description": "设备连接、只读探测和运维状态读取。",
+    },
     "memory": {
         "name": "Memory 记忆",
         "description": "记忆搜索、创建、确认、profile 和更新。",
@@ -80,6 +84,12 @@ NS_DATA = [
         "Parse CSV/JSON/Markdown tables, compute stats, distinct, aggregate, filter, sort, pivot, join and render.",
         "Do not use for durable storage; save outputs through report/manage or workspace artifacts.",
         "data.manage",
+    ),
+    (
+        "device.manage", "ops", "device", "multi", "设备连接", "device.manage",
+        "Probe TCP/SSH/host-key/auth/prompt stages or run allowlisted read-only commands against a saved asset or supplied target.",
+        "Do not use for config mode, write commands, reloads, Telnet, SNMP set, or broad scanning.",
+        "device.manage",
     ),
     (
         "report.manage", "data", "report", "multi", "报告渲染", "report.manage",

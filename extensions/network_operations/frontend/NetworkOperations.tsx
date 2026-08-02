@@ -5,7 +5,7 @@ import "./NetworkOperations.css";
 
 type Asset = {
   asset_id: string; name: string; host: string; port: number; username: string;
-  vendor: string; region: string; credential_configured: boolean;
+  vendor: string; region: string; auth_method?: string; credential_configured: boolean; host_key_trusted?: boolean;
 };
 type Inspection = {
   task_id: string; status: string; total: number; completed: number;
@@ -27,7 +27,8 @@ export default function NetworkOperations() {
   const [selected, setSelected] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const [form, setForm] = useState({ name: "", host: "", port: "22", username: "", password: "", vendor: "h3c", region: "" });
+  const [probeStatus, setProbeStatus] = useState<Record<string, string>>({});
+  const [form, setForm] = useState({ name: "", host: "", port: "22", username: "", password: "", private_key: "", key_passphrase: "", auth_method: "password", vendor: "h3c", region: "" });
 
   const load = useCallback(async () => {
     const params = { workspace_id: workspaceId };
@@ -62,7 +63,7 @@ export default function NetworkOperations() {
     setBusy(true); setError("");
     try {
       await apiRequest({ method: "POST", url: `${base}/assets`, data: { ...form, port: Number(form.port), workspace_id: workspaceId } });
-      setForm({ name: "", host: "", port: "22", username: "", password: "", vendor: "h3c", region: "" });
+      setForm({ name: "", host: "", port: "22", username: "", password: "", private_key: "", key_passphrase: "", auth_method: "password", vendor: "h3c", region: "" });
       await load();
     } catch (err) {
       setError(String((err as { message?: string })?.message || "设备保存失败"));
@@ -86,6 +87,26 @@ export default function NetworkOperations() {
       await load();
     } catch (err) {
       setError(String((err as { message?: string })?.message || "巡检启动失败"));
+    } finally { setBusy(false); }
+  }
+
+  async function probeAsset(asset: Asset, acceptHostKey = false) {
+    setBusy(true); setError("");
+    setProbeStatus((value) => ({ ...value, [asset.asset_id]: acceptHostKey ? "正在信任指纹并复测..." : "正在测试连接..." }));
+    try {
+      const result = await apiRequest<{ ok: boolean; status: string; error?: string; fingerprint?: string; requires_host_key_acceptance?: boolean; host_key_saved?: boolean }>({
+        method: "POST",
+        url: `${base}/assets/${asset.asset_id}/probe`,
+        data: { workspace_id: workspaceId, accept_host_key: acceptHostKey },
+      });
+      if (result.requires_host_key_acceptance) {
+        setProbeStatus((value) => ({ ...value, [asset.asset_id]: `发现新指纹 ${result.fingerprint || ""}，请确认信任` }));
+      } else {
+        setProbeStatus((value) => ({ ...value, [asset.asset_id]: result.ok ? (result.host_key_saved ? "连接成功，指纹已保存" : "连接成功") : `连接失败：${result.error || result.status}` }));
+      }
+      await load();
+    } catch (err) {
+      setProbeStatus((value) => ({ ...value, [asset.asset_id]: `连接失败：${String((err as { message?: string })?.message || err)}` }));
     } finally { setBusy(false); }
   }
 
@@ -137,10 +158,18 @@ export default function NetworkOperations() {
                 <label className="network-port"><span>端口</span><input value={form.port} onChange={(e) => setForm({ ...form, port: e.target.value })} /></label>
               </div>
               <div className="network-form-row">
-                <label><span>登录账户</span><input value={form.username} onChange={(e) => setForm({ ...form, username: e.target.value })} required /></label>
+                <label><span>登录账户</span><input autoComplete="username" value={form.username} onChange={(e) => setForm({ ...form, username: e.target.value })} required /></label>
                 <label><span>厂商</span><select value={form.vendor} onChange={(e) => setForm({ ...form, vendor: e.target.value })}><option value="h3c">H3C</option><option value="huawei">华为</option><option value="cisco">Cisco</option><option value="generic">通用主机</option></select></label>
               </div>
-              <label><span>登录密码</span><input type="password" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} required /></label>
+              <label><span>认证方式</span><select value={form.auth_method} onChange={(e) => setForm({ ...form, auth_method: e.target.value })}><option value="password">密码</option><option value="private_key">私钥</option></select></label>
+              {form.auth_method === "password" ? (
+                <label><span>登录密码</span><input type="password" autoComplete="current-password" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} required /></label>
+              ) : (
+                <>
+                  <label><span>私钥</span><textarea value={form.private_key} onChange={(e) => setForm({ ...form, private_key: e.target.value })} required rows={5} spellCheck={false} /></label>
+                  <label><span>私钥口令</span><input type="password" autoComplete="new-password" value={form.key_passphrase} onChange={(e) => setForm({ ...form, key_passphrase: e.target.value })} /></label>
+                </>
+              )}
               <label><span>区域</span><input value={form.region} onChange={(e) => setForm({ ...form, region: e.target.value })} /></label>
               <button className="btn primary" type="submit" disabled={busy}>保存设备</button>
             </form>
@@ -151,8 +180,13 @@ export default function NetworkOperations() {
                 <article className="network-asset-row" key={asset.asset_id}>
                   <input type="checkbox" aria-label={`选择 ${asset.name}`} checked={selected.includes(asset.asset_id)} onChange={(e) => setSelected((value) => e.target.checked ? [...value, asset.asset_id] : value.filter((id) => id !== asset.asset_id))} />
                   <div className="network-asset-main"><strong>{asset.name}</strong><span>{asset.host}:{asset.port} · {asset.vendor || "generic"}</span></div>
-                  <div className="network-asset-meta"><span className={asset.credential_configured ? "ok" : "warn"}>{asset.credential_configured ? "凭据已配置" : "缺少凭据"}</span><span>{asset.region || "未分区"}</span></div>
-                  <button className="network-delete" onClick={() => void removeAsset(asset.asset_id)} disabled={busy}>删除</button>
+                  <div className="network-asset-meta"><span className={asset.credential_configured ? "ok" : "warn"}>{asset.credential_configured ? `${asset.auth_method === "private_key" ? "私钥" : "密码"}已配置` : "缺少凭据"}</span><span className={asset.host_key_trusted ? "ok" : "warn"}>{asset.host_key_trusted ? "指纹已信任" : "指纹待信任"}</span><span>{asset.region || "未分区"}</span></div>
+                  <div className="network-row-actions">
+                    <button className="network-link" onClick={() => void probeAsset(asset)} disabled={busy}>测试连接</button>
+                    {!asset.host_key_trusted && probeStatus[asset.asset_id]?.includes("发现新指纹") ? <button className="network-link" onClick={() => void probeAsset(asset, true)} disabled={busy}>信任并重试</button> : null}
+                    <button className="network-delete" onClick={() => void removeAsset(asset.asset_id)} disabled={busy}>删除</button>
+                  </div>
+                  {probeStatus[asset.asset_id] ? <div className="network-probe-status">{probeStatus[asset.asset_id]}</div> : null}
                 </article>
               ))}
             </section>

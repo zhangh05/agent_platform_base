@@ -213,6 +213,11 @@ def _handle_data(inv: ToolInvocation) -> dict:
     return _unsupported(inv, "parse|stats|distinct|aggregate|filter|sort|render|pivot|join")
 
 
+def _handle_device(inv: ToolInvocation) -> dict:
+    from core.tools.general_tools.device_tools import handle_device_manage
+    return handle_device_manage(inv)
+
+
 def _handle_report(inv: ToolInvocation) -> dict:
     from core.tools.general_tools.runtime_tools import handle_doc_render_from_safe_summary, handle_report_save_artifact, handle_text_diff
 
@@ -477,6 +482,7 @@ _RAW_REGISTRY: list[CanonicalToolEntry] = [
     _entry("browser.manage", _handle_browser, {**_COMMON, "action": {"type": "string", "enum": ["navigate", "snapshot", "screenshot", "click", "type", "extract", "scroll", "hover", "press_key", "select_option", "evaluate", "wait", "tabs", "network", "console", "navigate_back", "close"]}, "url": {"type": "string"}, "selector": {"type": "string"}, "ref": {"type": "string"}, "text": {"type": "string"}, "script": {"type": "string"}, "key": {"type": "string"}}, required=["action"], risk="medium", description="Browser automation."),
     _entry("web.manage", _handle_web, {**_COMMON, "action": {"type": "string", "enum": ["search", "fetch", "weather", "deep_search", "list"]}, "url": {"type": "string"}, "source": {"type": "string"}, "location": {"type": "string"}, "days": {"type": "integer", "description": "Forecast days for weather action."}}, required=["action"], description="Web search, fetch and weather."),
     _entry("data.manage", _handle_data, {**_COMMON, "action": {"type": "string", "enum": ["parse", "stats", "distinct", "aggregate", "filter", "sort", "render", "pivot", "join"]}, "text": {"type": "string"}, "rows": {"type": "array"}, "column": {"type": "string"}, "conditions": {"type": "array"}, "group_by": {"type": "array"}, "metrics": {"type": "array"}}, required=["action"], description="Structured data processing."),
+    _entry("device.manage", _handle_device, {**_COMMON, "action": {"type": "string", "enum": ["probe", "read"]}, "asset_id": {"type": "string"}, "host": {"type": "string"}, "port": {"type": "integer"}, "vendor": {"type": "string"}, "username": {"type": "string"}, "password": {"type": "string"}, "auth_method": {"type": "string", "enum": ["password", "private_key"]}, "private_key": {"type": "string"}, "passphrase": {"type": "string"}, "host_key_fingerprint": {"type": "string"}, "accept_host_key": {"type": "boolean"}, "commands": {"type": "array", "items": {"type": "string"}}, "timeout": {"type": "integer"}}, required=["action"], risk="medium", permission="network", description="Read-only network device connection probing and command reads."),
     _entry("report.manage", _handle_report, {**_COMMON, "action": {"type": "string", "enum": ["save", "diff", "document"]}, "left": {"type": "string"}, "right": {"type": "string"}}, required=["action"], description="Report save, diff and document rendering."),
     _entry("knowledge.manage", _handle_knowledge, {**_COMMON, "action": {"type": "string", "enum": ["search", "read", "list", "chunk", "import", "manage"]}, "level": {"type": "string"}, "chunk_id": {"type": "string"}, "source_id": {"type": "string"}}, required=["action"], risk="medium", description="Knowledge search/read/import/manage."),
     _entry("memory.manage", _handle_memory, {**_COMMON, "action": {"type": "string", "enum": ["search", "review", "confirm", "create", "update", "delete", "profile_get", "profile_set"]}, "memory_id": {"type": "string"}, "scope": {"type": "string"}, "field": {"type": "string"}, "value": {"type": "string"}}, required=["action"], risk="medium", description="Memory search and management."),

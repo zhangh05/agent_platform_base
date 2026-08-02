@@ -14,7 +14,9 @@
 .network-asset-form { display: flex; flex-direction: column; gap: 12px; padding: 18px; }
 .network-asset-form label { display: flex; min-width: 0; flex: 1; flex-direction: column; gap: 5px; }
 .network-asset-form label > span { color: var(--text-3); font-size: var(--fs-11); font-weight: 650; }
-.network-asset-form input, .network-asset-form select { width: 100%; height: 36px; padding: 0 10px; border: 1px solid var(--line-2); border-radius: 6px; color: var(--text-1); background: var(--surface); }
+.network-asset-form input, .network-asset-form select, .network-asset-form textarea { width: 100%; padding: 0 10px; border: 1px solid var(--line-2); border-radius: 6px; color: var(--text-1); background: var(--surface); }
+.network-asset-form input, .network-asset-form select { height: 36px; }
+.network-asset-form textarea { min-height: 118px; padding: 9px 10px; resize: vertical; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: var(--fs-11); line-height: 1.45; }
 .network-form-row { display: flex; gap: 10px; }
 .network-form-row .network-port { max-width: 92px; }
 .network-section-head { padding: 16px 18px 12px; border-bottom: 1px solid var(--line-2); }
@@ -24,13 +26,17 @@
 .network-list-panel { min-width: 0; overflow: hidden; }
 .network-list-panel.full { flex: 1; }
 .network-empty { display: grid; min-height: 180px; place-items: center; color: var(--text-4); }
-.network-asset-row { display: grid; grid-template-columns: auto minmax(160px, 1fr) minmax(140px, auto) auto; align-items: center; gap: 12px; padding: 12px 16px; border-bottom: 1px solid var(--line-2); }
+.network-asset-row { display: grid; grid-template-columns: auto minmax(160px, 1fr) minmax(170px, auto) auto; align-items: center; gap: 12px; padding: 12px 16px; border-bottom: 1px solid var(--line-2); }
 .network-asset-main, .network-asset-meta, .network-task-row > div:first-child, .network-baseline-row > div:first-child { display: flex; min-width: 0; flex-direction: column; gap: 3px; }
 .network-asset-main strong, .network-task-row strong, .network-baseline-row strong { color: var(--text-1); font-size: var(--fs-13); }
 .network-asset-main span, .network-asset-meta span, .network-task-row span, .network-baseline-row span { color: var(--text-4); font-size: var(--fs-11); }
 .network-asset-meta .ok, .network-counts .ok { color: var(--ok); }
 .network-asset-meta .warn { color: var(--warning); }
-.network-delete { border: 0; color: var(--danger); background: transparent; cursor: pointer; }
+.network-row-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+.network-link, .network-delete { border: 0; background: transparent; cursor: pointer; }
+.network-link { color: var(--accent); }
+.network-delete { color: var(--danger); }
+.network-probe-status { grid-column: 2 / -1; padding: 8px 10px; border-radius: 6px; color: var(--text-3); background: var(--surface-2); font-size: var(--fs-11); overflow-wrap: anywhere; }
 .network-task-row { display: grid; grid-template-columns: minmax(220px, 1fr) minmax(120px, 240px) auto auto; align-items: center; gap: 16px; padding: 14px 18px; border-bottom: 1px solid var(--line-2); }
 .network-progress { height: 6px; overflow: hidden; border-radius: 999px; background: var(--surface-3); }
 .network-progress span { display: block; height: 100%; background: var(--accent); transition: width 180ms ease; }
