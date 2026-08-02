@@ -63,7 +63,9 @@ NS_DATA = [
     (
         "exec.run", "exec", "runtime", "multi", "本地命令执行", "exec.run",
         "Unified local execution. action=shell|python|slash. "
-        "Always provide description. Destructive commands are policy-gated.",
+        "Defaults to the current user workspace, so use workspace-relative paths. "
+        "Always provide description. Destructive commands are policy-gated. "
+        "Persist user deliverables through workspace.file and report its returned relative path.",
         "Do not use for remote SSH/Telnet or product-domain device access.",
         "exec.run",
     ),

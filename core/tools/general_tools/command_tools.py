@@ -94,6 +94,16 @@ def handle_command_approved_exec(inv: ToolInvocation) -> dict:
 
     # v3.7: pass through cwd, env_vars, timeout
     cwd = (inv.arguments.get("working_dir") or "").strip() or None
+    if cwd is None:
+        # Agent commands operate in the caller's durable user + workspace
+        # directory by default.  Running from the application source tree made
+        # relative paths returned by workspace.file unreadable and allowed
+        # generated deliverables to be mistaken for durable workspace files.
+        from storage.paths import ensure_workspace_storage_dirs, workspace_root
+
+        workspace_id = _caller_workspace(inv)
+        ensure_workspace_storage_dirs(workspace_id)
+        cwd = str(workspace_root(workspace_id))
     env_vars = inv.arguments.get("env_vars")
     timeout = inv.arguments.get("timeout")
     if timeout is not None:
@@ -109,6 +119,7 @@ def handle_command_approved_exec(inv: ToolInvocation) -> dict:
         }
 
     result = _run_shell(command, cwd=cwd, env=env_vars, timeout=timeout)
+    result.setdefault("working_dir", "." if not inv.arguments.get("working_dir") else cwd)
     # Attach safety metadata + description to result
     if safety["warnings"]:
         result["warnings"] = safety["warnings"]

@@ -12,7 +12,10 @@ ALLOWED_TRANSITIONS = {
     "queued": {"running", "cancelled", "failed"},
     "running": {"succeeded", "failed", "cancelled", "paused"},
     "paused": {"running", "cancelled", "failed"},
-    "failed": {"queued", "cancelled"},
+    # A new user turn may reactivate a failed session-level job.  This is not
+    # an automatic retry of the failed turn; it is new work in the same
+    # conversation, so it must not remain permanently labelled failed.
+    "failed": {"queued", "running", "cancelled"},
     "succeeded": {"running"},    # allow session jobs to re-activate
     "cancelled": {"running"},    # allow cancelled jobs to be re-activated
 }
@@ -101,7 +104,12 @@ def mark_running(ws_id, job_id) -> JobRecord:
     now = now_iso()
     result = _transition(ws_id, job_id, "running", "job_started", "Job started")
     if result:
-        update_job(ws_id, job_id, {"started_at": now})
+        update_job(ws_id, job_id, {
+            "started_at": now,
+            "finished_at": "",
+            "error": "",
+            "cancel_requested": False,
+        })
     return result
 
 

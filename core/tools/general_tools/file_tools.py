@@ -251,6 +251,8 @@ def handle_ws_write_artifact_file(inv: ToolInvocation) -> dict:
             title=title,
             ext=suffix,
             source="workspace.file",
+            run_id=str(inv.run_id or ""),
+            session_id=str(inv.session_id or ""),
         )
         return _ok(inv, "", {
             "filepath": rec.path,

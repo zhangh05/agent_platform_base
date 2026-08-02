@@ -81,11 +81,30 @@ def _safe_run_trace_summary(run: dict, trace: dict | None) -> dict:
             if isinstance(tool, str) and tool.strip():
                 tool_ids.add(tool.strip())
 
+    persisted_calls = run.get("tool_calls", [])
+    if not isinstance(persisted_calls, list):
+        persisted_calls = []
+    for call in persisted_calls:
+        if not isinstance(call, dict):
+            continue
+        tool_id = str(call.get("tool_id") or "").strip()
+        if tool_id:
+            tool_ids.add(tool_id)
+
     selected_capabilities = run.get("selected_capabilities")
     if not isinstance(selected_capabilities, list):
         selected_capabilities = []
 
-    tool_count = max(int(run.get("tool_call_count") or 0), len(tool_ids) or anonymous_tool_events)
+    declared_count = 0
+    decision = run.get("tool_decision")
+    if isinstance(decision, dict):
+        declared_count = int(decision.get("tool_count") or 0)
+    tool_count = max(
+        int(run.get("tool_call_count") or 0),
+        declared_count,
+        len(persisted_calls),
+        len(tool_ids) or anonymous_tool_events,
+    )
     # v3.9.14 fix: started_at / finished_at fall back to ``run.created_at``
     # before trace timestamps. Trace event timestamps are produced AFTER
     # the run record is written (run_started event fires ~ms after the

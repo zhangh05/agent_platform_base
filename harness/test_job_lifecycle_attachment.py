@@ -37,3 +37,23 @@ def test_create_session_job_returns_and_broadcasts_new_id(monkeypatch):
 
     assert lifecycle._find_or_create_job("default", "session_2", "new request") == "job_new"
     assert broadcasts == [("job_new", "default", "session_2")]
+
+
+def test_failed_session_job_reactivates_for_new_user_turn(monkeypatch):
+    import jobs.lifecycle as lifecycle
+
+    rec = type("Rec", (), {"status": "failed"})()
+    calls = []
+    monkeypatch.setattr(lifecycle, "get_job", lambda *_args: rec)
+    monkeypatch.setattr(lifecycle, "mark_running", lambda ws, job: calls.append((ws, job)))
+    monkeypatch.setattr(lifecycle, "_broadcast_job", lambda *_args, **_kwargs: None)
+
+    lifecycle._ensure_running("default", "job_failed")
+
+    assert calls == [("default", "job_failed")]
+
+
+def test_failed_to_running_is_valid_session_transition():
+    from jobs.manager import _check_transition
+
+    assert _check_transition("failed", "running") is True

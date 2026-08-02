@@ -476,6 +476,8 @@ _RAW_REGISTRY: list[CanonicalToolEntry] = [
         "command": {"type": "string"},
         "code": {"type": "string"},
         "description": {"type": "string"},
+        "working_dir": {"type": "string", "description": "Optional working directory. Defaults to the current user workspace; prefer workspace-relative paths."},
+        "timeout": {"type": "integer", "minimum": 1, "maximum": 600},
         "target": {"type": "string", "enum": ["local"], "default": "local"},
         "shell": {"type": "string", "enum": ["cmd", "powershell"], "default": "cmd"},
     }, required=["action"], risk="medium", permission="exec", description="Local command execution."),

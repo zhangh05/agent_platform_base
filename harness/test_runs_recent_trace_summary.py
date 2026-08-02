@@ -96,3 +96,22 @@ def test_recent_runs_enriches_counts_from_trace(client, temp_dirs):
     assert run["finished_at"] == "2026-06-19T01:00:04"
     assert run["visible_tools"] == ["exec.run"]
     assert run["event_count"] == 4
+
+
+def test_run_summary_uses_persisted_tool_calls_not_trace_event_guessing():
+    from backend.api.workspace_routes import _safe_run_trace_summary
+
+    run = {
+        "tool_calls": [
+            {"tool_id": "workspace.file", "ok": True},
+            {"tool_id": "exec.run", "ok": False},
+            {"tool_id": "exec.run", "ok": True},
+        ],
+        "tool_decision": {"tool_count": 3},
+    }
+    trace = {"events": [{"type": "tool_call"}, {"type": "tool_result"}]}
+
+    summary = _safe_run_trace_summary(run, trace)
+
+    assert summary["tool_call_count"] == 3
+    assert summary["visible_tools"] == ["exec.run", "workspace.file"]

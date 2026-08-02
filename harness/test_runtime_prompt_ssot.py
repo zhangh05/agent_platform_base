@@ -26,6 +26,8 @@ def test_runtime_prompt_is_compact_capable_and_destructive_only():
     assert "action-level boundary" in RUNTIME_SYSTEM_PROMPT
     assert "approval_required" in RUNTIME_SYSTEM_PROMPT
     assert "do not reissue the same call" in RUNTIME_SYSTEM_PROMPT
+    assert "never as the underlying model or" in RUNTIME_SYSTEM_PROMPT
+    assert "workspace-relative path" in RUNTIME_SYSTEM_PROMPT
 
 
 def test_turn_message_separates_history_context_and_current_request():

@@ -99,7 +99,7 @@ def _ensure_running(ws_id: str, job_id: str):
     if not rec:
         return
 
-    if rec.status in ("created", "queued", "succeeded", "cancelled"):
+    if rec.status in ("created", "queued", "failed", "succeeded", "cancelled"):
         try:
             mark_running(ws_id, job_id)
             _broadcast_job(job_id, ws_id)

@@ -132,3 +132,36 @@ def test_run_shell_redacts_before_truncating():
     stdout_redact_idx = src.index('stdout = redact_tool_output(stdout or "")')
     stdout_truncate_idx = src.index('[:_SHELL_MAX_OUTPUT]', stdout_redact_idx)
     assert stdout_redact_idx < stdout_truncate_idx
+
+
+def test_exec_defaults_to_current_workspace(monkeypatch, tmp_path):
+    from core.tools.schemas import ToolInvocation
+    from core.tools.general_tools import command_tools
+
+    monkeypatch.setenv("NA_WORKSPACE_ROOT", str(tmp_path))
+    captured = {}
+
+    def fake_run(command, cwd=None, shell="/bin/bash", env=None, timeout=None):
+        captured.update(command=command, cwd=cwd, timeout=timeout)
+        return {"ok": True, "exit_code": 0, "stdout": "", "stderr": ""}
+
+    monkeypatch.setattr(command_tools, "_run_shell", fake_run)
+    result = command_tools.handle_command_approved_exec(ToolInvocation(
+        tool_id="exec.run",
+        workspace_id="default",
+        arguments={"action": "shell", "command": "pwd"},
+    ))
+
+    assert captured["cwd"] == str((tmp_path / "default").resolve())
+    assert result["working_dir"] == "."
+
+
+def test_path_redaction_preserves_markdown_delimiters_and_spacing():
+    from core.tools.redaction import redact_string
+    from storage.redaction import redact_text
+
+    core_text = redact_string("file: `/root/work/out.csv` next")
+    assert core_text == "file: `[PATH_REDACTED]` next"
+
+    stored_text = redact_text("file: `/home/user/work/out.csv` next")
+    assert stored_text == "file: `[REDACTED_PATH]` next"

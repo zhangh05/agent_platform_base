@@ -31,8 +31,8 @@ _SECRET_PATTERNS = [
     (re.compile(r'authorization\s*[:=]\s*[^\s,}"\']+', re.IGNORECASE),
      lambda m: 'Authorization=[REDACTED]'),
     # Absolute paths (Unix style)
-    (re.compile(r'(?:^|\s)/(?:home|Users|root|tmp|etc|var|opt|usr)/[^\s"\'<>]*'),
-     '[PATH_REDACTED]'),
+    (re.compile(r'(^|[\s`(])/(?:home|Users|root|tmp|etc|var|opt|usr)/[^\s"\'`<>]*', re.MULTILINE),
+     lambda m: m.group(1) + '[PATH_REDACTED]'),
 ]
 
 # Sensitive key names to mask in dicts

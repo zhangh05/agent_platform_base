@@ -36,9 +36,9 @@ PATH_MASK = "[REDACTED_PATH]"
 _ABSOLUTE_PATH_PATTERNS = [
     # Local Unix/macOS paths. Stop at JSON/string delimiters and common
     # traceback separators so file names are not allowed to leak the user home.
-    re.compile(r"/(?:Users|home)/[^\s\"'<>),;]+"),
+    re.compile(r"/(?:Users|home)/[^\s\"'`<>),;]+"),
     # Windows drive paths, including JSON-escaped backslashes.
-    re.compile(r"[A-Za-z]:(?:\\\\|\\)[^\s\"'<>),;]+"),
+    re.compile(r"[A-Za-z]:(?:\\\\|\\)[^\s\"'`<>),;]+"),
 ]
 
 
