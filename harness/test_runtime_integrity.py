@@ -187,9 +187,13 @@ def test_websocket_broadcast_is_workspace_scoped(monkeypatch):
 
     one = Socket()
     two = Socket()
+    monkeypatch.setattr(
+        "storage.principal.current_storage_principal",
+        lambda: "Admin",
+    )
     monkeypatch.setattr(agent_ws, "_active_ws_connections", {
-        "one": ("ws_one", one),
-        "two": ("ws_two", two),
+        "one": ("Admin", "ws_one", one),
+        "two": ("Admin", "ws_two", two),
     })
     agent_ws.broadcast_ws_event({
         "name": "run_status",
