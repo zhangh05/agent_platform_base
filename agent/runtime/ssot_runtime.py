@@ -184,6 +184,12 @@ def run_ssot_turn(
             "tool_recovery_events": list(
                 (runtime_result.metadata or {}).get("tool_recovery_events") or []
             ),
+            "tracking_summary": dict(
+                (runtime_result.metadata or {}).get("tracking_summary") or {}
+            ),
+            "tracking_events": list(
+                (runtime_result.metadata or {}).get("tracking_events") or []
+            ),
             "context_compacted": bool((runtime_result.metadata or {}).get("context_compacted", False)),
             "context_estimated_tokens": int(
                 (runtime_result.metadata or {}).get("context_estimated_tokens", 0) or 0

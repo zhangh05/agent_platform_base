@@ -202,6 +202,24 @@ def test_run_record_warning_count_uses_agent_result_warnings(monkeypatch, tmp_pa
     assert rec["warnings"] == _FakeResult.warnings
 
 
+def test_run_projection_keeps_latest_tracking_poll_only():
+    from agent.runtime.turn_persistence import _safe_tool_calls
+
+    calls = [
+        {"call_id": "spawn-a", "tool_id": "agent.manage", "ok": True, "summary": "started"},
+        {"call_id": "spawn-a_track_1", "tool_id": "agent.manage", "ok": True, "summary": "running"},
+        {"call_id": "spawn-a_track_2", "tool_id": "agent.manage", "ok": True, "summary": "completed"},
+        {"call_id": "other", "tool_id": "web.manage", "ok": True, "summary": "done"},
+    ]
+
+    projected = _safe_tool_calls(calls)
+
+    assert [call["call_id"] for call in projected] == [
+        "spawn-a", "spawn-a_track_2", "other",
+    ]
+    assert projected[1]["summary"] == "completed"
+
+
 def test_persist_run_record_uses_result_llm_metadata(monkeypatch, tmp_path):
     """Run-store llm_metadata must mirror AgentResult.metadata['llm']."""
     from agent.runtime.turn_persistence import persist_run_record
