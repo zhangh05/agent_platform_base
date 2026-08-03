@@ -306,6 +306,7 @@ _CHINA_CITY_ADMIN_HINTS = {
     "广州": "广东", "深圳": "广东", "珠海": "广东", "佛山": "广东",
     "东莞": "广东", "中山": "广东", "江门": "广东", "肇庆": "广东",
     "惠州": "广东",
+    "香港": "香港特别行政区", "澳门": "澳门特别行政区",
 }
 
 _KNOWN_WEATHER_PLACES = {
@@ -318,6 +319,8 @@ _KNOWN_WEATHER_PLACES = {
     "江门": (22.5787, 113.0819),
     "肇庆": (23.0472, 112.4651),
     "惠州": (23.1115, 114.4152),
+    "香港": (22.3193, 114.1694),
+    "澳门": (22.1987, 113.5439),
 }
 
 # A delegated request can launch several weather lookups at once. Bound the
@@ -345,7 +348,7 @@ def _known_weather_place(location: str) -> dict:
     for city, (latitude, longitude) in _KNOWN_WEATHER_PLACES.items():
         if _weather_place_token(city) in token:
             return {
-                "name": f"{city}市",
+                "name": city if city in {"香港", "澳门"} else f"{city}市",
                 "admin1": _CHINA_CITY_ADMIN_HINTS[city],
                 "country": "中国",
                 "latitude": latitude,

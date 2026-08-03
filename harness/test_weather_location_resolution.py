@@ -21,6 +21,8 @@ def test_prd_city_prefers_guangdong_match():
     known = _known_weather_place("广东省珠海市，中国")
     assert known["name"] == "珠海市"
     assert known["admin1"] == "广东"
+    assert _known_weather_place("香港，中国")["longitude"] == 114.1694
+    assert _known_weather_place("澳门特别行政区")["admin1"] == "澳门特别行政区"
 
 
 def test_explicit_province_wins_for_unknown_city_name():
