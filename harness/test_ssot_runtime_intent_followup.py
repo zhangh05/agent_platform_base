@@ -180,6 +180,13 @@ def test_short_disagreement_uses_conversation_history(query: str):
     assert is_conversation_comprehension_ref(query) is True
 
 
+def test_direct_answer_prompt_preserves_platform_capabilities():
+    from core.runtime_engine.prompt_contract import DIRECT_ANSWER_PROMPT
+
+    assert "Do not deny Agent Platform Base capabilities" in DIRECT_ANSWER_PROMPT
+    assert "Prior assistant messages may summarize real" in DIRECT_ANSWER_PROMPT
+
+
 # ── G: TaskIntentResult.requires_execution defence-in-depth ──────
 
 
