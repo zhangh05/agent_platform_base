@@ -238,7 +238,6 @@ _sync_contracts_from_canonical_registry()
 ALWAYS_READ_ONLY_TOOLS: frozenset[str] = frozenset({
     "web.manage",
     "data.manage",
-    "skill.manage",
     "text.analyze",
     "workspace.metadata.get",
     "workspace.document.pdf.extract_text",
@@ -247,13 +246,14 @@ ALWAYS_READ_ONLY_TOOLS: frozenset[str] = frozenset({
 
 READ_ONLY_ACTIONS: dict[str, frozenset[str]] = {
     "agent.manage": frozenset({"list", "get", "status"}),
-    "browser.manage": frozenset({"snapshot", "screenshot", "extract", "wait", "network", "console"}),
+    "browser.manage": frozenset({"snapshot", "extract", "wait", "network", "console"}),
     "knowledge.manage": frozenset({"search", "read", "list", "chunk"}),
     "memory.manage": frozenset({"search", "review", "profile_get"}),
-    "report.manage": frozenset({"diff"}),
+    "report.manage": frozenset({"diff", "document"}),
+    "skill.manage": frozenset({"list", "find", "load", "inspect", "mcp_list_tools"}),
     "system.manage": frozenset({
         "diagnostics", "health", "selfcheck", "local_info", "tasks",
-        "audit_log", "run_get", "session_get", "review_list",
+        "audit_log", "run_get", "session_get",
     }),
     "workspace.artifact": frozenset({"list", "read"}),
     "workspace.file": frozenset({"list", "read", "read_image", "glob"}),

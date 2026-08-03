@@ -318,8 +318,11 @@ def run_subagent_task(subtask_id: str, ws_id: str) -> dict:
         else:
             result.status = "failed"
             result.summary = "Subagent LLM call failed"
-            if not is_ok:
-                result.errors.append("LLM returned error")
+            llm_errors = list(getattr(llm_result, "errors", []) or []) if llm_result is not None else []
+            if llm_errors:
+                result.errors.extend(str(error)[:300] for error in llm_errors[:10])
+            elif not is_ok:
+                result.errors.append("LLM returned error without details")
 
     except Exception as e:
         result.status = "failed"
@@ -341,6 +344,8 @@ def run_subagent_task(subtask_id: str, ws_id: str) -> dict:
             result.summary = "Subagent cancelled by user"
         task.status = result.status
         task.summary = result.summary[:4000]
+        task.errors = list(result.errors[:20])
+        task.warnings = list(result.warnings[:20])
         task.finished_at = _now()
         _save_task(task)
     result.finished_at = _now()
@@ -630,8 +635,8 @@ def _task_result_payload(task: SubagentTask, *, ok: bool) -> dict:
         "summary": task.summary,
         "findings": [],
         "tool_results": [],
-        "errors": [],
-        "warnings": [],
+        "errors": list(task.errors or []),
+        "warnings": list(task.warnings or []),
     }
 
 def _get_manifest(tool_id: str):

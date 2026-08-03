@@ -32,6 +32,17 @@ DANGEROUS_IP_PATTERNS: list[str] = [
     r"^127\.0\.0\.1$",
 ]
 
+
+def _has_argument_value(arguments: dict[str, Any], field_name: str) -> bool:
+    if field_name not in arguments or arguments[field_name] is None:
+        return False
+    value = arguments[field_name]
+    if isinstance(value, str):
+        return bool(value.strip())
+    if isinstance(value, (list, dict, tuple, set)):
+        return bool(value)
+    return True
+
 # --- Validation result types ---
 
 @dataclass
@@ -149,24 +160,48 @@ class SemanticValidator:
             field_schema = properties[field_name]
             expected_type = field_schema.get("type")
 
+            type_mismatch = False
             if expected_type == "string" and not isinstance(value, str):
-                result.errors.append(SemanticError(
-                    node_id=node.id,
-                    code="ARG_TYPE_MISMATCH",
-                    message=f"Node '{node.id}' arg '{field_name}' expected string, got {type(value).__name__}",
-                ))
-            elif expected_type == "number" and not isinstance(value, (int, float)):
-                result.errors.append(SemanticError(
-                    node_id=node.id,
-                    code="ARG_TYPE_MISMATCH",
-                    message=f"Node '{node.id}' arg '{field_name}' expected number, got {type(value).__name__}",
-                ))
+                type_mismatch = True
+            elif expected_type == "number" and (isinstance(value, bool) or not isinstance(value, (int, float))):
+                type_mismatch = True
+            elif expected_type == "integer" and (isinstance(value, bool) or not isinstance(value, int)):
+                type_mismatch = True
+            elif expected_type == "boolean" and not isinstance(value, bool):
+                type_mismatch = True
             elif expected_type == "array" and not isinstance(value, list):
+                type_mismatch = True
+            elif expected_type == "object" and not isinstance(value, dict):
+                type_mismatch = True
+
+            if type_mismatch:
                 result.errors.append(SemanticError(
                     node_id=node.id,
                     code="ARG_TYPE_MISMATCH",
-                    message=f"Node '{node.id}' arg '{field_name}' expected array",
+                    message=f"Node '{node.id}' arg '{field_name}' expected {expected_type}, got {type(value).__name__}",
                 ))
+
+            if not type_mismatch and isinstance(value, (int, float)) and not isinstance(value, bool):
+                minimum = field_schema.get("minimum")
+                maximum = field_schema.get("maximum")
+                if minimum is not None and value < minimum:
+                    result.errors.append(SemanticError(
+                        node_id=node.id, code="ARG_RANGE_INVALID",
+                        message=f"Node '{node.id}' arg '{field_name}' must be >= {minimum}",
+                    ))
+                if maximum is not None and value > maximum:
+                    result.errors.append(SemanticError(
+                        node_id=node.id, code="ARG_RANGE_INVALID",
+                        message=f"Node '{node.id}' arg '{field_name}' must be <= {maximum}",
+                    ))
+
+            if not type_mismatch and isinstance(value, list):
+                item_type = (field_schema.get("items") or {}).get("type")
+                if item_type == "string" and any(not isinstance(item, str) for item in value):
+                    result.errors.append(SemanticError(
+                        node_id=node.id, code="ARG_TYPE_MISMATCH",
+                        message=f"Node '{node.id}' arg '{field_name}' items must be string",
+                    ))
 
             # Enum validation is strictly canonical. QueryLoop normally
             # normalizes known aliases before this guard runs.
@@ -208,40 +243,29 @@ class SemanticValidator:
         node: ExecutionNode,
         result: SemanticValidationResult,
     ) -> None:
-        """Validate sub-action requirements not expressible in the flat schema."""
-        if node.tool == "agent.manage":
-            action = str(node.args.get("action") or "").strip().lower()
-            if action == "spawn" and not str(node.args.get("instruction") or "").strip():
-                result.errors.append(SemanticError(
-                    node_id=node.id,
-                    code="MISSING_REQUIRED_ARG",
-                    message=f"Node '{node.id}' missing required arg 'instruction' for agent spawn",
-                ))
-            if action == "get" and not str(
-                node.args.get("subtask_id") or node.args.get("child_session_id") or ""
-            ).strip():
-                result.errors.append(SemanticError(
-                    node_id=node.id,
-                    code="MISSING_REQUIRED_ARG",
-                    message=f"Node '{node.id}' missing subtask_id for agent get",
-                ))
-            return
-        if node.tool != "exec.run":
-            return
+        """Validate conditional requirements for every merged tool action."""
+        from core.tools.action_requirements import ACTION_REQUIRED_ALL, ACTION_REQUIRED_ANY
+
         action = str(node.args.get("action") or "shell").strip().lower()
-        if action in ("shell", "background", "stream", "slash"):
-            if not str(node.args.get("command") or "").strip():
+        key = (node.tool, action)
+
+        for field_name in ACTION_REQUIRED_ALL.get(key, ()):
+            if not _has_argument_value(node.args, field_name):
                 result.errors.append(SemanticError(
                     node_id=node.id,
                     code="MISSING_REQUIRED_ARG",
-                    message=f"Node '{node.id}' missing required arg 'command'",
+                    message=f"Node '{node.id}' missing required arg '{field_name}' for {node.tool} action={action}",
                 ))
-        elif action == "python":
-            if not str(node.args.get("code") or "").strip():
+
+        for alternatives in ACTION_REQUIRED_ANY.get(key, ()):
+            if not any(_has_argument_value(node.args, field_name) for field_name in alternatives):
                 result.errors.append(SemanticError(
                     node_id=node.id,
                     code="MISSING_REQUIRED_ARG",
-                    message=f"Node '{node.id}' missing required arg 'code'",
+                    message=(
+                        f"Node '{node.id}' requires one of {list(alternatives)} "
+                        f"for {node.tool} action={action}"
+                    ),
                 ))
 
     def _validate_path_safety(

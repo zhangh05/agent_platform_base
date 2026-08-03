@@ -125,7 +125,7 @@ NS_DATA = [
     ),
     (
         "system.manage", "system", "health", "multi", "系统自省", "system.manage",
-        "Diagnostics, health, selfcheck, local_info, tasks, audit_log, run/session/review operations.",
+        "Diagnostics, health, selfcheck, local_info, durable tasks, audit log, and run/session operations.",
         "Do not expose sensitive trace payloads.",
         "system.manage",
     ),

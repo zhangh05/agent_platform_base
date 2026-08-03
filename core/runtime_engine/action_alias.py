@@ -83,8 +83,7 @@ CANONICAL_ALIASES_BY_TOOL: Final[dict[str, dict[str, tuple[str, str | None]]]] =
         "session_list": ("session_get", "list"),
         "list_sessions": ("session_get", "list"),
 
-        # review / audit / tasks
-        "review_get": ("review_list", "get"),
+        # audit / tasks
         "audit_get": ("audit_log", "get"),
         "get": ("tasks", "get"),
         "tasks_get": ("tasks", "get"),
@@ -120,6 +119,8 @@ CANONICAL_ALIASES_BY_TOOL: Final[dict[str, dict[str, tuple[str, str | None]]]] =
         "import_knowledge": ("import", None),
         "find_knowledge": ("search", None),
         "search_knowledge": ("search", None),
+        "manage": ("reindex", None),
+        "reindex_knowledge": ("reindex", None),
     },
 
     "agent.manage": {
@@ -141,12 +142,21 @@ CANONICAL_ALIASES_BY_TOOL: Final[dict[str, dict[str, tuple[str, str | None]]]] =
         "fetch_page": ("fetch", None),
         "page": ("fetch", None),
         "deep_web_search": ("deep_search", None),
+        "list": ("search", None),
     },
 
     "report.manage": {
         "render_report": ("document", None),
         "generate_report": ("document", None),
         "save_report": ("save", None),
+    },
+
+    "text.analyze": {
+        "extract": ("extract_entities", None),
+    },
+
+    "skill.manage": {
+        "search": ("find", None),
     },
 
 }
@@ -162,45 +172,46 @@ CANONICAL_ALIASES_GLOBAL: Final[dict[str, tuple[str, str | None]]] = {}
 # pre-execution repair path consults it before schema validation.
 _CANONICAL_ACTIONS: Final[dict[str, frozenset[str]]] = {
     "exec.run": frozenset({
-        "shell", "python", "slash", "background", "stream",
+        "shell", "python", "slash",
     }),
     "system.manage": frozenset({
         "diagnostics", "health", "selfcheck", "local_info", "tasks", "audit_log",
         "run_get", "session_get", "session_checkpoint", "session_rewind",
-        "session_export", "session_snapshot", "review_list", "review_update",
+        "session_export", "session_snapshot",
     }),
     "workspace.file": frozenset({
         "list", "read", "read_image", "edit", "patch",
-        "write_artifact", "glob", "delete",
+        "write", "write_artifact", "glob", "delete",
     }),
     "knowledge.manage": frozenset({
-        "search", "read", "list", "chunk", "import", "manage",
+        "search", "read", "list", "chunk", "import", "reindex",
     }),
     "agent.manage": frozenset({
-        "list", "get", "cancel", "status",
+        "spawn", "list", "get", "cancel", "status", "merge",
     }),
     "browser.manage": frozenset({
         "navigate", "snapshot", "screenshot", "click", "type", "extract",
         "scroll", "hover", "press_key", "select_option", "evaluate", "wait",
-        "fill_form", "tabs", "network", "console", "navigate_back", "close",
+        "tabs", "network", "console", "navigate_back", "close",
     }),
-    "web.manage": frozenset({"search", "fetch", "weather", "deep_search", "list"}),
+    "web.manage": frozenset({"search", "fetch", "weather", "deep_search"}),
     "data.manage": frozenset({
         "parse", "stats", "distinct", "aggregate", "filter",
         "sort", "render", "pivot", "join",
     }),
+    "device.manage": frozenset({"probe", "read"}),
     "report.manage": frozenset({
         "save", "diff", "document",
     }),
     "text.analyze": frozenset({
-        "redact", "extract", "match",
+        "redact", "extract_entities", "match",
     }),
     "memory.manage": frozenset({
         "search", "create", "update", "confirm", "delete",
         "review", "profile_get", "profile_set",
     }),
     "skill.manage": frozenset({
-        "list", "search", "load", "inspect",
+        "list", "find", "load", "inspect", "mcp_list_tools", "mcp_call",
     }),
     "workspace.artifact": frozenset({
         "list", "read", "save", "tag", "delete",

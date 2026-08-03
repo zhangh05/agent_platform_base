@@ -253,3 +253,83 @@ class TestProfileToolsFilter:
     def test_removed_development_profiles_are_absent(self):
         for profile_id in ("review_agent", "fix_agent", "test_agent", "doc_agent"):
             assert get_profile(profile_id) is None
+
+
+def test_tracking_exposes_only_latest_poll_but_keeps_full_events(monkeypatch):
+    import asyncio
+    from core.runtime_engine.models import SSOTRuntimeConfig, StatelessContext
+    from core.runtime_engine.query_loop import QueryLoop, StreamingToolResult
+
+    class _Runtime:
+        @staticmethod
+        def has_tool(name):
+            return name == "agent.manage"
+
+    config = SSOTRuntimeConfig(
+        tracking_max_polls=5,
+        tracking_max_seconds=1,
+        tracking_poll_interval_cap_seconds=0,
+    )
+    loop = QueryLoop(
+        config,
+        {"agent.manage": {"description": "", "args_schema": {"type": "object", "properties": {}}}},
+        _Runtime(),
+    )
+    poll_number = 0
+
+    async def _poll(call, **_kwargs):
+        nonlocal poll_number
+        poll_number += 1
+        done = poll_number == 3
+        status = "succeeded" if done else "running"
+        return StreamingToolResult(
+            tool_name="agent.manage",
+            call_id=call.id,
+            ok=True,
+            output={
+                "ok": True,
+                "summary": f"Subagent status: {status}",
+                "tracking": {
+                    "kind": "long_task",
+                    "task_id": "sub-1",
+                    "status": status,
+                    "done": done,
+                    "suggested_next_action": "poll_get",
+                    "poll_action": "get",
+                    "poll_arguments": {"subtask_id": "sub-1"},
+                },
+            },
+        )
+
+    monkeypatch.setattr(loop._executor, "_execute_one", _poll)
+    ctx = StatelessContext(
+        workspace_id="default",
+        session_id="s1",
+        request_id="r1",
+        user_input="delegate",
+    )
+    initial = StreamingToolResult(
+        tool_name="agent.manage",
+        call_id="spawn-1",
+        ok=True,
+        output={
+            "ok": True,
+            "tracking": {
+                "kind": "long_task",
+                "task_id": "sub-1",
+                "status": "running",
+                "done": False,
+                "suggested_next_action": "poll_get",
+                "poll_action": "get",
+                "poll_arguments": {"subtask_id": "sub-1"},
+            },
+        },
+    )
+
+    exposed = asyncio.run(loop._settle_tracking(ctx, [initial]))
+
+    assert poll_number == 3
+    assert len(exposed) == 1
+    assert exposed[0].call_id == "spawn-1_track_3"
+    assert exposed[0].output["tracking_poll_count"] == 3
+    assert len(ctx.extras["tracking_events"]) == 4

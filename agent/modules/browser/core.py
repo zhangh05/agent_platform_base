@@ -11,7 +11,7 @@ Key features:
 
 Architecture:
     Single global browser instance (headless Chromium).
-    Each action synchronously delegates to Playwright async API via asyncio.run().
+    Each synchronous action delegates to one persistent Playwright event loop.
     Screenshots saved as workspace artifacts rather than returned inline
     (base64 in tool result is truncated to prefix for brevity).
 """
@@ -23,16 +23,22 @@ import base64
 import json
 import logging
 import os
+import threading
 import time
 from typing import Any
 
 _log = logging.getLogger(__name__)
 
 _playwright = None
+_pw_instance = None
 _browser = None
 _context = None
 _pages: dict[int, Any] = {}  # tab_index → page
 _active_tab: int = 0
+_loop: asyncio.AbstractEventLoop | None = None
+_loop_thread: threading.Thread | None = None
+_loop_lock = threading.Lock()
+_browser_call_lock = threading.Lock()
 
 # ── Ref mapping: ref_id → CSS selector ─────────────────────────────
 # Snapshot assigns ref=e1, e2, ... to elements. The mapping stores
@@ -62,12 +68,13 @@ def _ensure_playwright():
 
 async def _get_page(tab_index: int | None = None) -> Any:
     """Get or create a browser page. Uses tab_index for multi-tab support."""
-    global _browser, _context, _pages, _active_tab, _playwright
+    global _browser, _context, _pages, _active_tab, _playwright, _pw_instance
     _ensure_playwright()
 
     if _browser is None:
-        pw = await _playwright().start()
-        _browser = await pw.chromium.launch(headless=True)
+        if _pw_instance is None:
+            _pw_instance = await _playwright().start()
+        _browser = await _pw_instance.chromium.launch(headless=True)
         _context = await _browser.new_context(
             viewport=VIEWPORT,
             user_agent=USER_AGENT,
@@ -84,11 +91,44 @@ async def _get_page(tab_index: int | None = None) -> Any:
     return _pages[idx]
 
 
+def _browser_event_loop() -> asyncio.AbstractEventLoop:
+    """Return the one long-lived loop that owns every Playwright object."""
+    global _loop, _loop_thread
+    with _loop_lock:
+        if _loop is not None and _loop.is_running():
+            return _loop
+        ready = threading.Event()
+
+        def run_loop() -> None:
+            global _loop
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            _loop = loop
+            ready.set()
+            loop.run_forever()
+
+        _loop_thread = threading.Thread(
+            target=run_loop,
+            name="agent-browser-loop",
+            daemon=True,
+        )
+        _loop_thread.start()
+        ready.wait(timeout=5)
+        if _loop is None:
+            raise RuntimeError("browser event loop failed to start")
+        return _loop
+
+
 def _run(async_fn):
-    """Run an async Playwright function synchronously."""
+    """Run a Playwright coroutine on its persistent owning event loop."""
+    future = None
     try:
-        return asyncio.run(async_fn)
+        with _browser_call_lock:
+            future = asyncio.run_coroutine_threadsafe(async_fn, _browser_event_loop())
+            return future.result(timeout=180)
     except Exception as e:
+        if future is not None:
+            future.cancel()
         return {"ok": False, "error": str(e)[:300]}
 
 
@@ -115,7 +155,7 @@ def browser_navigate(url: str, wait_selector: str = "", timeout: int = DEFAULT_T
 
 
 def browser_snapshot(selector: str = "body", compact: bool = True, max_elements: int = 50) -> dict:
-    """Return accessibility snapshot with ref-based element targeting.
+    """Return a semantic DOM snapshot with ref-based element targeting.
 
     Each element gets a ref ID (e1, e2, ...). Use these ref IDs in
     click/type/hover/select_option.fill_form for precise targeting.
@@ -125,17 +165,75 @@ def browser_snapshot(selector: str = "body", compact: bool = True, max_elements:
     async def _snap():
         page = await _get_page()
         _ref_map.clear()
-
-        snapshot = await page.accessibility.snapshot(interesting_only=compact)
         title = await page.title()
         url = page.url
-
-        elements = _parse_snapshot(snapshot, page) if snapshot else []
-
-        # Truncate to max_elements
-        truncated = len(elements) > max_elements
-        if truncated:
-            elements = elements[:max_elements]
+        limit = max(1, min(int(max_elements), 500))
+        snapshot = await page.locator(selector or "body").evaluate(
+            r"""(root, options) => {
+              const roleByTag = {
+                A: 'link', BUTTON: 'button', INPUT: 'textbox', TEXTAREA: 'textbox',
+                SELECT: 'combobox', IMG: 'img', NAV: 'navigation', MAIN: 'main',
+                UL: 'list', OL: 'list', LI: 'listitem', TABLE: 'table',
+                TR: 'row', TD: 'cell', TH: 'columnheader'
+              };
+              const semanticTags = new Set([
+                'A','BUTTON','INPUT','TEXTAREA','SELECT','IMG','NAV','MAIN',
+                'H1','H2','H3','H4','H5','H6','UL','OL','LI','TABLE','TR','TD','TH'
+              ]);
+              const cssPath = (element) => {
+                if (element.id) return `#${CSS.escape(element.id)}`;
+                const parts = [];
+                let current = element;
+                while (current && current.nodeType === Node.ELEMENT_NODE && current !== document.body) {
+                  const tag = current.tagName.toLowerCase();
+                  const siblings = current.parentElement
+                    ? Array.from(current.parentElement.children).filter(item => item.tagName === current.tagName)
+                    : [];
+                  const suffix = siblings.length > 1 ? `:nth-of-type(${siblings.indexOf(current) + 1})` : '';
+                  parts.unshift(tag + suffix);
+                  current = current.parentElement;
+                }
+                return `body > ${parts.join(' > ')}`;
+              };
+              const nodes = [root, ...root.querySelectorAll('*')];
+              const rows = [];
+              for (const element of nodes) {
+                const style = getComputedStyle(element);
+                const rect = element.getBoundingClientRect();
+                if (style.display === 'none' || style.visibility === 'hidden' || rect.width <= 0 || rect.height <= 0) continue;
+                let role = (element.getAttribute('role') || roleByTag[element.tagName] || '').toLowerCase();
+                if (/^H[1-6]$/.test(element.tagName)) role = 'heading';
+                if (element.tagName === 'INPUT') {
+                  const type = (element.getAttribute('type') || 'text').toLowerCase();
+                  if (type === 'checkbox') role = 'checkbox';
+                  else if (type === 'radio') role = 'radio';
+                  else if (['button','submit','reset'].includes(type)) role = 'button';
+                }
+                const name = (
+                  element.getAttribute('aria-label') || element.getAttribute('alt') ||
+                  element.getAttribute('title') || element.getAttribute('placeholder') ||
+                  element.innerText || element.textContent || ''
+                ).replace(/\s+/g, ' ').trim().slice(0, 120);
+                const actionable = Boolean(role) || semanticTags.has(element.tagName) || element.tabIndex >= 0;
+                if (options.compact ? !actionable : (!actionable && !name)) continue;
+                const row = { role: role || 'text', name, selector: cssPath(element) };
+                if ('value' in element && element.value) row.value = String(element.value).slice(0, 100);
+                if (role === 'checkbox' || role === 'radio') row.checked = Boolean(element.checked);
+                rows.push(row);
+              }
+              return { total: rows.length, elements: rows.slice(0, options.limit) };
+            }""",
+            {"compact": bool(compact), "limit": limit},
+        )
+        raw_elements = list((snapshot or {}).get("elements") or [])
+        elements = []
+        for item in raw_elements:
+            ref = f"e{len(elements) + 1}"
+            css_selector = str(item.pop("selector", "") or "")
+            _ref_map[ref] = f"css:{css_selector}" if css_selector else ""
+            elements.append({"ref": ref, **item})
+        total = int((snapshot or {}).get("total") or len(elements))
+        truncated = total > len(elements)
 
         return {
             "ok": True,
@@ -143,7 +241,7 @@ def browser_snapshot(selector: str = "body", compact: bool = True, max_elements:
             "title": title,
             "elements": elements,
             "count": len(elements),
-            "total": len(elements) + (0 if not truncated else max_elements),
+            "total": total,
             "truncated": truncated,
             "compact": compact,
         }
@@ -233,7 +331,10 @@ def browser_screenshot(
         return data, title, current_url
 
     try:
-        img_bytes, title, current_url = asyncio.run(_shot())
+        shot_result = _run(_shot())
+        if isinstance(shot_result, dict) and shot_result.get("ok") is False:
+            return shot_result
+        img_bytes, title, current_url = shot_result
         b64 = base64.b64encode(img_bytes).decode()
         file_size = len(img_bytes)
 
@@ -279,6 +380,8 @@ def _resolve_target(page: Any, selector: str, ref: str, role_hint: str = "") -> 
     """
     if ref:
         mapping = _ref_map.get(ref, "")
+        if mapping.startswith("css:") and mapping[4:]:
+            return mapping[4:]
         if mapping and mapping.startswith("role:"):
             parts = mapping.split(":", 2)
             if len(parts) >= 3:
@@ -293,6 +396,12 @@ def _resolve_target(page: Any, selector: str, ref: str, role_hint: str = "") -> 
 async def _click_by_ref(page: Any, ref: str) -> bool:
     """Click an element referenced by snapshot ref ID."""
     mapping = _ref_map.get(ref, "")
+    if mapping.startswith("css:") and mapping[4:]:
+        try:
+            await page.locator(mapping[4:]).click(timeout=5000)
+            return True
+        except Exception:
+            pass
     if mapping and mapping.startswith("role:"):
         parts = mapping.split(":", 2)
         role = parts[1]
@@ -333,7 +442,10 @@ def browser_type(text: str, selector: str = "", ref: str = "", clear_first: bool
 
         if ref:
             mapping = _ref_map.get(ref, "")
-            if mapping and mapping.startswith("role:"):
+            if mapping.startswith("css:") and mapping[4:]:
+                target = page.locator(mapping[4:])
+                target_label = f"ref:{ref}"
+            elif mapping and mapping.startswith("role:"):
                 parts = mapping.split(":", 2)
                 role = parts[1]
                 name = parts[2] if len(parts) > 2 else ""
@@ -366,6 +478,9 @@ def browser_hover(selector: str = "", ref: str = "") -> dict:
         page = await _get_page()
         if ref:
             mapping = _ref_map.get(ref, "")
+            if mapping.startswith("css:") and mapping[4:]:
+                await page.locator(mapping[4:]).hover(timeout=5000)
+                return {"ok": True, "hovered_ref": ref}
             if mapping and mapping.startswith("role:"):
                 parts = mapping.split(":", 2)
                 role = parts[1]
@@ -389,7 +504,10 @@ def browser_select_option(value: str, selector: str = "", ref: str = "") -> dict
         target_label = ""
         if ref:
             mapping = _ref_map.get(ref, "")
-            if mapping and mapping.startswith("role:"):
+            if mapping.startswith("css:") and mapping[4:]:
+                await page.locator(mapping[4:]).select_option(value)
+                target_label = f"ref:{ref}"
+            elif mapping and mapping.startswith("role:"):
                 parts = mapping.split(":", 2)
                 role = parts[1]
                 name = parts[2] if len(parts) > 2 else ""
@@ -421,7 +539,10 @@ def browser_fill_form(fields: dict[str, str]) -> dict:
                 if key_str.startswith("e") and key_str in _ref_map:
                     # ref-based
                     mapping = _ref_map[key_str]
-                    if mapping.startswith("role:"):
+                    if mapping.startswith("css:") and mapping[4:]:
+                        await page.locator(mapping[4:]).fill(val_str)
+                        filled.append(key_str)
+                    elif mapping.startswith("role:"):
                         parts = mapping.split(":", 2)
                         role = parts[1]
                         name = parts[2] if len(parts) > 2 else ""
@@ -459,15 +580,18 @@ def browser_extract(url: str, selector: str = "body") -> dict:
 
 
 def browser_scroll(direction: str = "down", amount: int = 500) -> dict:
-    """Scroll the page up or down."""
+    """Scroll the page in one of the four declared directions."""
     async def _scroll():
         page = await _get_page()
-        delta = amount if direction == "down" else -amount
-        await page.evaluate(f"window.scrollBy(0, {delta})")
+        direction_normalized = str(direction or "down").lower()
+        dx = amount if direction_normalized == "right" else -amount if direction_normalized == "left" else 0
+        dy = amount if direction_normalized == "down" else -amount if direction_normalized == "up" else 0
+        await page.evaluate("([x, y]) => window.scrollBy(x, y)", [dx, dy])
         scroll_y = await page.evaluate("window.scrollY")
+        scroll_x = await page.evaluate("window.scrollX")
         return {
-            "ok": True, "scrolled": direction, "amount": amount,
-            "scroll_y": scroll_y,
+            "ok": True, "scrolled": direction_normalized, "amount": amount,
+            "scroll_x": scroll_x, "scroll_y": scroll_y,
         }
     return _run(_scroll())
 

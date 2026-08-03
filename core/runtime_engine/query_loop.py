@@ -2195,15 +2195,19 @@ class QueryLoop:
         declares a non-terminal ``long_task`` tracking payload.
         Uses the tool's canonical name for get calls.
         """
-        polled: List[StreamingToolResult] = []
+        # Keep every poll in tracking_events for diagnostics, but expose only
+        # the latest observation for each source call to the model/result
+        # projection. Replaying dozens of intermediate "running" rows bloats
+        # context and makes internal polling look like business tool work.
+        latest_by_source: dict[str, StreamingToolResult] = {}
         if not getattr(self._config, "tracking_enabled", True):
-            return polled
+            return []
 
         max_polls = max(0, int(getattr(self._config, "tracking_max_polls", 8) or 0))
         cap_seconds = float(getattr(self._config, "tracking_poll_interval_cap_seconds", 2.0))
         max_seconds = max(0, float(getattr(self._config, "tracking_max_seconds", 60)))
         if max_polls <= 0:
-            return polled
+            return []
 
         deadline = time.monotonic() + max_seconds
         user_input = ctx.user_input or ""
@@ -2251,6 +2255,11 @@ class QueryLoop:
                 ),
             })
 
+        state_by_source = {
+            state["result"].call_id: state
+            for state in states
+        }
+
         # Poll the earliest-due task first, then requeue it. This preserves one
         # global tracking deadline while preventing the first long task from
         # consuming the entire window and starving the rest.
@@ -2290,7 +2299,7 @@ class QueryLoop:
                 poll_result = await self._executor._execute_one(
                     poll_call, ctx=ctx, budget=budget
                 )
-                polled.append(poll_result)
+                latest_by_source[source_result.call_id] = poll_result
 
                 new_tracking = extract_tracking_payload(poll_result.output)
                 if new_tracking:
@@ -2312,16 +2321,20 @@ class QueryLoop:
                     state["tracking"], cap_seconds, deadline
                 )
             except Exception as e:
-                polled.append(StreamingToolResult(
+                latest_by_source[source_result.call_id] = StreamingToolResult(
                     tool_name=tool_name,
                     call_id=poll_call_id,
                     output={},
                     ok=False,
                     error=f"poll_crash: {str(e)[:200]}",
-                ))
+                )
                 state["last_error_count"] = 3
 
-        return polled
+        for source_call_id, state in state_by_source.items():
+            latest = latest_by_source.get(source_call_id)
+            if latest and isinstance(latest.output, dict):
+                latest.output.setdefault("tracking_poll_count", int(state["poll_index"]))
+        return list(latest_by_source.values())
 
     async def _sleep_until_poll_or_cancel(
         self,

@@ -162,7 +162,11 @@ class ToolExecutor:
 
         # ── 8. Build result ──
         ok = output.get("ok", True)  # v1.0.3.5: check ok to propagate errors
-        summary = output.get("summary", f"Tool {invocation.tool_id} {'completed' if ok else 'failed'}")
+        summary = (
+            output.get("summary")
+            or output.get("_hint")
+            or _structured_summary(invocation.tool_id, output, ok)
+        )
         # No per-field truncation — query_loop enforces a single 50K cap on the full payload.
 
         errors = output.get("errors", [])
@@ -184,6 +188,20 @@ class ToolExecutor:
         )
 
         return result
+
+
+def _structured_summary(tool_id: str, output: dict, ok: bool) -> str:
+    """Produce an evidence-bearing fallback for raw structured handlers."""
+    if not ok:
+        return str(output.get("error") or f"Tool {tool_id} failed")[:500]
+    for count_key, noun in (
+        ("match_count", "match(es)"),
+        ("row_count", "row(s)"),
+        ("count", "item(s)"),
+    ):
+        if count_key in output:
+            return f"{tool_id} returned {output[count_key]} {noun}."
+    return f"{tool_id} completed with structured output."
 
 
 def _validate_arguments(arguments: dict, schema: dict) -> list:

@@ -80,6 +80,10 @@ def test_read_actions_get_bounded_retry_and_writes_never_do():
         ("agent.manage", "status", True),
         ("agent.manage", "spawn", False),
         ("agent.manage", "cancel", False),
+        ("skill.manage", "list", True),
+        ("skill.manage", "mcp_call", False),
+        ("browser.manage", "screenshot", False),
+        ("report.manage", "document", True),
     ],
 )
 def test_high_risk_merged_tool_boundaries(tool_id, action, expected_read):

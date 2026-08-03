@@ -67,7 +67,12 @@ def _local_glob(inv: ToolInvocation) -> dict:
             "is_file": path.is_file(),
             "size": path.stat().st_size if path.is_file() else 0,
         })
-    return {"ok": True, "matches": matches, "count": len(matches)}
+    return {
+        "ok": True,
+        "matches": matches,
+        "count": len(matches),
+        "summary": f"Matched {len(matches)} workspace path(s).",
+    }
 
 
 def _local_delete(inv: ToolInvocation) -> dict:
@@ -89,7 +94,12 @@ def _local_delete(inv: ToolInvocation) -> dict:
         dest = trash / f"{target.stem}.{i}{target.suffix}"
         i += 1
     target.rename(dest)
-    return {"ok": True, "deleted": True, "trash_path": str(dest.relative_to(_workspace_path(ws)))}
+    return {
+        "ok": True,
+        "deleted": True,
+        "trash_path": str(dest.relative_to(_workspace_path(ws))),
+        "summary": f"Moved {filepath} to workspace trash.",
+    }
 
 
 def _handle_exec(inv: ToolInvocation) -> dict:
@@ -122,7 +132,7 @@ def _handle_browser(inv: ToolInvocation) -> dict:
     if action == "navigate":
         return browser.browser_navigate(str(args.get("url") or ""), wait_selector=str(args.get("wait_selector") or ""), timeout=int(args.get("timeout") or 30000))
     if action == "snapshot":
-        return browser.browser_snapshot(compact=bool(args.get("compact", True)), max_elements=int(args.get("max_elements") or 50))
+        return browser.browser_snapshot(selector=str(args.get("selector") or "body"), compact=bool(args.get("compact", True)), max_elements=int(args.get("max_elements") or 50))
     if action == "screenshot":
         return browser.browser_screenshot(url=str(args.get("url") or ""), full_page=bool(args.get("full_page", False)), as_file=bool(args.get("as_file", True)), workspace_id=str(args.get("workspace_id") or inv.workspace_id or ""))
     if action == "click":
@@ -180,9 +190,45 @@ def _handle_web(inv: ToolInvocation) -> dict:
             workspace_id=str(args.get("workspace_id") or inv.workspace_id or "default"),
         )
     if action == "deep_search":
-        search_result = _handle_web(ToolInvocation(tool_id=inv.tool_id, arguments={**args, "action": "search"}, workspace_id=inv.workspace_id))
-        return {"ok": bool(search_result.get("ok", True)), "summary": "deep_search fallback returned search results; fetch selected URLs explicitly when needed.", "search": search_result}
-    return _unsupported(inv, "search|fetch|weather|deep_search|list")
+        from core.tools.general_tools.web_content import fetch_with_fallback
+
+        top_k = max(1, min(int(args.get("top_k") or 3), 5))
+        search_result = _handle_web(ToolInvocation(
+            tool_id=inv.tool_id,
+            arguments={**args, "action": "search", "depth": "deep", "max_results": max(top_k, int(args.get("max_results") or top_k))},
+            workspace_id=inv.workspace_id,
+        ))
+        if not search_result.get("ok", False):
+            return search_result
+        pages = []
+        for item in list(search_result.get("results") or [])[:top_k]:
+            fetched = fetch_with_fallback(
+                str(item.get("url") or ""),
+                workspace_id=str(inv.workspace_id or "default"),
+                max_length=int(args.get("max_length") or 20000),
+                timeout=int(args.get("timeout") or 15),
+            )
+            pages.append({
+                "title": item.get("title", ""),
+                "url": item.get("url", ""),
+                "snippet": item.get("snippet", ""),
+                "ok": bool(fetched.get("ok", False)),
+                "content": fetched.get("content", ""),
+                "content_length": fetched.get("content_length", 0),
+                "quality_score": fetched.get("quality_score", 0),
+                "error": fetched.get("error", ""),
+            })
+        usable = sum(1 for page in pages if page["ok"] and page["content"])
+        return {
+            "ok": usable > 0,
+            "summary": f"Deep search fetched {usable}/{len(pages)} source page(s).",
+            "query": args.get("query", ""),
+            "search_results": search_result.get("results", []),
+            "pages": pages,
+            "count": usable,
+            "errors": [] if usable else ["no source page could be fetched"],
+        }
+    return _unsupported(inv, "search|fetch|weather|deep_search")
 
 
 def _handle_data(inv: ToolInvocation) -> dict:
@@ -236,6 +282,8 @@ def _handle_knowledge(inv: ToolInvocation) -> dict:
         handle_knowledge_get_chunk_summary,
         handle_knowledge_get_source,
         handle_knowledge_index_artifact,
+        handle_knowledge_list_chunks,
+        handle_knowledge_list_sources,
         handle_knowledge_reindex,
         handle_knowledge_search,
     )
@@ -245,14 +293,17 @@ def _handle_knowledge(inv: ToolInvocation) -> dict:
     if action == "search":
         return handle_knowledge_search(inv)
     if action == "read":
-        return handle_knowledge_get_source(inv) if level == "source" else handle_knowledge_get_chunk_summary(inv)
+        has_source = bool((inv.arguments or {}).get("source_id"))
+        return handle_knowledge_get_source(inv) if level == "source" or has_source else handle_knowledge_get_chunk_summary(inv)
     if action == "import":
         return handle_knowledge_index_artifact(inv)
-    if action == "manage":
+    if action in {"reindex", "manage"}:
         return handle_knowledge_reindex(inv)
-    if action in {"list", "chunk"}:
-        return handle_knowledge_search(inv)
-    return _unsupported(inv, "search|read|list|chunk|import|manage")
+    if action == "list":
+        return handle_knowledge_list_sources(inv)
+    if action == "chunk":
+        return handle_knowledge_list_chunks(inv)
+    return _unsupported(inv, "search|read|list|chunk|import|reindex")
 
 
 def _handle_memory(inv: ToolInvocation) -> dict:
@@ -310,7 +361,14 @@ def _handle_agent(inv: ToolInvocation) -> dict:
 
 
 def _handle_system(inv: ToolInvocation) -> dict:
-    from core.tools.general_tools.runtime_tools import handle_runtime_diagnostics, handle_runtime_health, handle_runtime_local_info, handle_runtime_selfcheck
+    from core.tools.general_tools.runtime_tools import (
+        handle_runtime_audit_log,
+        handle_runtime_diagnostics,
+        handle_runtime_health,
+        handle_runtime_local_info,
+        handle_runtime_selfcheck,
+        handle_runtime_tasks,
+    )
     from core.tools.general_tools.session_tools import (
         handle_run_get_merged,
         handle_session_checkpoint,
@@ -326,17 +384,15 @@ def _handle_system(inv: ToolInvocation) -> dict:
         "health": handle_runtime_health,
         "selfcheck": handle_runtime_selfcheck,
         "local_info": handle_runtime_local_info,
-        "tasks": handle_runtime_diagnostics,
-        "audit_log": handle_runtime_diagnostics,
+        "tasks": handle_runtime_tasks,
+        "audit_log": handle_runtime_audit_log,
         "run_get": handle_run_get_merged,
         "session_get": handle_session_get_merged,
         "session_checkpoint": handle_session_checkpoint,
         "session_rewind": handle_session_rewind,
         "session_export": handle_session_export,
         "session_snapshot": handle_session_snapshot,
-        "review_list": handle_runtime_diagnostics,
-        "review_update": handle_runtime_diagnostics,
-    }.get(action, lambda x: _unsupported(x, "diagnostics|health|selfcheck|local_info|tasks|audit_log|run_get|session_get|session_checkpoint|session_rewind|session_export|session_snapshot|review_list|review_update"))(inv)
+    }.get(action, lambda x: _unsupported(x, "diagnostics|health|selfcheck|local_info|tasks|audit_log|run_get|session_get|session_checkpoint|session_rewind|session_export|session_snapshot"))(inv)
 
 
 def _handle_text(inv: ToolInvocation) -> dict:
@@ -357,7 +413,12 @@ def _handle_text(inv: ToolInvocation) -> dict:
             matches = re.findall(pattern, str(args.get("text") or ""), re.MULTILINE | re.DOTALL)
         except re.error as exc:
             return {"ok": False, "error": f"invalid regex: {exc}"}
-        return {"ok": True, "matches": matches[:100], "match_count": len(matches)}
+        return {
+            "ok": True,
+            "matches": matches[:100],
+            "match_count": len(matches),
+            "summary": f"Regex matched {len(matches)} occurrence(s).",
+        }
     return _unsupported(inv, "redact|extract|extract_entities|match")
 
 
@@ -468,27 +529,100 @@ _COMMON = {
     "title": {"type": "string"},
 }
 
+_EXEC_ARGS = {
+    "command": {"type": "string", "description": "Shell/slash command; required for action=shell|slash."},
+    "code": {"type": "string", "description": "Python source; required for action=python."},
+    "description": {"type": "string"},
+    "working_dir": {"type": "string", "description": "Workspace-relative working directory."},
+    "timeout": {"type": "integer", "minimum": 1, "maximum": 600},
+    "target": {"type": "string", "enum": ["local"], "default": "local"},
+    "shell": {"type": "string", "enum": ["cmd", "powershell"], "default": "cmd"},
+    "env_vars": {"type": "object"},
+}
+
+_BROWSER_ARGS = {
+    "url": {"type": "string"}, "selector": {"type": "string"},
+    "ref": {"type": "string"}, "text": {"type": "string"},
+    "script": {"type": "string"}, "key": {"type": "string"},
+    "value": {"type": "string"}, "wait_selector": {"type": "string"},
+    "wait_text": {"type": "string"}, "timeout": {"type": "integer", "minimum": 1},
+    "wait_ms": {"type": "integer", "minimum": 0},
+    "compact": {"type": "boolean"}, "max_elements": {"type": "integer", "minimum": 1},
+    "full_page": {"type": "boolean"}, "as_file": {"type": "boolean"},
+    "clear_first": {"type": "boolean"},
+    "direction": {"type": "string", "enum": ["up", "down", "left", "right"]},
+    "amount": {"type": "integer", "minimum": 1},
+    "tab_action": {"type": "string", "enum": ["list", "new", "switch", "close"]},
+    "tab_index": {"type": "integer", "minimum": 0},
+}
+
+_WEB_ARGS = {
+    "source": {"type": "string", "enum": ["web", "news", "docs"]},
+    "url": {"type": "string"}, "location": {"type": "string"},
+    "days": {"type": "integer", "minimum": 1, "maximum": 10, "description": "Forecast horizon in days (1-10)."},
+    "language": {"type": "string"}, "units": {"type": "string", "enum": ["metric", "imperial"]},
+    "recency": {"type": "string"},
+    "safe_search": {"type": "string", "enum": ["strict", "moderate", "off"]},
+    "depth": {"type": "string", "enum": ["fast", "balanced", "deep"]},
+    "domains": {"type": "array", "items": {"type": "string"}},
+    "allowed_domains": {"type": "array", "items": {"type": "string"}},
+    "blocked_domains": {"type": "array", "items": {"type": "string"}},
+    "site": {"type": "string"}, "vendor": {"type": "string"},
+    "max_results": {"type": "integer", "minimum": 1}, "top_k": {"type": "integer", "minimum": 1},
+    "extract_mode": {"type": "string", "enum": ["article", "full", "structured", "links"]},
+    "max_length": {"type": "integer", "minimum": 1}, "timeout": {"type": "integer", "minimum": 1},
+}
+
+_DATA_ARGS = {
+    "rows": {"type": "array"}, "text": {"type": "string"},
+    "column": {"type": "string"}, "conditions": {"type": "array"},
+    "group_by": {"type": "array", "items": {"type": "string"}}, "metrics": {"type": "array"},
+    "by": {"type": "array", "items": {"type": "string"}}, "order": {"type": "string", "enum": ["asc", "desc"]},
+    "max_rows": {"type": "integer", "minimum": 1, "maximum": 200},
+    "output": {"type": "string", "enum": ["markdown", "json", "csv"]},
+    "index": {"type": "string"}, "columns": {"type": "string"},
+    "values": {"type": "string"}, "aggfunc": {"type": "string", "enum": ["sum", "count", "avg", "min", "max"]},
+    "right_text": {"type": "string"}, "right_rows": {"type": "array"},
+    "on": {"type": "string"}, "how": {"type": "string", "enum": ["inner", "left"]},
+}
+
+_MEMORY_ARGS = {
+    "memory_id": {"type": "string"}, "memory_type": {"type": "string"},
+    "scope": {"type": "string"}, "field": {"type": "string"},
+    "value": {}, "merge": {"type": "boolean"}, "session_id": {"type": "string"},
+    "tags": {"type": "array", "items": {"type": "string"}},
+}
+
+_SYSTEM_ARGS = {
+    "run_id": {"type": "string"}, "session_id": {"type": "string"},
+    "snapshot_id": {"type": "string"}, "log_level": {"type": "string"},
+    "operation": {"type": "string"}, "reason": {"type": "string"},
+    "format": {"type": "string", "enum": ["json", "markdown"]},
+    "dry_run": {"type": "boolean"}, "status": {"type": "string"},
+}
+
+_WORKSPACE_FILE_ARGS = {
+    "offset": {"type": "integer", "minimum": 0}, "subdir": {"type": "string"},
+    "pattern": {"type": "string"}, "old_string": {"type": "string"},
+    "new_string": {"type": "string"}, "replace_all": {"type": "boolean"},
+    "patch_text": {"type": "string"}, "filename": {"type": "string"},
+    "dry_run": {"type": "boolean"},
+}
+
 
 _RAW_REGISTRY: list[CanonicalToolEntry] = [
     _entry("exec.run", _handle_exec, {
-        **_COMMON,
+        **_COMMON, **_EXEC_ARGS,
         "action": {"type": "string", "enum": ["shell", "python", "slash"], "default": "shell"},
-        "command": {"type": "string"},
-        "code": {"type": "string"},
-        "description": {"type": "string"},
-        "working_dir": {"type": "string", "description": "Optional working directory. Defaults to the current user workspace; prefer workspace-relative paths."},
-        "timeout": {"type": "integer", "minimum": 1, "maximum": 600},
-        "target": {"type": "string", "enum": ["local"], "default": "local"},
-        "shell": {"type": "string", "enum": ["cmd", "powershell"], "default": "cmd"},
     }, required=["action"], risk="medium", permission="exec", description="Local command execution."),
-    _entry("browser.manage", _handle_browser, {**_COMMON, "action": {"type": "string", "enum": ["navigate", "snapshot", "screenshot", "click", "type", "extract", "scroll", "hover", "press_key", "select_option", "evaluate", "wait", "tabs", "network", "console", "navigate_back", "close"]}, "url": {"type": "string"}, "selector": {"type": "string"}, "ref": {"type": "string"}, "text": {"type": "string"}, "script": {"type": "string"}, "key": {"type": "string"}}, required=["action"], risk="medium", description="Browser automation."),
-    _entry("web.manage", _handle_web, {**_COMMON, "action": {"type": "string", "enum": ["search", "fetch", "weather", "deep_search", "list"]}, "url": {"type": "string"}, "source": {"type": "string"}, "location": {"type": "string"}, "days": {"type": "integer", "description": "Forecast days for weather action."}}, required=["action"], description="Web search, fetch and weather."),
-    _entry("data.manage", _handle_data, {**_COMMON, "action": {"type": "string", "enum": ["parse", "stats", "distinct", "aggregate", "filter", "sort", "render", "pivot", "join"]}, "text": {"type": "string"}, "rows": {"type": "array"}, "column": {"type": "string"}, "conditions": {"type": "array"}, "group_by": {"type": "array"}, "metrics": {"type": "array"}}, required=["action"], description="Structured data processing."),
+    _entry("browser.manage", _handle_browser, {**_COMMON, **_BROWSER_ARGS, "action": {"type": "string", "enum": ["navigate", "snapshot", "screenshot", "click", "type", "extract", "scroll", "hover", "press_key", "select_option", "evaluate", "wait", "tabs", "network", "console", "navigate_back", "close"]}}, required=["action"], risk="medium", description="Browser automation. navigate/extract require url; click/hover require selector or ref; type requires text and selector/ref."),
+    _entry("web.manage", _handle_web, {**_COMMON, **_WEB_ARGS, "action": {"type": "string", "enum": ["search", "fetch", "weather", "deep_search"]}}, required=["action"], description="Web search/fetch/weather. search requires query; deep_search searches then fetches up to top_k source pages; fetch requires url; weather requires location and supports days=1..10."),
+    _entry("data.manage", _handle_data, {**_COMMON, **_DATA_ARGS, "action": {"type": "string", "enum": ["parse", "stats", "distinct", "aggregate", "filter", "sort", "render", "pivot", "join"]}}, required=["action"], description="Structured data processing. Supply text or rows; action-specific columns/options are declared in the schema."),
     _entry("device.manage", _handle_device, {**_COMMON, "action": {"type": "string", "enum": ["probe", "read"]}, "asset_id": {"type": "string"}, "host": {"type": "string"}, "port": {"type": "integer"}, "vendor": {"type": "string"}, "username": {"type": "string"}, "password": {"type": "string"}, "auth_method": {"type": "string", "enum": ["password", "private_key"]}, "private_key": {"type": "string"}, "passphrase": {"type": "string"}, "host_key_fingerprint": {"type": "string"}, "accept_host_key": {"type": "boolean"}, "commands": {"type": "array", "items": {"type": "string"}}, "timeout": {"type": "integer"}}, required=["action"], risk="medium", permission="network", description="Read-only network device connection probing and command reads."),
-    _entry("report.manage", _handle_report, {**_COMMON, "action": {"type": "string", "enum": ["save", "diff", "document"]}, "left": {"type": "string"}, "right": {"type": "string"}}, required=["action"], description="Report save, diff and document rendering."),
-    _entry("knowledge.manage", _handle_knowledge, {**_COMMON, "action": {"type": "string", "enum": ["search", "read", "list", "chunk", "import", "manage"]}, "level": {"type": "string"}, "chunk_id": {"type": "string"}, "source_id": {"type": "string"}}, required=["action"], risk="medium", description="Knowledge search/read/import/manage."),
-    _entry("memory.manage", _handle_memory, {**_COMMON, "action": {"type": "string", "enum": ["search", "review", "confirm", "create", "update", "delete", "profile_get", "profile_set"]}, "memory_id": {"type": "string"}, "scope": {"type": "string"}, "field": {"type": "string"}, "value": {"type": "string"}}, required=["action"], risk="medium", description="Memory search and management."),
-    _entry("skill.manage", _handle_skill, {**_COMMON, "action": {"type": "string", "enum": ["list", "find", "load", "inspect", "mcp_list_tools", "mcp_call"]}, "skill_name": {"type": "string"}, "provider_id": {"type": "string"}, "tool_name": {"type": "string"}, "arguments": {"type": "object"}, "confirm": {"type": "boolean"}}, required=["action"], risk="medium", permission="exec", description="Skill discovery and governed MCP access."),
+    _entry("report.manage", _handle_report, {**_COMMON, "action": {"type": "string", "enum": ["save", "diff", "document"]}, "summary": {"type": "string"}, "text_a": {"type": "string"}, "text_b": {"type": "string"}}, required=["action"], description="Report operations. save requires content; diff requires text_a/text_b; document requires summary."),
+    _entry("knowledge.manage", _handle_knowledge, {**_COMMON, "action": {"type": "string", "enum": ["search", "read", "list", "chunk", "import", "reindex"]}, "level": {"type": "string", "enum": ["chunk", "source"]}, "chunk_id": {"type": "string"}, "source_id": {"type": "string"}, "chunk_type": {"type": "string"}, "scope": {"type": "string"}, "include_disabled": {"type": "boolean"}, "include_deleted": {"type": "boolean"}}, required=["action"], risk="medium", description="Knowledge operations. search requires query; read requires chunk_id or source_id; list lists sources; chunk lists chunks; import requires artifact_id; reindex requires source_id."),
+    _entry("memory.manage", _handle_memory, {**_COMMON, **_MEMORY_ARGS, "action": {"type": "string", "enum": ["search", "review", "confirm", "create", "update", "delete", "profile_get", "profile_set"]}}, required=["action"], risk="medium", description="Memory operations. create requires content; update/confirm/delete require memory_id; profile_set requires field and value."),
+    _entry("skill.manage", _handle_skill, {**_COMMON, "action": {"type": "string", "enum": ["list", "find", "load", "inspect", "mcp_list_tools", "mcp_call"]}, "skill_name": {"type": "string"}, "provider_id": {"type": "string"}, "tool_name": {"type": "string"}, "arguments": {"type": "object"}, "confirm": {"type": "boolean"}}, required=["action"], risk="medium", permission="exec", description="Skill operations. find requires query; load/inspect require skill_name; MCP actions require provider_id and mcp_call also requires tool_name."),
     _entry("agent.manage", _handle_agent, {
         **_COMMON,
         "action": {"type": "string", "enum": ["spawn", "list", "get", "status", "cancel", "merge"]},
@@ -499,10 +633,11 @@ _RAW_REGISTRY: list[CanonicalToolEntry] = [
         "session_id": {"type": "string"},
         "child_session_id": {"type": "string"},
         "subtask_id": {"type": "string"},
+        "parent_task_id": {"type": "string"},
     }, required=["action"], description="Subagent task management. action=spawn requires instruction; action=get accepts the subtask_id returned by spawn (child_session_id is a compatibility alias)."),
-    _entry("system.manage", _handle_system, {**_COMMON, "action": {"type": "string", "enum": ["diagnostics", "health", "selfcheck", "local_info", "tasks", "audit_log", "run_get", "session_get", "session_checkpoint", "session_rewind", "session_export", "session_snapshot", "review_list", "review_update"]}, "run_id": {"type": "string"}, "session_id": {"type": "string"}, "review_id": {"type": "string"}}, required=["action"], risk="medium", description="Runtime diagnostics and session operations."),
+    _entry("system.manage", _handle_system, {**_COMMON, **_SYSTEM_ARGS, "action": {"type": "string", "enum": ["diagnostics", "health", "selfcheck", "local_info", "tasks", "audit_log", "run_get", "session_get", "session_checkpoint", "session_rewind", "session_export", "session_snapshot"]}}, required=["action"], risk="medium", description="Runtime health, durable tasks, audit logs, run details, and session operations. run_get requires run_id; session actions require session_id; rewind additionally requires snapshot_id."),
     _entry("text.analyze", _handle_text, {**_COMMON, "action": {"type": "string", "enum": ["redact", "extract_entities", "match"]}, "text": {"type": "string"}, "pattern": {"type": "string"}}, required=["action"], description="Text redact, extract and match."),
-    _entry("workspace.file", _handle_workspace_file, {**_COMMON, "action": {"type": "string", "enum": ["list", "read", "read_image", "write", "write_artifact", "edit", "patch", "glob", "delete"]}, "filename": {"type": "string", "description": "Requested filename for write/write_artifact, including extension."}, "subdir": {"type": "string"}, "pattern": {"type": "string"}, "old_string": {"type": "string"}, "new_string": {"type": "string"}, "patch_text": {"type": "string"}}, required=["action"], risk="medium", description="Workspace file operations."),
+    _entry("workspace.file", _handle_workspace_file, {**_COMMON, **_WORKSPACE_FILE_ARGS, "action": {"type": "string", "enum": ["list", "read", "read_image", "write", "write_artifact", "edit", "patch", "glob", "delete"]}}, required=["action"], risk="medium", description="Workspace files. read/read_image/edit/patch/delete require filepath; write/write_artifact require filename and content."),
     _entry("workspace.artifact", _handle_workspace_artifact, {**_COMMON, "action": {"type": "string", "enum": ["list", "read", "save", "tag", "delete"]}, "status": {"type": "string"}, "tags": {"type": "array"}, "artifact_type": {"type": "string"}}, required=["action"], description="Workspace artifact operations."),
     _entry("workspace.filestore", _handle_workspace_filestore, {**_COMMON, "action": {"type": "string", "enum": ["references", "import"]}, "file_id": {"type": "string"}}, required=["action"], description="FileStore references and import."),
     _entry("workspace.metadata.get", _handle_workspace_metadata, {"workspace_id": {"type": "string"}}, description="Workspace metadata."),

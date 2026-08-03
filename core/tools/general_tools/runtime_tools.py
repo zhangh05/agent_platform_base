@@ -60,6 +60,43 @@ def handle_knowledge_search(inv: ToolInvocation) -> dict:
     except Exception as e:
         return _error_inv(inv, str(e)[:200])
 
+
+def handle_knowledge_list_sources(inv: ToolInvocation) -> dict:
+    """List sources instead of routing the list action through search."""
+    args = inv.arguments or {}
+    ws = _caller_workspace(inv)
+    try:
+        validate_workspace_id(ws)
+        from agent.modules.knowledge.service import list_sources
+
+        return list_sources(
+            workspace_id=ws,
+            include_disabled=bool(args.get("include_disabled", False)),
+            include_deleted=bool(args.get("include_deleted", False)),
+            query=str(args.get("query") or ""),
+            scope=str(args.get("scope") or ""),
+        )
+    except Exception as exc:
+        return _error_inv(inv, str(exc)[:200])
+
+
+def handle_knowledge_list_chunks(inv: ToolInvocation) -> dict:
+    """List chunks, optionally scoped to a source."""
+    args = inv.arguments or {}
+    ws = _caller_workspace(inv)
+    try:
+        validate_workspace_id(ws)
+        from agent.modules.knowledge.service import list_chunks
+
+        return list_chunks(
+            workspace_id=ws,
+            source_id=str(args.get("source_id") or ""),
+            chunk_type=str(args.get("chunk_type") or ""),
+            limit=max(1, min(int(args.get("limit") or 200), 200)),
+        )
+    except Exception as exc:
+        return _error_inv(inv, str(exc)[:200])
+
 def handle_knowledge_get_source(inv: ToolInvocation) -> dict:
     args = inv.arguments
     ws = _caller_workspace(inv)
@@ -223,6 +260,49 @@ def handle_runtime_local_info(inv: ToolInvocation) -> dict:
         "machine": platform.machine(),
         "cwd": os.getcwd(),
     })
+
+
+def handle_runtime_tasks(inv: ToolInvocation) -> dict:
+    """List durable runtime tasks for the current workspace."""
+    try:
+        ws = _caller_workspace(inv)
+        args = inv.arguments or {}
+        from agent.runtime.durable.store import list_tasks
+
+        tasks = list_tasks(
+            ws,
+            session_id=str(args.get("session_id") or ""),
+            limit=max(1, min(int(args.get("limit") or 50), 200)),
+        )
+        rows = [task.to_dict() for task in tasks]
+        return _ok(inv, f"{len(rows)} durable tasks", {
+            "tasks": rows,
+            "count": len(rows),
+            "workspace_id": ws,
+        })
+    except Exception as exc:
+        return _error_inv(inv, str(exc)[:200])
+
+
+def handle_runtime_audit_log(inv: ToolInvocation) -> dict:
+    """Read the workspace-owned audit log, not generic diagnostics."""
+    try:
+        ws = _caller_workspace(inv)
+        args = inv.arguments or {}
+        from storage.audit_store import list_audit_entries
+
+        entries = list_audit_entries(
+            ws,
+            log_level=str(args.get("log_level") or "info"),
+            limit=max(1, min(int(args.get("limit") or 20), 200)),
+        )
+        return _ok(inv, f"{len(entries)} audit entries", {
+            "entries": entries,
+            "count": len(entries),
+            "workspace_id": ws,
+        })
+    except Exception as exc:
+        return _error_inv(inv, str(exc)[:200])
 
 def handle_runtime_retention_preview(inv: ToolInvocation) -> dict:
     ws = _caller_workspace(inv)

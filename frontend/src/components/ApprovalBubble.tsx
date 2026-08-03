@@ -55,6 +55,7 @@ export function ApprovalBubble({ onResolved }: { onResolved?: (decision: "approv
     let es: EventSource | null = null;
     let pollTimer: ReturnType<typeof setInterval> | null = null;
     let pollInFlight = false;
+    let authorized = false;
 
     const stopPoll = () => {
       if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
@@ -74,6 +75,7 @@ export function ApprovalBubble({ onResolved }: { onResolved?: (decision: "approv
         }
         const data = await approvalApi.pending(currentSessionId, currentWorkspaceId);
         if (cancelled) return;
+        authorized = true;
         if (data.ok && data.pending?.length > 0) {
           const p = (data.pending as unknown as PendingApproval[]).find((item) => !resolvedIdsRef.current.has(item.approval_id));
           if (!p) {
@@ -99,19 +101,24 @@ export function ApprovalBubble({ onResolved }: { onResolved?: (decision: "approv
           setPending(null);
           setSecondsLeft(60);
         }
-      } catch { /* ignore */ }
+      } catch (error) {
+        const status = typeof error === "object" && error !== null && "status" in error
+          ? Number((error as { status?: number }).status || 0)
+          : 0;
+        if (status === 401) stopPoll();
+      }
       finally { pollInFlight = false; }
     };
 
-    // Initial poll: only continue polling if a pending approval is found
-    poll();
-    startPoll();
+    // Initial check. Healthy SSE events trigger later checks; polling is only
+    // a fallback while an approval is active or the stream is disconnected.
+    void poll();
     try {
       es = openApprovalStream(currentWorkspaceId, (event) => {
         if (!resolvingRef.current && event.session_id === currentSessionId && event.workspace_id === currentWorkspaceId) {
           void poll();
         }
-      });
+      }, () => { if (authorized) startPoll(); });
     } catch {
       es = null;
     }
