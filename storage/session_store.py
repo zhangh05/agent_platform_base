@@ -205,7 +205,6 @@ def _session_from_messages(
         return None
 
     records: list[tuple[str, str, Dict[str, Any]]] = []
-    run_ids: list[str] = []
     for message_file in message_files:
         try:
             data = json.loads(message_file.read_text(encoding="utf-8"))
@@ -220,12 +219,14 @@ def _session_from_messages(
             or ""
         )
         records.append((timestamp, role, data))
-        run_id = str(data.get("run_id") or "").strip()
-        if run_id and run_id not in run_ids:
-            run_ids.append(run_id)
     if not records:
         return None
     records.sort(key=lambda item: item[0])
+    run_ids: list[str] = []
+    for _, _, data in records:
+        run_id = str(data.get("run_id") or "").strip()
+        if run_id and run_id not in run_ids:
+            run_ids.append(run_id)
     timestamps = [item[0] for item in records if item[0]]
     title = ""
     for _, role, data in records:

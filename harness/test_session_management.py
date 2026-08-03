@@ -169,6 +169,14 @@ class TestSessionRunAssociation:
             "legacy_run_1", "assistant", "处理失败",
             {"created_at": "2026-01-01T00:00:01+00:00"},
         )
+        store.write_message(
+            "legacy_run_2", "user", "不可能啊",
+            {"created_at": "2026-01-01T00:00:02+00:00"},
+        )
+        store.write_message(
+            "legacy_run_2", "assistant", "继续处理",
+            {"created_at": "2026-01-01T00:00:03+00:00"},
+        )
         update_session(
             session_id, "default", title=session_id,
             metadata={"auto_repaired": True},
@@ -180,7 +188,7 @@ class TestSessionRunAssociation:
         )
 
         assert repaired["title"] == "派生子任务查询天气"
-        assert repaired["run_ids"] == ["legacy_run_1"]
+        assert repaired["run_ids"] == ["legacy_run_1", "legacy_run_2"]
         assert repaired["metadata"]["repair_complete"] is True
 
     def test_add_run_to_session(self):
