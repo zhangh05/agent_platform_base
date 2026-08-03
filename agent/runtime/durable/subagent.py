@@ -669,7 +669,6 @@ def _run_ssot_runtime_with_timeout(
         bind_storage_principal(run_fn),
         session,
         turn,
-        None,
         allowed_tool_ids=allowed_tool_ids,
         requested_by="subagent",
     )

@@ -15,7 +15,9 @@ class _FakeAgentResult:
     events = []
 
 
-def _fake_run_turn(session, turn, services=None, **kwargs):
+def _fake_run_turn(session, turn, **kwargs):
+    assert kwargs.get("requested_by") == "subagent"
+    assert kwargs.get("allowed_tool_ids") is not None
     return _FakeAgentResult()
 
 
