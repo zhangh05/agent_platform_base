@@ -209,6 +209,15 @@ class SemanticValidator:
         result: SemanticValidationResult,
     ) -> None:
         """Validate sub-action requirements not expressible in the flat schema."""
+        if node.tool == "agent.manage":
+            action = str(node.args.get("action") or "").strip().lower()
+            if action == "spawn" and not str(node.args.get("instruction") or "").strip():
+                result.errors.append(SemanticError(
+                    node_id=node.id,
+                    code="MISSING_REQUIRED_ARG",
+                    message=f"Node '{node.id}' missing required arg 'instruction' for agent spawn",
+                ))
+            return
         if node.tool != "exec.run":
             return
         action = str(node.args.get("action") or "shell").strip().lower()

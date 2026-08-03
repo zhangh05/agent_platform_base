@@ -1420,13 +1420,33 @@ class QueryLoop:
                         # Budget exhaustion — stop immediately
                         if "budget" in err_lower or "exceeded" in err_lower:
                             return finish(
-                                final_response="已达到 LLM 调用或工具执行预算上限。请简化请求或稍后再试。",
+                                final_response=(
+                                    self._build_tool_result_fallback(ctx, all_results)
+                                    if all_results
+                                    else "已达到 LLM 调用或工具执行预算上限。请简化请求或稍后再试。"
+                                ),
                                 tool_results=all_results,
                                 iterations=iterations,
                                 total_tool_calls=len(all_results),
                                 llm_calls=llm_calls,
                                 error="doom_loop_budget",
                             )
+                        # Missing/invalid arguments are deterministic. Different
+                        # call ids must not allow the same schema error to consume
+                        # the entire execution budget.
+                        if "required" in err_lower or "invalid argument" in err_lower:
+                            normalized_error = " ".join(err_lower.split())[:160]
+                            key = f"args:{r.tool_name}:{normalized_error}"
+                            failure_counts[key] = failure_counts.get(key, 0) + 1
+                            if failure_counts[key] >= 2:
+                                return finish(
+                                    final_response=self._build_tool_result_fallback(ctx, all_results),
+                                    tool_results=all_results,
+                                    iterations=iterations,
+                                    total_tool_calls=len(all_results),
+                                    llm_calls=llm_calls,
+                                    error="doom_loop_args",
+                                )
                         # Timeout / connection — generic doom-loop detection
                         if "timeout" in err_lower or "timed out" in err_lower or "connection" in err_lower or "network" in err_lower:
                             key = f"timeout:{r.tool_name}:{_json_compact(r.output, max_chars=600)}"
@@ -2407,7 +2427,7 @@ class QueryLoop:
                 if hint:
                     lines.append(f"错误: `{r.tool_name}` 不存在: {r.error}；应使用 `{hint}`")
                 else:
-                    lines.append(f"错误: `{r.tool_name}` 不存在: {r.error}")
+                    lines.append(f"错误: `{r.tool_name}` 调用失败: {r.error}")
 
         # Tracking info
         tracking_items: list[dict[str, Any]] = []

@@ -228,8 +228,11 @@ def handle_auth_login():
     if (
         configured_username
         and configured_password
-        and hmac.compare_digest(username, configured_username)
-        and hmac.compare_digest(password, configured_password)
+        # compare_digest(str, str) raises TypeError for non-ASCII input.
+        # UTF-8 bytes preserve constant-time comparison and make invalid
+        # credentials return the normal 401 response instead of HTTP 500.
+        and hmac.compare_digest(username.encode("utf-8"), configured_username.encode("utf-8"))
+        and hmac.compare_digest(password.encode("utf-8"), configured_password.encode("utf-8"))
     ):
         flask.session.clear()
         flask.session["agent_platform_user"] = configured_username

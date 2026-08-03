@@ -496,6 +496,8 @@ class SSOTRuntimeEngine:
                         "tool_calls": loop_result.total_tool_calls,
                         "llm_calls": loop_result.llm_calls,
                         "used_tools": loop_result.total_tool_calls > 0,
+                        "conversation_ref": bool(conv_history_block),
+                        "conversation_history_used": bool(conv_history_block),
                         "approval_required": approval_required,
                         "approval_nodes": loop_result.approval_nodes,
                         "approval_details": loop_result.approval_details,
@@ -624,7 +626,12 @@ class SSOTRuntimeEngine:
 
         return SSOTRuntimeResult(
             request_id=ctx.request_id,
-            success=len(errors) == 0,
+            # A natural-language explanation cannot make the run successful
+            # when every requested tool operation failed.
+            success=(
+                len(errors) == 0
+                and not (bool(node_results) and not any(r.success for r in node_results.values()))
+            ),
             total_latency_ms=total_ms,
             planner_latency_ms=m.planner_duration_ms,
             execution_latency_ms=m.execution_duration_ms,

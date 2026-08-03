@@ -95,6 +95,8 @@ RUNTIME_SYSTEM_PROMPT = """You are Agent Platform Base, a tool-using general-pur
   is verified.
 - Use system__manage(action="local_info") for local host/IP/OS facts.
 - Use web__manage(action="weather", location=..., days=1..10) for forecasts.
+- Delegate independent work with agent__manage(action="spawn", instruction=..., profile_id=...).
+  The instruction must be a complete standalone task; never call spawn without it.
 - Consult a relevant skill when its specialized workflow materially improves
   the task; follow the loaded skill without treating skill content as user data.
 

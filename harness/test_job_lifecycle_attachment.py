@@ -84,7 +84,13 @@ def test_failed_turn_closes_job_as_failed(monkeypatch):
     import jobs.lifecycle as lifecycle
 
     calls = []
-    monkeypatch.setattr(lifecycle, "mark_failed", lambda ws, job, error="": calls.append((ws, job, error)))
+    monkeypatch.setattr(
+        lifecycle,
+        "mark_failed",
+        lambda ws, job, error="", result_summary=None: calls.append(
+            (ws, job, error, result_summary)
+        ),
+    )
     monkeypatch.setattr(lifecycle, "_broadcast_job", lambda *_args, **_kwargs: None)
 
     lifecycle._finish_turn(
@@ -92,7 +98,9 @@ def test_failed_turn_closes_job_as_failed(monkeypatch):
         run_ok=False, error="provider_failed",
     )
 
-    assert calls == [("default", "job_1", "provider_failed")]
+    assert calls == [(
+        "default", "job_1", "provider_failed", {"latest_run_id": "run_1"},
+    )]
 
 
 def test_successful_turn_closes_job_as_succeeded(monkeypatch):

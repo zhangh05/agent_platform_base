@@ -82,7 +82,12 @@ def _finish_turn(
         if run_ok:
             mark_succeeded(ws_id, job_id, result_summary={"latest_run_id": run_id})
         else:
-            mark_failed(ws_id, job_id, error=error or "agent_turn_failed")
+            mark_failed(
+                ws_id,
+                job_id,
+                error=error or "agent_turn_failed",
+                result_summary={"latest_run_id": run_id},
+            )
         _broadcast_job(job_id, ws_id, session_id)
     except (TypeError, ValueError):
         _log.exception("job turn finalization failed job=%s run=%s", job_id, run_id)
@@ -168,11 +173,18 @@ def _merge_run_id(ws_id: str, job_id: str, session_id: str, run_id: str, tool_ca
     # artifact_refs from the run record so the job "Artifacts" tab is
     # populated even when the artifact store run index uses a different id.
     output_arts = list(getattr(rec, "output_artifacts", None) or [])
+    trace_ids = list(getattr(rec, "trace_ids", None) or [])
+    run_started_at = ""
     try:
         from storage.run_record_store import get_run
         for rid in new_ids:
             run_rec = get_run(rid, ws_id)
             if run_rec:
+                if rid == run_id:
+                    run_started_at = str(run_rec.get("started_at") or run_rec.get("created_at") or "")
+                    trace_id = str(run_rec.get("trace_id") or "")
+                    if trace_id and trace_id not in trace_ids:
+                        trace_ids.append(trace_id)
                 for ref in (run_rec.get("artifact_refs") or []):
                     art_id = ref.get("artifact_id") if isinstance(ref, dict) else ref
                     if art_id and art_id not in output_arts:
@@ -180,7 +192,14 @@ def _merge_run_id(ws_id: str, job_id: str, session_id: str, run_id: str, tool_ca
     except Exception:
         _log.debug("artifact_refs merge failed job=%s", job_id, exc_info=True)
 
-    update_job(ws_id, job_id, {"run_ids": new_ids, "output_artifacts": output_arts})
+    patch = {
+        "run_ids": new_ids,
+        "trace_ids": trace_ids,
+        "output_artifacts": output_arts,
+    }
+    if run_started_at:
+        patch["started_at"] = run_started_at
+    update_job(ws_id, job_id, patch)
     update_progress(
         ws_id, job_id,
         current=len(new_ids),

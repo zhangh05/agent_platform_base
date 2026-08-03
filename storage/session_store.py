@@ -72,6 +72,39 @@ def create_session(
     return session
 
 
+def ensure_session(
+    session_id: str,
+    ws_id: str = "default",
+    *,
+    title: str = "新会话",
+    created_at: str = "",
+) -> Dict[str, Any]:
+    """Return an existing session or create metadata for a caller-owned id.
+
+    Browser transports allocate the session id before the first turn. Persisting
+    that id before run/message writes prevents orphan directories and incomplete
+    ``run_ids`` projections.
+    """
+    ws_id = ensure_workspace(ws_id)
+    safe_id = validate_session_id(session_id)
+    existing = get_session(safe_id, ws_id)
+    if existing:
+        return existing
+    now = created_at or _now_iso()
+    session = {
+        "session_id": safe_id,
+        "workspace_id": ws_id,
+        "title": title or "新会话",
+        "status": "active",
+        "created_at": now,
+        "updated_at": now,
+        "run_ids": [],
+        "metadata": {},
+    }
+    _write_session(session, ws_id)
+    return session
+
+
 def get_session(session_id: str, ws_id: str = "default") -> Optional[Dict[str, Any]]:
     """Get a single session by ID."""
     ws_id = validate_workspace_id(ws_id)
@@ -111,8 +144,17 @@ def list_sessions(
     for f in sdir.glob("*.json"):
         try:
             s = json.loads(f.read_text(encoding="utf-8"))
+            sid = s.get("session_id", f.stem)
+            metadata = s.get("metadata") or {}
+            if (
+                (metadata.get("auto_repaired") and not metadata.get("repair_complete"))
+                or s.get("title") == sid
+            ):
+                repaired = _session_from_messages(sid, ws_id, base=s)
+                if repaired:
+                    s = repaired
             sessions.append(s)
-            seen_ids.add(s.get("session_id", f.stem))
+            seen_ids.add(sid)
         except Exception:
             _LOG.warning("session_store: silent exception", exc_info=True)
 
@@ -127,30 +169,9 @@ def list_sessions(
         if not msg_dir.is_dir():
             continue
         try:
-            msgs = sorted(msg_dir.iterdir())
-            if not msgs:
+            session_data = _session_from_messages(sid, ws_id)
+            if not session_data:
                 continue
-            # Derive title from first user message
-            title = sid
-            first_ts = _now_iso()
-            for mf in msgs:
-                if mf.name.endswith(":user.json"):
-                    try:
-                        data = json.loads(mf.read_text(encoding="utf-8"))
-                        content = data.get("content", "")
-                        if content:
-                            title = content[:60].replace("\n", " ")
-                        first_ts = data.get("timestamp", first_ts)
-                    except Exception:
-                        _LOG.warning("session_store: silent exception", exc_info=True)
-                    break
-            session_data = {
-                "session_id": sid, "workspace_id": ws_id,
-                "title": title, "status": "active",
-                "created_at": first_ts, "updated_at": first_ts,
-                "run_ids": [], "metadata": {"auto_repaired": True},
-            }
-            _write_session(session_data, ws_id)
             sessions.append(session_data)
             seen_ids.add(sid)
         except Exception:
@@ -167,6 +188,67 @@ def list_sessions(
     # Sort by updated_at desc
     sessions.sort(key=lambda s: s.get("updated_at", ""), reverse=True)
     return sessions[:limit]
+
+
+def _session_from_messages(
+    session_id: str,
+    ws_id: str,
+    *,
+    base: Optional[Dict[str, Any]] = None,
+) -> Optional[Dict[str, Any]]:
+    """Rebuild session title, timestamps, and run ids from canonical messages."""
+    msg_dir = _session_dir(ws_id) / session_id / "messages"
+    if not msg_dir.is_dir():
+        return None
+    message_files = sorted(msg_dir.glob("*.json"))
+    if not message_files:
+        return None
+
+    records: list[tuple[str, str, Dict[str, Any]]] = []
+    run_ids: list[str] = []
+    for message_file in message_files:
+        try:
+            data = json.loads(message_file.read_text(encoding="utf-8"))
+        except Exception:
+            _LOG.warning("session message repair read failed: %s", message_file, exc_info=True)
+            continue
+        role = str(data.get("role") or "")
+        timestamp = str(
+            (data.get("metadata") or {}).get("created_at")
+            or data.get("created_at")
+            or data.get("timestamp")
+            or ""
+        )
+        records.append((timestamp, role, data))
+        run_id = str(data.get("run_id") or "").strip()
+        if run_id and run_id not in run_ids:
+            run_ids.append(run_id)
+    if not records:
+        return None
+    records.sort(key=lambda item: item[0])
+    timestamps = [item[0] for item in records if item[0]]
+    title = ""
+    for _, role, data in records:
+        if role == "user" and str(data.get("content") or "").strip():
+            title = str(data["content"]).strip().replace("\n", " ")[:60]
+            break
+    session = dict(base or {})
+    session.update({
+        "session_id": session_id,
+        "workspace_id": ws_id,
+        "title": title or session.get("title") or "新会话",
+        "status": session.get("status") or "active",
+        "created_at": min(timestamps) if timestamps else session.get("created_at") or _now_iso(),
+        "updated_at": max(timestamps) if timestamps else session.get("updated_at") or _now_iso(),
+        "run_ids": run_ids or list(session.get("run_ids") or []),
+        "metadata": {
+            **dict(session.get("metadata") or {}),
+            "auto_repaired": True,
+            "repair_complete": True,
+        },
+    })
+    _write_session(session, ws_id)
+    return session
 
 
 def update_session(

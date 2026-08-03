@@ -73,6 +73,17 @@ BUILTIN_CONTRACTS: dict[str, ToolContract] = {
         timeout_seconds=30,
         max_retries=1,
     ),
+    "device.manage": ToolContract(
+        name="device.manage",
+        display_name="Network Device",
+        description="Probe and read network devices.",
+        input_schema={"required": ["action"], "properties": {"action": {"type": "string"}}},
+        side_effect="external_request",
+        risk_level="medium",
+        idempotent=False,
+        timeout_seconds=90,
+        concurrency_group="network_device",
+    ),
     "report.manage": ToolContract(
         name="report.manage",
         display_name="Report",

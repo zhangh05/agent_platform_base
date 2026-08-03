@@ -60,6 +60,11 @@ class AgentApp:
           context, tool-result, and trace cross-talk.
         """
         sid, session, turn_lock = self.session_manager.get_or_create(session_id, workspace_id)
+        # Persist caller-owned session metadata before the first run/message.
+        # This keeps session, run, and job projections aligned even if the
+        # process stops immediately after the turn.
+        from storage.session_store import ensure_session
+        ensure_session(sid, workspace_id)
 
         # The expensive turn execution happens outside the global session-map
         # lock, but inside this session's turn lock. Different sessions can run

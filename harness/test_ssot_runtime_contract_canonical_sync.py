@@ -31,8 +31,13 @@ def test_web_weather_contract_exposes_forecast_arguments():
 def test_agent_contract_exposes_current_runtime_actions():
     from core.runtime_engine.contracts import get_contract
 
-    actions = get_contract("agent.manage").input_schema["properties"]["action"]["enum"]
+    properties = get_contract("agent.manage").input_schema["properties"]
+    actions = properties["action"]["enum"]
     assert actions == ["spawn", "list", "get", "status", "cancel", "merge"]
+    assert "instruction" in properties
+    assert "profile_id" in properties
+    assert "max_turns" in properties
+    assert "background" in properties
 
 
 def test_system_contract_exposes_local_info_action():
@@ -66,3 +71,15 @@ def test_semantic_validator_accepts_future_weather_forecast_args():
     ]
     result = SemanticValidator().validate(calls)
     assert result.valid, [e.message for e in result.errors]
+
+
+def test_semantic_validator_rejects_agent_spawn_without_instruction():
+    from core.runtime_engine.models import ExecutionNode
+    from core.runtime_engine.semantic_validator import SemanticValidator
+
+    result = SemanticValidator().validate([
+        ExecutionNode(id="spawn", tool="agent.manage", args={"action": "spawn"}),
+    ])
+
+    assert result.valid is False
+    assert any("instruction" in error.message for error in result.errors)

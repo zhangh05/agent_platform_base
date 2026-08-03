@@ -28,6 +28,7 @@ from storage.session_store import (
     get_session_messages,
     get_or_create_default_session,
     auto_title_from_input,
+    ensure_session,
     get_session_count,
     list_sessions_by_status,
 )
@@ -135,6 +136,53 @@ class TestSessionLifecycle:
 
 
 class TestSessionRunAssociation:
+    def test_run_record_creates_caller_owned_session_before_association(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("NA_WORKSPACE_ROOT", str(tmp_path))
+        session_id = "browser_session_1"
+        state = AgentState(
+            request_id="run_first_001",
+            user_input="first browser turn",
+            intent="assistant_chat",
+            workspace_id="default",
+            session_id=session_id,
+        )
+
+        write_run_record(state, "default")
+
+        fetched = get_session(session_id, "default")
+        assert fetched is not None
+        assert fetched["run_ids"] == ["run_first_001"]
+        assert fetched["title"] == "first browser turn"
+
+    def test_list_repairs_legacy_session_title_and_run_ids(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("NA_WORKSPACE_ROOT", str(tmp_path))
+        from storage.message_store import SessionMessageStore
+
+        session_id = "legacy_browser_1"
+        ensure_session(session_id, "default")
+        store = SessionMessageStore(session_id, "default")
+        store.write_message(
+            "legacy_run_1", "user", "派生子任务查询天气",
+            {"created_at": "2026-01-01T00:00:00+00:00"},
+        )
+        store.write_message(
+            "legacy_run_1", "assistant", "处理失败",
+            {"created_at": "2026-01-01T00:00:01+00:00"},
+        )
+        update_session(
+            session_id, "default", title=session_id,
+            metadata={"auto_repaired": True},
+        )
+
+        repaired = next(
+            session for session in list_sessions("default")
+            if session["session_id"] == session_id
+        )
+
+        assert repaired["title"] == "派生子任务查询天气"
+        assert repaired["run_ids"] == ["legacy_run_1"]
+        assert repaired["metadata"]["repair_complete"] is True
+
     def test_add_run_to_session(self):
         s = create_session(TEST_WS, "Run Assoc")
         updated = add_run_to_session(s["session_id"], "run_001", TEST_WS)

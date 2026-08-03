@@ -194,6 +194,17 @@ def run_ssot_turn(
                 (runtime_result.metadata or {}).get("output_truncation_reason") or ""
             ),
         }
+        runtime_errors = list(runtime_result.errors or [])
+        failed_tool_count = sum(1 for call in tool_calls if not call.get("ok"))
+        successful_tool_count = len(tool_calls) - failed_tool_count
+        if not runtime_result.success and failed_tool_count and not runtime_errors:
+            runtime_errors.append("all_tool_calls_failed")
+        runtime_warnings = []
+        if failed_tool_count and successful_tool_count:
+            runtime_warnings.append(
+                f"partial_tool_failure: {failed_tool_count} failed, {successful_tool_count} succeeded"
+            )
+
         result = AgentResult(
             ok=bool(runtime_result.success),
             final_response=final_response,
@@ -202,8 +213,8 @@ def run_ssot_turn(
             session_id=session_id,
             turn_id=turn.turn_id,
             tool_calls=tool_calls,
-            warnings=[],
-            errors=list(runtime_result.errors or []),
+            warnings=runtime_warnings,
+            errors=runtime_errors,
             metadata=metadata,
             error_type="" if runtime_result.success else "ssot_runtime_error",
             tool_decision=_tool_decision(runtime_result, tool_calls),

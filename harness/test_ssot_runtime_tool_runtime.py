@@ -226,3 +226,6 @@ def test_engine_metadata_reflects_node_failure():
         f"P0 fix regression: success_count must be 0 after a failed node, "
         f"got {meta.get('node_success_count')!r}"
     )
+    assert result.success is False, (
+        "a run with only failed tool nodes must not be projected as successful"
+    )

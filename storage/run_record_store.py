@@ -74,8 +74,9 @@ def write_run_record(state: SimpleNamespace, workspace_id: str = "default") -> s
     session_id = str(record.get("session_id") or "")
     if session_id:
         try:
-            from storage.session_store import add_run_to_session, auto_title_from_input
+            from storage.session_store import add_run_to_session, auto_title_from_input, ensure_session
 
+            ensure_session(session_id, ws_id, created_at=created_at)
             add_run_to_session(session_id, run_id, ws_id)
             user_input = getattr(state, "user_input", "") or ""
             if user_input:

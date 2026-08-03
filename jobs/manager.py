@@ -127,13 +127,16 @@ def mark_succeeded(ws_id, job_id, result_summary=None) -> JobRecord:
     return result
 
 
-def mark_failed(ws_id, job_id, error="") -> JobRecord:
+def mark_failed(ws_id, job_id, error="", result_summary=None) -> JobRecord:
     rec = get_job(ws_id, job_id)
     if not rec: return None
     _check_transition(rec.status, "failed")
     now = now_iso()
     error = str(error)[:500]
-    result = update_job(ws_id, job_id, {"status": "failed", "finished_at": now, "error": error})
+    patch = {"status": "failed", "finished_at": now, "error": error}
+    if result_summary:
+        patch["result_summary"] = result_summary
+    result = update_job(ws_id, job_id, patch)
     if result:
         append_event(ws_id, job_id, JobEvent(job_id=job_id, workspace_id=ws_id,
                      event_type="job_failed", message=f"Job failed: {error[:100]}"))

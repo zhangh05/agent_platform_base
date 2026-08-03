@@ -106,6 +106,11 @@ def test_admin_exclusively_manages_ordinary_user_access(monkeypatch, tmp_path):
     headers = {"Origin": "http://localhost:5273"}
 
     admin = app.test_client()
+    assert admin.post(
+        "/api/auth/login",
+        json={"username": "Admin", "password": "错误密码"},
+        headers=headers,
+    ).status_code == 401
     assert admin.post("/api/auth/login", json={"username": "Admin", "password": "admin-password"}, headers=headers).status_code == 200
     status = admin.get("/api/auth/status", headers=headers).get_json()
     assert status["platform_admin"] is True

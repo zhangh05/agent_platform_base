@@ -300,6 +300,63 @@ def _decorate_realtime_search_result(out: dict, *, tool_id: str, query: str,
         result.setdefault("warnings", [])
         result["warnings"] = list(result["warnings"]) + ["backed_by_public_web_search"]
     return result
+_CHINA_CITY_ADMIN_HINTS = {
+    "广州": "广东", "深圳": "广东", "珠海": "广东", "佛山": "广东",
+    "东莞": "广东", "中山": "广东", "江门": "广东", "肇庆": "广东",
+    "惠州": "广东",
+}
+
+
+def _weather_place_token(value: Any) -> str:
+    return re.sub(r"[\s,，省市区县特别行政自治区]+", "", str(value or "")).casefold()
+
+
+def _weather_geocoding_query(location: str) -> str:
+    """Use the administrative-city form for known ambiguous Chinese cities."""
+    token = _weather_place_token(location)
+    for city in _CHINA_CITY_ADMIN_HINTS:
+        if token == _weather_place_token(city):
+            return f"{city}市"
+    return location
+
+
+def _select_weather_place(location: str, matches: list[dict]) -> dict:
+    """Choose a geographically credible geocoder match.
+
+    Open-Meteo can rank same-named villages ahead of well-known Chinese
+    prefecture-level cities. Prefer an explicit/request-derived province and
+    then an exact city-name match instead of blindly accepting result 1.
+    """
+    if not matches:
+        return {}
+    location_token = _weather_place_token(location)
+    admin_hint = ""
+    for city, admin in _CHINA_CITY_ADMIN_HINTS.items():
+        if _weather_place_token(city) in location_token:
+            admin_hint = admin
+            break
+    for match in matches:
+        admin = str(match.get("admin1") or "")
+        if admin and _weather_place_token(admin) in location_token:
+            admin_hint = admin
+            break
+
+    candidates = list(matches)
+    if admin_hint:
+        regional = [
+            match for match in candidates
+            if _weather_place_token(match.get("admin1")) == _weather_place_token(admin_hint)
+        ]
+        if regional:
+            candidates = regional
+    exact = [
+        match for match in candidates
+        if _weather_place_token(match.get("name"))
+        and _weather_place_token(match.get("name")) in location_token
+    ]
+    return (exact or candidates)[0]
+
+
 def _lookup_open_meteo_weather(*, location: str, days: int, language: str,
                                units: str, include_current: bool) -> dict:
     """Fetch structured weather data from Open-Meteo's no-key public APIs."""
@@ -308,8 +365,8 @@ def _lookup_open_meteo_weather(*, location: str, days: int, language: str,
         geo_resp = requests.get(
             "https://geocoding-api.open-meteo.com/v1/search",
             params={
-                "name": location,
-                "count": 1,
+                "name": _weather_geocoding_query(location),
+                "count": 10,
                 "language": _open_meteo_language(language),
                 "format": "json",
             },
@@ -328,7 +385,7 @@ def _lookup_open_meteo_weather(*, location: str, days: int, language: str,
                 "status": "location_not_found",
                 "errors": ["open_meteo_location_not_found"],
             })
-        place = matches[0]
+        place = _select_weather_place(location, matches)
         latitude = place.get("latitude")
         longitude = place.get("longitude")
         if latitude is None or longitude is None:
