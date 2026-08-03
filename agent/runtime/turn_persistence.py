@@ -217,7 +217,11 @@ def _merge_result_projection(run_id: str, ws_id: str, result, context) -> None:
         "no_tool_reason": result_dict.get("no_tool_reason") or "",
         "metadata": _safe_metadata(metadata),
         "timeline_summary": result_dict.get("timeline_summary") or metadata.get("timeline_summary") or {},
+        "warnings": [redact_text(str(w))[:300] for w in list(result_dict.get("warnings") or [])[:20]],
+        "warning_count": len(list(result_dict.get("warnings") or [])),
     })
+    if isinstance(record.get("result_counts"), dict):
+        record["result_counts"]["warnings"] = record["warning_count"]
     # v3.9.1: keep `status` consistent with `ok`. If the initial write (via
     # _safe_status) computed a wrong value because it read skill_results
     # instead of the real AgentResult, correct it now that we have the truth.

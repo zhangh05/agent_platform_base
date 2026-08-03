@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 import re
 import html
+import threading
+import time
 from typing import Any
 from datetime import datetime, timezone
 
@@ -306,6 +308,23 @@ _CHINA_CITY_ADMIN_HINTS = {
     "惠州": "广东",
 }
 
+_KNOWN_WEATHER_PLACES = {
+    "广州": (23.1291, 113.2644),
+    "深圳": (22.5431, 114.0579),
+    "珠海": (22.2707, 113.5767),
+    "佛山": (23.0215, 113.1214),
+    "东莞": (23.0207, 113.7518),
+    "中山": (22.5176, 113.3928),
+    "江门": (22.5787, 113.0819),
+    "肇庆": (23.0472, 112.4651),
+    "惠州": (23.1115, 114.4152),
+}
+
+# A delegated request can launch several weather lookups at once. Bound the
+# public provider traffic so one user turn does not create a burst of 9-18
+# simultaneous HTTP requests and turn transient throttling into false failures.
+_WEATHER_PROVIDER_SLOTS = threading.BoundedSemaphore(4)
+
 
 def _weather_place_token(value: Any) -> str:
     return re.sub(r"[\s,，省市区县特别行政自治区]+", "", str(value or "")).casefold()
@@ -315,9 +334,24 @@ def _weather_geocoding_query(location: str) -> str:
     """Use the administrative-city form for known ambiguous Chinese cities."""
     token = _weather_place_token(location)
     for city in _CHINA_CITY_ADMIN_HINTS:
-        if token == _weather_place_token(city):
+        if _weather_place_token(city) in token:
             return f"{city}市"
     return location
+
+
+def _known_weather_place(location: str) -> dict:
+    """Resolve common PRD cities locally before using a fuzzy geocoder."""
+    token = _weather_place_token(location)
+    for city, (latitude, longitude) in _KNOWN_WEATHER_PLACES.items():
+        if _weather_place_token(city) in token:
+            return {
+                "name": f"{city}市",
+                "admin1": _CHINA_CITY_ADMIN_HINTS[city],
+                "country": "中国",
+                "latitude": latitude,
+                "longitude": longitude,
+            }
+    return {}
 
 
 def _select_weather_place(location: str, matches: list[dict]) -> dict:
@@ -360,32 +394,40 @@ def _select_weather_place(location: str, matches: list[dict]) -> dict:
 def _lookup_open_meteo_weather(*, location: str, days: int, language: str,
                                units: str, include_current: bool) -> dict:
     """Fetch structured weather data from Open-Meteo's no-key public APIs."""
+    acquired = _WEATHER_PROVIDER_SLOTS.acquire(timeout=20)
+    if not acquired:
+        return _result(_DummyInv(""), False, {
+            "status": "weather_provider_busy",
+            "errors": ["open_meteo_concurrency_wait_timeout"],
+        })
     try:
         import requests
-        geo_resp = requests.get(
-            "https://geocoding-api.open-meteo.com/v1/search",
-            params={
-                "name": _weather_geocoding_query(location),
-                "count": 10,
-                "language": _open_meteo_language(language),
-                "format": "json",
-            },
-            timeout=10,
-            headers={"User-Agent": "AgentPlatformBase/1.0 (+https://github.com/zhangh05/agent_platform_base)"},
-        )
-        if geo_resp.status_code != 200:
-            return _result(_DummyInv(""), False, {
-                "status": "geocoding_http_error",
-                "errors": [f"open_meteo_geocoding_http_{geo_resp.status_code}"],
-            })
-        geo_data = geo_resp.json()
-        matches = geo_data.get("results") or []
-        if not matches:
-            return _result(_DummyInv(""), False, {
-                "status": "location_not_found",
-                "errors": ["open_meteo_location_not_found"],
-            })
-        place = _select_weather_place(location, matches)
+        place = _known_weather_place(location)
+        if not place:
+            geo_resp = requests.get(
+                "https://geocoding-api.open-meteo.com/v1/search",
+                params={
+                    "name": _weather_geocoding_query(location),
+                    "count": 10,
+                    "language": _open_meteo_language(language),
+                    "format": "json",
+                },
+                timeout=15,
+                headers={"User-Agent": "AgentPlatformBase/1.0 (+https://github.com/zhangh05/agent_platform_base)"},
+            )
+            if geo_resp.status_code != 200:
+                return _result(_DummyInv(""), False, {
+                    "status": "geocoding_http_error",
+                    "errors": [f"open_meteo_geocoding_http_{geo_resp.status_code}"],
+                })
+            geo_data = geo_resp.json()
+            matches = geo_data.get("results") or []
+            if not matches:
+                return _result(_DummyInv(""), False, {
+                    "status": "location_not_found",
+                    "errors": ["open_meteo_location_not_found"],
+                })
+            place = _select_weather_place(location, matches)
         latitude = place.get("latitude")
         longitude = place.get("longitude")
         if latitude is None or longitude is None:
@@ -419,12 +461,23 @@ def _lookup_open_meteo_weather(*, location: str, days: int, language: str,
                 "wind_speed_10m",
                 "wind_direction_10m",
             ))
-        weather_resp = requests.get(
-            "https://api.open-meteo.com/v1/forecast",
-            params=forecast_params,
-            timeout=10,
-            headers={"User-Agent": "AgentPlatformBase/1.0 (+https://github.com/zhangh05/agent_platform_base)"},
-        )
+        weather_resp = None
+        for attempt in range(2):
+            try:
+                weather_resp = requests.get(
+                    "https://api.open-meteo.com/v1/forecast",
+                    params=forecast_params,
+                    timeout=15,
+                    headers={"User-Agent": "AgentPlatformBase/1.0 (+https://github.com/zhangh05/agent_platform_base)"},
+                )
+                if weather_resp.status_code == 200 or attempt == 1:
+                    break
+            except requests.RequestException:
+                if attempt == 1:
+                    raise
+            time.sleep(0.25)
+        if weather_resp is None:
+            raise RuntimeError("open_meteo_forecast_no_response")
         if weather_resp.status_code != 200:
             return _result(_DummyInv(""), False, {
                 "status": "forecast_http_error",
@@ -471,6 +524,8 @@ def _lookup_open_meteo_weather(*, location: str, days: int, language: str,
             "status": "structured_weather_provider_error",
             "errors": [f"open_meteo_error: {str(e)[:200]}"],
         })
+    finally:
+        _WEATHER_PROVIDER_SLOTS.release()
 def _parse_open_meteo_current(current: dict, units: dict) -> dict:
     if not current:
         return {}

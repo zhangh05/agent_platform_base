@@ -217,6 +217,14 @@ class SemanticValidator:
                     code="MISSING_REQUIRED_ARG",
                     message=f"Node '{node.id}' missing required arg 'instruction' for agent spawn",
                 ))
+            if action == "get" and not str(
+                node.args.get("subtask_id") or node.args.get("child_session_id") or ""
+            ).strip():
+                result.errors.append(SemanticError(
+                    node_id=node.id,
+                    code="MISSING_REQUIRED_ARG",
+                    message=f"Node '{node.id}' missing subtask_id for agent get",
+                ))
             return
         if node.tool != "exec.run":
             return

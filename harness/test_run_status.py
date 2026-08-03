@@ -166,6 +166,42 @@ def test_merge_result_projection_reconciles_status_on_success(monkeypatch, tmp_p
     assert rec["status"] == "ok"
 
 
+def test_run_record_warning_count_uses_agent_result_warnings(monkeypatch, tmp_path):
+    from agent.runtime import turn_persistence as tp
+    import storage.run_record_store as rs
+
+    monkeypatch.setenv("NA_WORKSPACE_ROOT", str(tmp_path))
+    (tmp_path / "default" / "runs").mkdir(parents=True, exist_ok=True)
+
+    class _FakeResult:
+        ok = True
+        errors = []
+        warnings = ["partial_tool_failure: one failed"]
+        tool_calls = []
+        tool_decision = {}
+        no_tool_reason = ""
+        trace_id = "tr-warn"
+        final_response = "partial result"
+
+        def to_dict(self):
+            return {
+                "ok": True, "errors": [], "warnings": self.warnings,
+                "turn_id": "r-warn", "trace_id": self.trace_id,
+                "tool_calls": [], "tool_decision": {}, "no_tool_reason": "",
+                "metadata": {},
+            }
+
+    state = _state(result_ok=True, result_errors=[], warnings=_FakeResult.warnings)
+    state.request_id = "r-warn"
+    rid = rs.write_run_record(state, "default")
+    tp._merge_result_projection(rid, "default", _FakeResult(), context=None)
+
+    rec = json.loads((tmp_path / "default" / "runs" / f"{rid}.json").read_text())
+    assert rec["warning_count"] == 1
+    assert rec["result_counts"]["warnings"] == 1
+    assert rec["warnings"] == _FakeResult.warnings
+
+
 def test_persist_run_record_uses_result_llm_metadata(monkeypatch, tmp_path):
     """Run-store llm_metadata must mirror AgentResult.metadata['llm']."""
     from agent.runtime.turn_persistence import persist_run_record

@@ -71,6 +71,52 @@ class TestSubagentTask:
         )
         assert result["ok"] is False
 
+    def test_get_accepts_spawn_subtask_id_and_declares_tracking(self):
+        from core.tools.general_tools.agent_tools import handle_agent_get_result
+        from core.tools.schemas import ToolInvocation
+
+        ws = f"ws_get_{uuid.uuid4().hex[:8]}"
+        created = create_subagent_task(
+            parent_task_id="t1", workspace_id=ws, session_id="s1",
+            profile_id="research_agent", goal="Research",
+        )
+        result = handle_agent_get_result(ToolInvocation(
+            tool_id="agent.manage",
+            workspace_id=ws,
+            arguments={"action": "get", "subtask_id": created["subtask_id"]},
+        ))
+
+        assert result["ok"] is True
+        assert result["subtask_id"] == created["subtask_id"]
+        assert result["child_session_id"] == created["subtask_id"]
+        assert result["tracking"]["task_id"] == created["subtask_id"]
+        assert result["tracking"]["poll_arguments"]["subtask_id"] == created["subtask_id"]
+
+    def test_background_spawn_returns_pollable_tracking(self, monkeypatch):
+        from core.tools.general_tools.agent_tools import _run_durable_subagent
+
+        monkeypatch.setattr(
+            "agent.runtime.durable.subagent.start_subagent_task",
+            lambda subtask_id, ws_id: {
+                "ok": True, "subtask_id": subtask_id, "status": "running",
+            },
+        )
+        ws = f"ws_track_{uuid.uuid4().hex[:8]}"
+        result = _run_durable_subagent(
+            instruction="Research", workspace_id=ws, session_id="s1",
+            profile_id="research_agent", background=True,
+        )
+
+        assert result["ok"] is True
+        assert result["status"] == "running"
+        assert result["summary"]
+        assert result["tracking"]["done"] is False
+        assert result["tracking"]["poll_action"] == "get"
+        assert result["tracking"]["suggested_next_action"] == "poll_get"
+
+        from core.runtime_engine.query_loop import QueryLoop
+        assert QueryLoop._should_poll_tracking("delegate this task", result["tracking"])
+
 
 class TestSubagentRuntime:
     def test_research_agent_runs_with_profile_limits(self, monkeypatch):

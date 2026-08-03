@@ -20,6 +20,7 @@ def write_run_record(state: SimpleNamespace, workspace_id: str = "default") -> s
     run_id = _safe_run_id(getattr(state, "request_id", "") or f"run_{int(time.time())}")
     created_at = getattr(state, "created_at", "") or _now_iso()
     result = getattr(state, "skill_results", {}) or getattr(state, "tool_results", {}) or {}
+    state_warnings = list(getattr(state, "warnings", []) or [])
     context = getattr(state, "context", {}) or {}
     llm_ctx = context.get("llm", {}) if isinstance(context, dict) else {}
     output_lines = len(result.get("output", "").split("\n")) if result.get("output") else 0
@@ -43,13 +44,13 @@ def write_run_record(state: SimpleNamespace, workspace_id: str = "default") -> s
         "status": _safe_status(state, result),
         "result_counts": {
             "output_lines": output_lines,
-            "warnings": len(result.get("warnings", [])),
+            "warnings": len(state_warnings),
             "artifacts": len(result.get("output_artifacts", [])),
         },
         "final_response_summary": redact_text(getattr(state, "final_response", "") or "")[:300],
         "verification": {},
         "quality_summary": _safe_quality_summary(result),
-        "warning_count": len(result.get("warnings", [])),
+        "warning_count": len(state_warnings),
         "llm_metadata": {
             "used": llm_ctx.get("used", False),
             "provider": llm_ctx.get("provider", ""),

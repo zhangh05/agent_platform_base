@@ -510,7 +510,7 @@ def get_subagent_task(ws_id: str, subtask_id: str) -> Optional[dict]:
         "status": task.status,
         "profile_id": task.profile_id,
         "instruction": task.goal[:100],
-        "summary": task.summary[:200],
+        "summary": task.summary[:4000],
         "created_at": task.created_at,
         "started_at": task.started_at,
         "finished_at": task.finished_at,

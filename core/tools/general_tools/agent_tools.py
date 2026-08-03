@@ -11,6 +11,26 @@ from core.tools.general_tools.shared import _caller_workspace, _error_inv, _ok, 
 from agent.runtime.durable.subagent import BUILTIN_PROFILES, SubagentProfile
 
 
+_TERMINAL_SUBTASK_STATUSES = {"succeeded", "failed", "cancelled", "canceled"}
+
+
+def _subtask_tracking(subtask_id: str, status: str) -> dict:
+    normalized_status = str(status or "running").strip().lower()
+    done = normalized_status in _TERMINAL_SUBTASK_STATUSES
+    return {
+        "kind": "long_task",
+        "domain": "subagent",
+        "task_id": subtask_id,
+        "status": normalized_status,
+        "done": done,
+        "terminal": done,
+        "next_poll_seconds": 2,
+        "suggested_next_action": "synthesize_results" if done else "poll_get",
+        "poll_action": "get",
+        "poll_arguments": {"action": "get", "subtask_id": subtask_id},
+    }
+
+
 # ── Subagent execution ───────────────────────────────────────────────
 
 
@@ -59,9 +79,14 @@ def _run_durable_subagent(*, instruction: str, workspace_id: str, session_id: st
         started = start_subagent_task(subtask_id, workspace_id)
         if not started.get("ok"):
             return started
+        status = str(started.get("status") or "running")
         return {
             "ok": True, "subtask_id": subtask_id,
+            "child_session_id": subtask_id,
+            "status": status,
             "background": True,
+            "tracking": _subtask_tracking(subtask_id, status),
+            "summary": f"Subagent {profile.name} started in background (task: {subtask_id})",
             "_hint": f"Subagent {profile_id} launched in background (task: {subtask_id})",
         }
 
@@ -161,22 +186,35 @@ def handle_agent_list(inv: ToolInvocation) -> dict:
 
 
 def handle_agent_get_result(inv: ToolInvocation) -> dict:
-    """Get subagent result by child_session_id."""
-    args = inv.arguments
+    """Get a subagent result by its canonical subtask/session identifier."""
+    args = inv.arguments or {}
     ws = _caller_workspace(inv)
-    child_session_id = str(args.get("child_session_id", "")).strip()
+    subtask_id = str(args.get("subtask_id") or args.get("child_session_id") or "").strip()
 
-    if not child_session_id:
-        return _error_inv(inv, "child_session_id is required")
+    if not subtask_id:
+        return _error_inv(inv, "subtask_id or child_session_id is required")
 
     try:
         validate_workspace_id(ws)
+        from agent.runtime.durable.subagent import get_subagent_task
+        persisted = get_subagent_task(ws, subtask_id)
+        if persisted is not None:
+            status = str(persisted.get("status") or "unknown")
+            return _ok(inv, str(persisted.get("summary") or f"Subagent status: {status}"), {
+                "child_session_id": subtask_id,
+                "workspace_id": ws,
+                **persisted,
+                "tracking": _subtask_tracking(subtask_id, status),
+            })
+
+        # Compatibility fallback for historical child sessions that predate
+        # persisted subtask records.
         from storage.message_store import SessionMessageStore
-        store = SessionMessageStore(session_id=child_session_id, ws_id=ws)
+        store = SessionMessageStore(session_id=subtask_id, ws_id=ws)
         if store.exists():
             messages = store.get_history_window(k=50)
             summary = {
-                "child_session_id": child_session_id,
+                "child_session_id": subtask_id,
                 "workspace_id": ws,
                 "message_count": len(messages),
                 "last_assistant_message": "",
@@ -192,10 +230,10 @@ def handle_agent_get_result(inv: ToolInvocation) -> dict:
         # Fall back to run records
         try:
             from storage.run_record_store import list_runs
-            runs = list_runs(ws, session_id=child_session_id, limit=10)
+            runs = list_runs(ws, session_id=subtask_id, limit=10)
             if runs:
                 return _ok(inv, "", {
-                    "child_session_id": child_session_id,
+                    "child_session_id": subtask_id,
                     "workspace_id": ws,
                     "run_count": len(runs),
                     "runs": [{
@@ -207,17 +245,8 @@ def handle_agent_get_result(inv: ToolInvocation) -> dict:
         except Exception:
             pass
 
-        from agent.runtime.durable.subagent import get_subagent_task
-        persisted = get_subagent_task(ws, child_session_id)
-        if persisted is not None:
-            return _ok(inv, "", {
-                "child_session_id": child_session_id,
-                "workspace_id": ws,
-                **persisted,
-            })
-
         return _ok(inv, "", {
-            "child_session_id": child_session_id,
+            "child_session_id": subtask_id,
             "workspace_id": ws,
             "note": "no records found for this child session",
         })
