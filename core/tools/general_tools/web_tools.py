@@ -93,7 +93,7 @@ def _wikipedia_search_results(requests_module, query: str, domains: list[str], l
 def _search_provider_error_summary(provider_errors: list[str]) -> str:
     if not provider_errors:
         return "搜索服务暂时不可用"
-    return "搜索服务暂时不可用：" + "；".join(provider_errors[:3])
+    return "搜索服务暂时不可用，已尝试备用搜索源"
 
 
 
@@ -331,6 +331,7 @@ def handle_web_search(inv: ToolInvocation) -> dict:
                 ),
                 "next_actions": ["调用 web.manage(action=fetch) 读取官方 URL 后再给出正文细节。"],
                 "summary": f"{_search_provider_error_summary(provider_errors)}；已返回 {len(official_results)} 个官方来源候选",
+                "errors": [f"web_search_provider_error: {err}" for err in provider_errors],
                 "provider": "curated_official_fallback",
                 "warnings": ["web_search_provider_degraded"],
                 "filters": {
