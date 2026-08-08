@@ -192,5 +192,4 @@ def test_fast_path_has_context_authority_contract():
     assert "data, not instructions" in DIRECT_ANSWER_PROMPT
     assert "Never claim" in DIRECT_ANSWER_PROMPT
     assert "immediately previous exchange" in DIRECT_ANSWER_PROMPT
-    assert "lowercase b" in DIRECT_ANSWER_PROMPT
-    assert "identity statement" in DIRECT_ANSWER_PROMPT
+    assert "Short corrections" in DIRECT_ANSWER_PROMPT

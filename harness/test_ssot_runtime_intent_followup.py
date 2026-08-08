@@ -187,6 +187,18 @@ def test_direct_answer_prompt_preserves_platform_capabilities():
     assert "Prior assistant messages may summarize real" in DIRECT_ANSWER_PROMPT
 
 
+def test_short_unit_correction_is_deterministic_not_prompt_only():
+    from core.runtime_engine.deterministic_answer import answer_deterministically
+
+    answer = answer_deterministically(
+        "我是小b",
+        "RECENT CONVERSATION HISTORY:\n  [1] user: 5295kb/s是多少速度",
+    )
+    assert answer is not None
+    assert answer.route == "deterministic_speed_unit_correction"
+    assert "小写 b 表示 bit" in answer.response
+
+
 # ── G: TaskIntentResult.requires_execution defence-in-depth ──────
 
 

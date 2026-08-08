@@ -307,6 +307,34 @@ class SSOTRuntimeEngine:
             risk_level = "low"
             approval_required = False
 
+            # Deterministic answers are handled before any LLM/planner path.
+            # Unit conversion and short unit corrections are mechanical; letting
+            # the model infer them caused repeat regressions around b vs B.
+            from .deterministic_answer import answer_deterministically
+
+            conv_history_block = ctx.extras.get("conversation_history_block") or ""
+            deterministic = answer_deterministically(user_input, conv_history_block)
+            if deterministic:
+                self._emit_stage(RESPONSE_STARTED, t_total)
+                self._emit_stage(RESPONSE_COMPLETED, t_total)
+                self._emit_stage(TURN_COMPLETED, t_total)
+                metrics.capture_response(0.0)
+                await self._stop_heartbeat()
+                return self._build_result(
+                    ctx, node_results, deterministic.response,
+                    errors, metrics, budget, t_total, "low", False,
+                    extra={
+                        "fast_path": True,
+                        "route": deterministic.route,
+                        "planner_skipped": True,
+                        "used_tools": False,
+                        "direct_answer_latency_ms": 0.0,
+                        "skip_reason": deterministic.reason,
+                        "deterministic_answer": True,
+                        "conversation_history_used": bool(conv_history_block),
+                    },
+                )
+
             # ── v3.11: Fast-path classifier ───────────────────────────────
             # Simple greetings / definition questions skip the planner
             # and go to a direct-answer LLM call.  This cuts
@@ -326,7 +354,6 @@ class SSOTRuntimeEngine:
             )
 
             fast = classify_direct_answer(user_input)
-            conv_history_block = ctx.extras.get("conversation_history_block") or ""
             is_conv_ref = bool(is_conversation_ref(user_input) and conv_history_block)
             is_conv_comprehension = bool(
                 is_conversation_comprehension_ref(user_input) and conv_history_block
