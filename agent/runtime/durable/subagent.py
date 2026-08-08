@@ -46,7 +46,11 @@ BUILTIN_PROFILES: dict[str, SubagentProfile] = {
         max_runtime_seconds=180,
         can_call_network=True,
         memory_write_policy="pending_only",
-        output_contract="Evidence-backed findings, uncertainty, blockers, and source references.",
+        output_contract=(
+            "Concise user-ready findings for the parent to merge: start with the "
+            "bottom line, include only useful evidence/caveats, and avoid raw API "
+            "fields, weather codes, or process details unless essential."
+        ),
     ),
     "file_agent": SubagentProfile(
         profile_id="file_agent",

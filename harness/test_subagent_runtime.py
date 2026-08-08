@@ -36,6 +36,12 @@ class TestSubagentProfiles:
         assert not p.can_execute_commands
         assert not p.can_modify_files
 
+    def test_research_agent_output_is_user_ready(self):
+        contract = BUILTIN_PROFILES["research_agent"].output_contract
+        assert "user-ready" in contract
+        assert "bottom line" in contract
+        assert "raw API" in contract
+
     def test_data_agent_is_data_scoped(self):
         p = get_profile("data_agent")
         assert p.allowed_action_classes == ["read", "write"]

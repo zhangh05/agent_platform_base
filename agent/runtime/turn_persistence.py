@@ -144,10 +144,43 @@ def persist_trace(run_id: str, ws_id: str, events: list) -> None:
         "synthetic_event_count": len(synthetic_events),
         "missing_event_count": len(missing_events),
         "node_count": len(normalized_events),
-        "total_duration_ms": 0,
+        "total_duration_ms": _trace_total_duration_ms(normalized_events),
         "persisted_at": now_iso(),
     }
     save_trace_record(ws_id, run_id, record)
+
+
+def _trace_total_duration_ms(events: list) -> int:
+    """Compute turn duration from normalized trace events.
+
+    Real runtime events store epoch-second timestamps plus per-event durations.
+    The most reliable total is the observed span from first event start to the
+    latest event end. Synthetic traces without timestamps fall back to the sum of
+    event durations.
+    """
+    starts: list[float] = []
+    ends: list[float] = []
+    duration_sum = 0.0
+    for event in events or []:
+        if not isinstance(event, dict):
+            continue
+        duration = _safe_float(event.get("duration_ms"))
+        if duration > 0:
+            duration_sum += duration
+        timestamp = _safe_float(event.get("timestamp") or event.get("ts") or event.get("time"))
+        if timestamp > 0:
+            starts.append(timestamp * 1000.0)
+            ends.append(timestamp * 1000.0 + max(duration, 0.0))
+    if starts and ends:
+        return max(0, int(round(max(ends) - min(starts))))
+    return max(0, int(round(duration_sum)))
+
+
+def _safe_float(value) -> float:
+    try:
+        return float(value or 0)
+    except Exception:
+        return 0.0
 
 
 def _synthetic_trace_events(run_id: str, result) -> list:

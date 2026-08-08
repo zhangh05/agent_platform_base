@@ -168,6 +168,24 @@ class TestTraceStore:
         assert len(result["events"]) > 0
 
 
+def test_turn_persistence_trace_total_duration_uses_real_event_span(temp_dirs):
+    from agent.runtime.turn_persistence import persist_trace
+    from storage.run_record_store import read_run_sidecar
+    from storage.workspace_store import ensure_workspace
+
+    ws_id = "trace_duration_ws"
+    run_id = "11111111-1111-4111-8111-111111111111"
+    ensure_workspace(ws_id)
+    persist_trace(run_id, ws_id, [
+        {"type": "turn_start", "timestamp": 100.0, "duration_ms": 5},
+        {"type": "tool_call", "timestamp": 101.0, "duration_ms": 250},
+        {"type": "final", "timestamp": 105.0, "duration_ms": 1200},
+    ])
+
+    trace = read_run_sidecar(ws_id, run_id, ".trace.json")
+    assert trace["total_duration_ms"] == 6200
+
+
 class TestAgentTrace:
     def test_agent_run_returns_trace_id(self, client):
         resp = client.post("/api/agent/message", json={

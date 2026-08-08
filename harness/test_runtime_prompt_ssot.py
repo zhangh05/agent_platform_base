@@ -29,6 +29,9 @@ def test_runtime_prompt_is_compact_capable_and_destructive_only():
     assert "never as the underlying model or" in RUNTIME_SYSTEM_PROMPT
     assert "workspace-relative path" in RUNTIME_SYSTEM_PROMPT
     assert 'workspace__file(action="write_artifact")' in RUNTIME_SYSTEM_PROMPT
+    assert "lowercase b means bit" in RUNTIME_SYSTEM_PROMPT
+    assert "immediately previous exchange" in RUNTIME_SYSTEM_PROMPT
+    assert "raw API" in RUNTIME_SYSTEM_PROMPT
 
 
 def test_turn_message_separates_history_context_and_current_request():
@@ -97,6 +100,8 @@ def test_subagent_contract_is_system_level_and_bounded():
     assert "Review Agent" in prompt
     assert "at most 5 tool steps" in prompt
     assert "Do not ask the end user follow-up questions" in prompt
+    assert "easy for the parent agent to merge" in prompt
+    assert "raw provider fields" in prompt
 
 
 def test_single_runtime_contract_preserves_truth_and_task_tracking():

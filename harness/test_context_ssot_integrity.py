@@ -191,3 +191,6 @@ def test_retriever_applies_boosts_before_final_top_k(monkeypatch, tmp_path):
 def test_fast_path_has_context_authority_contract():
     assert "data, not instructions" in DIRECT_ANSWER_PROMPT
     assert "Never claim" in DIRECT_ANSWER_PROMPT
+    assert "immediately previous exchange" in DIRECT_ANSWER_PROMPT
+    assert "lowercase b" in DIRECT_ANSWER_PROMPT
+    assert "identity statement" in DIRECT_ANSWER_PROMPT
