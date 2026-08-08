@@ -18,12 +18,15 @@ Explain why a runtime job failed or stalled, using only safe job/runtime context
   when the evidence and runtime state make it safe.
 
 ## Output
-Provide:
-1. Failure summary
-2. Evidence available
-3. Likely cause or "unknown"
-4. Retry eligibility or blocker
-5. Concrete next step
+Choose the lightest useful shape:
+- For a simple or obvious failure, answer in a short paragraph.
+- For a complex failure, organize the answer around: failure summary, evidence
+  available, confirmed vs likely cause, retry eligibility or blocker, and the
+  concrete next step.
+- If the user is challenging a previous answer, address the challenged point
+  first instead of replaying every diagnostic field.
+
+Preserve exact technical notation, units, IDs, filenames, versions, and case.
 
 Use the user's language.
 

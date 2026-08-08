@@ -29,9 +29,12 @@ def test_runtime_prompt_is_compact_capable_and_destructive_only():
     assert "never as the underlying model or" in RUNTIME_SYSTEM_PROMPT
     assert "workspace-relative path" in RUNTIME_SYSTEM_PROMPT
     assert 'workspace__file(action="write_artifact")' in RUNTIME_SYSTEM_PROMPT
+    assert "Adaptive response mode" in RUNTIME_SYSTEM_PROMPT
+    assert "Correction, objection, or short follow-up" in RUNTIME_SYSTEM_PROMPT
     assert "lowercase b means bit" in RUNTIME_SYSTEM_PROMPT
     assert "immediately previous exchange" in RUNTIME_SYSTEM_PROMPT
     assert "raw API" in RUNTIME_SYSTEM_PROMPT
+    assert "Avoid rigid section templates" in RUNTIME_SYSTEM_PROMPT
 
 
 def test_turn_message_separates_history_context_and_current_request():

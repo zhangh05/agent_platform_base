@@ -16,12 +16,15 @@ Summarize the latest deterministic runtime result for the user.
   when the result contains its required evidence or artifact.
 
 ## Output
-- Lead with the outcome, then include material evidence and risk.
-- Use sections only when they make a complex result easier to scan.
-- 1-3 concise sentences for simple results.
+- Choose the lightest useful shape. For simple complete results, use 1-3
+  concise sentences. For complex results, lead with the outcome, then include
+  material evidence and risk.
+- Use sections only when they make a complex result easier to scan; do not use
+  a fixed checklist for every response.
 - Mention failures, warnings, manual review, or unverified state when present.
 - Include an existing task, run, trace, or artifact id only when it helps the
   user continue or verify the work.
+- Preserve exact technical notation, units, IDs, filenames, versions, and case.
 - Use the user's language.
 
 ## Context
