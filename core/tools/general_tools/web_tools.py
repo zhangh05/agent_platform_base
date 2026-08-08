@@ -10,6 +10,92 @@ from core.tools.general_tools.shared import _caller_workspace, _contract, _error
 from core.tools.general_tools.shared_web import *  # has __all__ — 21 functions, all needed
 
 
+_CURATED_OFFICIAL_SEARCH_TARGETS = [
+    {
+        "keywords": ("k8s", "kubernetes"),
+        "title": "Kubernetes 官方文档",
+        "url": "https://kubernetes.io/docs/",
+        "snippet": "Kubernetes 官方文档入口，适合核对 Kubernetes/K8s 的概念、架构和使用说明。",
+    },
+    {
+        "keywords": ("python",),
+        "title": "Python 官方文档",
+        "url": "https://docs.python.org/",
+        "snippet": "Python 官方文档入口，适合核对语言和标准库说明。",
+    },
+    {
+        "keywords": ("react",),
+        "title": "React 官方文档",
+        "url": "https://react.dev/",
+        "snippet": "React 官方文档入口，适合核对 React 概念、API 和最佳实践。",
+    },
+]
+
+
+def _curated_official_results(query: str, domains: list[str], limit: int) -> list[dict]:
+    q = query.lower()
+    results: list[dict] = []
+    for item in _CURATED_OFFICIAL_SEARCH_TARGETS:
+        if not any(keyword in q for keyword in item["keywords"]):
+            continue
+        domain = _domain_from_url_or_host(item["url"])
+        if domains and not any(domain.endswith(allowed) or allowed in domain for allowed in domains):
+            continue
+        results.append(_build_web_result(
+            title=item["title"],
+            url=item["url"],
+            snippet=item["snippet"],
+            source="curated_official_fallback",
+            rank=len(results) + 1,
+        ))
+        if len(results) >= limit:
+            break
+    return results
+
+
+def _wikipedia_search_results(requests_module, query: str, domains: list[str], limit: int, language: str) -> list[dict]:
+    if domains:
+        return []
+    endpoint = "https://zh.wikipedia.org/w/api.php" if language.lower().startswith("zh") else "https://en.wikipedia.org/w/api.php"
+    resp = requests_module.get(
+        endpoint,
+        params={
+            "action": "opensearch",
+            "search": query,
+            "limit": min(limit, 10),
+            "namespace": 0,
+            "format": "json",
+        },
+        timeout=8,
+        headers={"User-Agent": "AgentPlatformBase/1.0 (+https://github.com/zhangh05/agent_platform_base)"},
+    )
+    data = resp.json()
+    titles = data[1] if isinstance(data, list) and len(data) > 1 and isinstance(data[1], list) else []
+    snippets = data[2] if isinstance(data, list) and len(data) > 2 and isinstance(data[2], list) else []
+    urls = data[3] if isinstance(data, list) and len(data) > 3 and isinstance(data[3], list) else []
+    results: list[dict] = []
+    for index, title in enumerate(titles):
+        url = urls[index] if index < len(urls) else ""
+        if not url:
+            continue
+        results.append(_build_web_result(
+            title=title,
+            url=url,
+            snippet=snippets[index] if index < len(snippets) else "",
+            source="wikipedia_opensearch",
+            rank=len(results) + 1,
+        ))
+        if len(results) >= limit:
+            break
+    return results
+
+
+def _search_provider_error_summary(provider_errors: list[str]) -> str:
+    if not provider_errors:
+        return "搜索服务暂时不可用"
+    return "搜索服务暂时不可用：" + "；".join(provider_errors[:3])
+
+
 
 
 def _ddgs_to_results(raw: list, domains: list, limit: int) -> list:
@@ -69,6 +155,7 @@ def handle_web_search(inv: ToolInvocation) -> dict:
         backend_limit = min(count * 3, 15)
 
     # ── Primary: ddgs multi-backend search ──
+    provider_errors: list[str] = []
     try:
         from ddgs import DDGS
         timelimit_map = {"day": "d", "week": "w", "month": "m", "year": "y"}
@@ -104,117 +191,182 @@ def handle_web_search(inv: ToolInvocation) -> dict:
                         "language": language, "safe_search": safe_search,
                     },
                 })
-    except Exception:
-        pass  # Fall through to DuckDuckGo
+    except Exception as e:
+        provider_errors.append(f"ddgs: {str(e)[:120]}")
 
     # ── Fallback: DuckDuckGo HTML scraping ──
     try:
         import requests
-        results = []
 
         # ── DuckDuckGo HTML search (fallback when ddgs unavailable) ──
-        html_resp = requests.get(
-            "https://html.duckduckgo.com/html/",
-            params=_duckduckgo_search_params(search_query, recency, language, safe_search),
-            timeout=12,
-            headers={
-                "User-Agent": "AgentPlatformBase/1.0 (+https://github.com/zhangh05/agent_platform_base)",
-                "Accept-Language": language,
-            },
-        )
-        if html_resp.status_code == 200:
-            results = _filter_web_results(_parse_duckduckgo_html(html_resp.text, count * 2), domains, count)
-            # Filter out blocked domains
+        try:
+            html_resp = requests.get(
+                "https://html.duckduckgo.com/html/",
+                params=_duckduckgo_search_params(search_query, recency, language, safe_search),
+                timeout=12,
+                headers={
+                    "User-Agent": "AgentPlatformBase/1.0 (+https://github.com/zhangh05/agent_platform_base)",
+                    "Accept-Language": language,
+                },
+            )
+            if html_resp.status_code == 200:
+                results = _filter_web_results(_parse_duckduckgo_html(html_resp.text, count * 2), domains, count)
+                # Filter out blocked domains
+                if blocked:
+                    results = [r for r in results if r.get("domain", "") not in blocked]
+                if results:
+                    guidance = _web_search_guidance(query, results, domains)
+                    return _ok(inv, "", {
+                        "ok": True,
+                        "status": "succeeded",
+                        "query": query,
+                        "search_query": search_query,
+                        "results": results,
+                        "results_markdown": _web_results_markdown(results),
+                        "count": len(results),
+                        "answer_hint": guidance["answer_hint"],
+                        "next_actions": guidance["next_actions"],
+                        "summary": f"Found {len(results)} result(s) for '{query}'",
+                        "provider": "duckduckgo_html",
+                        "filters": {
+                            "domains": domains, "blocked_domains": blocked,
+                            "depth": depth, "recency": recency or "any",
+                            "language": language, "safe_search": safe_search,
+                        },
+                    })
+            elif html_resp.status_code >= 400:
+                provider_errors.append(f"duckduckgo_html: HTTP {html_resp.status_code}")
+        except Exception as e:
+            provider_errors.append(f"duckduckgo_html: {str(e)[:120]}")
+
+        # ── Fallback 1: DuckDuckGo Instant Answer (unreliable, often empty) ──
+        try:
+            ia_resp = requests.get(
+                "https://api.duckduckgo.com/",
+                params={"q": search_query, "format": "json", "no_html": 1, "skip_disambig": 1},
+                timeout=10,
+            )
+            ia_data = ia_resp.json()
+            ia_results = []
+            for item in _flatten_duckduckgo_topics(ia_data.get("RelatedTopics", [])):
+                url = _clean_url(item.get("FirstURL", ""))
+                if not url:
+                    continue
+                ia_results.append(_build_web_result(
+                    title=item.get("Text", ""),
+                    url=url,
+                    snippet=item.get("Text", ""),
+                    source="duckduckgo_instant_answer",
+                    rank=len(ia_results) + 1,
+                ))
+            ia_results = _filter_web_results(ia_results, domains, count)
             if blocked:
-                results = [r for r in results if r.get("domain", "") not in blocked]
-            if results:
-                guidance = _web_search_guidance(query, results, domains)
+                ia_results = [r for r in ia_results if r.get("domain", "") not in blocked]
+            if ia_results:
+                guidance = _web_search_guidance(query, ia_results, domains)
                 return _ok(inv, "", {
                     "ok": True,
                     "status": "succeeded",
                     "query": query,
                     "search_query": search_query,
-                    "results": results,
-                    "results_markdown": _web_results_markdown(results),
-                    "count": len(results),
+                    "results": ia_results,
+                    "results_markdown": _web_results_markdown(ia_results),
+                    "count": len(ia_results),
                     "answer_hint": guidance["answer_hint"],
                     "next_actions": guidance["next_actions"],
-                    "summary": f"Found {len(results)} result(s) for '{query}'",
-                    "provider": "duckduckgo_html",
+                    "summary": f"Found {len(ia_results)} result(s) for '{query}'",
+                    "provider": "duckduckgo_instant_answer",
                     "filters": {
                         "domains": domains, "blocked_domains": blocked,
                         "depth": depth, "recency": recency or "any",
                         "language": language, "safe_search": safe_search,
                     },
                 })
+        except Exception as e:
+            provider_errors.append(f"duckduckgo_instant_answer: {str(e)[:120]}")
 
-        # ── Fallback 1: DuckDuckGo Instant Answer (unreliable, often empty) ──
-        ia_resp = requests.get(
-            "https://api.duckduckgo.com/",
-            params={"q": search_query, "format": "json", "no_html": 1, "skip_disambig": 1},
-            timeout=10,
-        )
-        ia_data = ia_resp.json()
-        ia_results = []
-        for item in _flatten_duckduckgo_topics(ia_data.get("RelatedTopics", [])):
-            url = _clean_url(item.get("FirstURL", ""))
-            if not url:
-                continue
-            ia_results.append(_build_web_result(
-                title=item.get("Text", ""),
-                url=url,
-                snippet=item.get("Text", ""),
-                source="duckduckgo_instant_answer",
-                rank=len(ia_results) + 1,
-            ))
-        ia_results = _filter_web_results(ia_results, domains, count)
+        # ── Fallback 2: Wikipedia OpenSearch for general concepts ──
+        try:
+            wiki_results = _wikipedia_search_results(requests, query, domains, count, language)
+            if blocked:
+                wiki_results = [r for r in wiki_results if r.get("domain", "") not in blocked]
+            if wiki_results:
+                guidance = _web_search_guidance(query, wiki_results, domains)
+                return _ok(inv, "", {
+                    "ok": True,
+                    "status": "succeeded",
+                    "query": query,
+                    "search_query": search_query,
+                    "results": wiki_results,
+                    "results_markdown": _web_results_markdown(wiki_results),
+                    "count": len(wiki_results),
+                    "answer_hint": guidance["answer_hint"],
+                    "next_actions": guidance["next_actions"],
+                    "summary": f"Found {len(wiki_results)} result(s) for '{query}'",
+                    "provider": "wikipedia_opensearch",
+                    "filters": {
+                        "domains": domains, "blocked_domains": blocked,
+                        "depth": depth, "recency": recency or "any",
+                        "language": language, "safe_search": safe_search,
+                    },
+                })
+        except Exception as e:
+            provider_errors.append(f"wikipedia_opensearch: {str(e)[:120]}")
+
+        official_results = _curated_official_results(query, domains, count)
         if blocked:
-            ia_results = [r for r in ia_results if r.get("domain", "") not in blocked]
-        if ia_results:
-            guidance = _web_search_guidance(query, ia_results, domains)
-            return _ok(inv, "", {
+            official_results = [r for r in official_results if r.get("domain", "") not in blocked]
+        if official_results:
+            degraded = _result(inv, True, {
                 "ok": True,
-                "status": "succeeded",
+                "status": "partial",
                 "query": query,
                 "search_query": search_query,
-                "results": ia_results,
-                "results_markdown": _web_results_markdown(ia_results),
-                "count": len(ia_results),
-                "answer_hint": guidance["answer_hint"],
-                "next_actions": guidance["next_actions"],
-                "summary": f"Found {len(ia_results)} result(s) for '{query}'",
-                "provider": "duckduckgo_instant_answer",
+                "results": official_results,
+                "results_markdown": _web_results_markdown(official_results),
+                "count": len(official_results),
+                "answer_hint": (
+                    "搜索引擎 provider 暂时不可用；以下是内置官方来源候选。"
+                    "回答时必须说明这不是搜索引擎结果，如需正文细节请继续 fetch 官方 URL。"
+                ),
+                "next_actions": ["调用 web.manage(action=fetch) 读取官方 URL 后再给出正文细节。"],
+                "summary": f"{_search_provider_error_summary(provider_errors)}；已返回 {len(official_results)} 个官方来源候选",
+                "provider": "curated_official_fallback",
+                "warnings": ["web_search_provider_degraded"],
                 "filters": {
                     "domains": domains, "blocked_domains": blocked,
                     "depth": depth, "recency": recency or "any",
                     "language": language, "safe_search": safe_search,
                 },
             })
+            degraded["status"] = "partial"
+            return degraded
 
         # ── No results from any provider ──
         return _result(inv, False, {
-            "status": "no_results",
+            "status": "provider_error" if provider_errors else "no_results",
             "query": query,
             "search_query": search_query,
             "results": [],
             "count": 0,
-            "summary": "搜索服务未返回结果",
-            "errors": [],
-            "warnings": ["web_search_no_results"],
-            "provider": "none",
+            "summary": _search_provider_error_summary(provider_errors) if provider_errors else "搜索服务未返回结果",
+            "errors": [f"web_search_provider_error: {err}" for err in provider_errors],
+            "warnings": ["web_search_provider_error"] if provider_errors else ["web_search_no_results"],
+            "provider": "error" if provider_errors else "none",
             "hint": _web_no_results_hint(query),
             "next_actions": _web_no_results_actions(query, domains),
             "filters": {"domains": domains, "blocked_domains": blocked, "depth": depth, "recency": recency or "any"},
         })
     except Exception as e:
+        provider_errors.append(f"web_runtime: {str(e)[:120]}")
         return _result(inv, False, {
             "status": "provider_error",
             "query": query,
             "search_query": search_query,
             "results": [],
             "count": 0,
-            "summary": f"Search unavailable: {str(e)[:100]}",
-            "errors": [f"web_search_provider_error: {str(e)[:200]}"],
+            "summary": _search_provider_error_summary(provider_errors),
+            "errors": [f"web_search_provider_error: {err}" for err in provider_errors],
             "warnings": ["web_search_provider_error"],
             "provider": "error",
             "next_actions": _web_no_results_actions(query, domains),

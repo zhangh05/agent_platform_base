@@ -2374,15 +2374,24 @@ class QueryLoop:
             else:
                 ok_count += 1
 
-        lines.append(f"工具调用：成功 {ok_count} 个" +
-                     (f"，警告 {warn_count} 个" if warn_count else "") +
-                     f"，失败 {fail_count} 个")
+        if results and all(r.tool_name.replace("__", ".") == "web.manage" for r in results):
+            lines.append("联网处理结果：")
+        else:
+            lines.append(f"工具调用：成功 {ok_count} 个" +
+                         (f"，警告 {warn_count} 个" if warn_count else "") +
+                         f"，失败 {fail_count} 个")
 
         for r in results:
             output = r.output if isinstance(r.output, dict) else {}
             exit_code = output.get("exit_code")
             ec_mark = "⚠️ " if (r.ok and exit_code is not None and exit_code != 0) else ""
             status_mark = "❌" if not r.ok else (ec_mark or "✅")
+
+            if r.tool_name.replace("__", ".") == "web.manage":
+                web_summary = self._build_web_result_fallback_line(r, output)
+                if web_summary:
+                    lines.append(web_summary)
+                    continue
 
             lines.append(f"\n### {status_mark} {r.tool_name}")
 
@@ -2448,6 +2457,43 @@ class QueryLoop:
                 lines.append(f"报告链接：{report_url}")
 
         return "\n".join(lines)
+
+    def _build_web_result_fallback_line(self, result: StreamingToolResult, output: dict[str, Any]) -> str:
+        payload = output.get("output") if isinstance(output.get("output"), dict) else output
+        provider = str(payload.get("provider") or "")
+        status = str(payload.get("status") or "")
+        summary = str(payload.get("summary") or result.error or "")
+        web_results = payload.get("results") if isinstance(payload.get("results"), list) else []
+
+        if result.ok and web_results:
+            lines = ["\n### 🌐 联网结果"]
+            if status == "partial" or provider == "curated_official_fallback":
+                lines.append("搜索引擎暂时不可用，我先拿到了可继续读取的官方来源候选；这还不是完整搜索摘要。")
+            else:
+                lines.append(f"已拿到 {len(web_results)} 条网页结果。")
+            for item in web_results[:5]:
+                title = str(item.get("title") or "网页结果")
+                url = str(item.get("url") or "")
+                snippet = str(item.get("snippet") or "")
+                line = f"- {title}"
+                if url:
+                    line += f"：{url}"
+                if snippet:
+                    line += f" — {snippet[:220]}"
+                lines.append(line)
+            hint = str(payload.get("answer_hint") or "")
+            if hint:
+                lines.append(f"\n说明：{hint}")
+            return "\n".join(lines)
+
+        if not result.ok:
+            lines = ["\n### 🌐 联网搜索未完成"]
+            if summary:
+                lines.append(summary)
+            lines.append("当前失败发生在搜索服务侧，不代表服务器完全无法访问互联网；可以稍后重试，或改用更具体的官方 URL 让我直接读取。")
+            return "\n".join(lines)
+
+        return ""
 
     def _canonical_tool_hint(self, tool_name: str) -> str:
         """Suggest the canonical tool id for a category-like hallucination.

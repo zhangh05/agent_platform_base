@@ -39,6 +39,11 @@ class TestFastPathClassifier:
         d = classify_direct_answer("NAT 是什么")
         assert d.enabled is True
 
+    def test_explicit_web_search_rejects_fast_path(self):
+        d = classify_direct_answer("我先测试你的联网搜索，联网搜索一下什么是 K8s")
+        assert d.enabled is False
+        assert d.reason == "hard_tool_keyword"
+
     def test_ospf_neighbor_down_rejects(self):
         d = classify_direct_answer("OSPF 邻居起不来，帮我排查")
         assert d.enabled is False
