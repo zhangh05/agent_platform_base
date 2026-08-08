@@ -13,6 +13,7 @@ from backend.core.identity import (
     list_memberships,
     list_organizations,
     list_users,
+    delete_user,
     upsert_membership,
     upsert_user,
     update_user_access,
@@ -108,7 +109,7 @@ def register_identity_routes(app) -> None:
             return jsonify({"ok": False, "error": str(exc)}), 400
         return jsonify({"ok": True, "user": user}), 201
 
-    @app.route("/api/identity/users/<username>", methods=["PUT"])
+    @app.route("/api/identity/users/<username>", methods=["PUT", "DELETE"])
     def identity_user_update(username):
         context, denied = _context()
         if denied: return denied
@@ -117,6 +118,15 @@ def register_identity_routes(app) -> None:
         from backend.core.auth import _get_login_username
         if str(username).casefold() == _get_login_username().casefold():
             return jsonify({"ok": False, "error": "administrator_account_is_protected"}), 400
+        existing_user = get_user(str(username))
+        if existing_user and has_role(str(existing_user.get("role") or "viewer"), "admin"):
+            return jsonify({"ok": False, "error": "administrator_account_is_protected"}), 400
+        if request.method == "DELETE":
+            try:
+                deleted = delete_user(username)
+            except ValueError as exc:
+                return jsonify({"ok": False, "error": str(exc)}), 404
+            return jsonify({"ok": True, "deleted": True, "user": deleted})
         data = request.get_json(silent=True) or {}
         role = str(data.get("role") or "viewer")
         if role not in {"viewer", "operator", "developer"}:

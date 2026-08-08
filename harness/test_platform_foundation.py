@@ -162,6 +162,14 @@ def test_admin_exclusively_manages_ordinary_user_access(monkeypatch, tmp_path):
     ordinary.post("/api/auth/logout", headers=headers)
     assert ordinary.post("/api/auth/login", json={"username": "alice", "password": "user-password"}, headers=headers).status_code == 401
 
+    deleted = admin.delete("/api/identity/users/bob", headers=headers)
+    assert deleted.status_code == 200
+    assert deleted.get_json()["deleted"] is True
+    assert "bob" not in {item["username"] for item in admin.get("/api/identity/users", headers=headers).get_json()["users"]}
+    bob.post("/api/auth/logout", headers=headers)
+    assert bob.post("/api/auth/login", json={"username": "bob", "password": "bob-password"}, headers=headers).status_code == 401
+    assert admin.delete("/api/identity/users/Admin", headers=headers).status_code == 400
+
 
 def test_model_candidates_include_active_fallback(monkeypatch):
     monkeypatch.setenv("AGENT_PLATFORM_MODEL_ROUTE_ASSISTANT_CHAT", "deepseek")

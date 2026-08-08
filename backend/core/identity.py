@@ -112,6 +112,23 @@ def list_users() -> list[dict[str, Any]]:
     return [_project_user(data, user) for user in data.get("users", [])]
 
 
+def delete_user(username: str) -> dict[str, Any]:
+    """Remove a login account and its memberships without deleting audit data."""
+    username = str(username or "").strip()
+    if not username:
+        raise ValueError("username is required")
+    with FileLock(_path().with_name("users.lock")):
+        data = _read()
+        user = next((item for item in data["users"] if item.get("username") == username), None)
+        if user is None:
+            raise ValueError("user not found")
+        projected = _project_user(data, user)
+        data["users"] = [item for item in data["users"] if item.get("username") != username]
+        data["memberships"] = [item for item in data["memberships"] if item.get("username") != username]
+        atomic_write_json(_path(), data)
+        return projected
+
+
 def has_role(role: str, minimum: str) -> bool:
     order = {"viewer": 0, "operator": 1, "developer": 2, "admin": 3, "owner": 4}
     return order.get(role, -1) >= order.get(minimum, 99)

@@ -161,6 +161,7 @@ export const identityApi = {
   users: () => apiRequest<{ ok: boolean; users: IdentityUser[] }>({ method: "GET", url: "/identity/users" }),
   saveUser: (user: IdentityUser & { password: string }) => apiRequest<{ ok: boolean; user: IdentityUser }>({ method: "POST", url: "/identity/users", data: user }),
   updateUser: (username: string, user: Omit<IdentityUser, "username"> & { password?: string }) => apiRequest<{ ok: boolean; user: IdentityUser }>({ method: "PUT", url: `/identity/users/${encodeURIComponent(username)}`, data: user }),
+  deleteUser: (username: string) => apiRequest<{ ok: boolean; deleted: boolean; user: IdentityUser }>({ method: "DELETE", url: `/identity/users/${encodeURIComponent(username)}` }),
   memberships: (organizationId: string) => apiRequest<{ ok: boolean; memberships: MembershipRecord[] }>({ method: "GET", url: `/identity/organizations/${organizationId}/memberships` }),
 };
 

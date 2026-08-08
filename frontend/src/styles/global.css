@@ -9072,7 +9072,8 @@ summary:focus-visible,
 .user-role-options small, .user-workspace-options small { color: var(--text-4); font-size: var(--fs-9); line-height: 1.45; }
 .user-workspace-options { grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); }
 .user-workspace-options > p { color: var(--text-4); font-size: var(--fs-11); }
-.user-access-actions { display: flex; justify-content: flex-end; padding-top: 18px; }
+.user-access-actions { display: flex; justify-content: space-between; gap: 10px; padding-top: 18px; }
+.user-access-actions .btn.primary { margin-left: auto; }
 .user-access-denied { max-width: 620px; padding: 32px; border: 1px solid var(--line-2); border-radius: var(--r-8); background: var(--surface); }
 .user-access-denied h1 { margin: 0 0 8px; font-size: var(--fs-18); }
 .user-access-denied p { margin: 0; color: var(--text-3); }

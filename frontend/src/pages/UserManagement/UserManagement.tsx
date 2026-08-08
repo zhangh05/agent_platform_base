@@ -127,6 +127,26 @@ export function UserManagement() {
     }
   }
 
+  async function removeSelectedUser() {
+    const username = selectedUsername || draft.username.trim();
+    if (!username || !window.confirm(`删除普通用户「${username}」？\n\n账号将无法再登录，历史会话和产物会保留用于审计。`)) return;
+    setBusy(true);
+    setError("");
+    setNotice("");
+    try {
+      await identityApi.deleteUser(username);
+      await load();
+      setCreating(false);
+      setSelectedUsername("");
+      setDraft(emptyDraft(organizations[0]?.organization_id || "default"));
+      setNotice(`用户 ${username} 已删除，历史数据已保留`);
+    } catch (err) {
+      setError(String((err as { message?: string })?.message || "删除失败，请稍后重试"));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   if (session && (!session.identity_enabled || !session.platform_admin)) {
     return <div className="page user-management"><div className="page-body"><section className="user-access-denied"><h1>无权访问用户管理</h1><p>此页面仅对平台管理员开放。</p></section></div></div>;
   }
@@ -171,7 +191,7 @@ export function UserManagement() {
               <div className="user-access-section-title"><h3>工作区范围</h3><p>选择用户可进入的工作区；同一工作区内的数据仍按用户独立保存。</p></div>
               <div className="user-workspace-options">{availableWorkspaces.length ? availableWorkspaces.map((workspace) => <label key={workspace.workspace_id} className={draft.workspace_ids.includes(workspace.workspace_id) ? "selected" : ""}><input type="checkbox" checked={draft.workspace_ids.includes(workspace.workspace_id)} onChange={() => toggleWorkspace(workspace.workspace_id)} /><span><b>{workspace.name || workspace.workspace_id}</b><small>{workspace.workspace_id} · 数据按用户独立存储</small></span></label>) : <p>该组织暂时没有可分配工作区。</p>}</div>
             </section>
-            <div className="user-access-actions"><button className="btn primary" disabled={busy || !draft.username.trim() || (creating && !draft.password) || !draft.workspace_ids.length} onClick={() => void save()}>{busy ? "保存中…" : creating ? "创建用户" : "保存权限"}</button></div>
+            <div className="user-access-actions">{!creating ? <button className="btn danger" disabled={busy} onClick={() => void removeSelectedUser()}>删除用户</button> : null}<button className="btn primary" disabled={busy || !draft.username.trim() || (creating && !draft.password) || !draft.workspace_ids.length} onClick={() => void save()}>{busy ? "保存中…" : creating ? "创建用户" : "保存权限"}</button></div>
           </>}
         </main>
       </div>
