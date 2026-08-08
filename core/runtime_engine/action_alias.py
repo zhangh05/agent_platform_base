@@ -199,7 +199,6 @@ _CANONICAL_ACTIONS: Final[dict[str, frozenset[str]]] = {
         "parse", "stats", "distinct", "aggregate", "filter",
         "sort", "render", "pivot", "join",
     }),
-    "device.manage": frozenset({"probe", "read"}),
     "report.manage": frozenset({
         "save", "diff", "document",
     }),

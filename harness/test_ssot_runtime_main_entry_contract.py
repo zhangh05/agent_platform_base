@@ -1,6 +1,12 @@
 """SSOT Runtime main-entry contract tests."""
 
 
+def test_default_output_budget_stays_bounded():
+    from core.runtime_engine.models import SSOTRuntimeConfig
+
+    assert SSOTRuntimeConfig().max_output_tokens == 8192
+
+
 def test_agent_app_submit_uses_ssot_runtime(monkeypatch, temp_dirs):
     from agent.app.facade import AgentApp
 

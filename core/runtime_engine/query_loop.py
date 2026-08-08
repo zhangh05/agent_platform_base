@@ -1607,31 +1607,9 @@ class QueryLoop:
                             "session_id": ctx.session_id,
                         },
                     ),
-                    timeout=120,
+                    timeout=300,
                 )
                 return self._coerce_llm_response(raw)
-
-            from agent.llm.runtime import invoke_llm
-            call_messages = [
-                LLMMessage(role="system", content=system_prompt),
-                *messages[1:],
-            ] if messages else [LLMMessage(role="system", content=system_prompt)]
-
-            response = await asyncio.wait_for(
-                asyncio.to_thread(
-                    invoke_llm,
-                    task="query_loop",
-                    messages=call_messages,
-                    tools=tools_for_call,
-                    config_override={
-                        "temperature": 0.2,
-                        "max_tokens": self._config.max_output_tokens,
-                        "timeout": 120,
-                    },
-                ),
-                timeout=120,
-            )
-            return response
         except asyncio.TimeoutError:
             self._llm_call_count += 1
             return LLMResponse(error="llm_call_timeout")

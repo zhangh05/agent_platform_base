@@ -12,7 +12,7 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Callable
 
-from core.tools.general_tools.device_tools import DeviceCredential, DeviceTarget, probe_target
+from extensions.network_operations.device_tools import DeviceCredential, DeviceTarget, probe_target
 from extensions.sdk import ExtensionDataStore, ExtensionSecretStore
 from storage.time_utils import now_iso
 

@@ -612,10 +612,16 @@ def _invoke_llm_for_ssot_runtime(**kwargs):
     if caller_extra:
         extra.update(caller_extra)
 
-    config_override = None
+    config_override = {}
     timeout = kwargs.get("timeout")
     if timeout is not None:
-        config_override = {"timeout": int(timeout)}
+        config_override["timeout"] = int(timeout)
+    temperature = kwargs.get("temperature")
+    if temperature is not None:
+        config_override["temperature"] = float(temperature)
+    max_tokens = kwargs.get("max_tokens")
+    if max_tokens is not None:
+        config_override["max_tokens"] = int(max_tokens)
 
     resp = invoke_llm(
         task="assistant_chat",

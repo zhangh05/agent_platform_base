@@ -94,17 +94,33 @@ def test_write_commands_are_rejected():
     assert service.is_read_only_command("display version; reboot") is False
 
 
-def test_device_manage_is_registered_as_governed_connectivity_tool():
-    from core.tools.canonical_registry import CANONICAL_REGISTRY
-    from core.tools.manifest_registry import get_manifest
-    from core.tools.tool_namespace import metadata_for_tool
+def test_device_manage_is_registered_as_network_operations_extension_tool():
+    from extensions.runtime import get_extension_tool_specs
 
-    assert "device.manage" in CANONICAL_REGISTRY
-    manifest = get_manifest("device.manage")
-    assert manifest is not None
-    assert manifest.action_class == "network"
-    assert manifest.risk_level == "medium"
-    assert metadata_for_tool("device.manage")["category"] == "ops"
+    specs = {spec.tool_id: spec for spec, _handler in get_extension_tool_specs()}
+    assert "network.operations.device.manage" in specs
+    spec = specs["network.operations.device.manage"]
+    assert spec.category == "ops"
+    assert spec.risk_level == "medium"
+    assert spec.permission_action == "network"
+    properties = set((spec.input_schema or {}).get("properties") or {})
+    for required in {"action", "asset_id", "host", "commands", "accept_host_key"}:
+        assert required in properties, required
+
+
+def test_device_manage_is_exposed_to_llm_as_extension_tool():
+    from core.tools.canonical_registry import CANONICAL_REGISTRY, to_openai_tools, to_tool_specs
+
+    assert "device.manage" not in CANONICAL_REGISTRY
+    tool_specs = {spec.tool_id: spec for spec, _handler in to_tool_specs()}
+    assert "network.operations.device.manage" in tool_specs
+    openai_names = {
+        tool["function"]["name"]
+        for tool in to_openai_tools()
+        if tool.get("type") == "function"
+    }
+    assert "device__manage" not in openai_names
+    assert "network__operations__device__manage" in openai_names
 
 
 def test_extension_routes_cover_asset_and_inspection_flow(monkeypatch, tmp_path):

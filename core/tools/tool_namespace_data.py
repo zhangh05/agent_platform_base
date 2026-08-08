@@ -71,7 +71,7 @@ NS_DATA = [
     ),
     (
         "browser.manage", "browser", "automation", "multi", "浏览器自动化", "browser.manage",
-        "Use navigate -> snapshot -> ref-based interactions. Supports click, type, extract, screenshot, tabs, network and console.",
+        "Use navigate -> snapshot -> ref-based interactions. Full action set: navigate, snapshot, screenshot, click, type, extract, scroll, hover, press_key, select_option, evaluate, wait, tabs, network, console, navigate_back, close.",
         "Do not access private/login-walled sites without explicit permission.",
         "browser.manage",
     ),
@@ -88,12 +88,6 @@ NS_DATA = [
         "data.manage",
     ),
     (
-        "device.manage", "ops", "device", "multi", "设备连接", "device.manage",
-        "Probe TCP/SSH/host-key/auth/prompt stages or run allowlisted read-only commands against a saved asset or supplied target.",
-        "Do not use for config mode, write commands, reloads, Telnet, SNMP set, or broad scanning.",
-        "device.manage",
-    ),
-    (
         "report.manage", "data", "report", "multi", "报告渲染", "report.manage",
         "Save, diff or render complete documents from supplied evidence.",
         "Do not include raw secrets or unredacted sensitive data.",
@@ -107,19 +101,19 @@ NS_DATA = [
     ),
     (
         "memory.manage", "memory", "record", "multi", "记忆", "memory.manage",
-        "Search, create, update, confirm, delete and maintain profile facts.",
+        "Full action set: search, review, confirm, create, update, delete, profile_get, profile_set. Review action can surface stale memories; confirm action verifies a memory. Use profile_set to update user/agent profile fields.",
         "Do not store passwords, API keys, tokens, or one-off noisy facts.",
         "memory.manage",
     ),
     (
         "skill.manage", "agent", "skill", "multi", "技能", "skill.manage",
-        "List/search/load/inspect available skills. Loading only returns instructions; it does not execute the task.",
+        "Skill operations. Full action set: list, find (alias: search), load, inspect, mcp_list_tools, mcp_call. Loading returns instructions only; it does not execute the task. find requires query; load/inspect require skill_name.",
         "Do not confuse skill discovery with task completion.",
         "skill.manage",
     ),
     (
         "agent.manage", "agent", "subagent", "multi", "Agent 管理", "agent.manage",
-        "List subagent profiles, fetch child results, cancel tasks and inspect status.",
+        "Subagent task management. Full action set: spawn (requires instruction), list, get, status, cancel, merge.",
         "Do not delegate simple single-step lookups.",
         "agent.manage",
     ),

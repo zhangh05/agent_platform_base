@@ -48,7 +48,6 @@ def test_public_schemas_expose_handler_consumed_arguments():
         "browser.manage": {"url", "selector", "ref", "text", "script", "key", "value", "wait_selector", "wait_text", "timeout", "wait_ms", "compact", "max_elements", "full_page", "as_file", "clear_first", "direction", "amount", "tab_action", "tab_index"},
         "web.manage": {"query", "source", "url", "location", "days", "language", "units", "recency", "safe_search", "depth", "domains", "allowed_domains", "blocked_domains", "site", "vendor", "max_results", "top_k", "extract_mode", "max_length", "timeout"},
         "data.manage": {"text", "rows", "column", "conditions", "group_by", "metrics", "by", "order", "max_rows", "output", "index", "columns", "values", "aggfunc", "right_text", "right_rows", "on", "how"},
-        "device.manage": {"asset_id", "host", "port", "vendor", "username", "password", "auth_method", "private_key", "passphrase", "host_key_fingerprint", "accept_host_key", "commands", "timeout"},
         "report.manage": {"title", "content", "summary", "text_a", "text_b"},
         "knowledge.manage": {"query", "limit", "level", "chunk_id", "source_id", "artifact_id", "chunk_type", "scope", "include_disabled", "include_deleted"},
         "memory.manage": {"query", "limit", "title", "content", "memory_id", "memory_type", "scope", "field", "value", "merge", "session_id", "tags"},

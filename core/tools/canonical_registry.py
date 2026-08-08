@@ -259,11 +259,6 @@ def _handle_data(inv: ToolInvocation) -> dict:
     return _unsupported(inv, "parse|stats|distinct|aggregate|filter|sort|render|pivot|join")
 
 
-def _handle_device(inv: ToolInvocation) -> dict:
-    from core.tools.general_tools.device_tools import handle_device_manage
-    return handle_device_manage(inv)
-
-
 def _handle_report(inv: ToolInvocation) -> dict:
     from core.tools.general_tools.runtime_tools import handle_doc_render_from_safe_summary, handle_report_save_artifact, handle_text_diff
 
@@ -618,7 +613,6 @@ _RAW_REGISTRY: list[CanonicalToolEntry] = [
     _entry("browser.manage", _handle_browser, {**_COMMON, **_BROWSER_ARGS, "action": {"type": "string", "enum": ["navigate", "snapshot", "screenshot", "click", "type", "extract", "scroll", "hover", "press_key", "select_option", "evaluate", "wait", "tabs", "network", "console", "navigate_back", "close"]}}, required=["action"], risk="medium", description="Browser automation. navigate/extract require url; click/hover require selector or ref; type requires text and selector/ref."),
     _entry("web.manage", _handle_web, {**_COMMON, **_WEB_ARGS, "action": {"type": "string", "enum": ["search", "fetch", "weather", "deep_search"]}}, required=["action"], description="Web search/fetch/weather. search requires query; deep_search searches then fetches up to top_k source pages; fetch requires url; weather requires location and supports days=1..10."),
     _entry("data.manage", _handle_data, {**_COMMON, **_DATA_ARGS, "action": {"type": "string", "enum": ["parse", "stats", "distinct", "aggregate", "filter", "sort", "render", "pivot", "join"]}}, required=["action"], description="Structured data processing. Supply text or rows; action-specific columns/options are declared in the schema."),
-    _entry("device.manage", _handle_device, {**_COMMON, "action": {"type": "string", "enum": ["probe", "read"]}, "asset_id": {"type": "string"}, "host": {"type": "string"}, "port": {"type": "integer"}, "vendor": {"type": "string"}, "username": {"type": "string"}, "password": {"type": "string"}, "auth_method": {"type": "string", "enum": ["password", "private_key"]}, "private_key": {"type": "string"}, "passphrase": {"type": "string"}, "host_key_fingerprint": {"type": "string"}, "accept_host_key": {"type": "boolean"}, "commands": {"type": "array", "items": {"type": "string"}}, "timeout": {"type": "integer"}}, required=["action"], risk="medium", permission="network", description="Read-only network device connection probing and command reads."),
     _entry("report.manage", _handle_report, {**_COMMON, "action": {"type": "string", "enum": ["save", "diff", "document"]}, "summary": {"type": "string"}, "text_a": {"type": "string"}, "text_b": {"type": "string"}}, required=["action"], description="Report operations. save requires content; diff requires text_a/text_b; document requires summary."),
     _entry("knowledge.manage", _handle_knowledge, {**_COMMON, "action": {"type": "string", "enum": ["search", "read", "list", "chunk", "import", "reindex"]}, "level": {"type": "string", "enum": ["chunk", "source"]}, "chunk_id": {"type": "string"}, "source_id": {"type": "string"}, "chunk_type": {"type": "string"}, "scope": {"type": "string"}, "include_disabled": {"type": "boolean"}, "include_deleted": {"type": "boolean"}}, required=["action"], risk="medium", description="Knowledge operations. search requires query; read requires chunk_id or source_id; list lists sources; chunk lists chunks; import requires artifact_id; reindex requires source_id."),
     _entry("memory.manage", _handle_memory, {**_COMMON, **_MEMORY_ARGS, "action": {"type": "string", "enum": ["search", "review", "confirm", "create", "update", "delete", "profile_get", "profile_set"]}}, required=["action"], risk="medium", description="Memory operations. create requires content; update/confirm/delete require memory_id; profile_set requires field and value."),
@@ -691,14 +685,32 @@ def to_tool_specs() -> list[tuple[ToolSpec, Callable[[ToolInvocation], dict]]]:
 
 
 def to_openai_tools() -> list[dict[str, Any]]:
-    return [
-        {
+    from extensions.runtime import get_extension_tool_specs
+    from core.tools.tool_namespace import get_namespace_entry
+    out = []
+    for tool_id, entry in CANONICAL_REGISTRY.items():
+        ns_entry = get_namespace_entry(tool_id)
+        description = ns_entry.usage_hint or entry.description
+        if ns_entry.not_for:
+            description = f"{description}\n\nAvoid: {ns_entry.not_for}"
+        out.append({
             "type": "function",
             "function": {
                 "name": tool_id.replace(".", "__"),
-                "description": entry.description,
+                "description": description,
                 "parameters": entry.input_schema,
             },
-        }
-        for tool_id, entry in CANONICAL_REGISTRY.items()
-    ]
+        })
+    for spec, _handler in get_extension_tool_specs():
+        if not spec.callable_by_llm:
+            continue
+        description = spec.description or spec.name or spec.tool_id
+        out.append({
+            "type": "function",
+            "function": {
+                "name": spec.tool_id.replace(".", "__"),
+                "description": description,
+                "parameters": spec.input_schema,
+            },
+        })
+    return out

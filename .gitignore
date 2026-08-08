@@ -6,6 +6,7 @@ venv/
 .runtime/
 .env
 *.env
+.env.local
 config/llm.local.yaml
 config/secrets.yaml
 apikey

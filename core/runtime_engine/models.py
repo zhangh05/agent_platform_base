@@ -133,7 +133,7 @@ class SSOTRuntimeConfig:
     # fully visible and are deducted before message/history/tool-result budgets.
     context_window_tokens: int = 0
     max_input_tokens: int = 48_000
-    max_output_tokens: int = 4096
+    max_output_tokens: int = 8192
     context_safety_tokens: int = 2048
 
     # RiskPolicy warning thresholds. These no longer trigger approval/blocking;

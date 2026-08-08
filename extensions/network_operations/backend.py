@@ -147,6 +147,62 @@ def device_probe(invocation):
     )
 
 
+def device_manage(invocation):
+    """Probe or read a network device.
+
+    Mirrors the former base ``device.manage`` tool but now lives entirely
+    in the network.operations extension. With ``asset_id`` the request is
+    routed through ``service.probe_asset`` (which honours the workspace
+    asset store, host-key acceptance, and credential encryption). Without
+    ``asset_id`` the handler builds an ad-hoc ``DeviceTarget`` and calls
+    ``probe_target`` directly.
+    """
+    args = invocation.arguments or {}
+    action = str(args.get("action") or "probe").lower()
+    if action not in {"probe", "read"}:
+        return {
+            "ok": False,
+            "error": f"unsupported action for network.operations.device.manage; expected probe|read, got {action}",
+        }
+    if args.get("asset_id"):
+        return service.probe_asset(
+            invocation.workspace_id,
+            str(args.get("asset_id") or ""),
+            commands=[str(item) for item in (args.get("commands") or [])],
+            accept_host_key=bool(args.get("accept_host_key")),
+            read=action == "read",
+            timeout=int(args.get("timeout") or 15),
+        )
+    from extensions.network_operations.device_tools import (
+        DeviceCredential,
+        DeviceTarget,
+        probe_target,
+    )
+    if not str(args.get("host") or "").strip():
+        return {"ok": False, "error": "host is required when asset_id is omitted"}
+    credential = DeviceCredential(
+        auth_method=str(args.get("auth_method") or "password"),
+        username=str(args.get("username") or ""),
+        password=str(args.get("password") or ""),
+        private_key=str(args.get("private_key") or ""),
+        passphrase=str(args.get("passphrase") or ""),
+    )
+    target = DeviceTarget(
+        host=str(args.get("host") or ""),
+        port=int(args.get("port") or 22),
+        vendor=str(args.get("vendor") or "generic"),
+        expected_fingerprint=str(args.get("host_key_fingerprint") or ""),
+        credential=credential,
+    )
+    return probe_target(
+        target,
+        commands=[str(item) for item in (args.get("commands") or [])],
+        accept_host_key=bool(args.get("accept_host_key")),
+        read=action == "read",
+        timeout=int(args.get("timeout") or 15),
+    )
+
+
 def inspection(invocation):
     args = invocation.arguments or {}
     action = str(args.get("action") or "list")
@@ -178,6 +234,7 @@ def register():
             {"tool_id": "network.operations.assets_read", "name": "读取网络资产", "description": "列出或读取当前工作区网络设备。", "category": "ops", "permission_action": "read", "handler": assets_read, "input_schema": {"type": "object", "properties": {**common, "asset_id": {"type": "string"}}}},
             {"tool_id": "network.operations.assets_write", "name": "维护网络资产", "description": "新增、修改或删除当前工作区网络设备。", "category": "ops", "risk_level": "medium", "permission_action": "write", "handler": assets_write, "input_schema": {"type": "object", "properties": {**common, "action": {"type": "string", "enum": ["save", "delete"]}, "asset_id": {"type": "string"}, "asset": {"type": "object"}}, "required": ["action"]}},
             {"tool_id": "network.operations.device_probe", "name": "设备连接测试", "description": "对当前工作区设备执行 TCP、SSH、主机指纹、认证和提示符探测。", "category": "ops", "risk_level": "medium", "permission_action": "network", "handler": device_probe, "timeout_seconds": 60, "input_schema": {"type": "object", "properties": {**common, "asset_id": {"type": "string"}, "accept_host_key": {"type": "boolean"}, "read": {"type": "boolean"}, "commands": {"type": "array", "items": {"type": "string"}}, "timeout": {"type": "integer"}}, "required": ["asset_id"]}},
+            {"tool_id": "network.operations.device.manage", "name": "网络设备只读探测", "description": "对工作区网络资产或临时目标执行只读 TCP/SSH/主机指纹/认证/提示符探测和命令读取。", "category": "ops", "risk_level": "medium", "permission_action": "network", "handler": device_manage, "timeout_seconds": 90, "input_schema": {"type": "object", "properties": {**common, "action": {"type": "string", "enum": ["probe", "read"]}, "asset_id": {"type": "string"}, "host": {"type": "string"}, "port": {"type": "integer"}, "vendor": {"type": "string"}, "username": {"type": "string"}, "password": {"type": "string"}, "auth_method": {"type": "string", "enum": ["password", "private_key"]}, "private_key": {"type": "string"}, "passphrase": {"type": "string"}, "host_key_fingerprint": {"type": "string"}, "accept_host_key": {"type": "boolean"}, "commands": {"type": "array", "items": {"type": "string"}}, "timeout": {"type": "integer"}}, "required": ["action"]}},
             {"tool_id": "network.operations.inspection", "name": "执行只读巡检", "description": "启动、读取或取消只读 SSH 网络巡检。", "category": "ops", "risk_level": "medium", "permission_action": "network", "handler": inspection, "timeout_seconds": 120, "input_schema": {"type": "object", "properties": {**common, "action": {"type": "string", "enum": ["run", "list", "get", "cancel"]}, "asset_ids": {"type": "array", "items": {"type": "string"}}, "commands": {"type": "array", "items": {"type": "string"}}, "task_id": {"type": "string"}}, "required": ["action"]}},
             {"tool_id": "network.operations.baseline", "name": "管理巡检基线", "description": "创建、确认和比较状态基线。", "category": "ops", "risk_level": "medium", "permission_action": "write", "handler": baseline, "input_schema": {"type": "object", "properties": {**common, "action": {"type": "string", "enum": ["create", "confirm", "list", "diff"]}, "task_id": {"type": "string"}, "baseline_id": {"type": "string"}, "confirm": {"type": "boolean"}}, "required": ["action"]}}
         ],
