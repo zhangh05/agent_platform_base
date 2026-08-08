@@ -28,6 +28,7 @@ body,
   --overlay: rgba(16, 24, 40, 0.42);
 
   --text: #131a24;
+  --text-1: var(--text);
   --text-2: #2f3b4a;
   --text-3: #647184;
   --text-4: #98a4b3;
@@ -54,6 +55,7 @@ body,
   --font-mono: "SF Mono", "JetBrains Mono", Menlo, Consolas, ui-monospace, monospace;
   --font-display: var(--font-sans);
 
+  --fs-9: 9px;
   --fs-10: 10px;
   --fs-11: 11px;
   --fs-12: 12px;

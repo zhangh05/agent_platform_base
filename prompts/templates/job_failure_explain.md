@@ -21,8 +21,8 @@ Explain why a runtime job failed or stalled, using only safe job/runtime context
 Choose the lightest useful shape:
 - For a simple or obvious failure, answer in a short paragraph.
 - For a complex failure, organize the answer around: failure summary, evidence
-  available, confirmed vs likely cause, retry eligibility or blocker, and the
-  concrete next step.
+  available, confirmed vs likely cause, the "Retry eligibility or blocker"
+  decision, and the concrete next step.
 - If the user is challenging a previous answer, address the challenged point
   first instead of replaying every diagnostic field.
 
