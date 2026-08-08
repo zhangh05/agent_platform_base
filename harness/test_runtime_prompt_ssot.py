@@ -147,6 +147,31 @@ def test_ssot_registry_feeds_action_profiles_to_llm_tools():
     assert "delete=write/high/approval_required" in desc
 
 
+def test_llm_tool_descriptions_keep_long_action_boundaries_complete():
+    from agent.runtime.ssot_runtime import _build_ssot_runtime_tool_registry
+    from core.runtime_engine.query_loop import _build_cached_tool_definitions
+
+    registry = _build_ssot_runtime_tool_registry(["browser.manage"])
+    desc = _build_cached_tool_definitions(registry)[0]["function"]["description"]
+
+    assert len(desc) <= 1200
+    assert "Action boundaries:" in desc
+    assert "navigate_back" in desc
+    assert "close" in desc
+    assert not desc.endswith("navigate")
+
+
+def test_internal_search_tools_are_not_labeled_as_network_actions():
+    from agent.runtime.ssot_runtime import _build_ssot_runtime_tool_registry
+
+    registry = _build_ssot_runtime_tool_registry(["knowledge.manage", "memory.manage"])
+    knowledge = {item["action"]: item for item in registry["knowledge.manage"]["action_profiles"]}
+    memory = {item["action"]: item for item in registry["memory.manage"]["action_profiles"]}
+
+    assert knowledge["search"]["permission_action"] == "read"
+    assert memory["search"]["permission_action"] == "read"
+
+
 def test_workspace_file_schema_exposes_requested_filename():
     from agent.runtime.ssot_runtime import _build_ssot_runtime_tool_registry
 

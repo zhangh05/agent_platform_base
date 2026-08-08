@@ -496,6 +496,10 @@ def _build_ssot_runtime_tool_registry(allowed_tool_ids=None) -> dict[str, dict[s
         }
     except Exception:
         action_profiles = {}
+    try:
+        from core.tools.catalog_snapshot import build_action_profiles_for_tool
+    except Exception:
+        build_action_profiles_for_tool = None
     for item in client.list_tools():
         tool_id = str(item.get("tool_id") or "")
         if not tool_id:
@@ -506,12 +510,24 @@ def _build_ssot_runtime_tool_registry(allowed_tool_ids=None) -> dict[str, dict[s
             continue
         if item.get("forbidden") is True:
             continue
+        args_schema = item.get("input_schema") or {}
+        profiles = action_profiles.get(tool_id, [])
+        if not profiles and build_action_profiles_for_tool:
+            try:
+                profiles = build_action_profiles_for_tool(
+                    tool_id,
+                    input_schema=args_schema,
+                    category=str(item.get("category") or ""),
+                    base_permission=str(item.get("permission_action") or "read"),
+                )
+            except Exception:
+                profiles = []
         tools[tool_id] = {
             "description": str(item.get("description") or tool_id),
-            "args_schema": item.get("input_schema") or {},
+            "args_schema": args_schema,
             "category": item.get("category") or "",
             "risk_level": item.get("risk_level") or "low",
-            "action_profiles": action_profiles.get(tool_id, []),
+            "action_profiles": profiles,
         }
     return tools
 

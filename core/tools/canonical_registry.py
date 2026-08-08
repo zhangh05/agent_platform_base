@@ -685,6 +685,8 @@ def to_tool_specs() -> list[tuple[ToolSpec, Callable[[ToolInvocation], dict]]]:
 
 
 def to_openai_tools() -> list[dict[str, Any]]:
+    from agent.llm.tool_adapter import tool_spec_to_openai_function
+    from core.tools.catalog_snapshot import build_action_profiles_for_tool
     from extensions.runtime import get_extension_tool_specs
     from core.tools.tool_namespace import get_namespace_entry
     out = []
@@ -693,24 +695,34 @@ def to_openai_tools() -> list[dict[str, Any]]:
         description = ns_entry.usage_hint or entry.description
         if ns_entry.not_for:
             description = f"{description}\n\nAvoid: {ns_entry.not_for}"
-        out.append({
-            "type": "function",
-            "function": {
-                "name": tool_id.replace(".", "__"),
-                "description": description,
-                "parameters": entry.input_schema,
-            },
-        })
+        out.append(tool_spec_to_openai_function({
+            "tool_id": tool_id,
+            "description": description,
+            "input_schema": entry.input_schema,
+            "risk_level": entry.risk_level,
+            "requires_approval": entry.requires_approval,
+            "action_profiles": build_action_profiles_for_tool(
+                tool_id,
+                input_schema=entry.input_schema,
+                category=ns_entry.category,
+                base_permission=entry.permission_action or "read",
+            ),
+            "metadata": ns_entry.metadata(),
+        }))
     for spec, _handler in get_extension_tool_specs():
         if not spec.callable_by_llm:
             continue
-        description = spec.description or spec.name or spec.tool_id
-        out.append({
-            "type": "function",
-            "function": {
-                "name": spec.tool_id.replace(".", "__"),
-                "description": description,
-                "parameters": spec.input_schema,
-            },
-        })
+        out.append(tool_spec_to_openai_function({
+            "tool_id": spec.tool_id,
+            "description": spec.description or spec.name or spec.tool_id,
+            "input_schema": spec.input_schema,
+            "risk_level": spec.risk_level,
+            "requires_approval": spec.requires_approval,
+            "action_profiles": build_action_profiles_for_tool(
+                spec.tool_id,
+                input_schema=spec.input_schema,
+                category=spec.category,
+                base_permission=spec.permission_action,
+            ),
+        }))
     return out

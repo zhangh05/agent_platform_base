@@ -123,6 +123,41 @@ def test_device_manage_is_exposed_to_llm_as_extension_tool():
     assert "network__operations__device__manage" in openai_names
 
 
+def test_network_extension_llm_descriptions_expose_actions_and_arguments():
+    from agent.runtime.ssot_runtime import _build_ssot_runtime_tool_registry
+    from core.runtime_engine.query_loop import _build_cached_tool_definitions
+
+    registry = _build_ssot_runtime_tool_registry([
+        "network.operations.device.manage",
+        "network.operations.inspection",
+        "network.operations.baseline",
+    ])
+    descriptions = {
+        tool["function"]["name"]: tool["function"]["description"]
+        for tool in _build_cached_tool_definitions(registry)
+    }
+
+    device = descriptions["network__operations__device__manage"]
+    assert "probe=network" in device
+    assert "read=network" in device
+    assert "asset_id" in device
+    assert "host" in device
+    assert "commands" in device
+
+    inspection = descriptions["network__operations__inspection"]
+    assert "run=network" in inspection
+    assert "get=network" in inspection
+    assert "cancel=network" in inspection
+    assert "asset_ids" in inspection
+    assert "task_id" in inspection
+
+    baseline = descriptions["network__operations__baseline"]
+    assert "create=write" in baseline
+    assert "confirm=write" in baseline
+    assert "diff=read" in baseline
+    assert "baseline_id" in baseline
+
+
 def test_extension_routes_cover_asset_and_inspection_flow(monkeypatch, tmp_path):
     _setup(monkeypatch, tmp_path)
     monkeypatch.setenv("AGENT_PLATFORM_LOGIN_ENABLED", "false")

@@ -42,20 +42,45 @@ _READ_ACTIONS = {
     "redact", "diff", "document", "references", "read_image", "glob",
 }
 _EXEC_ACTIONS = {"shell", "python", "slash", "background", "stream"}
-_NETWORK_ACTIONS = {"search", "fetch", "weather", "deep_search"}
+_NETWORK_ACTIONS = {"fetch", "weather", "deep_search"}
+_NETWORK_TOOLS = {
+    "web.manage",
+    "network.operations.device_probe",
+    "network.operations.device.manage",
+    "network.operations.inspection",
+}
 
 
 def _action_permission(tool_id: str, action: str, base_permission: str) -> str:
     action = str(action or "").strip().lower()
     if tool_id == "exec.run" or action in _EXEC_ACTIONS:
         return "exec"
-    if tool_id == "web.manage" or action in _NETWORK_ACTIONS:
+    if (
+        tool_id in _NETWORK_TOOLS
+        or action in _NETWORK_ACTIONS
+    ):
         return "network"
     if action in _WRITE_ACTIONS or action in {"delete", "remove", "purge", "destroy", "drop", "rewind", "session_rewind"}:
         return "write"
     if action in _READ_ACTIONS:
         return "read"
     return base_permission or "read"
+
+
+def build_action_profiles_for_tool(
+    tool_id: str,
+    *,
+    input_schema: dict,
+    category: str = "",
+    base_permission: str = "read",
+) -> list[dict]:
+    return _action_profiles(
+        tool_id,
+        _schema_actions(input_schema),
+        input_schema=input_schema,
+        category=category,
+        base_permission=base_permission,
+    )
 
 
 def _action_profiles(tool_id: str, actions: list[str], *, input_schema: dict, category: str, base_permission: str) -> list[dict]:

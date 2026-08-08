@@ -18,8 +18,8 @@ def to_llm_tool_name(tool_id: str) -> str:
     """Convert tool_id to LLM-safe function name.
 
     Examples:
-        "system.manage" -> "runtime__health"
-        "web.manage" -> "web__search"
+        "system.manage" -> "system__manage"
+        "web.manage" -> "web__manage"
         "artifact_list" -> "artifact_list"  (no dots, no change)
     """
     return tool_id.replace(".", "__")
@@ -29,8 +29,8 @@ def from_llm_tool_name(llm_name: str) -> str:
     """Convert LLM-safe function name back to real tool_id.
 
     Examples:
-        "runtime__health" -> "system.manage"
-        "web__search" -> "web.manage"
+        "system__manage" -> "system.manage"
+        "web__manage" -> "web.manage"
         "artifact_list" -> "artifact_list"  (no double underscore, no change)
     """
     return llm_name.replace("__", ".")
@@ -93,7 +93,7 @@ def _build_tool_description(tool: dict, metadata: dict, canonical_tool_id: str) 
     base = str(tool.get("description") or tool.get("name") or canonical_tool_id)
     parts = [
         f"[tool_id={canonical_tool_id}]",
-        base[:280],
+        _soft_truncate(base, 260),
     ]
     usage_hint = metadata.get("usage_hint") or tool.get("usage_hint")
     not_for = metadata.get("not_for") or tool.get("not_for")
@@ -102,20 +102,33 @@ def _build_tool_description(tool: dict, metadata: dict, canonical_tool_id: str) 
     if risk and str(risk).lower() not in {"low", "safe"}:
         parts.append(f"Risk: {risk}; approval_required={bool(approval)}.")
     if usage_hint:
-        parts.append(f"Use when: {str(usage_hint)[:220]}")
+        parts.append(f"Use when: {_soft_truncate(str(usage_hint), 220)}")
     if not_for:
-        parts.append(f"Do not use for: {str(not_for)[:160]}")
+        parts.append(f"Do not use for: {_soft_truncate(str(not_for), 180)}")
     boundary = _format_action_profiles(tool.get("action_profiles") or metadata.get("action_profiles"))
     if boundary:
         parts.append(f"Action boundaries: {boundary}")
-    return " ".join(p for p in parts if p)[:650]
+    return " ".join(p for p in parts if p)[:1200]
+
+
+def _soft_truncate(text: str, limit: int) -> str:
+    """Truncate without cutting English identifiers in half when practical."""
+    text = " ".join(str(text or "").split())
+    if len(text) <= limit:
+        return text
+    cut = text[:limit].rstrip()
+    for separator in ("。", "；", ";", ".", ",", "，", " "):
+        pos = cut.rfind(separator)
+        if pos >= max(40, limit // 2):
+            return cut[: pos + (0 if separator == " " else 1)].rstrip()
+    return cut.rstrip("_-. ")
 
 
 def _format_action_profiles(action_profiles) -> str:
     """Compact action-level risk/approval hints for LLM tool selection."""
     if not isinstance(action_profiles, list):
         return ""
-    chunks = []
+    chunks: list[tuple[str, str]] = []
     for item in action_profiles:
         if not isinstance(item, dict):
             continue
@@ -131,11 +144,18 @@ def _format_action_profiles(action_profiles) -> str:
             suffix = f"{perm or 'write'}/{risk or 'high'}/approval_required"
         else:
             suffix = perm or risk or "read"
-        chunks.append(f"{action}={suffix}")
+        chunks.append((action, suffix))
     if not chunks:
         return ""
-    text = ", ".join(chunks)
-    return text[:260]
+    if len(chunks) <= 12:
+        return ", ".join(f"{action}={suffix}" for action, suffix in chunks)
+    grouped: dict[str, list[str]] = {}
+    for action, suffix in chunks:
+        grouped.setdefault(suffix, []).append(action)
+    return "; ".join(
+        f"{suffix}:[{','.join(actions)}]"
+        for suffix, actions in sorted(grouped.items())
+    )
 
 
 def build_tool_registry_for_llm(tools: List[dict]) -> List[dict]:
