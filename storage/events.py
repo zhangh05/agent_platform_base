@@ -14,6 +14,13 @@ _lock = threading.RLock()
 _subscribers: dict[str, dict[str, queue.Queue]] = {}
 
 
+def _workspace_event_key(workspace_id: str) -> str:
+    """Use the principal-scoped physical workspace as the event namespace."""
+    from storage.paths import workspace_root
+
+    return str(workspace_root(workspace_id))
+
+
 def publish(workspace_id: str, domain: str, action: str, entity_id: str = "") -> None:
     payload = json.dumps({
         "domain": domain,
@@ -22,8 +29,9 @@ def publish(workspace_id: str, domain: str, action: str, entity_id: str = "") ->
         "entity_id": entity_id,
         "ts": time.time(),
     }, ensure_ascii=False)
+    event_key = _workspace_event_key(workspace_id)
     with _lock:
-        subscribers = list((_subscribers.get(workspace_id) or {}).values())
+        subscribers = list((_subscribers.get(event_key) or {}).values())
     for subscriber in subscribers:
         try:
             subscriber.put_nowait(payload)
@@ -37,13 +45,14 @@ def publish(workspace_id: str, domain: str, action: str, entity_id: str = "") ->
         from storage.event_bus import get_event_bus, InProcessEventBus
         bus = get_event_bus()
         if not isinstance(bus, InProcessEventBus):
-            bus.publish(f"workspace:{workspace_id}", json.loads(payload))
+            bus.publish(f"workspace:{event_key}", json.loads(payload))
     except Exception:
         pass
 
 
 @contextmanager
 def subscribe(workspace_id: str):
+    event_key = _workspace_event_key(workspace_id)
     subscriber_id = uuid.uuid4().hex
     subscriber: queue.Queue = queue.Queue(maxsize=64)
     redis_bus = None
@@ -59,7 +68,7 @@ def subscribe(workspace_id: str):
             ready = threading.Event()
             thread = threading.Thread(
                 target=redis_bus.pump,
-                args=(f"workspace:{workspace_id}", raw_queue, stop, ready),
+                args=(f"workspace:{event_key}", raw_queue, stop, ready),
                 daemon=True,
             )
             thread.start()
@@ -77,10 +86,10 @@ def subscribe(workspace_id: str):
             encoder.start()
         else:
             with _lock:
-                _subscribers.setdefault(workspace_id, {})[subscriber_id] = subscriber
+                _subscribers.setdefault(event_key, {})[subscriber_id] = subscriber
     except Exception:
         with _lock:
-            _subscribers.setdefault(workspace_id, {})[subscriber_id] = subscriber
+            _subscribers.setdefault(event_key, {})[subscriber_id] = subscriber
     try:
         yield subscriber
     finally:
@@ -89,8 +98,8 @@ def subscribe(workspace_id: str):
         if thread is not None:
             thread.join(timeout=1.0)
         with _lock:
-            listeners = _subscribers.get(workspace_id)
+            listeners = _subscribers.get(event_key)
             if listeners is not None:
                 listeners.pop(subscriber_id, None)
                 if not listeners:
-                    _subscribers.pop(workspace_id, None)
+                    _subscribers.pop(event_key, None)
