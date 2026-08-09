@@ -425,6 +425,7 @@ def _handle_text(inv: ToolInvocation) -> dict:
 
 
 def _handle_workspace_file(inv: ToolInvocation) -> dict:
+    from core.tools.general_tools.filestore_tools import handle_file_extract_document
     from core.tools.general_tools.file_tools import (
         handle_file_edit,
         handle_file_patch,
@@ -439,13 +440,14 @@ def _handle_workspace_file(inv: ToolInvocation) -> dict:
         "list": handle_ws_list_files,
         "read": handle_file_read,
         "read_image": handle_file_read_image,
+        "extract_document": handle_file_extract_document,
         "edit": handle_file_edit,
         "patch": handle_file_patch,
         "write": handle_ws_write_artifact_file,
         "write_artifact": handle_ws_write_artifact_file,
         "glob": _local_glob,
         "delete": _local_delete,
-    }.get(action, lambda x: _unsupported(x, "list|read|read_image|edit|patch|write|write_artifact|glob|delete"))(inv)
+    }.get(action, lambda x: _unsupported(x, "list|read|read_image|extract_document|edit|patch|write|write_artifact|glob|delete"))(inv)
 
 
 def _handle_workspace_artifact(inv: ToolInvocation) -> dict:
@@ -615,6 +617,7 @@ _WORKSPACE_FILE_ARGS = {
     "new_string": {"type": "string"}, "replace_all": {"type": "boolean"},
     "patch_text": {"type": "string"}, "filename": {"type": "string"},
     "dry_run": {"type": "boolean"},
+    "file_id": {"type": "string", "description": "Managed attachment id for extract_document."},
 }
 
 
@@ -644,7 +647,7 @@ _RAW_REGISTRY: list[CanonicalToolEntry] = [
     }, required=["action"], description="Subagent task management. action=spawn requires instruction; action=get accepts the subtask_id returned by spawn (child_session_id is a compatibility alias)."),
     _entry("system.manage", _handle_system, {**_COMMON, **_SYSTEM_ARGS, "limit": {"type": "integer", "minimum": 1}, "action": {"type": "string", "enum": ["diagnostics", "health", "selfcheck", "local_info", "tasks", "audit_log", "run_get", "session_get", "session_checkpoint", "session_rewind", "session_export", "session_snapshot"]}}, required=["action"], risk="medium", description="Runtime health, durable tasks, audit logs, run details, and session operations. run_get requires run_id; session actions require session_id; rewind additionally requires snapshot_id."),
     _entry("text.analyze", _handle_text, {**_COMMON, "action": {"type": "string", "enum": ["redact", "extract_entities", "match"]}, "text": {"type": "string"}, "pattern": {"type": "string"}}, required=["action"], description="Text redact, extract and match."),
-    _entry("workspace.file", _handle_workspace_file, {**_COMMON, **_WORKSPACE_FILE_ARGS, "action": {"type": "string", "enum": ["list", "read", "read_image", "write", "write_artifact", "edit", "patch", "glob", "delete"]}}, required=["action"], risk="medium", description="Workspace files. read/read_image/edit/patch/delete require filepath; write/write_artifact require filename and content."),
+    _entry("workspace.file", _handle_workspace_file, {**_COMMON, **_WORKSPACE_FILE_ARGS, "action": {"type": "string", "enum": ["list", "read", "read_image", "extract_document", "write", "write_artifact", "edit", "patch", "glob", "delete"]}}, required=["action"], risk="medium", description="Workspace files. extract_document reads a managed DOCX/PDF attachment by file_id; read/read_image/edit/patch/delete require filepath; write/write_artifact require filename and content."),
     _entry("workspace.artifact", _handle_workspace_artifact, {**_COMMON, "action": {"type": "string", "enum": ["list", "read", "save", "tag", "delete"]}, "query": {"type": "string"}, "limit": {"type": "integer", "minimum": 1}, "artifact_id": {"type": "string"}, "content": {"type": "string"}, "title": {"type": "string"}, "status": {"type": "string"}, "tags": {"type": "array", "items": {"type": "string"}}, "artifact_type": {"type": "string"}}, required=["action"], description="Workspace artifact operations."),
     _entry("workspace.filestore", _handle_workspace_filestore, {**_COMMON, "action": {"type": "string", "enum": ["references", "import"]}, "file_id": {"type": "string"}, "filepath": {"type": "string"}}, required=["action"], description="FileStore references and import."),
     _entry("workspace.metadata.get", _handle_workspace_metadata, {"workspace_id": {"type": "string"}}, description="Workspace metadata."),

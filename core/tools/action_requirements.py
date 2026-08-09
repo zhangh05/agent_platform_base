@@ -59,6 +59,7 @@ ACTION_REQUIRED_ALL: dict[tuple[str, str], tuple[str, ...]] = {
     ("text.analyze", "match"): ("text", "pattern"),
     ("workspace.file", "read"): ("filepath",),
     ("workspace.file", "read_image"): ("filepath",),
+    ("workspace.file", "extract_document"): ("file_id",),
     ("workspace.file", "write"): ("filename", "content"),
     ("workspace.file", "write_artifact"): ("filename", "content"),
     ("workspace.file", "edit"): ("filepath", "old_string", "new_string"),

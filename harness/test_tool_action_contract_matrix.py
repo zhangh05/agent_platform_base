@@ -127,7 +127,7 @@ def test_public_schemas_expose_handler_consumed_arguments():
         "agent.manage": {"instruction", "profile_id", "max_turns", "background", "child_session_id", "subtask_id", "parent_task_id"},
         "system.manage": {"run_id", "session_id", "snapshot_id", "operation", "reason", "format", "dry_run", "status", "limit", "log_level"},
         "text.analyze": {"text", "pattern"},
-        "workspace.file": {"filepath", "limit", "offset", "subdir", "pattern", "old_string", "new_string", "replace_all", "patch_text", "filename", "content", "dry_run"},
+        "workspace.file": {"filepath", "file_id", "limit", "offset", "subdir", "pattern", "old_string", "new_string", "replace_all", "patch_text", "filename", "content", "dry_run"},
         "workspace.artifact": {"artifact_id", "query", "limit", "title", "content", "tags", "artifact_type", "status"},
         "workspace.filestore": {"file_id", "filepath"},
         "workspace.document.pdf.extract_text": {"filepath", "page_range"},

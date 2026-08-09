@@ -8,6 +8,10 @@ from core.tools.general_tools.shared import _caller_workspace, _contract, _error
 from typing import Any
 
 
+_EXTRACTABLE_FILE_KINDS = frozenset({"docx", "pdf"})
+_MAX_EXTRACT_BYTES = 100 * 1024 * 1024
+
+
 def _ok(tool_id: str, **kwargs) -> dict[str, Any]:
     kwargs.setdefault("ok", True)
     kwargs.setdefault("status", "succeeded")
@@ -71,6 +75,85 @@ def handle_file_preview(inv, *, file_id: str = "", limit: int = 500) -> dict[str
         except Exception:
             pass
     return result
+
+
+def handle_file_extract_document(inv, *, file_id: str = "", limit: int = 50_000) -> dict[str, Any]:
+    """Extract a managed DOCX or PDF by FileStore id without exposing its path.
+
+    Attachments arrive as FileStore records, not importable workspace paths.  This
+    is deliberately a read-only, file-id based action so the model does not need
+    to guess a path or fall back to an unrestricted command to parse a document.
+    """
+    from agent.modules.knowledge.parsers.base import (
+        UnsupportedFormatError,
+        parse_document,
+    )
+    from storage.file_store import get_file_record, resolve_file_path
+
+    args = getattr(inv, "arguments", None) or {}
+    file_id = file_id or str(args.get("file_id") or "")
+    limit = args.get("limit", limit)
+    ws = getattr(inv, "workspace_id", None) or ""
+    rec = get_file_record(ws, file_id)
+    if not rec:
+        return _fail("workspace.file", "file_not_found", file_id=file_id)
+
+    file_kind = str(rec.get("file_kind") or "").lower()
+    if file_kind not in _EXTRACTABLE_FILE_KINDS:
+        return _fail(
+            "workspace.file",
+            "unsupported_document_format",
+            file_id=file_id,
+            file_kind=file_kind,
+            supported_file_kinds=sorted(_EXTRACTABLE_FILE_KINDS),
+        )
+    size_bytes = int(rec.get("size_bytes") or 0)
+    if size_bytes > _MAX_EXTRACT_BYTES:
+        return _fail(
+            "workspace.file",
+            "document_too_large_to_extract",
+            file_id=file_id,
+            size_bytes=size_bytes,
+            max_size_bytes=_MAX_EXTRACT_BYTES,
+        )
+
+    try:
+        raw = resolve_file_path(ws, file_id).read_bytes()
+        document = parse_document(
+            raw,
+            fmt=file_kind,
+            title=str(rec.get("original_name") or file_id),
+            source_type="attachment",
+            metadata={"file_id": file_id},
+        )
+    except UnsupportedFormatError as exc:
+        return _fail("workspace.file", "unsupported_document_format", file_id=file_id, detail=str(exc))
+    except Exception as exc:
+        return _fail("workspace.file", "document_extract_failed", file_id=file_id, detail=str(exc)[:200])
+
+    content = document.normalized_markdown or ""
+    warnings = list(document.warnings or [])
+    if not content.strip():
+        return _fail(
+            "workspace.file",
+            "document_has_no_extractable_text",
+            file_id=file_id,
+            file_kind=file_kind,
+            warnings=warnings,
+        )
+
+    bounded_limit = max(1, min(int(limit or 50_000), 50_000))
+    return _ok(
+        "workspace.file",
+        file_id=file_id,
+        file_kind=file_kind,
+        title=document.title or rec.get("original_name"),
+        content=content[:bounded_limit],
+        size_bytes=size_bytes,
+        truncated=len(content) > bounded_limit,
+        warnings=warnings,
+        summary="document extracted from managed attachment",
+    )
 
 
 def handle_file_references(inv, *, file_id: str = "") -> dict[str, Any]:

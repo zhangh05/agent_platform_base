@@ -152,7 +152,7 @@ BUILTIN_CONTRACTS: dict[str, ToolContract] = {
     "workspace.file": ToolContract(
         name="workspace.file",
         display_name="Workspace File",
-        description="Read, write, edit, glob, and delete workspace files.",
+        description="Read, extract managed attachments, write, edit, glob, and delete workspace files.",
         input_schema={"required": ["action"], "properties": {"action": {"type": "string"}}},
         side_effect="write_file",
         risk_level="medium",
@@ -245,7 +245,7 @@ READ_ONLY_ACTIONS: dict[str, frozenset[str]] = {
         "audit_log", "run_get", "session_get",
     }),
     "workspace.artifact": frozenset({"list", "read"}),
-    "workspace.file": frozenset({"list", "read", "read_image", "glob"}),
+    "workspace.file": frozenset({"list", "read", "read_image", "extract_document", "glob"}),
     "workspace.filestore": frozenset({"references"}),
 }
 

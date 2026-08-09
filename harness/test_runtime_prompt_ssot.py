@@ -245,6 +245,8 @@ def test_workspace_file_schema_exposes_requested_filename():
     properties = registry["workspace.file"]["args_schema"]["properties"]
 
     assert "filename" in properties
+    assert "file_id" in properties
     profiles = {item["action"]: item for item in registry["workspace.file"]["action_profiles"]}
+    assert profiles["extract_document"]["permission_action"] == "read"
     assert profiles["write"]["permission_action"] == "write"
     assert profiles["write_artifact"]["permission_action"] == "write"

@@ -342,3 +342,52 @@ def test_read_file_content_rejects_binary(tmp_workspace):
 
     with pytest.raises(ValueError, match="binary"):
         read_file_content("test_ws", rec.file_id)
+
+
+def test_workspace_file_extracts_docx_attachment_by_file_id(tmp_workspace):
+    """A chat attachment is a FileStore id, never a workspace path guess."""
+    docx = pytest.importorskip("docx")
+    from core.tools.canonical_registry import CANONICAL_REGISTRY
+    from core.tools.schemas import ToolInvocation
+    from storage.file_store import import_user_upload
+
+    source = tmp_workspace / "runbook.docx"
+    document = docx.Document()
+    document.add_heading("倒换测试手册", level=1)
+    document.add_paragraph("先确认链路状态，再执行倒换。")
+    document.save(source)
+    record = import_user_upload(
+        workspace_id="test_ws",
+        file_source=source,
+        original_name="runbook.docx",
+        logical_type="document_input",
+        file_kind="docx",
+        binary=True,
+    )
+
+    result = CANONICAL_REGISTRY["workspace.file"].handler(ToolInvocation(
+        tool_id="workspace.file",
+        workspace_id="test_ws",
+        arguments={"action": "extract_document", "file_id": record.file_id},
+    ))
+
+    assert result["ok"] is True
+    assert result["file_id"] == record.file_id
+    assert "倒换测试手册" in result["content"]
+    assert "先确认链路状态" in result["content"]
+
+
+def test_workspace_file_extract_rejects_non_document_attachment(tmp_workspace):
+    from core.tools.canonical_registry import CANONICAL_REGISTRY
+    from core.tools.schemas import ToolInvocation
+    from storage.file_store import write_agent_output
+
+    record = write_agent_output("test_ws", "plain text", "artifact_output", "text", title="note")
+    result = CANONICAL_REGISTRY["workspace.file"].handler(ToolInvocation(
+        tool_id="workspace.file",
+        workspace_id="test_ws",
+        arguments={"action": "extract_document", "file_id": record.file_id},
+    ))
+
+    assert result["ok"] is False
+    assert result["error"] == "unsupported_document_format"

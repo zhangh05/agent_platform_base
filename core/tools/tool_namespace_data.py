@@ -128,8 +128,8 @@ NS_DATA = [
     ),
     (
         "workspace.file", "workspace", "file", "multi", "工作区文件", "workspace.file",
-        "Use proactively for real workspace file evidence. List/glob discovers paths, read/read_image verifies content, and writes must be followed by reread or relevant validation.",
-        "Do not use for content-addressed FileStore references.",
+        "Use proactively for real workspace file evidence. List/glob discovers paths and read/read_image verifies path content. For an uploaded DOCX/PDF shown as file_id, call extract_document with that file_id first; it is the only supported attachment parsing path. Writes must be followed by reread or relevant validation.",
+        "Do not read binary DOCX/PDF as text, do not import an existing attachment through workspace.filestore, and do not use exec to parse it.",
         "workspace.file",
     ),
     (
