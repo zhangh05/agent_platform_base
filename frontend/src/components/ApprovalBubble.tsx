@@ -31,6 +31,7 @@ export function ApprovalBubble({ onResolved }: { onResolved?: (decision: "approv
   const { currentSessionId, currentWorkspaceId } = useSessionStore();
   const [pending, setPending] = useState<PendingApproval | null>(null);
   const [secondsLeft, setSecondsLeft] = useState(60);
+  const [resolving, setResolving] = useState(false);
   const onResolvedRef = useRef(onResolved);
   onResolvedRef.current = onResolved;
   const mountedRef = useRef(true);
@@ -41,9 +42,7 @@ export function ApprovalBubble({ onResolved }: { onResolved?: (decision: "approv
     mountedRef.current = true;
     return () => {
       mountedRef.current = false;
-      setPending(null);
       resolvingRef.current = false;
-      setSecondsLeft(60);
     };
   }, []);
 
@@ -153,12 +152,14 @@ export function ApprovalBubble({ onResolved }: { onResolved?: (decision: "approv
     const p = pending;
     if (!p || resolvingRef.current) return;
     resolvingRef.current = true;
+    setResolving(true);
     try {
       const res = await approvalApi.resolve(p.approval_id, { decision, workspace_id: currentWorkspaceId });
       if (!res.ok) {
         console.warn("[Approval] resolve returned not ok:", res);
         // Keep showing the bubble so user can retry
         resolvingRef.current = false;
+        setResolving(false);
         return;
       }
       resolvedIdsRef.current.set(p.approval_id, Date.now());
@@ -170,13 +171,12 @@ export function ApprovalBubble({ onResolved }: { onResolved?: (decision: "approv
       // Keep bubble visible so user can retry
     } finally {
       resolvingRef.current = false;
+      if (mountedRef.current) setResolving(false);
     }
   }, [pending, currentWorkspaceId]);
 
   const resolveApprovalRef = useRef(resolveApproval);
   resolveApprovalRef.current = resolveApproval;
-
-  const resolving = resolvingRef.current;
 
   if (!pending) return null;
 

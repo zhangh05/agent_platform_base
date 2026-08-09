@@ -1,4 +1,4 @@
-import { act, render } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ApprovalBubble } from "../components/ApprovalBubble";
 import { approvalApi } from "../api";
@@ -37,5 +37,35 @@ describe("approval transport lifecycle", () => {
 
     await act(async () => { vi.advanceTimersByTime(60_000); });
     expect(pending).toHaveBeenCalledTimes(1);
+  });
+
+  it("disables approval actions while a resolution is in flight", async () => {
+    vi.spyOn(approvalApi, "pending").mockResolvedValue({
+      ok: true,
+      pending: [{
+        approval_id: "approval-1",
+        tool_id: "exec.run",
+        risk_level: "high",
+        arguments_preview: {},
+        created_at: Date.now(),
+        created_at_iso: new Date().toISOString(),
+      }],
+      count: 1,
+    });
+    let finish!: (value: { ok: boolean; approval_id: string; decision: string }) => void;
+    vi.spyOn(approvalApi, "resolve").mockImplementation(
+      () => new Promise((resolve) => { finish = resolve; }),
+    );
+
+    render(<ApprovalBubble />);
+    await act(async () => { await Promise.resolve(); });
+    const allow = screen.getByRole("button", { name: /允许/ });
+    const reject = screen.getByRole("button", { name: /拒绝/ });
+    fireEvent.click(allow);
+
+    expect(allow).toBeDisabled();
+    expect(reject).toBeDisabled();
+
+    await act(async () => { finish({ ok: true, approval_id: "approval-1", decision: "approve" }); });
   });
 });
