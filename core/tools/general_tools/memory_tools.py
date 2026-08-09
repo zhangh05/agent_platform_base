@@ -212,11 +212,14 @@ def handle_memory_get_profile(inv: ToolInvocation) -> dict:
                 "warnings": ["tool_returned_no_payload"],
             })
         data = results[0]
+        profile = data.get("metadata", {}).get("profile")
+        if not isinstance(profile, dict):
+            return _error_inv(inv, "stored profile payload is invalid")
         return _ok(inv, "Profile loaded.", {
-            "explicit_preferences": data.get("explicit_preferences", {}),
-            "inferred_preferences": data.get("inferred_preferences", {}),
-            "tool_usage_stats": data.get("tool_usage_stats", {}),
-            "updated_at": data.get("updated_at", ""),
+            "explicit_preferences": profile.get("explicit_preferences", {}),
+            "inferred_preferences": profile.get("inferred_preferences", {}),
+            "tool_usage_stats": profile.get("tool_usage_stats", {}),
+            "updated_at": profile.get("updated_at", ""),
         })
     except Exception as e:
         return _error_inv(inv, str(e)[:200])
@@ -231,12 +234,15 @@ def handle_memory_set_profile(inv: ToolInvocation) -> dict:
     try:
         ws = _caller_workspace(inv)
         from storage.memory_governance import MemoryRecord, MemoryWriteGate
-        existing = {}
+        existing: dict = {}
         store = _get_store(ws)
         results = store.list_retrievable(ws, memory_type="profile", limit=1)
         if results:
-            existing = results[0]
-        profile = existing if existing else {"explicit_preferences": {}, "inferred_preferences": {}, "updated_at": ""}
+            existing = results[0].get("metadata", {}).get("profile", {})
+        profile = dict(existing) if isinstance(existing, dict) else {}
+        profile.setdefault("explicit_preferences", {})
+        profile.setdefault("inferred_preferences", {})
+        profile.setdefault("tool_usage_stats", {})
         if merge and isinstance(profile.get("explicit_preferences"), dict):
             profile["explicit_preferences"][field] = value
         else:
@@ -249,6 +255,7 @@ def handle_memory_set_profile(inv: ToolInvocation) -> dict:
             source="user", content=str(profile)[:2000],
             summary=f"Profile updated: {field}",
             confidence=1.0, created_by="user", redacted=True,
+            metadata={"profile": profile},
         )
         gate = MemoryWriteGate()
         result = gate.write(rec)
