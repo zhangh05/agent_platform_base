@@ -567,6 +567,12 @@ def merge_subagent_result(parent_task_id: str, subtask_id: str, ws_id: str) -> d
         return {"ok": False, "error": "workspace mismatch"}
     if task.parent_task_id != parent_task_id:
         return {"ok": False, "error": "subtask parent mismatch"}
+    if task.status != "succeeded":
+        return {
+            "ok": False,
+            "error": f"subtask is {task.status}; only succeeded tasks can merge",
+            "status": task.status,
+        }
 
     profile = get_profile(task.profile_id)
     _emit_event(ws_id, parent_task_id, task.session_id, "subagent_merged",

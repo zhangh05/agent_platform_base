@@ -117,7 +117,10 @@ def _spawn_agent(inv: ToolInvocation, profile_id: str, default_max_turns: int = 
     """Generic dispatcher for spawning a subagent of a specific profile."""
     args = inv.arguments
     instruction = str(args.get("instruction", "")).strip()
-    max_turns = int(args.get("max_turns", 0) or 0)
+    try:
+        max_turns = int(args.get("max_turns", 0) or 0)
+    except (TypeError, ValueError):
+        return _error_inv(inv, "max_turns must be an integer")
     background = bool(args.get("background", False))
 
     if not instruction:
@@ -207,49 +210,7 @@ def handle_agent_get_result(inv: ToolInvocation) -> dict:
                 "tracking": _subtask_tracking(subtask_id, status),
             })
 
-        # Compatibility fallback for historical child sessions that predate
-        # persisted subtask records.
-        from storage.message_store import SessionMessageStore
-        store = SessionMessageStore(session_id=subtask_id, ws_id=ws)
-        if store.exists():
-            messages = store.get_history_window(k=50)
-            summary = {
-                "child_session_id": subtask_id,
-                "workspace_id": ws,
-                "message_count": len(messages),
-                "last_assistant_message": "",
-                "tool_calls_count": 0,
-            }
-            for m in reversed(messages):
-                if m.get("role") == "assistant":
-                    summary["last_assistant_message"] = (m.get("content", "") or "")[:500]
-                    break
-            summary["tool_calls_count"] = sum(1 for m in messages if m.get("role") == "tool")
-            return _ok(inv, "", summary)
-
-        # Fall back to run records
-        try:
-            from storage.run_record_store import list_runs
-            runs = list_runs(ws, session_id=subtask_id, limit=10)
-            if runs:
-                return _ok(inv, "", {
-                    "child_session_id": subtask_id,
-                    "workspace_id": ws,
-                    "run_count": len(runs),
-                    "runs": [{
-                        "run_id": r.get("run_id", ""),
-                        "ok": r.get("ok", False),
-                        "summary": str(r.get("summary", ""))[:200],
-                    } for r in runs],
-                })
-        except Exception:
-            pass
-
-        return _ok(inv, "", {
-            "child_session_id": subtask_id,
-            "workspace_id": ws,
-            "note": "no records found for this child session",
-        })
+        return _error_inv(inv, "subtask not found")
     except Exception as e:
         return _error_inv(inv, str(e)[:200])
 

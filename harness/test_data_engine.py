@@ -43,6 +43,12 @@ def test_pivot_count_does_not_require_a_numeric_value_column():
     assert result["pivot"]["east"] == {"down": 1, "up": 2}
 
 
+def test_pivot_count_action_contract_does_not_require_values():
+    from core.tools.action_requirements import ACTION_REQUIRED_ALL
+
+    assert ACTION_REQUIRED_ALL[("data.manage", "pivot")] == ("index", "columns")
+
+
 def test_join_validates_keys_and_counts_matched_left_rows():
     missing = data_join(rows=[{"id": 1}], right_rows=[{"key": 1}], on="id")
     assert missing["ok"] is False

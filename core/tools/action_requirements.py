@@ -27,7 +27,9 @@ ACTION_REQUIRED_ALL: dict[tuple[str, str], tuple[str, ...]] = {
     ("data.manage", "distinct"): ("column",),
     ("data.manage", "filter"): ("conditions",),
     ("data.manage", "sort"): ("by",),
-    ("data.manage", "pivot"): ("index", "columns", "values"),
+    # ``values`` is only meaningful for sum/avg.  Count pivots intentionally
+    # operate without it, so the handler validates it after inspecting aggfunc.
+    ("data.manage", "pivot"): ("index", "columns"),
     ("data.manage", "join"): ("on",),
     ("report.manage", "save"): ("content",),
     ("report.manage", "diff"): ("text_a", "text_b"),

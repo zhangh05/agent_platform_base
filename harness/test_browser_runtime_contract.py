@@ -7,6 +7,8 @@ from agent.modules.browser.core import (
     browser_close,
     browser_navigate,
     browser_snapshot,
+    browser_select_option,
+    browser_type,
 )
 
 
@@ -28,6 +30,8 @@ def test_navigate_snapshot_and_ref_click_share_one_browser_session():
 
         clicked = browser_click(ref=button["ref"])
         assert clicked["ok"] is True
+        assert browser_type("unsafe", ref="e999999")["ok"] is False
+        assert browser_select_option("missing", ref="e999999")["ok"] is False
     finally:
         browser_close()
 

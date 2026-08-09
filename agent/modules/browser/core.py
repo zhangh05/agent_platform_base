@@ -465,8 +465,9 @@ def browser_type(text: str, selector: str = "", ref: str = "", clear_first: bool
                 await target.fill("")
             await target.type(text, delay=50)
         else:
-            await page.keyboard.type(text, delay=50)
-            target_label = "keyboard"
+            # A stale snapshot ref must never fall through to the focused
+            # element: that can silently write into a different form field.
+            return {"ok": False, "error": "selector or a valid snapshot ref is required"}
 
         return {"ok": True, "typed": text[:200], "target": target_label}
     return _run(_type())
@@ -519,6 +520,8 @@ def browser_select_option(value: str, selector: str = "", ref: str = "") -> dict
             target_label = selector
         else:
             return {"ok": False, "error": "selector or ref is required"}
+        if not target_label:
+            return {"ok": False, "error": f"ref {ref} not found"}
         return {"ok": True, "target": target_label, "selected": value}
     return _run(_select())
 
@@ -677,7 +680,8 @@ def browser_tabs(action: str = "list", tab_index: int = 0, url: str = "") -> dic
                 del _pages[tab_index]
                 if _active_tab == tab_index:
                     _active_tab = next(iter(_pages.keys()), 0)
-            return {"ok": True, "closed_tab": tab_index, "active_tab": _active_tab}
+                return {"ok": True, "closed_tab": tab_index, "active_tab": _active_tab}
+            return {"ok": False, "error": f"tab {tab_index} not found"}
 
         elif action == "select":
             if tab_index in _pages and not _pages[tab_index].is_closed():
@@ -762,7 +766,9 @@ def browser_navigate_back() -> dict:
     """Go back in browser history."""
     async def _back():
         page = await _get_page()
-        await page.go_back()
+        response = await page.go_back()
+        if response is None:
+            return {"ok": False, "error": "no browser history entry to navigate back to"}
         return {"ok": True, "url": page.url, "title": await page.title()}
     return _run(_back())
 

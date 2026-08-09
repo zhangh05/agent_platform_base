@@ -188,6 +188,23 @@ class TestSubagentRuntime:
         m = merge_subagent_result("t-wrong", cr["subtask_id"], ws)
         assert m["ok"] is False
 
+    def test_merge_rejects_unfinished_subtask(self):
+        ws = f"ws_unfinished_{uuid.uuid4().hex[:8]}"
+        cr = create_subagent_task("t-parent", ws, "s1", "research_agent", "Research")
+        result = merge_subagent_result("t-parent", cr["subtask_id"], ws)
+        assert result["ok"] is False
+        assert result["status"] == "created"
+
+    def test_get_missing_subtask_is_an_error(self):
+        from core.tools.general_tools.agent_tools import handle_agent_get_result
+        from core.tools.schemas import ToolInvocation
+
+        result = handle_agent_get_result(ToolInvocation(
+            tool_id="agent.manage", workspace_id=f"ws_missing_{uuid.uuid4().hex[:8]}",
+            arguments={"action": "get", "subtask_id": "sub-00000000"},
+        ))
+        assert result["ok"] is False
+
 
 class TestProfileToolsFilter:
     def test_research_agent_is_read_only(self):

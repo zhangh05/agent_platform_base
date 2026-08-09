@@ -177,17 +177,30 @@ def handle_file_patch(inv: ToolInvocation) -> dict:
             old_start = int(hunk[0]) - 1
             old_count = int(hunk[1]) if hunk[1] else 1
             body = hunk[4]
+            if old_start < 0 or old_start > len(result_lines):
+                return _error_inv(inv, "patch hunk position is outside the current file")
+            expected_old: list[str] = []
             new_lines = []
-            for line in body.split("\n"):
-                if not line:
-                    new_lines.append("\n")
-                elif line.startswith("+"):
-                    new_lines.append(line[1:] + "\n")
+            line_ending = "\r\n" if "\r\n" in original else "\n"
+            for line in body.splitlines():
+                if line.startswith("\\ No newline at end of file"):
+                    continue
+                if not line or line[0] not in {"+", "-", " "}:
+                    return _error_inv(inv, "invalid unified diff line in patch_text")
+                value = line[1:]
+                if line.startswith(("-", " ")):
+                    expected_old.append(value)
+                if line.startswith("+"):
+                    new_lines.append(value + line_ending)
                     lines_added += 1
                 elif line.startswith("-"):
                     lines_removed += 1
                 elif line.startswith(" "):
-                    new_lines.append(line[1:] + "\n")
+                    new_lines.append(value + line_ending)
+            current_old = result_lines[old_start:old_start + old_count]
+            normalized_current = [line.rstrip("\r\n") for line in current_old]
+            if len(current_old) != old_count or normalized_current != expected_old:
+                return _error_inv(inv, "patch context does not match current file; re-read before retrying")
             result_lines[old_start:old_start + old_count] = new_lines
         new_content = "".join(result_lines)
         write_text_atomic(target, new_content)

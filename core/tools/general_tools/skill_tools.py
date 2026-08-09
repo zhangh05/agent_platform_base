@@ -167,6 +167,15 @@ def handle_mcp_call(inv: ToolInvocation) -> dict:
         from core.tools.mcp_client import McpServerConfig, StdioMcpClient
         with StdioMcpClient(McpServerConfig(provider.provider_id, tuple(provider.command), cwd=provider.root_path or None)) as client:
             result = client.call_tool(tool_name, dict(args.get("arguments") or {}))
+        if result.get("isError") is True:
+            content = result.get("content") or []
+            detail = "MCP tool reported an error"
+            if isinstance(content, list):
+                detail = "; ".join(
+                    str(item.get("text") or item.get("message") or "")
+                    for item in content if isinstance(item, dict)
+                ).strip() or detail
+            return _error_inv(inv, detail[:200])
         return _ok(inv, "", {"provider_id": provider.provider_id, "tool_name": tool_name, "result": result})
     except Exception as exc:
         return _error_inv(inv, str(exc)[:200])

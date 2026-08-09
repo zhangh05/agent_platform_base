@@ -245,6 +245,13 @@ def _handle_data(inv: ToolInvocation) -> dict:
     action = _action(inv) or "parse"
     text = str(args.get("text") or "")
     rows = args.get("rows")
+    def max_rows() -> int:
+        # The schema normally guarantees an integer. Keep this boundary
+        # deterministic when a malformed tool call reaches it nonetheless.
+        try:
+            return int(args.get("max_rows") or 50)
+        except (TypeError, ValueError):
+            return 50
     if action == "parse":
         return data_engine.data_parse(text=text, rows=rows)
     if action == "stats":
@@ -254,11 +261,11 @@ def _handle_data(inv: ToolInvocation) -> dict:
     if action == "aggregate":
         return data_engine.data_aggregate(text=text, rows=rows, group_by=args.get("group_by"), metrics=args.get("metrics"))
     if action == "filter":
-        return data_engine.data_filter(text=text, rows=rows, conditions=args.get("conditions"), max_rows=int(args.get("max_rows") or 50))
+        return data_engine.data_filter(text=text, rows=rows, conditions=args.get("conditions"), max_rows=max_rows())
     if action == "sort":
-        return data_engine.data_sort(text=text, rows=rows, by=args.get("by"), order=str(args.get("order") or "asc"), max_rows=int(args.get("max_rows") or 50))
+        return data_engine.data_sort(text=text, rows=rows, by=args.get("by"), order=str(args.get("order") or "asc"), max_rows=max_rows())
     if action == "render":
-        return data_engine.data_render(text=text, rows=rows, output=str(args.get("output") or "markdown"), max_rows=int(args.get("max_rows") or 50))
+        return data_engine.data_render(text=text, rows=rows, output=str(args.get("output") or "markdown"), max_rows=max_rows())
     if action == "pivot":
         return data_engine.data_pivot(text=text, rows=rows, index=str(args.get("index") or ""), columns=str(args.get("columns") or args.get("pivot_columns") or ""), values=str(args.get("values") or args.get("pivot_values") or ""), aggfunc=str(args.get("aggfunc") or "sum"))
     if action == "join":
