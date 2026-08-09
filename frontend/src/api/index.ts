@@ -273,19 +273,6 @@ export const sessionsApi = {
       },
       signal,
     ),
-  softDelete: (
-    session_id: string,
-    workspace_id: string,
-    signal?: AbortSignal,
-  ): Promise<{ ok: boolean; session: Session }> =>
-    apiRequest<{ ok: boolean; session: Session }>(
-      {
-        method: "POST",
-        url: `/sessions/${session_id}/soft-delete`,
-        params: { workspace_id },
-      },
-      signal,
-    ),
   delete: (
     session_id: string,
     workspace_id: string,

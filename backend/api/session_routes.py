@@ -17,7 +17,6 @@ from storage.session_store import (
     list_sessions,
     update_session,
     archive_session,
-    soft_delete_session,
     delete_session_permanently,
     get_session_messages,
     get_or_create_default_session,
@@ -290,25 +289,6 @@ def handle_session_restore(session_id):
                 break
     except Exception:
         _log.exception("session restore job reactivation failed ws=%s session=%s", ws_id, session_id)
-
-    return jsonify({"ok": True, "session": session})
-
-
-def handle_session_soft_delete(session_id):
-    """POST /api/sessions/<session_id>/soft-delete — Soft delete a session."""
-    session_id, err = _validated_session_id(session_id)
-    if err:
-        return err
-    ws_id = request.args.get("workspace_id", "")
-    ws_id, err = _validated_ws_id(ws_id)
-    if err:
-        return err
-
-    session = soft_delete_session(session_id, ws_id)
-    if not session:
-        return jsonify({"ok": False, "error": "session_not_found"}), 404
-
-    _complete_session_job(ws_id, session_id, "cancelled")
 
     return jsonify({"ok": True, "session": session})
 
