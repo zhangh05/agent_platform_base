@@ -1408,15 +1408,23 @@ class QueryLoop:
                     all_results.extend(polled_results)
                     results = results + polled_results
 
-                document_images = [
-                    result.output.get("vision_attachment")
-                    for result in results
-                    if result.ok and isinstance(result.output, dict)
-                    and isinstance(result.output.get("vision_attachment"), dict)
-                ]
+                document_images: list[dict[str, Any]] = []
+                for result in results:
+                    if not result.ok or not isinstance(result.output, dict):
+                        continue
+                    single = result.output.get("vision_attachment")
+                    if isinstance(single, dict):
+                        document_images.append(single)
+                    batch = result.output.get("vision_attachments")
+                    if isinstance(batch, list):
+                        document_images.extend(item for item in batch if isinstance(item, dict))
                 if document_images:
                     pending_images = list(ctx.extras.get("derived_vision_attachments") or [])
-                    pending_images.extend(document_images)
+                    known_image_ids = {str(item.get("file_id") or "") for item in pending_images if isinstance(item, dict)}
+                    pending_images.extend(
+                        item for item in document_images
+                        if str(item.get("file_id") or "") and str(item.get("file_id") or "") not in known_image_ids
+                    )
                     ctx.extras["derived_vision_attachments"] = pending_images
 
                 # Append assistant message (with tool_calls) + tool results

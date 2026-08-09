@@ -225,6 +225,59 @@ def handle_file_extract_document_image(inv, *, file_id: str = "", image_index: i
     )
 
 
+def handle_file_extract_document_images(
+    inv, *, file_id: str = "", start_index: int = 1, limit: int = 8,
+) -> dict[str, Any]:
+    """Extract a bounded ordered DOCX image batch for visual analysis."""
+    from storage.file_store import get_file_record, import_user_upload, resolve_file_path
+
+    args = getattr(inv, "arguments", None) or {}
+    file_id = file_id or str(args.get("file_id") or "")
+    start_index = int(args.get("start_index", start_index) or 1)
+    limit = max(1, min(int(args.get("limit", limit) or limit), 8))
+    ws = getattr(inv, "workspace_id", None) or ""
+    record = get_file_record(ws, file_id)
+    if not record:
+        return _fail("workspace.file", "file_not_found", file_id=file_id)
+    if record.get("file_kind") != "docx":
+        return _fail("workspace.file", "embedded_image_extraction_requires_docx", file_id=file_id)
+    if start_index < 1:
+        return _fail("workspace.file", "invalid_image_index", file_id=file_id)
+    try:
+        with zipfile.ZipFile(resolve_file_path(ws, file_id)) as document:
+            names = sorted(
+                (name for name in document.namelist() if name.startswith("word/media/") and not name.endswith("/")),
+                key=lambda name: (int("".join(ch for ch in Path(name).stem if ch.isdigit()) or 0), name),
+            )
+            image_count = len(names)
+            if start_index > image_count:
+                return _fail("workspace.file", "embedded_image_not_found", file_id=file_id, image_count=image_count)
+            selected = list(enumerate(names[start_index - 1:start_index - 1 + limit], start=start_index))
+            extracted = [(index, name, document.read(name)) for index, name in selected]
+    except (OSError, ValueError, zipfile.BadZipFile) as exc:
+        return _fail("workspace.file", "embedded_image_extract_failed", file_id=file_id, detail=str(exc)[:200])
+
+    attachments: list[dict[str, Any]] = []
+    for index, name, raw in extracted:
+        suffix = Path(name).suffix.lower().lstrip(".")
+        kind = {"jpg": "jpeg", "jpeg": "jpeg", "png": "png", "gif": "gif", "webp": "webp"}.get(suffix)
+        if not kind:
+            return _fail("workspace.file", "unsupported_embedded_image_format", file_id=file_id, image_index=index)
+        image_record = import_user_upload(
+            ws, BytesIO(raw), f"{Path(str(record.get('original_name') or 'document')).stem}_image_{index}.{suffix}",
+            logical_type="tmp", file_kind=kind, binary=True, source="document_image_extract",
+            session_id=str(getattr(inv, "session_id", "") or ""), run_id=str(getattr(inv, "run_id", "") or ""),
+        )
+        attachments.append({"file_id": image_record.file_id, "kind": "image", "image_index": index})
+    last_index = attachments[-1]["image_index"]
+    return _ok(
+        "workspace.file", file_id=file_id, image_count=image_count,
+        start_index=start_index, end_index=last_index, has_more=last_index < image_count,
+        vision_attachments=attachments,
+        summary=f"extracted embedded document images {start_index}-{last_index} of {image_count} for visual analysis",
+    )
+
+
 def handle_file_references(inv, *, file_id: str = "") -> dict[str, Any]:
     """Query ReferenceIndex for a file."""
     from storage.reference_index import list_references_for_file

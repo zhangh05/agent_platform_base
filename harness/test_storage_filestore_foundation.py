@@ -410,6 +410,15 @@ def test_workspace_file_extracts_docx_image_for_vision(tmp_workspace):
     assert vision["kind"] == "image"
     assert get_file_record("test_ws", vision["file_id"])["file_kind"] == "png"
 
+    batch = CANONICAL_REGISTRY["workspace.file"].handler(ToolInvocation(
+        tool_id="workspace.file", workspace_id="test_ws",
+        arguments={"action": "extract_document_images", "file_id": record.file_id, "start_index": 1},
+    ))
+    assert batch["ok"] is True
+    assert batch["image_count"] == 1
+    assert batch["has_more"] is False
+    assert len(batch["vision_attachments"]) == 1
+
 
 def test_workspace_file_extracts_text_attachment_by_file_id(tmp_workspace):
     from core.tools.canonical_registry import CANONICAL_REGISTRY

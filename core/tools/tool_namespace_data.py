@@ -128,7 +128,7 @@ NS_DATA = [
     ),
     (
         "workspace.file", "workspace", "file", "multi", "工作区文件", "workspace.file",
-        "Use proactively for real workspace file evidence. List/glob discovers paths and read/read_image verifies path content. For every non-image uploaded attachment shown as file_id, call extract_document first. Its DOCX embedded_image_count is authoritative. To answer about an internal image, call extract_document_image with that file_id and its 1-based image_index; when the user asks about all images, cover every index through embedded_image_count before answering. Its result is sent to vision for the next answer. Writes must be followed by reread or relevant validation.",
+        "Use proactively for real workspace file evidence. List/glob discovers paths and read/read_image verifies path content. For every non-image uploaded attachment shown as file_id, call extract_document first. Its DOCX embedded_image_count is authoritative. To answer about one internal image, call extract_document_image with that file_id and its 1-based image_index. To cover all document images, call extract_document_images with file_id, start_index=1 and a batch limit up to 8; if has_more is true, continue from end_index+1 before answering. Its returned images are sent to vision for the next answer. Writes must be followed by reread or relevant validation.",
         "Do not guess attachment paths, treat image metadata as visual understanding, import an existing attachment through workspace.filestore, or use exec to parse an attachment or unpack document images.",
         "workspace.file",
     ),

@@ -425,7 +425,7 @@ def _handle_text(inv: ToolInvocation) -> dict:
 
 
 def _handle_workspace_file(inv: ToolInvocation) -> dict:
-    from core.tools.general_tools.filestore_tools import handle_file_extract_document, handle_file_extract_document_image
+    from core.tools.general_tools.filestore_tools import handle_file_extract_document, handle_file_extract_document_image, handle_file_extract_document_images
     from core.tools.general_tools.file_tools import (
         handle_file_edit,
         handle_file_patch,
@@ -442,13 +442,14 @@ def _handle_workspace_file(inv: ToolInvocation) -> dict:
         "read_image": handle_file_read_image,
         "extract_document": handle_file_extract_document,
         "extract_document_image": handle_file_extract_document_image,
+        "extract_document_images": handle_file_extract_document_images,
         "edit": handle_file_edit,
         "patch": handle_file_patch,
         "write": handle_ws_write_artifact_file,
         "write_artifact": handle_ws_write_artifact_file,
         "glob": _local_glob,
         "delete": _local_delete,
-    }.get(action, lambda x: _unsupported(x, "list|read|read_image|extract_document|extract_document_image|edit|patch|write|write_artifact|glob|delete"))(inv)
+    }.get(action, lambda x: _unsupported(x, "list|read|read_image|extract_document|extract_document_image|extract_document_images|edit|patch|write|write_artifact|glob|delete"))(inv)
 
 
 def _handle_workspace_artifact(inv: ToolInvocation) -> dict:
@@ -620,6 +621,7 @@ _WORKSPACE_FILE_ARGS = {
     "dry_run": {"type": "boolean"},
     "file_id": {"type": "string", "description": "Managed attachment id for extract_document."},
     "image_index": {"type": "integer", "minimum": 1, "description": "1-based embedded DOCX image index."},
+    "start_index": {"type": "integer", "minimum": 1, "description": "First 1-based DOCX image index for a batch."},
 }
 
 
@@ -649,7 +651,7 @@ _RAW_REGISTRY: list[CanonicalToolEntry] = [
     }, required=["action"], description="Subagent task management. action=spawn requires instruction; action=get accepts the subtask_id returned by spawn (child_session_id is a compatibility alias)."),
     _entry("system.manage", _handle_system, {**_COMMON, **_SYSTEM_ARGS, "limit": {"type": "integer", "minimum": 1}, "action": {"type": "string", "enum": ["diagnostics", "health", "selfcheck", "local_info", "tasks", "audit_log", "run_get", "session_get", "session_checkpoint", "session_rewind", "session_export", "session_snapshot"]}}, required=["action"], risk="medium", description="Runtime health, durable tasks, audit logs, run details, and session operations. run_get requires run_id; session actions require session_id; rewind additionally requires snapshot_id."),
     _entry("text.analyze", _handle_text, {**_COMMON, "action": {"type": "string", "enum": ["redact", "extract_entities", "match"]}, "text": {"type": "string"}, "pattern": {"type": "string"}}, required=["action"], description="Text redact, extract and match."),
-    _entry("workspace.file", _handle_workspace_file, {**_COMMON, **_WORKSPACE_FILE_ARGS, "action": {"type": "string", "enum": ["list", "read", "read_image", "extract_document", "extract_document_image", "write", "write_artifact", "edit", "patch", "glob", "delete"]}}, required=["action"], risk="medium", description="Workspace files. extract_document reads a managed text, DOCX, PDF, XLSX, or PPTX attachment by file_id and reports embedded_image_count for DOCX. extract_document_image extracts one DOCX image by file_id and 1-based image_index for visual analysis. When the request covers all DOCX images, extract every index through embedded_image_count before answering; read/read_image/edit/patch/delete require filepath; write/write_artifact require filename and content."),
+    _entry("workspace.file", _handle_workspace_file, {**_COMMON, **_WORKSPACE_FILE_ARGS, "action": {"type": "string", "enum": ["list", "read", "read_image", "extract_document", "extract_document_image", "extract_document_images", "write", "write_artifact", "edit", "patch", "glob", "delete"]}}, required=["action"], risk="medium", description="Workspace files. extract_document reads a managed text, DOCX, PDF, XLSX, or PPTX attachment by file_id and reports embedded_image_count for DOCX. extract_document_image extracts one DOCX image by file_id and 1-based image_index. extract_document_images extracts an ordered DOCX image batch (up to 8) for visual analysis; use it for every image the user asks to cover. read/read_image/edit/patch/delete require filepath; write/write_artifact require filename and content."),
     _entry("workspace.artifact", _handle_workspace_artifact, {**_COMMON, "action": {"type": "string", "enum": ["list", "read", "save", "tag", "delete"]}, "query": {"type": "string"}, "limit": {"type": "integer", "minimum": 1}, "artifact_id": {"type": "string"}, "content": {"type": "string"}, "title": {"type": "string"}, "status": {"type": "string"}, "tags": {"type": "array", "items": {"type": "string"}}, "artifact_type": {"type": "string"}}, required=["action"], description="Workspace artifact operations."),
     _entry("workspace.filestore", _handle_workspace_filestore, {**_COMMON, "action": {"type": "string", "enum": ["references", "import"]}, "file_id": {"type": "string"}, "filepath": {"type": "string"}}, required=["action"], description="FileStore references and import."),
     _entry("workspace.metadata.get", _handle_workspace_metadata, {"workspace_id": {"type": "string"}}, description="Workspace metadata."),
