@@ -180,7 +180,7 @@ _CANONICAL_ACTIONS: Final[dict[str, frozenset[str]]] = {
         "session_export", "session_snapshot",
     }),
     "workspace.file": frozenset({
-        "list", "read", "read_image", "extract_document", "edit", "patch",
+        "list", "read", "read_image", "extract_document", "extract_document_image", "edit", "patch",
         "write", "write_artifact", "glob", "delete",
     }),
     "knowledge.manage": frozenset({

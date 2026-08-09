@@ -1408,6 +1408,17 @@ class QueryLoop:
                     all_results.extend(polled_results)
                     results = results + polled_results
 
+                document_images = [
+                    result.output.get("vision_attachment")
+                    for result in results
+                    if result.ok and isinstance(result.output, dict)
+                    and isinstance(result.output.get("vision_attachment"), dict)
+                ]
+                if document_images:
+                    pending_images = list(ctx.extras.get("derived_vision_attachments") or [])
+                    pending_images.extend(document_images)
+                    ctx.extras["derived_vision_attachments"] = pending_images
+
                 # Append assistant message (with tool_calls) + tool results
                 messages = self._append_tool_round(messages, tool_calls, results)
                 failed_results = [result for result in results if not result.ok]
@@ -1426,6 +1437,21 @@ class QueryLoop:
                         + " The complete artifact content is included above. "
                         "Analyze it and answer the original request if sufficient. "
                         "Tools remain available if more verification is needed.",
+                    )
+                if document_images:
+                    messages = self._append_turn_nudge(
+                        messages,
+                        RESPONSE_ONLY_MARKER
+                        + " The requested embedded document image is now attached as visual evidence. "
+                        "Answer the user's original question from that image. Do not issue more tools or "
+                        "claim visual details not present in the image.",
+                    )
+                elif iterations >= max_iterations - 1:
+                    messages = self._append_turn_nudge(
+                        messages,
+                        RESPONSE_ONLY_MARKER
+                        + " Use the evidence already collected to answer the original request naturally now. "
+                        "Do not call more tools and never expose internal tool summaries as the answer.",
                     )
 
                 # ── Doom-loop detection ──
@@ -1636,7 +1662,7 @@ class QueryLoop:
         """
         try:
             system_prompt, stream_scope, stream_to_user = self._llm_call_mode(messages, ctx)
-            tools_for_call = self._cached_tools
+            tools_for_call = None if self._is_response_only(messages) else self._cached_tools
             if self._llm_invoke is not None:
                 raw = await asyncio.wait_for(
                     asyncio.to_thread(
@@ -1657,7 +1683,10 @@ class QueryLoop:
                             # File references, never image bytes.  The adapter
                             # resolves these only for the first model-planning
                             # request so subsequent tool iterations stay lean.
-                            "vision_attachments": list(ctx.extras.get("attachments") or []),
+                            "vision_attachments": (
+                                list(ctx.extras.get("attachments") or [])
+                                + list(ctx.extras.get("derived_vision_attachments") or [])
+                            ),
                         },
                     ),
                     timeout=300,

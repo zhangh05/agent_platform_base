@@ -642,7 +642,7 @@ def _invoke_llm_for_ssot_runtime(**kwargs):
     # The planner is the only stage that needs the original image.  Keep the
     # normal text transcript for continuation/synthesis turns and never place
     # encoded bytes in metadata, history, trace or persistence.
-    if is_planner and caller_extra.get("vision_attachments"):
+    if stream_scope in {"planner", "continuation", "response"} and caller_extra.get("vision_attachments"):
         try:
             from agent.llm.capabilities import supports_vision
             from agent.llm.config import resolve_provider_config

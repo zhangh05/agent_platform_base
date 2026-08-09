@@ -377,6 +377,32 @@ def test_workspace_file_extracts_docx_attachment_by_file_id(tmp_workspace):
     assert "先确认链路状态" in result["content"]
 
 
+def test_workspace_file_extracts_docx_image_for_vision(tmp_workspace):
+    docx = pytest.importorskip("docx")
+    from PIL import Image
+    from core.tools.canonical_registry import CANONICAL_REGISTRY
+    from core.tools.schemas import ToolInvocation
+    from storage.file_store import import_user_upload, get_file_record
+
+    image_path = tmp_workspace / "diagram.png"
+    Image.new("RGB", (8, 8), color="navy").save(image_path)
+    source = tmp_workspace / "runbook.docx"
+    document = docx.Document()
+    document.add_picture(str(image_path))
+    document.save(source)
+    record = import_user_upload("test_ws", source, "runbook.docx", logical_type="document_input", file_kind="docx", binary=True)
+
+    result = CANONICAL_REGISTRY["workspace.file"].handler(ToolInvocation(
+        tool_id="workspace.file", workspace_id="test_ws",
+        arguments={"action": "extract_document_image", "file_id": record.file_id, "image_index": 1},
+    ))
+
+    assert result["ok"] is True
+    vision = result["vision_attachment"]
+    assert vision["kind"] == "image"
+    assert get_file_record("test_ws", vision["file_id"])["file_kind"] == "png"
+
+
 def test_workspace_file_extracts_text_attachment_by_file_id(tmp_workspace):
     from core.tools.canonical_registry import CANONICAL_REGISTRY
     from core.tools.schemas import ToolInvocation

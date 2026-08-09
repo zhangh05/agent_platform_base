@@ -6,6 +6,9 @@ from __future__ import annotations
 from core.tools.general_tools.shared import _caller_workspace, _contract, _error, _error_inv, _ok, _result, _unavailable, _workspace_path
 
 from typing import Any
+from io import BytesIO
+from pathlib import Path
+import zipfile
 
 
 _STRUCTURED_DOCUMENT_KINDS = frozenset({"docx", "pdf", "xlsx", "pptx"})
@@ -163,6 +166,50 @@ def handle_file_extract_document(inv, *, file_id: str = "", limit: int = 50_000)
         truncated=len(content) > bounded_limit,
         warnings=warnings,
         summary="document extracted from managed attachment",
+    )
+
+
+def handle_file_extract_document_image(inv, *, file_id: str = "", image_index: int = 1) -> dict[str, Any]:
+    """Extract one embedded DOCX image into a managed temporary image record."""
+    from storage.file_store import get_file_record, import_user_upload, resolve_file_path
+
+    args = getattr(inv, "arguments", None) or {}
+    file_id = file_id or str(args.get("file_id") or "")
+    image_index = int(args.get("image_index", image_index) or 1)
+    ws = getattr(inv, "workspace_id", None) or ""
+    record = get_file_record(ws, file_id)
+    if not record:
+        return _fail("workspace.file", "file_not_found", file_id=file_id)
+    if record.get("file_kind") != "docx":
+        return _fail("workspace.file", "embedded_image_extraction_requires_docx", file_id=file_id)
+    if image_index < 1 or image_index > 50:
+        return _fail("workspace.file", "invalid_image_index", file_id=file_id)
+    try:
+        with zipfile.ZipFile(resolve_file_path(ws, file_id)) as document:
+            names = sorted(
+                (name for name in document.namelist() if name.startswith("word/media/") and not name.endswith("/")),
+                key=lambda name: (int("".join(ch for ch in Path(name).stem if ch.isdigit()) or 0), name),
+            )
+            if image_index > len(names):
+                return _fail("workspace.file", "embedded_image_not_found", file_id=file_id, image_count=len(names))
+            name = names[image_index - 1]
+            raw = document.read(name)
+    except (OSError, ValueError, zipfile.BadZipFile) as exc:
+        return _fail("workspace.file", "embedded_image_extract_failed", file_id=file_id, detail=str(exc)[:200])
+
+    suffix = Path(name).suffix.lower().lstrip(".")
+    kind = {"jpg": "jpeg", "jpeg": "jpeg", "png": "png", "gif": "gif", "webp": "webp"}.get(suffix)
+    if not kind:
+        return _fail("workspace.file", "unsupported_embedded_image_format", file_id=file_id, image_index=image_index)
+    image_record = import_user_upload(
+        ws, BytesIO(raw), f"{Path(str(record.get('original_name') or 'document')).stem}_image_{image_index}.{suffix}",
+        logical_type="tmp", file_kind=kind, binary=True, source="document_image_extract",
+        session_id=str(getattr(inv, "session_id", "") or ""), run_id=str(getattr(inv, "run_id", "") or ""),
+    )
+    return _ok(
+        "workspace.file", file_id=file_id, image_index=image_index, image_count=len(names),
+        vision_attachment={"file_id": image_record.file_id, "kind": "image"},
+        summary="embedded document image extracted for visual analysis",
     )
 
 

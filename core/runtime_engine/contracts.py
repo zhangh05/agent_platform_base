@@ -245,7 +245,7 @@ READ_ONLY_ACTIONS: dict[str, frozenset[str]] = {
         "audit_log", "run_get", "session_get",
     }),
     "workspace.artifact": frozenset({"list", "read"}),
-    "workspace.file": frozenset({"list", "read", "read_image", "extract_document", "glob"}),
+    "workspace.file": frozenset({"list", "read", "read_image", "extract_document", "extract_document_image", "glob"}),
     "workspace.filestore": frozenset({"references"}),
 }
 

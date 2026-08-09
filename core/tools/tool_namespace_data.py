@@ -128,8 +128,8 @@ NS_DATA = [
     ),
     (
         "workspace.file", "workspace", "file", "multi", "工作区文件", "workspace.file",
-        "Use proactively for real workspace file evidence. List/glob discovers paths and read/read_image verifies path content. For every non-image uploaded attachment shown as file_id, call extract_document with that file_id first; it supports text, DOCX, PDF, XLSX, and PPTX and is the only supported attachment parsing path. Writes must be followed by reread or relevant validation.",
-        "Do not guess attachment paths, read binary documents as text, import an existing attachment through workspace.filestore, or use exec to parse it.",
+        "Use proactively for real workspace file evidence. List/glob discovers paths and read/read_image verifies path content. For every non-image uploaded attachment shown as file_id, call extract_document first. To answer about a DOCX internal image, call extract_document_image with that file_id and its 1-based image_index; its result is sent to vision for the next answer. Writes must be followed by reread or relevant validation.",
+        "Do not guess attachment paths, treat image metadata as visual understanding, import an existing attachment through workspace.filestore, or use exec to parse an attachment or unpack document images.",
         "workspace.file",
     ),
     (
