@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import contextvars
 import hashlib
+import os
 import re
 from contextlib import contextmanager
 from functools import wraps
@@ -51,6 +52,17 @@ def principal_storage_key(username: str) -> str:
     safe = re.sub(r"[^A-Za-z0-9_.-]+", "_", value).strip("._-") or "user"
     digest = hashlib.sha256(value.casefold().encode("utf-8")).hexdigest()[:12]
     return f"{safe[:40]}-{digest}"
+
+
+def known_storage_principals() -> list[str]:
+    """Return configured and identity-managed users for restart recovery jobs."""
+    usernames = {os.environ.get("AGENT_PLATFORM_LOGIN_USERNAME", "").strip()}
+    try:
+        from backend.core.identity import list_users
+        usernames.update(str(item.get("username") or "").strip() for item in list_users())
+    except Exception:
+        pass
+    return sorted(username for username in usernames if username)
 
 
 def bind_storage_principal(func):

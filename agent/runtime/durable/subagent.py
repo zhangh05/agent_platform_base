@@ -530,25 +530,32 @@ def reconcile_subagent_tasks() -> list[str]:
     """Mark process-owned queued/running tasks interrupted after restart."""
     from storage.subagent_store import list_subagents
     from storage.workspace_store import list_workspace_ids
+    from storage.principal import known_storage_principals, storage_principal
 
     reconciled: list[str] = []
-    for ws_id in list_workspace_ids():
-        for raw in list_subagents(ws_id, 1000):
-            try:
-                if raw.get("workspace_id") != ws_id or raw.get("status") not in {"created", "running"}:
+    def reconcile_scope(*, include_system: bool = False) -> None:
+        for ws_id in list_workspace_ids(include_system=include_system):
+            for raw in list_subagents(ws_id, 1000):
+                try:
+                    if raw.get("workspace_id") != ws_id or raw.get("status") not in {"created", "running"}:
+                        continue
+                    task = SubagentTask(**{
+                        key: value for key, value in raw.items()
+                        if key in SubagentTask.__dataclass_fields__
+                    })
+                    task.status = "failed"
+                    task.finished_at = _now()
+                    task.summary = "Subagent interrupted by service restart"
+                    task.errors.append("service_restart_interrupted")
+                    _save_task(task)
+                    reconciled.append(task.subtask_id)
+                except (OSError, ValueError, TypeError):
                     continue
-                task = SubagentTask(**{
-                    key: value for key, value in raw.items()
-                    if key in SubagentTask.__dataclass_fields__
-                })
-                task.status = "failed"
-                task.finished_at = _now()
-                task.summary = "Subagent interrupted by service restart"
-                task.errors.append("service_restart_interrupted")
-                _save_task(task)
-                reconciled.append(task.subtask_id)
-            except (OSError, ValueError, TypeError):
-                continue
+
+    for username in known_storage_principals():
+        with storage_principal(username):
+            reconcile_scope()
+    reconcile_scope(include_system=True)
     return reconciled
 
 

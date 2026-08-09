@@ -243,6 +243,25 @@ class TestProfileToolsFilter:
         assert row["status"] == "failed"
         assert row["summary"] == "Subagent interrupted by service restart"
 
+    def test_reconcile_scans_principal_scoped_workspace_data(self, monkeypatch, tmp_path):
+        from storage.principal import storage_principal
+        from storage.workspace_store import ensure_workspace
+        from agent.runtime.durable.subagent import _load_task, _save_task
+
+        monkeypatch.setenv("NA_WORKSPACE_ROOT", str(tmp_path))
+        monkeypatch.setenv("AGENT_PLATFORM_LOGIN_USERNAME", "Admin")
+        ws = f"ws_principal_restart_{uuid.uuid4().hex[:8]}"
+        with storage_principal("Admin"):
+            ensure_workspace(ws)
+            created = create_subagent_task("t1", ws, "s1", "research_agent", "Research")
+            task = _load_task(ws, created["subtask_id"])
+            task.status = "running"
+            _save_task(task)
+
+        assert reconcile_subagent_tasks() == [created["subtask_id"]]
+        with storage_principal("Admin"):
+            assert list_subagent_tasks(ws)[0]["status"] == "failed"
+
     def test_query_loop_observes_cancel_callback(self):
         from core.runtime_engine.models import StatelessContext
         from core.runtime_engine.query_loop import QueryLoop

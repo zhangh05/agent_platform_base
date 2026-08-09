@@ -125,19 +125,28 @@ def list_workspaces() -> list[dict]:
     return workspaces
 
 
-def list_workspace_ids(root: Path | None = None) -> list[str]:
+def list_workspace_ids(root: Path | None = None, *, include_system: bool = False) -> list[str]:
     base = root or get_workspace_root() / "catalog"
-    if not base.is_dir():
-        return []
     ids: list[str] = []
-    for path in base.iterdir():
-        if not path.is_dir() or path.name.startswith("_"):
-            continue
-        try:
-            ids.append(validate_workspace_id(path.name))
-        except (TypeError, ValueError):
-            continue
-    return ids
+    if base.is_dir():
+        for path in base.iterdir():
+            if not path.is_dir() or path.name.startswith("_"):
+                continue
+            try:
+                ids.append(validate_workspace_id(path.name))
+            except (TypeError, ValueError):
+                continue
+    # A no-principal maintenance task may still own transient system records.
+    # Authenticated user data is discovered by binding each known principal.
+    if include_system and root is None and get_workspace_root().is_dir():
+        for path in get_workspace_root().iterdir():
+            if not path.is_dir() or path.name in {"_runtime", "catalog", "users"}:
+                continue
+            try:
+                ids.append(validate_workspace_id(path.name))
+            except (TypeError, ValueError):
+                continue
+    return sorted(set(ids))
 
 
 def rename_workspace(old_id: str, new_id: str) -> dict:
