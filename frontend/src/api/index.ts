@@ -1249,6 +1249,10 @@ function apiUrl(path: string): string {
 
 function apiUrlWithAuth(path: string): string {
   const raw = apiUrl(path);
+  // EventSource cannot attach an Authorization header.  Logged-in browser
+  // sessions authenticate with their cookie; this query token is only the
+  // compatibility fallback for API-token deployments.  Keep this helper
+  // SSE-only and redact `access_token` in every proxy/access log.
   const token = import.meta.env.VITE_API_TOKEN
     || (typeof window !== "undefined" ? window.localStorage.getItem("NA_API_TOKEN") : null);
   if (!token) return raw;

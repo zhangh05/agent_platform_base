@@ -108,5 +108,9 @@ def register_storage_routes(app) -> None:
         return Response(
             stream_with_context(generate()),
             mimetype="text/event-stream",
-            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+            headers={
+                "Cache-Control": "no-store",
+                "Referrer-Policy": "no-referrer",
+                "X-Accel-Buffering": "no",
+            },
         )

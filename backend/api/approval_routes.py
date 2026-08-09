@@ -209,7 +209,8 @@ def register_approval_routes(app) -> None:
             _stream(),
             mimetype="text/event-stream",
             headers={
-                "Cache-Control": "no-cache, no-transform",
+                "Cache-Control": "no-store, no-transform",
+                "Referrer-Policy": "no-referrer",
                 "X-Accel-Buffering": "no",
                 "Connection": "keep-alive",
             },
