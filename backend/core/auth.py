@@ -446,7 +446,9 @@ def _authorize_identity_request():
         return flask.jsonify({"ok": False, "error": "workflow_developer_required"}), 403
     if (path.startswith("/api/workflows/") and path.endswith("/runs") or path.startswith("/api/workflow-runs/")) and flask.request.method == "POST" and not _role_at_least(role, "operator"):
         return flask.jsonify({"ok": False, "error": "workflow_operator_required"}), 403
-    if path.startswith("/api/agent/llm/") and flask.request.method not in {"GET", "HEAD"} and not _role_at_least(role, "admin"):
+    # Connectivity probing is a read-only health operation. Ordinary users may
+    # test an already saved provider; the handler discards draft overrides.
+    if path.startswith("/api/agent/llm/") and path != "/api/agent/llm/test" and flask.request.method not in {"GET", "HEAD"} and not _role_at_least(role, "admin"):
         return flask.jsonify({"ok": False, "error": "forbidden"}), 403
     if path.startswith("/api/extensions/"):
         extension_denied = _authorize_extension_request(path, role)

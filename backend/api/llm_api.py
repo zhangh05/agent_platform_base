@@ -93,14 +93,28 @@ def handle_llm_config_delete():
 def handle_llm_test():
     """Test one provider's real chat-completions transport.
     
-    Accepts config overrides for testing draft values before saving:
-      { message, base_url, model, api_key, provider }
+    Administrators may test draft overrides. Ordinary users test only the
+    already saved provider configuration; draft endpoint/model/key fields are
+    intentionally ignored for them.
     """
     data = request.get_json(silent=True) or {}
     message = data.get("message", "")
 
+    is_platform_admin = False
+    try:
+        from flask import session
+        from backend.core.identity import get_user
+        role = str(session.get("agent_platform_role") or "viewer")
+        current = get_user(str(session.get("agent_platform_user") or ""))
+        is_platform_admin = current is None or role == "owner"
+    except Exception:
+        # Identity-disabled deployments retain their existing authenticated
+        # operator behaviour.
+        is_platform_admin = True
+
     overrides = {}
-    for k in ("base_url", "model", "api_key", "provider"):
+    allowed_override_keys = ("base_url", "model", "api_key", "provider") if is_platform_admin else ("provider",)
+    for k in allowed_override_keys:
         if data.get(k):
             overrides[k] = data[k]
     client = LLMClient(overrides=overrides if overrides else None)
