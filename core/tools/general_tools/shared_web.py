@@ -104,6 +104,22 @@ _OFFICIAL_PRODUCT_DOMAINS = {
     "nginx": ["nginx.org"],
     "postgresql": ["postgresql.org"],
     "redis": ["redis.io"],
+    "linux": ["kernel.org"],
+    "node.js": ["nodejs.org"],
+    "nodejs": ["nodejs.org"],
+    "typescript": ["typescriptlang.org"],
+    "golang": ["go.dev"],
+    "rust": ["rust-lang.org"],
+}
+
+
+_SECURITY_PRODUCT_DOMAINS = {
+    "kubernetes": ["kubernetes.io"],
+    "k8s": ["kubernetes.io"],
+    "docker": ["docs.docker.com"],
+    "linux": ["kernel.org"],
+    "node.js": ["nodejs.org"],
+    "nodejs": ["nodejs.org"],
 }
 
 
@@ -119,14 +135,18 @@ def _resolve_search_authority(args: dict, query: str) -> dict:
     explicit_domains = _normalize_search_domains(args or {})
 
     if requested == "auto":
-        if any(token in text for token in ("cve-", "漏洞", "安全公告", "vulnerability", "exploit", "受影响版本")):
+        if any(token in text for token in (
+            "cve", "漏洞", "安全公告", "安全通告", "security advisory",
+            "vulnerability", "exploit", "受影响版本", "0day", "zero-day",
+        )):
             profile = "security_advisory"
         elif any(token in text for token in _VENDOR_DOMAINS):
             profile = "network_vendor"
         elif any(token in text for token in (
             "rfc ", "rfc-", "ietf", "iana", "协议标准", "protocol standard",
             "802.1", "802.3", "bgp", "ospf", "is-is", "isis", "stp", "vxlan",
-            "evpn", "mpls", "ipv6", "dhcp",
+            "evpn", "mpls", "ipv6", "dhcp", "tcp", "udp", "dns", "snmp",
+            "netconf", "restconf", "lldp", "lacp", "vlan",
         )):
             profile = "protocol_standard"
         elif any(token in text for token in _OFFICIAL_PRODUCT_DOMAINS):
@@ -151,11 +171,17 @@ def _resolve_search_authority(args: dict, query: str) -> dict:
         elif profile == "protocol_standard":
             domains = ["rfc-editor.org", "ietf.org", "iana.org", "ieee.org"]
         elif profile == "security_advisory":
-            domains = ["cisa.gov", "nvd.nist.gov", "cve.org"]
+            primary_domains: list[str] = []
             for token, candidates in _VENDOR_DOMAINS.items():
                 if token in text:
-                    domains = candidates + domains
+                    primary_domains = candidates
                     break
+            if not primary_domains:
+                for token, candidates in _SECURITY_PRODUCT_DOMAINS.items():
+                    if token in text:
+                        primary_domains = candidates
+                        break
+            domains = primary_domains + ["cisa.gov", "nvd.nist.gov", "cve.org", "osv.dev"]
 
     domains = list(dict.fromkeys(domains))[:5]
     spec = AUTHORITY_PROFILES[profile]
@@ -336,9 +362,10 @@ def _source_quality(domain: str) -> str:
         "juniper.net", "arista.com", "ietf.org", "rfc-editor.org",
         "microsoft.com", "python.org", "kubernetes.io",
         "docker.com", "react.dev", "mozilla.org", "nginx.org",
-        "postgresql.org", "redis.io", "iana.org", "ieee.org",
+        "postgresql.org", "redis.io", "kernel.org", "nodejs.org",
+        "typescriptlang.org", "go.dev", "rust-lang.org", "iana.org", "ieee.org",
         "cisa.gov", "nist.gov", "cve.org", "fortinet.com",
-        "paloaltonetworks.com", "ruijie.com.cn",
+        "paloaltonetworks.com", "ruijie.com.cn", "osv.dev",
     )
     if any(domain == d or domain.endswith("." + d) for d in official_hints):
         return "official_or_primary"

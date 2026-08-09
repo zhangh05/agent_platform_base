@@ -100,6 +100,17 @@ def test_authority_profile_routes_known_technical_scenes_to_primary_domains():
     assert security["profile"] == "security_advisory"
     assert security["domains"][:3] == ["cisa.gov", "nvd.nist.gov", "cve.org"]
 
+    package_cve = _resolve_search_authority({"authority_profile": "auto"}, "Python requests CVE")
+    assert package_cve["profile"] == "security_advisory"
+    assert package_cve["domains"][:4] == ["cisa.gov", "nvd.nist.gov", "cve.org", "osv.dev"]
+
+    tcp = _resolve_search_authority({"authority_profile": "auto"}, "TCP 拥塞控制")
+    assert tcp["profile"] == "protocol_standard"
+
+    linux = _resolve_search_authority({"authority_profile": "auto"}, "Linux 内核最新版本")
+    assert linux["profile"] == "official_docs"
+    assert linux["domains"] == ["kernel.org"]
+
 
 def test_explicit_domains_override_automatic_authority_domains():
     from core.tools.general_tools.shared_web import _resolve_search_authority
@@ -111,6 +122,62 @@ def test_explicit_domains_override_automatic_authority_domains():
     assert policy["profile"] == "security_advisory"
     assert policy["domains"] == ["security.example.com"]
     assert policy["explicit_domains"] is True
+
+
+def test_automatic_authority_domains_can_be_blocked_without_false_conflict(monkeypatch):
+    import sys
+    import types
+
+    import core.tools.general_tools.web_tools as web_tools
+    from core.tools.schemas import ToolInvocation
+
+    class EmptyDDGS:
+        def __init__(self, *args, **kwargs): pass
+        def __enter__(self): return self
+        def __exit__(self, *args): return False
+        def text(self, *args, **kwargs): return []
+
+    class EmptyRequests:
+        @staticmethod
+        def get(*args, **kwargs):
+            raise TimeoutError("offline")
+
+    ddgs_module = types.ModuleType("ddgs")
+    ddgs_module.DDGS = EmptyDDGS
+    requests_module = types.ModuleType("requests")
+    requests_module.get = EmptyRequests.get
+    monkeypatch.setitem(sys.modules, "ddgs", ddgs_module)
+    monkeypatch.setitem(sys.modules, "requests", requests_module)
+
+    result = web_tools.handle_web_search(ToolInvocation(
+        tool_id="web.manage",
+        arguments={"action": "search", "query": "Kubernetes docs", "blocked_domains": ["kubernetes.io"]},
+        workspace_id="default",
+    ))
+    assert result.get("error") != "Cannot specify both allowed_domains and blocked_domains"
+
+
+def test_domain_filter_does_not_accept_suffix_spoofing():
+    from core.tools.general_tools.web_tools import _domain_matches_any
+
+    assert _domain_matches_any("docs.h3c.com", ["h3c.com"])
+    assert not _domain_matches_any("fakeh3c.com", ["h3c.com"])
+    assert not _domain_matches_any("h3c.com.evil.example", ["h3c.com"])
+
+
+def test_primary_ddgs_results_keep_domain_quality_and_citation():
+    from core.tools.general_tools.web_tools import _ddgs_to_results
+
+    results = _ddgs_to_results([{
+        "title": "Kubernetes Documentation",
+        "href": "https://kubernetes.io/docs/home/",
+        "body": "Official Kubernetes documentation.",
+        "source": "google",
+    }], ["kubernetes.io"], 3)
+
+    assert results[0]["domain"] == "kubernetes.io"
+    assert results[0]["source_quality"] == "official_or_primary"
+    assert results[0]["citation"] == "[1] kubernetes.io"
 
 
 def test_web_tool_schema_exposes_source_authority_policy():

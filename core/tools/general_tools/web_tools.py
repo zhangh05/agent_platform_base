@@ -36,6 +36,12 @@ _CURATED_OFFICIAL_SEARCH_TARGETS = [
         "snippet": "Docker 官方文档入口，适合核对容器、镜像、网络和版本行为。",
     },
     {
+        "keywords": ("linux", "kernel", "内核"),
+        "title": "Linux Kernel Archives",
+        "url": "https://www.kernel.org/",
+        "snippet": "Linux 内核官方发布入口，适合核对当前稳定版和长期支持版本。",
+    },
+    {
         "keywords": ("h3c", "华三"),
         "title": "H3C 技术支持",
         "url": "https://www.h3c.com/cn/Service/Document_Software/Document_Center/",
@@ -87,7 +93,7 @@ def _curated_official_results(query: str, domains: list[str], limit: int) -> lis
         if not any(keyword in q for keyword in item["keywords"]):
             continue
         domain = _domain_from_url_or_host(item["url"])
-        if domains and not any(domain.endswith(allowed) or allowed in domain for allowed in domains):
+        if domains and not _domain_matches_any(domain, domains):
             continue
         results.append(_build_web_result(
             title=item["title"],
@@ -99,6 +105,17 @@ def _curated_official_results(query: str, domains: list[str], limit: int) -> lis
         if len(results) >= limit:
             break
     return results
+
+
+def _domain_matches_any(domain: str, candidates: list[str]) -> bool:
+    domain = str(domain or "").lower().strip(".")
+    normalized = [str(item or "").lower().strip(".") for item in candidates]
+    return any(item and (domain == item or domain.endswith("." + item)) for item in normalized)
+
+
+def _is_blocked_result(result: dict, blocked: list[str]) -> bool:
+    domain = str(result.get("domain") or _domain_from_url_or_host(result.get("url", "")))
+    return _domain_matches_any(domain, blocked)
 
 
 def _wikipedia_search_results(requests_module, query: str, domains: list[str], limit: int, language: str) -> list[dict]:
@@ -144,6 +161,54 @@ def _search_provider_error_summary(provider_errors: list[str]) -> str:
     return "搜索服务暂时不可用，已尝试备用搜索源"
 
 
+def _curated_degraded_result(
+    inv: ToolInvocation,
+    *,
+    query: str,
+    search_query: str,
+    domains: list[str],
+    blocked: list[str],
+    count: int,
+    provider_errors: list[str],
+    authority: dict,
+    depth: str,
+    recency: str,
+    language: str,
+    safe_search: str,
+) -> dict | None:
+    official_results = _curated_official_results(query, domains, count)
+    if blocked:
+        official_results = [r for r in official_results if not _is_blocked_result(r, blocked)]
+    if not official_results:
+        return None
+    degraded = _result(inv, True, {
+        "ok": True,
+        "status": "partial",
+        "query": query,
+        "search_query": search_query,
+        "results": official_results,
+        "results_markdown": _web_results_markdown(official_results),
+        "count": len(official_results),
+        "answer_hint": (
+            "搜索 provider 未返回结果；以下仅是内置官方来源候选。"
+            "必须继续 fetch 相关官方 URL 后，才能给出正文、版本、安全或配置细节。"
+        ),
+        "next_actions": ["调用 web.manage(action=fetch) 读取官方 URL 后再给出正文细节。"],
+        "summary": f"{_search_provider_error_summary(provider_errors)}；已返回 {len(official_results)} 个官方来源候选",
+        "errors": [f"web_search_provider_error: {err}" for err in provider_errors],
+        "provider": "curated_official_fallback",
+        "authority": authority,
+        "warnings": ["web_search_provider_degraded"],
+        "filters": {
+            "domains": domains, "blocked_domains": blocked,
+            "depth": depth, "recency": recency or "any",
+            "language": language, "safe_search": safe_search,
+        },
+    })
+    degraded["status"] = "partial"
+    return degraded
+
+
 
 
 def _ddgs_to_results(raw: list, domains: list, limit: int) -> list:
@@ -156,17 +221,17 @@ def _ddgs_to_results(raw: list, domains: list, limit: int) -> list:
             continue
         if domains:
             from urllib.parse import urlparse
-            host = urlparse(url).netloc.lower()
-            if not any(d in host for d in domains):
+            host = (urlparse(url).hostname or "").lower()
+            if not _domain_matches_any(host, domains):
                 continue
         seen.add(url)
-        out.append({
-            "title": (item.get("title") or "").strip(),
-            "url": url,
-            "snippet": (item.get("body") or "").strip(),
-            "source": item.get("source", ""),
-            "rank": len(out) + 1,
-        })
+        out.append(_build_web_result(
+            title=(item.get("title") or "").strip(),
+            url=url,
+            snippet=(item.get("body") or "").strip(),
+            source=item.get("source", "ddgs"),
+            rank=len(out) + 1,
+        ))
         if len(out) >= limit:
             break
     return out
@@ -187,8 +252,10 @@ def handle_web_search(inv: ToolInvocation) -> dict:
         return _error_inv(inv, "query is required")
 
     # Validate: can't specify both allowed_domains and blocked_domains
-    if domains and blocked:
+    if authority["explicit_domains"] and blocked:
         return _error_inv(inv, "Cannot specify both allowed_domains and blocked_domains")
+    if blocked:
+        domains = [domain for domain in domains if not _domain_matches_any(domain, blocked)]
 
     search_query = _build_web_search_query(query, domains)
 
@@ -196,12 +263,15 @@ def handle_web_search(inv: ToolInvocation) -> dict:
     if depth == "fast":
         backends = "google"
         backend_limit = min(count, 5)
+        provider_timeout = 6
     elif depth == "deep":
         backends = "google,bing,duckduckgo,brave"
         backend_limit = min(count * 4, 30)
+        provider_timeout = 10
     else:  # balanced (default)
-        backends = "google,bing,duckduckgo,brave"
+        backends = "google,bing"
         backend_limit = min(count * 3, 15)
+        provider_timeout = 7
 
     # ── Primary: ddgs multi-backend search ──
     provider_errors: list[str] = []
@@ -213,7 +283,7 @@ def handle_web_search(inv: ToolInvocation) -> dict:
             # newer releases also publish the same client from ``ddgs``.
             from duckduckgo_search import DDGS
         timelimit_map = {"day": "d", "week": "w", "month": "m", "year": "y"}
-        with DDGS(timeout=10) as ddgs:
+        with DDGS(timeout=provider_timeout) as ddgs:
             raw = ddgs.text(
                 search_query,
                 region="cn-zh" if language.startswith("zh") else "us-en",
@@ -226,7 +296,7 @@ def handle_web_search(inv: ToolInvocation) -> dict:
             results = _ddgs_to_results(raw, domains, count)
             # Filter out blocked domains
             if blocked:
-                results = [r for r in results if r.get("domain", "") not in blocked]
+                results = [r for r in results if not _is_blocked_result(r, blocked)]
             if results:
                 guidance = _web_search_guidance(query, results, domains, authority)
                 return _ok(inv, "", {
@@ -249,6 +319,30 @@ def handle_web_search(inv: ToolInvocation) -> dict:
     except Exception as e:
         provider_errors.append(f"ddgs: {str(e)[:120]}")
 
+    if not provider_errors:
+        provider_errors.append("ddgs: no results matching the authority source policy")
+
+    # For recognized technical scenes, a known official entry is more useful
+    # than making the user wait through several blocked public-search fallbacks.
+    # It remains explicitly partial and requires a subsequent fetch.
+    if authority["profile"] != "general_web":
+        curated = _curated_degraded_result(
+            inv,
+            query=query,
+            search_query=search_query,
+            domains=domains,
+            blocked=blocked,
+            count=count,
+            provider_errors=provider_errors,
+            authority=authority,
+            depth=depth,
+            recency=recency,
+            language=language,
+            safe_search=safe_search,
+        )
+        if curated:
+            return curated
+
     # ── Fallback: DuckDuckGo HTML scraping ──
     try:
         import requests
@@ -268,7 +362,7 @@ def handle_web_search(inv: ToolInvocation) -> dict:
                 results = _filter_web_results(_parse_duckduckgo_html(html_resp.text, count * 2), domains, count)
                 # Filter out blocked domains
                 if blocked:
-                    results = [r for r in results if r.get("domain", "") not in blocked]
+                    results = [r for r in results if not _is_blocked_result(r, blocked)]
                 if results:
                     guidance = _web_search_guidance(query, results, domains, authority)
                     return _ok(inv, "", {
@@ -317,7 +411,7 @@ def handle_web_search(inv: ToolInvocation) -> dict:
                 ))
             ia_results = _filter_web_results(ia_results, domains, count)
             if blocked:
-                ia_results = [r for r in ia_results if r.get("domain", "") not in blocked]
+                ia_results = [r for r in ia_results if not _is_blocked_result(r, blocked)]
             if ia_results:
                 guidance = _web_search_guidance(query, ia_results, domains, authority)
                 return _ok(inv, "", {
@@ -346,7 +440,7 @@ def handle_web_search(inv: ToolInvocation) -> dict:
         try:
             wiki_results = _wikipedia_search_results(requests, query, domains, count, language)
             if blocked:
-                wiki_results = [r for r in wiki_results if r.get("domain", "") not in blocked]
+                wiki_results = [r for r in wiki_results if not _is_blocked_result(r, blocked)]
             if wiki_results:
                 guidance = _web_search_guidance(query, wiki_results, domains, authority)
                 return _ok(inv, "", {
@@ -371,36 +465,22 @@ def handle_web_search(inv: ToolInvocation) -> dict:
         except Exception as e:
             provider_errors.append(f"wikipedia_opensearch: {str(e)[:120]}")
 
-        official_results = _curated_official_results(query, domains, count)
-        if blocked:
-            official_results = [r for r in official_results if r.get("domain", "") not in blocked]
-        if official_results:
-            degraded = _result(inv, True, {
-                "ok": True,
-                "status": "partial",
-                "query": query,
-                "search_query": search_query,
-                "results": official_results,
-                "results_markdown": _web_results_markdown(official_results),
-                "count": len(official_results),
-                "answer_hint": (
-                    "搜索引擎 provider 暂时不可用；以下是内置官方来源候选。"
-                    "回答时必须说明这不是搜索引擎结果，如需正文细节请继续 fetch 官方 URL。"
-                ),
-                "next_actions": ["调用 web.manage(action=fetch) 读取官方 URL 后再给出正文细节。"],
-                "summary": f"{_search_provider_error_summary(provider_errors)}；已返回 {len(official_results)} 个官方来源候选",
-                "errors": [f"web_search_provider_error: {err}" for err in provider_errors],
-                "provider": "curated_official_fallback",
-                "authority": authority,
-                "warnings": ["web_search_provider_degraded"],
-                "filters": {
-                    "domains": domains, "blocked_domains": blocked,
-                    "depth": depth, "recency": recency or "any",
-                    "language": language, "safe_search": safe_search,
-                },
-            })
-            degraded["status"] = "partial"
-            return degraded
+        curated = _curated_degraded_result(
+            inv,
+            query=query,
+            search_query=search_query,
+            domains=domains,
+            blocked=blocked,
+            count=count,
+            provider_errors=provider_errors,
+            authority=authority,
+            depth=depth,
+            recency=recency,
+            language=language,
+            safe_search=safe_search,
+        )
+        if curated:
+            return curated
 
         # ── No results from any provider ──
         return _result(inv, False, {

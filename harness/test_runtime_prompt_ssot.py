@@ -188,6 +188,18 @@ def test_llm_tool_schema_is_action_relevant_and_explains_required_args():
     assert "Read-only commands" in network_props["commands"]["description"]
 
 
+def test_model_visible_tool_descriptions_preserve_completion_evidence_rules():
+    from agent.runtime.ssot_runtime import _build_ssot_runtime_tool_registry
+    from core.runtime_engine.query_loop import _build_cached_tool_definitions
+
+    registry = _build_ssot_runtime_tool_registry(["web.manage", "exec.run"])
+    tools = {tool["function"]["name"]: tool["function"] for tool in _build_cached_tool_definitions(registry)}
+
+    assert "Cite source titles and URLs" in tools["web__manage"]["description"]
+    assert "surface degraded results" in tools["web__manage"]["description"]
+    assert "verify requested effects" in tools["exec__run"]["description"]
+
+
 def test_ssot_registry_feeds_action_profiles_to_llm_tools():
     from agent.runtime.ssot_runtime import _build_ssot_runtime_tool_registry
     from core.runtime_engine.query_loop import _build_cached_tool_definitions

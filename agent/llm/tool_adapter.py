@@ -100,7 +100,7 @@ def _build_tool_description(tool: dict, metadata: dict, canonical_tool_id: str) 
     base = str(tool.get("description") or tool.get("name") or canonical_tool_id)
     parts = [
         f"[tool_id={canonical_tool_id}]",
-        _soft_truncate(base, 260),
+        _soft_truncate(base, 420),
     ]
     usage_hint = metadata.get("usage_hint") or tool.get("usage_hint")
     not_for = metadata.get("not_for") or tool.get("not_for")
@@ -109,7 +109,7 @@ def _build_tool_description(tool: dict, metadata: dict, canonical_tool_id: str) 
     if risk and str(risk).lower() not in {"low", "safe"}:
         parts.append(f"Risk: {risk}; approval_required={bool(approval)}.")
     if usage_hint:
-        parts.append(f"Use when: {_soft_truncate(str(usage_hint), 220)}")
+        parts.append(f"Use when: {_soft_truncate(str(usage_hint), 360)}")
     if not_for:
         parts.append(f"Do not use for: {_soft_truncate(str(not_for), 180)}")
     boundary = _format_action_profiles(tool.get("action_profiles") or metadata.get("action_profiles"))
