@@ -212,6 +212,8 @@ def _handle_web(inv: ToolInvocation) -> dict:
                 "title": item.get("title", ""),
                 "url": item.get("url", ""),
                 "snippet": item.get("snippet", ""),
+                "citation": item.get("citation", ""),
+                "source_quality": item.get("source_quality", "unknown"),
                 "ok": bool(fetched.get("ok", False)),
                 "content": fetched.get("content", ""),
                 "content_length": fetched.get("content_length", 0),
@@ -224,9 +226,14 @@ def _handle_web(inv: ToolInvocation) -> dict:
             "summary": f"Deep search fetched {usable}/{len(pages)} source page(s).",
             "query": args.get("query", ""),
             "search_results": search_result.get("results", []),
+            "authority": search_result.get("authority", {}),
             "pages": pages,
             "count": usable,
             "errors": [] if usable else ["no source page could be fetched"],
+            "answer_hint": (
+                "Base precise claims only on successfully fetched page content; "
+                "cite each supporting source title and URL and disclose unfetched or conflicting candidates."
+            ),
         }
     return _unsupported(inv, "search|fetch|weather|deep_search")
 
@@ -547,6 +554,11 @@ _BROWSER_ARGS = {
 _WEB_ARGS = {
     "query": {"type": "string", "description": "Search query for action=search|deep_search."},
     "source": {"type": "string", "enum": ["web", "news", "docs"]},
+    "authority_profile": {
+        "type": "string",
+        "enum": ["auto", "general_web", "official_docs", "network_vendor", "protocol_standard", "security_advisory"],
+        "description": "Evidence-source policy. Use auto unless the claim clearly needs official docs, vendor docs, standards, or security advisories.",
+    },
     "url": {"type": "string"}, "location": {"type": "string"},
     "days": {"type": "integer", "minimum": 1, "maximum": 10, "description": "Forecast horizon in days (1-10)."},
     "language": {"type": "string"}, "units": {"type": "string", "enum": ["metric", "imperial"]},
@@ -612,7 +624,7 @@ _RAW_REGISTRY: list[CanonicalToolEntry] = [
         "action": {"type": "string", "enum": ["shell", "python", "slash"], "default": "shell"},
     }, required=["action"], risk="medium", permission="exec", description="Local command execution."),
     _entry("browser.manage", _handle_browser, {**_COMMON, **_BROWSER_ARGS, "action": {"type": "string", "enum": ["navigate", "snapshot", "screenshot", "click", "type", "extract", "scroll", "hover", "press_key", "select_option", "evaluate", "wait", "tabs", "network", "console", "navigate_back", "close"]}}, required=["action"], risk="medium", description="Browser automation. navigate/extract require url; click/hover require selector or ref; type requires text and selector/ref."),
-    _entry("web.manage", _handle_web, {**_COMMON, **_WEB_ARGS, "action": {"type": "string", "enum": ["search", "fetch", "weather", "deep_search"]}}, required=["action"], description="Web search/fetch/weather. search requires query; deep_search searches then fetches up to top_k source pages; fetch requires url; weather requires location and supports days=1..10."),
+    _entry("web.manage", _handle_web, {**_COMMON, **_WEB_ARGS, "action": {"type": "string", "enum": ["search", "fetch", "weather", "deep_search"]}}, required=["action"], description="Current external evidence via search/fetch/weather. Use proactively for time-sensitive facts, official technical references, versions and vulnerabilities. search finds candidates; fetch verifies page content; deep_search does both for top sources. Select authority_profile and cite returned titles/URLs."),
     _entry("data.manage", _handle_data, {**_COMMON, **_DATA_ARGS, "action": {"type": "string", "enum": ["parse", "stats", "distinct", "aggregate", "filter", "sort", "render", "pivot", "join"]}}, required=["action"], description="Structured data processing. Supply text or rows; action-specific columns/options are declared in the schema."),
     _entry("report.manage", _handle_report, {**_COMMON, "action": {"type": "string", "enum": ["save", "diff", "document"]}, "title": {"type": "string"}, "content": {"type": "string"}, "summary": {"type": "string"}, "text_a": {"type": "string"}, "text_b": {"type": "string"}}, required=["action"], description="Report operations. save requires content; diff requires text_a/text_b; document requires summary."),
     _entry("knowledge.manage", _handle_knowledge, {**_COMMON, "action": {"type": "string", "enum": ["search", "read", "list", "chunk", "import", "reindex"]}, "query": {"type": "string"}, "limit": {"type": "integer", "minimum": 1}, "artifact_id": {"type": "string"}, "level": {"type": "string", "enum": ["chunk", "source"]}, "chunk_id": {"type": "string"}, "source_id": {"type": "string"}, "chunk_type": {"type": "string"}, "scope": {"type": "string"}, "include_disabled": {"type": "boolean"}, "include_deleted": {"type": "boolean"}}, required=["action"], risk="medium", description="Knowledge operations. search requires query; read requires chunk_id or source_id; list lists sources; chunk lists chunks; import requires artifact_id; reindex requires source_id."),

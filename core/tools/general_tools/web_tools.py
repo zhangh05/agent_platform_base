@@ -29,6 +29,54 @@ _CURATED_OFFICIAL_SEARCH_TARGETS = [
         "url": "https://react.dev/",
         "snippet": "React 官方文档入口，适合核对 React 概念、API 和最佳实践。",
     },
+    {
+        "keywords": ("docker",),
+        "title": "Docker 官方文档",
+        "url": "https://docs.docker.com/",
+        "snippet": "Docker 官方文档入口，适合核对容器、镜像、网络和版本行为。",
+    },
+    {
+        "keywords": ("h3c", "华三"),
+        "title": "H3C 技术支持",
+        "url": "https://www.h3c.com/cn/Service/Document_Software/Document_Center/",
+        "snippet": "H3C 官方文档中心，包含产品手册、命令参考和版本资料。",
+    },
+    {
+        "keywords": ("huawei", "华为"),
+        "title": "华为企业技术支持",
+        "url": "https://support.huawei.com/enterprise/zh/index.html",
+        "snippet": "华为官方企业技术支持入口，包含产品文档、案例和版本资料。",
+    },
+    {
+        "keywords": ("cisco", "思科"),
+        "title": "Cisco 官方技术文档",
+        "url": "https://www.cisco.com/c/en/us/support/index.html",
+        "snippet": "Cisco 官方支持与技术文档入口。",
+    },
+    {
+        "keywords": ("juniper", "瞻博"),
+        "title": "Juniper 官方技术文档",
+        "url": "https://www.juniper.net/documentation/",
+        "snippet": "Juniper 官方产品与 Junos 文档入口。",
+    },
+    {
+        "keywords": ("rfc", "ietf", "bgp", "ospf", "协议"),
+        "title": "RFC Editor",
+        "url": "https://www.rfc-editor.org/",
+        "snippet": "RFC 官方发布与检索入口，适合核对互联网协议规范。",
+    },
+    {
+        "keywords": ("cve", "漏洞", "安全公告"),
+        "title": "CISA Known Exploited Vulnerabilities Catalog",
+        "url": "https://www.cisa.gov/known-exploited-vulnerabilities-catalog",
+        "snippet": "CISA 已知被利用漏洞目录，适合核对漏洞是否已被实际利用。",
+    },
+    {
+        "keywords": ("cve", "漏洞", "安全公告"),
+        "title": "NVD 漏洞数据库",
+        "url": "https://nvd.nist.gov/",
+        "snippet": "NIST NVD 官方漏洞数据库入口，适合核对 CVE、评分和受影响范围。",
+    },
 ]
 
 
@@ -128,7 +176,8 @@ def handle_web_search(inv: ToolInvocation) -> dict:
     args = inv.arguments
     query = (args.get("query") or "").strip()
     count = _coerce_int(args.get("max_results", args.get("limit", 8)), default=8, min_value=1, max_value=30)
-    domains = _normalize_search_domains(args)
+    authority = _resolve_search_authority(args, query)
+    domains = authority["domains"]
     blocked = _normalize_blocked_domains(args)
     depth = str(args.get("depth", "balanced")).strip().lower()
     recency = (args.get("recency") or "").strip().lower()
@@ -157,11 +206,16 @@ def handle_web_search(inv: ToolInvocation) -> dict:
     # ── Primary: ddgs multi-backend search ──
     provider_errors: list[str] = []
     try:
-        from ddgs import DDGS
+        try:
+            from ddgs import DDGS
+        except ImportError:
+            # requirements.txt currently installs the established package name;
+            # newer releases also publish the same client from ``ddgs``.
+            from duckduckgo_search import DDGS
         timelimit_map = {"day": "d", "week": "w", "month": "m", "year": "y"}
         with DDGS(timeout=10) as ddgs:
             raw = ddgs.text(
-                query=search_query,
+                search_query,
                 region="cn-zh" if language.startswith("zh") else "us-en",
                 safesearch=safe_search,
                 timelimit=timelimit_map.get(recency),
@@ -174,7 +228,7 @@ def handle_web_search(inv: ToolInvocation) -> dict:
             if blocked:
                 results = [r for r in results if r.get("domain", "") not in blocked]
             if results:
-                guidance = _web_search_guidance(query, results, domains)
+                guidance = _web_search_guidance(query, results, domains, authority)
                 return _ok(inv, "", {
                     "ok": True, "status": "succeeded",
                     "query": query, "search_query": search_query,
@@ -185,6 +239,7 @@ def handle_web_search(inv: ToolInvocation) -> dict:
                     "next_actions": guidance["next_actions"],
                     "summary": f"Found {len(results)} result(s) for '{query}'",
                     "provider": "ddgs",
+                    "authority": authority,
                     "filters": {
                         "domains": domains, "blocked_domains": blocked,
                         "depth": depth, "recency": recency or "any",
@@ -215,7 +270,7 @@ def handle_web_search(inv: ToolInvocation) -> dict:
                 if blocked:
                     results = [r for r in results if r.get("domain", "") not in blocked]
                 if results:
-                    guidance = _web_search_guidance(query, results, domains)
+                    guidance = _web_search_guidance(query, results, domains, authority)
                     return _ok(inv, "", {
                         "ok": True,
                         "status": "succeeded",
@@ -228,6 +283,7 @@ def handle_web_search(inv: ToolInvocation) -> dict:
                         "next_actions": guidance["next_actions"],
                         "summary": f"Found {len(results)} result(s) for '{query}'",
                         "provider": "duckduckgo_html",
+                        "authority": authority,
                         "filters": {
                             "domains": domains, "blocked_domains": blocked,
                             "depth": depth, "recency": recency or "any",
@@ -263,7 +319,7 @@ def handle_web_search(inv: ToolInvocation) -> dict:
             if blocked:
                 ia_results = [r for r in ia_results if r.get("domain", "") not in blocked]
             if ia_results:
-                guidance = _web_search_guidance(query, ia_results, domains)
+                guidance = _web_search_guidance(query, ia_results, domains, authority)
                 return _ok(inv, "", {
                     "ok": True,
                     "status": "succeeded",
@@ -276,6 +332,7 @@ def handle_web_search(inv: ToolInvocation) -> dict:
                     "next_actions": guidance["next_actions"],
                     "summary": f"Found {len(ia_results)} result(s) for '{query}'",
                     "provider": "duckduckgo_instant_answer",
+                    "authority": authority,
                     "filters": {
                         "domains": domains, "blocked_domains": blocked,
                         "depth": depth, "recency": recency or "any",
@@ -291,7 +348,7 @@ def handle_web_search(inv: ToolInvocation) -> dict:
             if blocked:
                 wiki_results = [r for r in wiki_results if r.get("domain", "") not in blocked]
             if wiki_results:
-                guidance = _web_search_guidance(query, wiki_results, domains)
+                guidance = _web_search_guidance(query, wiki_results, domains, authority)
                 return _ok(inv, "", {
                     "ok": True,
                     "status": "succeeded",
@@ -304,6 +361,7 @@ def handle_web_search(inv: ToolInvocation) -> dict:
                     "next_actions": guidance["next_actions"],
                     "summary": f"Found {len(wiki_results)} result(s) for '{query}'",
                     "provider": "wikipedia_opensearch",
+                    "authority": authority,
                     "filters": {
                         "domains": domains, "blocked_domains": blocked,
                         "depth": depth, "recency": recency or "any",
@@ -333,6 +391,7 @@ def handle_web_search(inv: ToolInvocation) -> dict:
                 "summary": f"{_search_provider_error_summary(provider_errors)}；已返回 {len(official_results)} 个官方来源候选",
                 "errors": [f"web_search_provider_error: {err}" for err in provider_errors],
                 "provider": "curated_official_fallback",
+                "authority": authority,
                 "warnings": ["web_search_provider_degraded"],
                 "filters": {
                     "domains": domains, "blocked_domains": blocked,
@@ -354,6 +413,7 @@ def handle_web_search(inv: ToolInvocation) -> dict:
             "errors": [f"web_search_provider_error: {err}" for err in provider_errors],
             "warnings": ["web_search_provider_error"] if provider_errors else ["web_search_no_results"],
             "provider": "error" if provider_errors else "none",
+            "authority": authority,
             "hint": _web_no_results_hint(query),
             "next_actions": _web_no_results_actions(query, domains),
             "filters": {"domains": domains, "blocked_domains": blocked, "depth": depth, "recency": recency or "any"},
@@ -370,6 +430,7 @@ def handle_web_search(inv: ToolInvocation) -> dict:
             "errors": [f"web_search_provider_error: {err}" for err in provider_errors],
             "warnings": ["web_search_provider_error"],
             "provider": "error",
+            "authority": authority,
             "next_actions": _web_no_results_actions(query, domains),
             "filters": {"domains": domains, "blocked_domains": blocked, "depth": depth},
         })

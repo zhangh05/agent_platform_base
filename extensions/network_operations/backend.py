@@ -234,7 +234,7 @@ def register():
             {
                 "tool_id": "network.operations.assets_read",
                 "name": "读取网络资产",
-                "description": "列出或读取当前工作区保存的网络设备资产。传 asset_id 读取单个资产；不传则列出资产。",
+                "description": "需要确认当前工作区有哪些网络设备或连接参数时主动使用。传 asset_id 读取单个资产；不传则列出。资产记录只证明保存的配置，不证明设备当前在线。",
                 "category": "ops",
                 "permission_action": "read",
                 "handler": assets_read,
@@ -246,7 +246,7 @@ def register():
             {
                 "tool_id": "network.operations.assets_write",
                 "name": "维护网络资产",
-                "description": "保存或删除当前工作区网络设备资产。action=save 需要 asset 对象；action=delete 需要 asset_id。",
+                "description": "保存或删除当前工作区网络资产。save 前核对目标和凭据归属，delete 前读取并确认 asset_id；写入成功后重新读取验证。",
                 "category": "ops",
                 "risk_level": "medium",
                 "permission_action": "write",
@@ -265,7 +265,7 @@ def register():
             {
                 "tool_id": "network.operations.device_probe",
                 "name": "设备连接测试",
-                "description": "对已保存资产执行只读 TCP/SSH/主机指纹/认证/提示符探测。需要 asset_id；accept_host_key=True 表示信任并保存本次指纹；read=True 时 commands 必须是只读命令。",
+                "description": "需要证明设备当前连通性、SSH 身份、认证或提示符时主动使用。仅操作已保存 asset_id；accept_host_key=True 才信任新指纹。read=True 只能执行只读命令，结果只证明本次探测时刻。",
                 "category": "ops",
                 "risk_level": "medium",
                 "permission_action": "network",
@@ -287,7 +287,7 @@ def register():
             {
                 "tool_id": "network.operations.device.manage",
                 "name": "网络设备只读探测",
-                "description": "对工作区资产或临时目标执行只读设备连接。action=probe 只做 TCP/SSH/指纹/认证/提示符探测；action=read 还执行 commands。传 asset_id 使用保存资产；否则必须传 host，并按需提供 port/vendor/username/password 或 private_key/passphrase。accept_host_key=True 才保存或信任新指纹。",
+                "description": "需要设备当前证据时主动调用。probe 验证 TCP/SSH/指纹/认证/提示符；read 还执行明确的只读 commands。优先使用 asset_id；临时目标需 host 和认证参数。仅 accept_host_key=True 可信任新指纹，命令输出必须结合时间和目标标识引用。",
                 "category": "ops",
                 "risk_level": "medium",
                 "permission_action": "network",
@@ -318,7 +318,7 @@ def register():
             {
                 "tool_id": "network.operations.inspection",
                 "name": "执行只读巡检",
-                "description": "启动、读取、列出或取消只读 SSH 网络巡检。action=run 需要 asset_ids，可选 commands；action=get/cancel 需要 task_id；action=list 不需要额外参数。",
+                "description": "对多个已保存设备执行可追踪的只读巡检。run 返回 task_id 后必须 get 跟踪到终态并读取结果；list 只列记录，cancel 不代表已产出结果。",
                 "category": "ops",
                 "risk_level": "medium",
                 "permission_action": "network",
@@ -339,7 +339,7 @@ def register():
             {
                 "tool_id": "network.operations.baseline",
                 "name": "管理巡检基线",
-                "description": "管理只读巡检状态基线。action=create 需要 task_id，可用 confirm=True 直接设为当前基线；action=confirm 需要 baseline_id；action=diff 需要 task_id；action=list 不需要额外参数。",
+                "description": "管理经巡检得到的状态基线。只有当前巡检证据可 create，人工确认后才作为有效基线；diff 比较指定 task_id 与已确认基线，不能用历史记忆替代当前状态。",
                 "category": "ops",
                 "risk_level": "medium",
                 "permission_action": "write",

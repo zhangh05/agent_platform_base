@@ -20,6 +20,7 @@ __all__ = [
     "_coerce_int",
     "_normalize_search_domains",
     "_normalize_blocked_domains",
+    "_resolve_search_authority",
     "_domain_from_url_or_host",
     "_build_web_search_query",
     "_duckduckgo_search_params",
@@ -50,6 +51,121 @@ __all__ = [
     "_strip_tags",
     "_extract_title",
 ]
+
+
+AUTHORITY_PROFILES = {
+    "general_web": {
+        "label": "公开网页",
+        "policy": "优先原始发布者和可交叉验证的可靠来源。",
+    },
+    "official_docs": {
+        "label": "官方技术文档",
+        "policy": "只用项目、产品或平台的官方文档、官方仓库和正式发布说明支撑技术结论。",
+    },
+    "network_vendor": {
+        "label": "网络厂商文档",
+        "policy": "优先对应厂商的配置手册、命令参考、版本说明、已知问题和安全公告。",
+    },
+    "protocol_standard": {
+        "label": "协议与标准",
+        "policy": "优先 RFC Editor、IETF、IANA 和 IEEE 的原始标准材料。",
+    },
+    "security_advisory": {
+        "label": "安全公告",
+        "policy": "优先厂商安全公告、CISA、NVD 和 CVE.org，并核对受影响版本与发布日期。",
+    },
+}
+
+
+_VENDOR_DOMAINS = {
+    "h3c": ["h3c.com"],
+    "华三": ["h3c.com"],
+    "huawei": ["huawei.com"],
+    "华为": ["huawei.com"],
+    "cisco": ["cisco.com"],
+    "思科": ["cisco.com"],
+    "juniper": ["juniper.net"],
+    "瞻博": ["juniper.net"],
+    "ruijie": ["ruijie.com.cn", "ruijienetworks.com"],
+    "锐捷": ["ruijie.com.cn", "ruijienetworks.com"],
+    "arista": ["arista.com"],
+    "fortinet": ["fortinet.com"],
+    "palo alto": ["paloaltonetworks.com"],
+}
+
+
+_OFFICIAL_PRODUCT_DOMAINS = {
+    "kubernetes": ["kubernetes.io"],
+    "k8s": ["kubernetes.io"],
+    "docker": ["docs.docker.com"],
+    "python": ["docs.python.org"],
+    "react": ["react.dev"],
+    "mdn": ["developer.mozilla.org"],
+    "nginx": ["nginx.org"],
+    "postgresql": ["postgresql.org"],
+    "redis": ["redis.io"],
+}
+
+
+def _resolve_search_authority(args: dict, query: str) -> dict:
+    """Resolve an evidence-source policy after the model has chosen web search.
+
+    This never decides whether a tool should be called. It only turns an
+    explicit/automatic authority profile into source constraints and metadata.
+    Explicit domain filters always win.
+    """
+    requested = str((args or {}).get("authority_profile") or "auto").strip().lower()
+    text = f"{query} {(args or {}).get('vendor') or ''}".lower()
+    explicit_domains = _normalize_search_domains(args or {})
+
+    if requested == "auto":
+        if any(token in text for token in ("cve-", "漏洞", "安全公告", "vulnerability", "exploit", "受影响版本")):
+            profile = "security_advisory"
+        elif any(token in text for token in _VENDOR_DOMAINS):
+            profile = "network_vendor"
+        elif any(token in text for token in (
+            "rfc ", "rfc-", "ietf", "iana", "协议标准", "protocol standard",
+            "802.1", "802.3", "bgp", "ospf", "is-is", "isis", "stp", "vxlan",
+            "evpn", "mpls", "ipv6", "dhcp",
+        )):
+            profile = "protocol_standard"
+        elif any(token in text for token in _OFFICIAL_PRODUCT_DOMAINS):
+            profile = "official_docs"
+        else:
+            profile = "general_web"
+    else:
+        profile = requested if requested in AUTHORITY_PROFILES else "general_web"
+
+    domains = list(explicit_domains)
+    if not domains:
+        if profile == "network_vendor":
+            for token, candidates in _VENDOR_DOMAINS.items():
+                if token in text:
+                    domains.extend(candidates)
+                    break
+        elif profile == "official_docs":
+            for token, candidates in _OFFICIAL_PRODUCT_DOMAINS.items():
+                if token in text:
+                    domains.extend(candidates)
+                    break
+        elif profile == "protocol_standard":
+            domains = ["rfc-editor.org", "ietf.org", "iana.org", "ieee.org"]
+        elif profile == "security_advisory":
+            domains = ["cisa.gov", "nvd.nist.gov", "cve.org"]
+            for token, candidates in _VENDOR_DOMAINS.items():
+                if token in text:
+                    domains = candidates + domains
+                    break
+
+    domains = list(dict.fromkeys(domains))[:5]
+    spec = AUTHORITY_PROFILES[profile]
+    return {
+        "profile": profile,
+        "label": spec["label"],
+        "policy": spec["policy"],
+        "domains": domains,
+        "explicit_domains": bool(explicit_domains),
+    }
 
 
 def _is_private_url(url: str) -> bool:
@@ -218,7 +334,11 @@ def _source_quality(domain: str) -> str:
     official_hints = (
         "cisco.com", "huawei.com", "h3c.com", "ruijienetworks.com",
         "juniper.net", "arista.com", "ietf.org", "rfc-editor.org",
-        "microsoft.com", "github.com", "python.org",
+        "microsoft.com", "python.org", "kubernetes.io",
+        "docker.com", "react.dev", "mozilla.org", "nginx.org",
+        "postgresql.org", "redis.io", "iana.org", "ieee.org",
+        "cisa.gov", "nist.gov", "cve.org", "fortinet.com",
+        "paloaltonetworks.com", "ruijie.com.cn",
     )
     if any(domain == d or domain.endswith("." + d) for d in official_hints):
         return "official_or_primary"
@@ -258,17 +378,19 @@ def _web_results_markdown(results: list[dict]) -> str:
         suffix = f" — {snippet}" if snippet else ""
         lines.append(f"{item.get('citation', '')} {item.get('title', '')}: {item.get('url', '')}{suffix}")
     return "\n".join(lines)
-def _web_search_guidance(query: str, results: list[dict], domains: list[str]) -> dict:
+def _web_search_guidance(query: str, results: list[dict], domains: list[str], authority: dict | None = None) -> dict:
     official = [r for r in results if r.get("source_quality") == "official_or_primary"]
     answer_hint = (
-        "优先引用 official_or_primary 结果；回答中保留 citation 编号和 URL。"
+        "优先使用 official_or_primary 结果；最终回答必须保留来源标题和 URL。"
         if official else
         "结果来自公开网页；回答前说明来源可信度，并优先交叉验证前 2-3 条。"
     )
     next_actions = [
-        "用结果的 title/snippet 先回答用户问题，不要编造网页未给出的细节。",
-        "如果需要精确引用或正文细节，再调用 web.manage(action=fetch) 读取具体 URL。",
+        "标题和摘要只用于筛选候选，不足以支持配置、版本、安全或精确技术结论。",
+        "需要正文事实时继续调用 web.manage(action=fetch) 读取最相关 URL，再形成答案。",
     ]
+    if authority:
+        next_actions.insert(0, f"遵循来源策略：{authority.get('policy', '')}")
     if not domains:
         next_actions.append("如用户要求厂商文档，下一次搜索加 allowed_domains 限定官方站点。")
     return {"answer_hint": answer_hint, "next_actions": next_actions}

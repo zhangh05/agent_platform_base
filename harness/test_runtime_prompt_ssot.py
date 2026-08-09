@@ -35,8 +35,10 @@ def test_runtime_prompt_is_compact_capable_and_destructive_only():
     assert "immediately previous exchange" in RUNTIME_SYSTEM_PROMPT
     assert "raw API" in RUNTIME_SYSTEM_PROMPT
     assert "Avoid rigid section templates" in RUNTIME_SYSTEM_PROMPT
-    assert "guidance, not a ban" in RUNTIME_SYSTEM_PROMPT
-    assert "you may still choose the appropriate tool" in RUNTIME_SYSTEM_PROMPT
+    assert "evidence the task needs" in RUNTIME_SYSTEM_PROMPT
+    assert "not from whether the user" in RUNTIME_SYSTEM_PROMPT
+    assert "Search snippets select candidates" in RUNTIME_SYSTEM_PROMPT
+    assert "never route a class of user requests around this loop" in RUNTIME_SYSTEM_PROMPT
 
 
 def test_turn_message_separates_history_context_and_current_request():

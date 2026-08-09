@@ -79,3 +79,48 @@ def test_web_tool_fallback_is_human_readable():
     assert "Kubernetes 官方文档" in text
     assert "工具调用：成功" not in text
     assert "web_search_provider_error" not in text
+
+
+def test_authority_profile_routes_known_technical_scenes_to_primary_domains():
+    from core.tools.general_tools.shared_web import _resolve_search_authority
+
+    h3c = _resolve_search_authority({"authority_profile": "auto"}, "H3C 交换机版本说明")
+    assert h3c["profile"] == "network_vendor"
+    assert h3c["domains"] == ["h3c.com"]
+
+    protocol = _resolve_search_authority({"authority_profile": "auto"}, "RFC 4271 BGP 状态机")
+    assert protocol["profile"] == "protocol_standard"
+    assert "rfc-editor.org" in protocol["domains"]
+
+    vendor_protocol = _resolve_search_authority({"authority_profile": "auto"}, "H3C BGP 配置")
+    assert vendor_protocol["profile"] == "network_vendor"
+    assert vendor_protocol["domains"] == ["h3c.com"]
+
+    security = _resolve_search_authority({"authority_profile": "auto"}, "CVE-2026-1234 受影响版本")
+    assert security["profile"] == "security_advisory"
+    assert security["domains"][:3] == ["cisa.gov", "nvd.nist.gov", "cve.org"]
+
+
+def test_explicit_domains_override_automatic_authority_domains():
+    from core.tools.general_tools.shared_web import _resolve_search_authority
+
+    policy = _resolve_search_authority(
+        {"authority_profile": "security_advisory", "allowed_domains": ["security.example.com"]},
+        "CVE-2026-1234",
+    )
+    assert policy["profile"] == "security_advisory"
+    assert policy["domains"] == ["security.example.com"]
+    assert policy["explicit_domains"] is True
+
+
+def test_web_tool_schema_exposes_source_authority_policy():
+    from agent.runtime.ssot_runtime import _build_ssot_runtime_tool_registry
+    from core.runtime_engine.query_loop import _build_cached_tool_definitions
+
+    registry = _build_ssot_runtime_tool_registry(["web.manage"])
+    tool = _build_cached_tool_definitions(registry)[0]["function"]
+    profile = tool["parameters"]["properties"]["authority_profile"]
+
+    assert "network_vendor" in profile["enum"]
+    assert "security_advisory" in profile["enum"]
+    assert "search finds candidates" in tool["description"]
