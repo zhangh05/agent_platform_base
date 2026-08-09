@@ -99,7 +99,7 @@ function toApiError(err: unknown, url?: string): ApiError {
     if (status === 404) code = "http_4xx";
     if (status === 408) code = "timeout";
     if (status === 413 || status === 422) code = "http_4xx";
-    if (status === 429) code = "http_4xx";
+    if (status === 429) code = "rate_limited";
     return mkError(code, status, msg, url, ax.response);
   }
   if (err instanceof SyntaxError) {
@@ -157,14 +157,20 @@ export async function apiRequest<T = unknown>(
       return res.data;
     } catch (err) {
       const ae = toApiError(err, (err as AxiosError)?.config?.url);
-      const retryable = ae.code === "network" || ae.code === "timeout" ||
+      const retryable = ae.code === "network" || ae.code === "timeout" || ae.code === "rate_limited" ||
                         (ae.status >= 500 && ae.status < 600);
       if (!retryable || signal?.aborted || attempt === maxRetries - 1) {
         throw ae;
       }
       lastError = ae;
-      // Exponential backoff: 500ms, 1000ms, 2000ms — honour abort while waiting
-      const delay = Math.min(500 * (2 ** attempt), 3000);
+      // Honour Retry-After header (seconds) when the upstream pinned it; otherwise
+      // exponential backoff: 500ms, 1000ms, 2000ms — clamped to 5s ceiling.
+      const axErr = err as AxiosError;
+      const retryAfterHeader = (axErr.response?.headers as Record<string, string> | undefined)?.["retry-after"];
+      const retryAfterMs = retryAfterHeader ? Math.max(0, parseInt(retryAfterHeader, 10) * 1000) : 0;
+      const delay = retryAfterMs > 0
+        ? Math.min(retryAfterMs, 5000)
+        : Math.min(500 * (2 ** attempt), 3000);
       await new Promise<void>((resolve, reject) => {
         const timer = setTimeout(resolve, delay);
         const onAbort = () => {

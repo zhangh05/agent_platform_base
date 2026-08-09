@@ -9,11 +9,9 @@ export function ToastHost() {
     <div
       className="toast-host"
       data-testid="toast-host"
-      role="status"
-      aria-live="polite"
     >
       {messages.map((m) => (
-        <div key={m.id} className={`toast ${m.kind}`} role="alert">
+        <div key={m.id} className={`toast ${m.kind}`} role="alert" aria-live="assertive">
           <div className="toast-content">
             <div className="toast-title">{m.title}</div>
             {m.body && <div className="toast-body">{m.body}</div>}

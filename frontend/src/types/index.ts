@@ -724,6 +724,7 @@ export interface RuntimeAuditTurn {
 export type ApiErrorCode =
   | "network"
   | "timeout"
+  | "rate_limited"
   | "http_4xx"
   | "http_5xx"
   | "parse"
