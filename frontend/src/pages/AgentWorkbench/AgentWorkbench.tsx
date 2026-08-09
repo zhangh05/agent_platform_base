@@ -330,11 +330,26 @@ export function TaskWorkbench() {
   // ── File upload ──
 
   function addFiles(files: FileList | File[]) {
-    const list = Array.from(files).filter((f) => f.size < 50 * 1024 * 1024);
-    if (list.length < files.length) toast({ kind: "warning", title: "部分文件跳过", body: "单文件不能超过 50 MB" });
+    const maxFileBytes = 100 * 1024 * 1024;
+    const maxImageBytes = 5 * 1024 * 1024;
+    const available = Math.max(0, 8 - attachments.length);
+    const accepted: File[] = [];
+    const skipped: string[] = [];
+    for (const file of Array.from(files)) {
+      if (accepted.length >= available) {
+        skipped.push(`${file.name}：一次最多附加 8 个文件`);
+      } else if (file.type.startsWith("image/") && file.size > maxImageBytes) {
+        skipped.push(`${file.name}：图片不能超过 5 MB`);
+      } else if (file.size > maxFileBytes) {
+        skipped.push(`${file.name}：文件不能超过 100 MB`);
+      } else {
+        accepted.push(file);
+      }
+    }
+    if (skipped.length) toast({ kind: "warning", title: "部分文件未添加", body: skipped.slice(0, 3).join("；") });
     setAttachments((prev) => [
       ...prev,
-      ...list.map((f) => ({
+      ...accepted.map((f) => ({
         id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
         name: f.name, size: formatFileSize(f.size), file: f,
         previewUrl: f.type.startsWith("image/") ? URL.createObjectURL(f) : undefined,
@@ -514,8 +529,8 @@ export function TaskWorkbench() {
           </div>
         )}
         <div className="wb-input-row">
-            <input ref={fileInputRef} type="file" multiple accept=".txt,.pdf,.md,.json,.csv,.log,.conf,.cfg,.yaml,.yml,.png,.jpg,.jpeg,.gif,.webp" onChange={(e) => { if (e.target.files) { addFiles(e.target.files); e.target.value = ""; } }} className="wb-file-input" />
-            <button className="wb-attach-btn" onClick={pickFile} disabled={sending} title="上传文件 (Ctrl+V 粘贴图片 / 拖拽)" type="button">
+            <input ref={fileInputRef} type="file" multiple accept=".txt,.md,.json,.csv,.tsv,.log,.conf,.cfg,.yaml,.yml,.xml,.html,.htm,.pdf,.docx,.xlsx,.pptx,.png,.jpg,.jpeg,.gif,.webp" onChange={(e) => { if (e.target.files) { addFiles(e.target.files); e.target.value = ""; } }} className="wb-file-input" />
+            <button className="wb-attach-btn" onClick={pickFile} disabled={sending} title="上传常见文档、表格、演示文稿、配置或图片（单文件 100 MB，图片 5 MB）" type="button">
               <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M8.5 1.5v9M5 5l3.5-3.5L12 5M2.5 10v2.5a1 1 0 001 1h9a1 1 0 001-1V10" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
             </button>
             <textarea

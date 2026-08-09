@@ -113,6 +113,7 @@ export function useWorkbenchSend({
       setAttachments((previous) => previous.map((attachment) => ({ ...attachment, uploading: true })));
       const uploaded: ChatStreamAttachment[] = [];
       const readableFileRefs: string[] = [];
+      const failedNames: string[] = [];
       for (const attachment of pendingAttachments) {
         try {
           const form = new FormData();
@@ -126,7 +127,10 @@ export function useWorkbenchSend({
             url: `/workspaces/${workspaceId}/artifacts/upload`,
             data: form,
           });
-          if (!result.ok || !result.file?.file_id) continue;
+          if (!result.ok || !result.file?.file_id) {
+            failedNames.push(attachment.name);
+            continue;
+          }
           const item: ChatStreamAttachment = {
             file_id: result.file.file_id,
             name: attachment.name,
@@ -137,12 +141,15 @@ export function useWorkbenchSend({
           };
           uploaded.push(item);
           if (item.kind === "file") readableFileRefs.push(`file_id=${item.file_id}`);
-        } catch { /* Keep sending any attachments that did upload. */ }
+        } catch { failedNames.push(attachment.name); }
       }
       setAttachments([]);
       if (!uploaded.length) {
         toast({ kind: "error", title: "附件上传失败", body: "未能上传附件，请稍后重试。" });
         return;
+      }
+      if (failedNames.length) {
+        toast({ kind: "warning", title: "部分附件上传失败", body: failedNames.slice(0, 3).join("、") });
       }
       displayAttachments = uploaded;
       turnMetadata.attachments = uploaded.map(({ previewUrl: _previewUrl, ...item }) => item);

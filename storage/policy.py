@@ -27,7 +27,7 @@ TEXT_KINDS = frozenset({
 
 ALLOWED_UPLOAD_KINDS = frozenset({
     "text", "binary", "pdf", "docx", "xlsx",
-    "markdown", "json", "yaml", "xml", "csv", "html", "log",
+    "pptx", "markdown", "config", "json", "yaml", "xml", "csv", "html", "log",
     "zip", "tar", "gz", "png", "jpg", "jpeg", "gif", "svg", "webp",
 })
 
