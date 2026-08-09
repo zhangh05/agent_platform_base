@@ -82,8 +82,8 @@ def test_planner_receives_multimodal_message(monkeypatch):
     assert content[1]["type"] == "image_url"
 
 
-def test_minimax_m3_is_not_treated_as_a_vision_model():
+def test_minimax_m3_is_treated_as_a_vision_model():
     from agent.llm.capabilities import supports_vision
 
-    assert supports_vision({"provider": "minimax", "model": "MiniMax-M3"}) is False
+    assert supports_vision({"provider": "minimax", "model": "MiniMax-M3"}) is True
     assert supports_vision({"model": "gpt-4o-mini"}) is True

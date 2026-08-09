@@ -201,6 +201,11 @@ def _api_generate(req: LLMRequest, cfg: dict) -> LLMResponse:
             metadata={"error_type": ERROR_TYPE_MISSING_API_KEY},
         )
     try:
+        # MiniMax-M3 accepts image/video content through its Anthropic
+        # compatibility endpoint, not its OpenAI chat-completions endpoint.
+        # Keep the established OpenAI route for ordinary text/tool turns.
+        if _uses_minimax_m3_vision(req, cfg):
+            return _minimax_m3_vision_generate(req, cfg)
         url = cfg.get("base_url", "https://api.minimaxi.com/v1").rstrip("/") + "/chat/completions"
         body_dict = {
             "model": cfg.get("model", req.model),
@@ -600,6 +605,128 @@ def _format_message(m) -> dict:
     if m.tool_calls:
         msg["tool_calls"] = m.tool_calls
     return msg
+
+
+def _uses_minimax_m3_vision(req: LLMRequest, cfg: dict) -> bool:
+    if str(cfg.get("provider") or "").lower() != "minimax":
+        return False
+    if str(cfg.get("model") or "").lower() != "minimax-m3":
+        return False
+    return any(
+        isinstance(message.content, list)
+        and any(isinstance(part, dict) and part.get("type") == "image_url" for part in message.content)
+        for message in req.messages
+    )
+
+
+def _minimax_m3_vision_generate(req: LLMRequest, cfg: dict) -> LLMResponse:
+    """Call MiniMax-M3's documented Anthropic-compatible vision endpoint."""
+    try:
+        import requests as _requests
+        from urllib.parse import urlsplit, urlunsplit
+
+        base = str(cfg.get("base_url") or "https://api.minimaxi.com/v1")
+        parsed = urlsplit(base)
+        vision_url = urlunsplit((parsed.scheme, parsed.netloc, "/anthropic/v1/messages", "", ""))
+        body = _to_minimax_anthropic_request(req, cfg)
+        headers = {
+            "Content-Type": "application/json",
+            "x-api-key": cfg.get("api_key", ""),
+            "anthropic-version": "2023-06-01",
+        }
+        if not req.stream:
+            response = _requests.post(vision_url, json=body, headers=headers, timeout=cfg.get("timeout", 120))
+            if response.status_code != 200:
+                return LLMResponse(error=f"provider_http_{response.status_code}: {response.text[:300]}", metadata={"http_status": response.status_code})
+            return _parse_minimax_anthropic_response(response.json(), cfg)
+        return _minimax_m3_vision_stream(vision_url, body, headers, cfg, req)
+    except Exception as exc:
+        return LLMResponse(error=f"provider_vision_error: {str(exc)[:300]}")
+
+
+def _to_minimax_anthropic_request(req: LLMRequest, cfg: dict) -> dict:
+    system = "\n\n".join(str(m.content) for m in req.messages if m.role == "system" and isinstance(m.content, str))
+    messages = []
+    for message in req.messages:
+        if message.role == "system":
+            continue
+        content = message.content
+        if isinstance(content, list):
+            content = [_to_anthropic_content_part(part) for part in content]
+        messages.append({"role": message.role, "content": content})
+    body = {"model": cfg.get("model", req.model), "max_tokens": cfg.get("max_tokens", req.max_tokens), "messages": messages}
+    if system:
+        body["system"] = system
+    if req.tools:
+        body["tools"] = [{
+            "name": item.get("function", {}).get("name", ""),
+            "description": item.get("function", {}).get("description", ""),
+            "input_schema": item.get("function", {}).get("parameters", {"type": "object", "properties": {}}),
+        } for item in req.tools if item.get("function", {}).get("name")]
+    if req.stream:
+        body["stream"] = True
+    return body
+
+
+def _to_anthropic_content_part(part: dict) -> dict:
+    if part.get("type") != "image_url":
+        return part
+    url = str((part.get("image_url") or {}).get("url") or "")
+    prefix, separator, data = url.partition(",")
+    if not separator or not prefix.startswith("data:") or ";base64" not in prefix:
+        raise ValueError("MiniMax-M3 vision requires a base64 data URL")
+    media_type = prefix[5:].split(";", 1)[0]
+    return {"type": "image", "source": {"type": "base64", "media_type": media_type, "data": data}}
+
+
+def _parse_minimax_anthropic_response(data: dict, cfg: dict) -> LLMResponse:
+    content = []
+    calls = []
+    for block in data.get("content") or []:
+        if block.get("type") == "text":
+            content.append(str(block.get("text") or ""))
+        elif block.get("type") == "tool_use":
+            calls.append(LLMToolCall(id=str(block.get("id") or ""), name=str(block.get("name") or ""), arguments=dict(block.get("input") or {})))
+    return LLMResponse(content="".join(content), provider=cfg.get("provider", "minimax"), model=data.get("model", cfg.get("model", "")), usage=data.get("usage"), finish_reason=data.get("stop_reason", ""), raw=data, tool_calls=calls)
+
+
+def _minimax_m3_vision_stream(url, body, headers, cfg, req) -> LLMResponse:
+    import requests as _requests
+    content_parts, blocks, usage, model, stop_reason = [], {}, None, cfg.get("model", ""), ""
+    try:
+        response = _requests.post(url, json=body, headers=headers, timeout=cfg.get("timeout", 120), stream=True)
+        if response.status_code != 200:
+            return LLMResponse(error=f"provider_http_{response.status_code}: {response.text[:300]}", metadata={"http_status": response.status_code})
+        for raw in response.iter_lines(decode_unicode=True):
+            if not raw or not raw.startswith("data:"):
+                continue
+            try:
+                event = json.loads(raw[5:].strip())
+            except json.JSONDecodeError:
+                continue
+            kind = event.get("type")
+            if kind == "message_start":
+                message = event.get("message") or {}; usage = message.get("usage"); model = message.get("model", model)
+            elif kind == "content_block_start":
+                blocks[event.get("index", 0)] = event.get("content_block") or {}
+            elif kind == "content_block_delta":
+                delta = event.get("delta") or {}; block = blocks.setdefault(event.get("index", 0), {})
+                if delta.get("type") == "text_delta":
+                    token = str(delta.get("text") or ""); content_parts.append(token)
+                    if req.metadata.get("stream_to_user") and token: _push_stream_token(token)
+                elif delta.get("type") == "input_json_delta":
+                    block["_partial_json"] = block.get("_partial_json", "") + str(delta.get("partial_json") or "")
+            elif kind == "message_delta":
+                delta = event.get("delta") or {}; stop_reason = str(delta.get("stop_reason") or stop_reason); usage = event.get("usage") or usage
+    except Exception as exc:
+        return LLMResponse(error=f"provider_vision_error: {str(exc)[:300]}")
+    calls = []
+    for block in blocks.values():
+        if block.get("type") == "tool_use":
+            try: args = json.loads(block.get("_partial_json") or "{}")
+            except json.JSONDecodeError: args = {}
+            calls.append(LLMToolCall(id=str(block.get("id") or ""), name=str(block.get("name") or ""), arguments=args))
+    return LLMResponse(content="".join(content_parts), provider=cfg.get("provider", "minimax"), model=model, usage=usage, finish_reason=stop_reason, tool_calls=calls)
 
 
 def _parse_message_tool_calls(message: dict) -> list:

@@ -16,5 +16,5 @@ def supports_vision(config: dict | None) -> bool:
     if isinstance(configured, bool):
         return configured
     model = str(config.get("model") or "").lower()
-    vision_markers = ("gpt-4o", "gpt-4.1", "gpt-5", "gemini", "qwen-vl", "qwen2-vl", "vision")
+    vision_markers = ("minimax-m3", "gpt-4o", "gpt-4.1", "gpt-5", "gemini", "qwen-vl", "qwen2-vl", "vision")
     return any(marker in model for marker in vision_markers)
