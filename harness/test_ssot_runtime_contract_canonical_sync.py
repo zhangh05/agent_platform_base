@@ -10,11 +10,21 @@ from __future__ import annotations
 
 def test_ssot_runtime_contracts_use_canonical_input_schemas():
     from core.runtime_engine.contracts import BUILTIN_CONTRACTS
-    from core.tools.canonical_registry import CANONICAL_REGISTRY
+    from core.tools.canonical_registry import CANONICAL_REGISTRY, to_tool_specs
 
-    assert set(BUILTIN_CONTRACTS) == set(CANONICAL_REGISTRY)
+    # Base tools are defined in the canonical registry. Extensions are loaded
+    # dynamically and deliberately add their own contracts, so equality would
+    # reject every valid extension as stale test data.
+    canonical_ids = set(CANONICAL_REGISTRY)
+    assert canonical_ids <= set(BUILTIN_CONTRACTS)
     for tool_id, entry in CANONICAL_REGISTRY.items():
         assert BUILTIN_CONTRACTS[tool_id].input_schema == entry.input_schema
+
+    extension_ids = {
+        spec.tool_id for spec, _handler in to_tool_specs()
+        if spec.tool_id not in canonical_ids
+    }
+    assert set(BUILTIN_CONTRACTS) - canonical_ids == extension_ids
 
 
 def test_web_weather_contract_exposes_forecast_arguments():
