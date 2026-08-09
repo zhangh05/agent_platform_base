@@ -10,13 +10,11 @@ import time
 from dataclasses import dataclass
 from typing import Any
 
-from core.tools.schemas import ToolInvocation
-
-
 READ_ONLY_DENY = re.compile(
     r"(^|\s)(undo|delete|remove|erase|format|reload|reboot|shutdown|write|copy|configure|system-view|enable|install|upgrade|reset|clear)(\s|$)",
     re.IGNORECASE,
 )
+MAX_READ_ONLY_COMMANDS = 20
 
 PAGING_COMMANDS = {
     "h3c": "screen-length disable",
@@ -52,6 +50,16 @@ def fingerprint_for_key(key: Any) -> str:
 def is_read_only_command(command: str) -> bool:
     value = str(command or "").strip()
     return bool(value and "\n" not in value and "\r" not in value and ";" not in value and not READ_ONLY_DENY.search(value))
+
+
+def normalize_read_only_commands(commands: list[str] | None) -> list[str]:
+    """Validate the shared read-only command boundary for every probe path."""
+    selected = [str(command).strip() for command in (commands or [])]
+    if not selected or len(selected) > MAX_READ_ONLY_COMMANDS:
+        raise ValueError("commands must contain 1 to 20 read-only commands")
+    if any(not is_read_only_command(command) for command in selected):
+        raise ValueError("commands_must_be_read_only")
+    return selected
 
 
 def _stage(name: str, status: str, **extra: Any) -> dict[str, Any]:
@@ -159,11 +167,12 @@ def probe_target(
             stages.append(_stage("prompt", "skipped"))
             return _result(True, stages, started, fingerprint=fingerprint)
 
-        safe_commands = [str(command).strip() for command in (commands or []) if is_read_only_command(str(command))]
-        if not safe_commands or len(safe_commands) != len(commands or []):
+        try:
+            safe_commands = normalize_read_only_commands(commands)
+        except ValueError as exc:
             stages.append(_stage("read", "failed"))
-            return _result(False, stages, started, error="commands_must_be_read_only", fingerprint=fingerprint)
-        output = _run_shell_commands(transport, target.vendor, safe_commands[:20], timeout)
+            return _result(False, stages, started, error=str(exc), fingerprint=fingerprint)
+        output = _run_shell_commands(transport, target.vendor, safe_commands, timeout)
         stages.append(_stage("prompt", "ok"))
         stages.append(_stage("read", "ok", command_count=len(output)))
         return _result(True, stages, started, fingerprint=fingerprint, output=output)
@@ -189,44 +198,3 @@ def _result(ok: bool, stages: list[dict[str, Any]], started: float, **extra: Any
         "duration_ms": int((time.monotonic() - started) * 1000),
         **{k: v for k, v in extra.items() if v not in ("", None)},
     }
-
-
-def handle_device_manage(inv: ToolInvocation) -> dict[str, Any]:
-    args = inv.arguments or {}
-    action = str(args.get("action") or "probe").lower()
-    if action not in {"probe", "read"}:
-        return {"ok": False, "error": "unsupported action for device.manage; expected probe|read"}
-    if args.get("asset_id"):
-        from extensions.network_operations import service
-        return service.probe_asset(
-            inv.workspace_id or str(args.get("workspace_id") or ""),
-            str(args.get("asset_id") or ""),
-            commands=[str(item) for item in (args.get("commands") or [])],
-            accept_host_key=bool(args.get("accept_host_key")),
-            read=action == "read",
-            timeout=int(args.get("timeout") or 15),
-        )
-
-    credential = DeviceCredential(
-        auth_method=str(args.get("auth_method") or "password"),
-        username=str(args.get("username") or ""),
-        password=str(args.get("password") or ""),
-        private_key=str(args.get("private_key") or ""),
-        passphrase=str(args.get("passphrase") or ""),
-    )
-    target = DeviceTarget(
-        host=str(args.get("host") or ""),
-        port=int(args.get("port") or 22),
-        vendor=str(args.get("vendor") or "generic"),
-        expected_fingerprint=str(args.get("host_key_fingerprint") or ""),
-        credential=credential,
-    )
-    if not target.host:
-        return {"ok": False, "error": "host is required"}
-    return probe_target(
-        target,
-        commands=[str(item) for item in (args.get("commands") or [])],
-        accept_host_key=bool(args.get("accept_host_key")),
-        read=action == "read",
-        timeout=int(args.get("timeout") or 15),
-    )

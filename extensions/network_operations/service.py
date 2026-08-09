@@ -12,7 +12,13 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Callable
 
-from extensions.network_operations.device_tools import DeviceCredential, DeviceTarget, probe_target
+from extensions.network_operations.device_tools import (
+    DeviceCredential,
+    DeviceTarget,
+    is_read_only_command,
+    normalize_read_only_commands,
+    probe_target,
+)
 from extensions.sdk import ExtensionDataStore, ExtensionSecretStore
 from storage.time_utils import now_iso
 
@@ -24,10 +30,6 @@ DEFAULT_COMMANDS = {
     "cisco": ["show version", "show inventory", "show interfaces status", "show ip route summary"],
     "generic": ["uname -a", "uptime", "df -h", "ip address"],
 }
-_WRITE_PATTERNS = re.compile(
-    r"(^|\s)(undo|delete|remove|erase|format|reload|reboot|shutdown|write|copy|configure|system-view|enable|install|upgrade|reset|clear)(\s|$)",
-    re.IGNORECASE,
-)
 _TASK_CANCEL: dict[str, threading.Event] = {}
 _TASK_LOCK = threading.Lock()
 
@@ -145,17 +147,9 @@ def _valid_host(host: str) -> bool:
         return bool(re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9.-]{0,252}[A-Za-z0-9]", host))
 
 
-def is_read_only_command(command: str) -> bool:
-    value = str(command or "").strip()
-    return bool(value and "\n" not in value and "\r" not in value and ";" not in value and not _WRITE_PATTERNS.search(value))
-
-
 def commands_for(asset: dict[str, Any], commands: list[str] | None = None) -> list[str]:
     selected = commands or DEFAULT_COMMANDS.get(str(asset.get("vendor") or "generic").lower(), DEFAULT_COMMANDS["generic"])
-    safe = [str(command).strip() for command in selected if is_read_only_command(str(command))]
-    if len(safe) != len(selected) or not safe:
-        raise ValueError("inspection commands must be non-empty and read-only")
-    return safe[:20]
+    return normalize_read_only_commands(selected)
 
 
 def _target_for(asset: dict[str, Any]) -> DeviceTarget:

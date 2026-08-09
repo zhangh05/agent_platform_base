@@ -16,6 +16,10 @@ class ExtensionQuotaError(RuntimeError):
     pass
 
 
+# Deliberately process-local. Daily usage is protected by FileLock; the
+# in-flight concurrency lease is accurate for this single-process deployment.
+# Multi-worker deployments must provide a shared lease backend before relying
+# on max_concurrency as a global limit.
 _ACTIVE: dict[tuple[str, str], int] = {}
 _ACTIVE_LOCK = threading.Lock()
 
@@ -81,5 +85,6 @@ def quota_status(extension_id: str, workspace_id: str, quotas: dict[str, Any] | 
         "day": _day(),
         "daily_calls": int(data.get(key) or 0) if isinstance(data, dict) else 0,
         "active": active,
+        "concurrency_scope": "process_local",
         "limits": limits,
     }

@@ -129,10 +129,18 @@ def assets_read(invocation):
 
 def assets_write(invocation):
     args = invocation.arguments or {}
-    action = str(args.get("action") or "save")
+    action = str(args.get("action") or "").strip().lower()
     if action == "delete":
-        return {"ok": service.delete_asset(invocation.workspace_id, str(args.get("asset_id") or ""))}
-    return {"ok": True, "asset": service.save_asset(invocation.workspace_id, dict(args.get("asset") or args))}
+        asset_id = str(args.get("asset_id") or "").strip()
+        if not asset_id:
+            return {"ok": False, "error": "asset_id is required for delete"}
+        return {"ok": service.delete_asset(invocation.workspace_id, asset_id)}
+    if action != "save":
+        return {"ok": False, "error": "unsupported action; expected save or delete"}
+    asset = args.get("asset")
+    if not isinstance(asset, dict) or not asset:
+        return {"ok": False, "error": "non-empty asset object is required for save"}
+    return {"ok": True, "asset": service.save_asset(invocation.workspace_id, dict(asset))}
 
 
 def device_probe(invocation):

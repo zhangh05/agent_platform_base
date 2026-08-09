@@ -1,8 +1,14 @@
 from __future__ import annotations
 
 import json
+from types import SimpleNamespace
 
 from extensions.network_operations import service
+from extensions.network_operations.backend import assets_write
+from extensions.network_operations.device_tools import (
+    MAX_READ_ONLY_COMMANDS,
+    is_read_only_command as device_is_read_only_command,
+)
 
 
 def _setup(monkeypatch, tmp_path):
@@ -92,6 +98,36 @@ def test_write_commands_are_rejected():
     assert service.is_read_only_command("system-view") is False
     assert service.is_read_only_command("reload") is False
     assert service.is_read_only_command("display version; reboot") is False
+    assert service.is_read_only_command is device_is_read_only_command
+
+
+def test_read_only_command_limit_is_shared_and_enforced():
+    commands = ["display version"] * (MAX_READ_ONLY_COMMANDS + 1)
+    try:
+        service.commands_for({"vendor": "h3c"}, commands)
+    except ValueError as exc:
+        assert "1 to 20" in str(exc)
+    else:
+        raise AssertionError("command count above the shared limit must fail")
+
+
+def test_assets_write_requires_explicit_action_and_non_empty_asset(monkeypatch, tmp_path):
+    _setup(monkeypatch, tmp_path)
+    invocation = SimpleNamespace(workspace_id="default", arguments={"action": "save", "asset": {}})
+    assert assets_write(invocation) == {
+        "ok": False,
+        "error": "non-empty asset object is required for save",
+    }
+
+    invalid = SimpleNamespace(workspace_id="default", arguments={"action": "list", "asset": {"name": "ignored"}})
+    assert assets_write(invalid)["error"] == "unsupported action; expected save or delete"
+
+    saved = assets_write(SimpleNamespace(workspace_id="default", arguments={
+        "action": "save",
+        "asset": {"name": "R1", "host": "10.0.0.8", "username": "ops", "password": "secret"},
+    }))
+    assert saved["ok"] is True
+    assert "action" not in service.get_asset("default", saved["asset"]["asset_id"], include_secret=True)
 
 
 def test_device_manage_is_registered_as_network_operations_extension_tool():
