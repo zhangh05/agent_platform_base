@@ -375,6 +375,7 @@ def test_workspace_file_extracts_docx_attachment_by_file_id(tmp_workspace):
     assert result["file_id"] == record.file_id
     assert "倒换测试手册" in result["content"]
     assert "先确认链路状态" in result["content"]
+    assert result["embedded_image_count"] == 0
 
 
 def test_workspace_file_extracts_docx_image_for_vision(tmp_workspace):
@@ -391,6 +392,13 @@ def test_workspace_file_extracts_docx_image_for_vision(tmp_workspace):
     document.add_picture(str(image_path))
     document.save(source)
     record = import_user_upload("test_ws", source, "runbook.docx", logical_type="document_input", file_kind="docx", binary=True)
+
+    extracted = CANONICAL_REGISTRY["workspace.file"].handler(ToolInvocation(
+        tool_id="workspace.file", workspace_id="test_ws",
+        arguments={"action": "extract_document", "file_id": record.file_id},
+    ))
+    assert extracted["ok"] is True
+    assert extracted["embedded_image_count"] == 1
 
     result = CANONICAL_REGISTRY["workspace.file"].handler(ToolInvocation(
         tool_id="workspace.file", workspace_id="test_ws",

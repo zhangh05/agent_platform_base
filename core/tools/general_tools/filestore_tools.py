@@ -126,6 +126,17 @@ def handle_file_extract_document(inv, *, file_id: str = "", limit: int = 50_000)
 
     try:
         raw = resolve_file_path(ws, file_id).read_bytes()
+        embedded_image_count = 0
+        if file_kind == "docx":
+            # A DOCX can be an image-only runbook. Its visual evidence is as
+            # important as its extracted text, so report the exact count from
+            # the package rather than leaving the model to infer it from names.
+            with zipfile.ZipFile(BytesIO(raw)) as document:
+                embedded_image_count = sum(
+                    1
+                    for name in document.namelist()
+                    if name.startswith("word/media/") and not name.endswith("/")
+                )
         if file_kind in _TEXT_ATTACHMENT_KINDS:
             content = raw.decode("utf-8", errors="replace")
             warnings: list[str] = []
@@ -146,7 +157,7 @@ def handle_file_extract_document(inv, *, file_id: str = "", limit: int = 50_000)
     except Exception as exc:
         return _fail("workspace.file", "document_extract_failed", file_id=file_id, detail=str(exc)[:200])
 
-    if not content.strip():
+    if not content.strip() and not embedded_image_count:
         return _fail(
             "workspace.file",
             "document_has_no_extractable_text",
@@ -164,6 +175,7 @@ def handle_file_extract_document(inv, *, file_id: str = "", limit: int = 50_000)
         content=content[:bounded_limit],
         size_bytes=size_bytes,
         truncated=len(content) > bounded_limit,
+        embedded_image_count=embedded_image_count,
         warnings=warnings,
         summary="document extracted from managed attachment",
     )
