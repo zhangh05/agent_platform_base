@@ -307,32 +307,7 @@ class SSOTRuntimeEngine:
             risk_level = "low"
             approval_required = False
 
-            # Deterministic answers are handled before any LLM/planner path.
-            # Unit conversion and short unit corrections are mechanical; letting
-            # the model infer them caused repeat regressions around b vs B.
-            from .deterministic_answer import answer_deterministically
-
             conv_history_block = ctx.extras.get("conversation_history_block") or ""
-            deterministic = answer_deterministically(user_input, conv_history_block)
-            if deterministic:
-                self._emit_stage(RESPONSE_STARTED, t_total)
-                self._emit_stage(RESPONSE_COMPLETED, t_total)
-                self._emit_stage(TURN_COMPLETED, t_total)
-                metrics.capture_response(0.0)
-                await self._stop_heartbeat()
-                return self._build_result(
-                    ctx, node_results, deterministic.response,
-                    errors, metrics, budget, t_total, "low", False,
-                    extra={
-                        "route": deterministic.route,
-                        "planner_skipped": True,
-                        "used_tools": False,
-                        "skip_reason": deterministic.reason,
-                        "deterministic_answer": True,
-                        "conversation_history_used": bool(conv_history_block),
-                    },
-                )
-
             task_intent = detect_task_intent(user_input)
 
             clarification = build_operational_clarification(ctx.user_input, task_intent)

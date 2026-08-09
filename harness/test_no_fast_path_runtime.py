@@ -89,3 +89,67 @@ def test_conversation_followup_stays_tool_visible_with_history():
     assert "fast_path" not in result.metadata
     assert calls
     assert "RECENT CONVERSATION HISTORY" in calls[0].get("user", "")
+
+
+def test_speed_conversion_uses_tool_visible_query_loop():
+    calls: list[dict] = []
+
+    def llm_mock(**kwargs):
+        calls.append(kwargs)
+        return "5295 kb/s 按小写 b 计算约为 5.29 Mbps。"
+
+    engine = SSOTRuntimeEngine(
+        config=SSOTRuntimeConfig(),
+        llm_invoke=llm_mock,
+        tool_runtime=mock.MagicMock(),
+    )
+
+    result = asyncio.run(engine.run(
+        user_input="5295kb/s是多少速度",
+        workspace_id="test",
+    ))
+
+    assert result.success
+    assert result.final_response == "5295 kb/s 按小写 b 计算约为 5.29 Mbps。"
+    assert result.metadata.get("planner_skipped") is False
+    assert "deterministic_answer" not in result.metadata
+    assert "fast_path" not in result.metadata
+    assert calls
+    assert calls[0].get("tools") is not None
+    assert calls[0].get("extra", {}).get("stream_scope") == "planner"
+
+
+def test_short_unit_correction_uses_tool_visible_query_loop_with_history():
+    calls: list[dict] = []
+
+    def llm_mock(**kwargs):
+        calls.append(kwargs)
+        return "对，按小写 b 理解上一轮速度。"
+
+    engine = SSOTRuntimeEngine(
+        config=SSOTRuntimeConfig(),
+        llm_invoke=llm_mock,
+        tool_runtime=mock.MagicMock(),
+    )
+
+    result = asyncio.run(engine.run(
+        user_input="我是小b",
+        workspace_id="test",
+        extras={
+            "conversation_history_block": (
+                "RECENT CONVERSATION HISTORY:\n"
+                "  [1] user: 5295kb/s是多少速度\n"
+                "  [2] assistant: 之前按大写 B 解释了。"
+            )
+        },
+    ))
+
+    assert result.success
+    assert result.final_response == "对，按小写 b 理解上一轮速度。"
+    assert result.metadata.get("planner_skipped") is False
+    assert result.metadata.get("conversation_history_used") is True
+    assert "deterministic_answer" not in result.metadata
+    assert "fast_path" not in result.metadata
+    assert calls
+    assert "RECENT CONVERSATION HISTORY" in calls[0].get("user", "")
+    assert calls[0].get("tools") is not None
