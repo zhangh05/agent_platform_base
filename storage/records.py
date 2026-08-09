@@ -77,6 +77,22 @@ def runtime_record_file(*parts: str, create_parent: bool = True) -> Path:
     return parent / _safe_part(parts[-1], allow_ext=True)
 
 
+def user_runtime_record_file(*parts: str, create_parent: bool = True) -> Path:
+    """Return a principal-scoped runtime record file for user-visible state."""
+    if not parts:
+        raise ValueError("runtime record file requires at least one path part")
+    if len(parts) == 1:
+        parent = storage_paths.user_runtime_root()
+        if create_parent:
+            parent.mkdir(parents=True, exist_ok=True)
+    else:
+        safe_parts = [_safe_part(part, allow_ext=False) for part in parts[:-1]]
+        parent = storage_paths.user_runtime_root().joinpath(*safe_parts)
+        if create_parent:
+            parent.mkdir(parents=True, exist_ok=True)
+    return parent / _safe_part(parts[-1], allow_ext=True)
+
+
 @contextmanager
 def jsonl_transaction(workspace_id: str, parts: Iterable[str]):
     """Hold the adapter lock for a JSONL record file."""

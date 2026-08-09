@@ -7,8 +7,9 @@ from agent.runtime.ssot_runtime import (
     _history_overlap,
 )
 from core.context.context_store import ContextStore
-from core.context.unified_retriever import UnifiedRetriever
+from core.context.unified_retriever import UnifiedRetriever, get_retriever
 from core.runtime_engine.prompt_contract import RUNTIME_SYSTEM_PROMPT
+from storage.principal import storage_principal
 
 
 def test_restored_history_overlap_is_not_injected_twice():
@@ -60,6 +61,29 @@ def test_context_store_singleton_tracks_workspace_root_changes(monkeypatch, tmp_
     assert first is not second
     assert first._items_path == root_a / "samews" / "context" / "items.jsonl"
     assert second._items_path == root_b / "samews" / "context" / "items.jsonl"
+
+
+def test_retriever_cache_isolated_by_storage_principal(monkeypatch, tmp_path):
+    monkeypatch.setenv("NA_WORKSPACE_ROOT", str(tmp_path))
+    with storage_principal("alice"):
+        alice = get_retriever("team")
+        alice._store.put({
+            "item_id": "alice-only",
+            "item_type": "memory_hit",
+            "workspace_id": "team",
+            "memory_type": "semantic_fact",
+            "memory_status": "active",
+            "status": "active",
+            "scope": "workspace",
+            "content": "alice router credential policy",
+        })
+        assert alice.search_memory("router credential", top_k=5)
+
+    with storage_principal("bob"):
+        bob = get_retriever("team")
+        assert bob is not alice
+        assert bob._store._items_path != alice._store._items_path
+        assert bob.search_memory("router credential", top_k=5) == []
 
 
 def test_context_store_rejects_cross_workspace_item(monkeypatch, tmp_path):

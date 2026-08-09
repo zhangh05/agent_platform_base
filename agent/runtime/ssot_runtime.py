@@ -1018,19 +1018,20 @@ def _build_retrieved_context_block(
             content = str(rule.get("content") or rule.get("summary") or "").strip()
             if content:
                 compacted, _ = truncate_text_to_tokens(content, min(item_tokens, 350))
-                lines.append(f"[core-rule authority=explicit-user] {compacted}")
+                lines.append(f"[core-rule scope=workspace authority=explicit-user] {compacted}")
         for hit in retrieved.get("memory_hits", [])[:3]:
             if str(hit.get("memory_type") or "") == "core_rule":
                 continue
             content = str(hit.get("content") or hit.get("summary") or "").strip()
             if content:
                 compacted, _ = truncate_text_to_tokens(content, item_tokens)
-                lines.append(f"[memory] {compacted}")
+                scope = str(hit.get("scope") or "workspace")
+                lines.append(f"[memory scope={scope}] {compacted}")
         for hit in retrieved.get("knowledge_hits", [])[:2]:
             content = str(hit.get("content") or hit.get("summary") or "").strip()
             if content:
                 compacted, _ = truncate_text_to_tokens(content, item_tokens)
-                lines.append(f"[knowledge] {compacted}")
+                lines.append(f"[knowledge scope=workspace] {compacted}")
         compacted, _ = truncate_text_to_tokens("\n".join(lines), max_tokens)
         return compacted
     except Exception:

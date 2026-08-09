@@ -29,6 +29,26 @@ def runtime_root() -> Path:
     return get_workspace_root() / "_runtime"
 
 
+def user_runtime_root() -> Path:
+    """Return the current principal's runtime-data root.
+
+    Runtime-wide service state remains in ``runtime_root``. User-visible
+    runtime records (for example approval audits) belong below this root but
+    must not be shared between authenticated users. The configured legacy
+    administrator deliberately retains the pre-identity location.
+    """
+    from storage.principal import (
+        current_storage_principal,
+        principal_storage_key,
+        uses_legacy_admin_storage,
+    )
+
+    principal = current_storage_principal()
+    if not principal or uses_legacy_admin_storage(principal):
+        return runtime_root()
+    return runtime_root() / "users" / principal_storage_key(principal)
+
+
 def workspace_root(workspace_id: str) -> Path:
     """Return user-scoped data root for a logical workspace."""
     from storage.ids import validate_workspace_id

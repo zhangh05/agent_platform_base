@@ -346,3 +346,25 @@ class TestApprovalStoreContract:
         )
         assert req.run_id == "run_99"
         assert req.job_id == "job_42"
+
+
+def test_approval_store_cache_isolated_by_storage_principal(monkeypatch, tmp_path):
+    import agent.approval as approval_module
+    from agent.approval import get_approval_store, reset_approval_store_for_tests
+    from storage.principal import storage_principal
+
+    monkeypatch.setenv("NA_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setattr(approval_module, "_APPROVALS_FILE", None)
+    reset_approval_store_for_tests(remove_persisted=True)
+    try:
+        with storage_principal("alice"):
+            alice = get_approval_store()
+            alice.create("session_shared", "exec.run", {}, workspace_id="team")
+
+        with storage_principal("bob"):
+            bob = get_approval_store()
+            assert bob is not alice
+            assert bob._persist_path != alice._persist_path
+            assert bob.get_pending(workspace_id="team") == []
+    finally:
+        reset_approval_store_for_tests(remove_persisted=True)

@@ -16,8 +16,15 @@ _LOG = logging.getLogger(__name__)
 
 # ── In-memory state for execution history ──
 _TOOL_HISTORY_MAX = 200
-_tool_exec_history: dict[str, OrderedDict] = {}  # ws_id -> OrderedDict
+_tool_exec_history: dict[tuple[str, str], OrderedDict] = {}
 _lock = threading.Lock()
+
+
+def _history_key(ws_id: str) -> tuple[str, str]:
+    """Key in-memory history by its principal-scoped physical store."""
+    from storage.tool_history_store import history_path
+
+    return (ws_id, str(history_path(ws_id)))
 
 
 def _persist_history(ws_id: str):
@@ -25,7 +32,7 @@ def _persist_history(ws_id: str):
     # (was a non-atomic open(...).write(...), which could leave the JSON
     # half-written if the process was killed mid-flush).
     with _lock:
-        snapshot = list(_tool_exec_history.get(ws_id, OrderedDict()).values())
+        snapshot = list(_tool_exec_history.get(_history_key(ws_id), OrderedDict()).values())
     try:
         from storage.tool_history_store import save_history
         save_history(ws_id, snapshot)
@@ -35,21 +42,22 @@ def _persist_history(ws_id: str):
 
 def _ensure_ws_history(ws_id: str) -> OrderedDict:
     """Lazily initialise per-workspace history (in-memory + load from disk)."""
+    key = _history_key(ws_id)
     with _lock:
-        if ws_id not in _tool_exec_history:
-            _tool_exec_history[ws_id] = OrderedDict()
+        if key not in _tool_exec_history:
+            _tool_exec_history[key] = OrderedDict()
     # Load persisted entries (outside lock — only reads)
     from storage.tool_history_store import load_history
     items = load_history(ws_id)
     if isinstance(items, list):
         with _lock:
-            ws_hist = _tool_exec_history[ws_id]
+            ws_hist = _tool_exec_history[key]
             for item in items:
                 if isinstance(item, dict):
                     inv_id = item.get('invocation_id', '')
                     if inv_id and inv_id not in ws_hist:
                         ws_hist[inv_id] = item
-    return _tool_exec_history[ws_id]
+    return _tool_exec_history[key]
 
 
 def _invalid_ws():
@@ -128,7 +136,7 @@ def _blocked_tool_response(invocation, ws_id: str, risk_level: str, reason: str)
     }
     _ensure_ws_history(ws_id)
     with _lock:
-        ws_hist = _tool_exec_history.setdefault(ws_id, OrderedDict())
+        ws_hist = _tool_exec_history.setdefault(_history_key(ws_id), OrderedDict())
         ws_hist[invocation.invocation_id] = hist_entry
         while len(ws_hist) > _TOOL_HISTORY_MAX:
             ws_hist.popitem(last=False)
@@ -460,7 +468,7 @@ def register_runtime_routes(app):
 
         _ensure_ws_history(ws_id)
         with _lock:
-            ws_hist = _tool_exec_history.get(ws_id, OrderedDict())
+            ws_hist = _tool_exec_history.get(_history_key(ws_id), OrderedDict())
             records = list(reversed(list(ws_hist.values())))
 
         if status_filter:
@@ -662,7 +670,7 @@ def register_runtime_routes(app):
             import time as _time
             deadline = _time.time() + 3600  # 1 hour max
             while _time.time() < deadline:
-                frame = subscribe(sid, timeout=30)
+                frame = subscribe(sid, timeout=30, workspace_id=ws_id)
                 if frame:
                     yield frame
                 else:

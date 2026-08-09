@@ -33,11 +33,11 @@ def _now_iso() -> str:
 _locks: dict[str, threading.RLock] = {}
 _lock_guard = threading.Lock()
 
-def _get_lock(workspace_id: str) -> threading.RLock:
+def _get_lock(storage_key: str) -> threading.RLock:
     with _lock_guard:
-        if workspace_id not in _locks:
-            _locks[workspace_id] = threading.RLock()
-        return _locks[workspace_id]
+        if storage_key not in _locks:
+            _locks[storage_key] = threading.RLock()
+        return _locks[storage_key]
 
 
 # ---------------------------------------------------------------------------
@@ -51,7 +51,9 @@ class ContextStore:
         self.workspace_id = validate_workspace_id(workspace_id)
         self._items_path = workspace_record_file(self.workspace_id, "context", "items.jsonl")
         self._root = self._items_path.parent
-        self._lock = _get_lock(self.workspace_id)
+        # The same logical workspace has distinct per-user storage roots.
+        # Locks must follow the physical path just as the store singleton does.
+        self._lock = _get_lock(str(self._items_path))
 
     # ---- Write ----
 

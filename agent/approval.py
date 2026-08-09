@@ -560,15 +560,16 @@ def _default_persist_path() -> Path:
 
 
 # Singleton
-_approval_store: Optional[ApprovalStore] = None
+_approval_stores: dict[str, ApprovalStore] = {}
 
 def get_approval_store() -> ApprovalStore:
-    global _approval_store
-    if _approval_store is None:
-        with _get_lock():
-            if _approval_store is None:
-                _approval_store = ApprovalStore()
-    return _approval_store
+    """Return the approval store for the current principal-scoped log path."""
+    path = _default_persist_path()
+    key = str(path)
+    with _get_lock():
+        if key not in _approval_stores:
+            _approval_stores[key] = ApprovalStore(persist_path=path)
+        return _approval_stores[key]
 
 _appr_lock = None
 def _get_lock():
@@ -581,17 +582,18 @@ def _get_lock():
 
 def reset_approval_store_for_tests(remove_persisted: bool = False) -> None:
     """Reset the module-level approval store for isolated tests."""
-    global _approval_store
-    if _approval_store is not None:
-        with _approval_store._lock:
-            _approval_store._pending.clear()
+    stores = list(_approval_stores.values())
+    for store in stores:
+        with store._lock:
+            store._pending.clear()
     if remove_persisted:
         try:
             from storage.approval_record_store import delete_approval_log
 
-            delete_approval_log(path=_approval_store._persist_path if _approval_store else _default_persist_path())
+            paths = {store._persist_path for store in stores}
+            paths.add(_default_persist_path())
+            for path in paths:
+                delete_approval_log(path=path)
         except OSError:
-            logger.debug("approval: test reset could not unlink %s",
-                         _approval_store._persist_path if _approval_store else _default_persist_path(),
-                         exc_info=True)
-    _approval_store = None
+            logger.debug("approval: test reset could not unlink approval logs", exc_info=True)
+    _approval_stores.clear()

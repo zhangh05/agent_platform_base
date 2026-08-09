@@ -260,9 +260,9 @@ def rank_documents(query: str, documents: list[dict], top_k: int = 10) -> list[d
 class UnifiedRetriever:
     """Single retriever for all item types in a workspace."""
 
-    def __init__(self, workspace_id: str = "default"):
+    def __init__(self, workspace_id: str = "default", *, store=None):
         self.workspace_id = workspace_id
-        self._store = get_context_store(workspace_id)
+        self._store = store or get_context_store(workspace_id)
         self._bm25 = _BM25()
         self._indexed_count = 0
         self._last_index_time = 0.0
@@ -570,12 +570,14 @@ def _ts_to_epoch(ts: str) -> float:
 # ---------------------------------------------------------------------------
 # Singleton helper
 # ---------------------------------------------------------------------------
-_retrievers: dict[str, UnifiedRetriever] = {}
+_retrievers: dict[tuple[str, str], UnifiedRetriever] = {}
 _retrievers_lock = threading.Lock()
 
 def get_retriever(workspace_id: str = "default") -> UnifiedRetriever:
-    """Return the singleton UnifiedRetriever for a workspace."""
+    """Return the singleton retriever for the current user/workspace store."""
+    store = get_context_store(workspace_id)
+    key = (store.workspace_id, str(store._items_path))
     with _retrievers_lock:
-        if workspace_id not in _retrievers:
-            _retrievers[workspace_id] = UnifiedRetriever(workspace_id)
-        return _retrievers[workspace_id]
+        if key not in _retrievers:
+            _retrievers[key] = UnifiedRetriever(store.workspace_id, store=store)
+        return _retrievers[key]

@@ -227,9 +227,10 @@ class TestRuntimeRoutesAtomicWrite:
             captured["indent"] = indent
         monkeypatch.setattr("storage.tool_history_store.atomic_write_json", fake_atomic_write_json)
         ws = "adhoc_ws_atomic"
-        runtime_routes._tool_exec_history.pop(ws, None)
-        runtime_routes._tool_exec_history[ws] = OrderedDict()
-        runtime_routes._tool_exec_history[ws]["inv-1"] = {"invocation_id": "inv-1", "ok": True}
+        key = runtime_routes._history_key(ws)
+        runtime_routes._tool_exec_history.pop(key, None)
+        runtime_routes._tool_exec_history[key] = OrderedDict()
+        runtime_routes._tool_exec_history[key]["inv-1"] = {"invocation_id": "inv-1", "ok": True}
         runtime_routes._persist_history(ws)
         assert captured["indent"] == 2
         assert len(captured["obj"]) == 1
@@ -243,12 +244,13 @@ class TestRuntimeRoutesAtomicWrite:
 
         def fake_history_path(ws_id):
             return hist_path
-        monkeypatch.setattr(tool_history_store, "_history_path", fake_history_path)
-        runtime_routes._tool_exec_history.pop("default", None)
-        runtime_routes._tool_exec_history["default"] = OrderedDict()
+        monkeypatch.setattr(tool_history_store, "history_path", fake_history_path)
+        key = runtime_routes._history_key("default")
+        runtime_routes._tool_exec_history.pop(key, None)
+        runtime_routes._tool_exec_history[key] = OrderedDict()
 
         runtime_routes._ensure_ws_history("default")
-        assert "inv-99" in runtime_routes._tool_exec_history["default"]
+        assert "inv-99" in runtime_routes._tool_exec_history[key]
 
     def test_load_persisted_handles_missing_file(self, monkeypatch, tmp_path):
         from backend.api import runtime_routes
@@ -256,11 +258,12 @@ class TestRuntimeRoutesAtomicWrite:
         missing = tmp_path / "missing1.json"
         def fake_history_path(ws_id):
             return missing
-        monkeypatch.setattr(tool_history_store, "_history_path", fake_history_path)
-        runtime_routes._tool_exec_history.pop("default", None)
-        runtime_routes._tool_exec_history["default"] = OrderedDict()
+        monkeypatch.setattr(tool_history_store, "history_path", fake_history_path)
+        key = runtime_routes._history_key("default")
+        runtime_routes._tool_exec_history.pop(key, None)
+        runtime_routes._tool_exec_history[key] = OrderedDict()
         runtime_routes._ensure_ws_history("default")
-        assert len(runtime_routes._tool_exec_history["default"]) == 0
+        assert len(runtime_routes._tool_exec_history[key]) == 0
 
     def test_load_persisted_handles_corrupt_json(self, monkeypatch, tmp_path):
         from backend.api import runtime_routes
@@ -269,8 +272,27 @@ class TestRuntimeRoutesAtomicWrite:
         bad.write_text("{this is not json")
         def fake_history_path(ws_id):
             return bad
-        monkeypatch.setattr(tool_history_store, "_history_path", fake_history_path)
-        runtime_routes._tool_exec_history.pop("default", None)
-        runtime_routes._tool_exec_history["default"] = OrderedDict()
+        monkeypatch.setattr(tool_history_store, "history_path", fake_history_path)
+        key = runtime_routes._history_key("default")
+        runtime_routes._tool_exec_history.pop(key, None)
+        runtime_routes._tool_exec_history[key] = OrderedDict()
         runtime_routes._ensure_ws_history("default")
-        assert len(runtime_routes._tool_exec_history["default"]) == 0
+        assert len(runtime_routes._tool_exec_history[key]) == 0
+
+    def test_history_cache_isolated_by_storage_principal(self, monkeypatch, tmp_path):
+        from backend.api import runtime_routes
+        from storage.principal import storage_principal
+
+        monkeypatch.setenv("NA_WORKSPACE_ROOT", str(tmp_path))
+        with storage_principal("alice"):
+            alice_key = runtime_routes._history_key("team")
+            runtime_routes._tool_exec_history.pop(alice_key, None)
+            alice = runtime_routes._ensure_ws_history("team")
+            alice["alice-invocation"] = {"invocation_id": "alice-invocation"}
+
+        with storage_principal("bob"):
+            bob_key = runtime_routes._history_key("team")
+            runtime_routes._tool_exec_history.pop(bob_key, None)
+            bob = runtime_routes._ensure_ws_history("team")
+            assert bob_key != alice_key
+            assert bob == OrderedDict()

@@ -34,6 +34,9 @@ from storage.session_store import (
 )
 from storage.run_record_store import write_run_record
 from agent.state import AgentState
+from agent.app.session_manager import SessionManager
+from agent.protocol.message import UserMessage
+from storage.principal import storage_principal
 
 TEST_WS = "session_mgmt_test"
 
@@ -133,6 +136,25 @@ class TestSessionLifecycle:
         assert ok is True
         fetched = get_session(s["session_id"], TEST_WS)
         assert fetched is None
+
+
+class TestLiveSessionIsolation:
+    def test_same_session_id_isolated_by_storage_principal(self):
+        manager = SessionManager()
+        with storage_principal("alice"):
+            sid, alice_session, _ = manager.get_or_create("session_shared", "team_a")
+            alice_session.history.append(UserMessage(content="alice confidential context"))
+
+        with storage_principal("bob"):
+            bob_sid, bob_session, _ = manager.get_or_create("session_shared", "team_a")
+            assert bob_sid == sid
+            assert bob_session is not alice_session
+            assert bob_session.history == []
+
+        with storage_principal("alice"):
+            _, restored_alice, _ = manager.get_or_create("session_shared", "team_a")
+            assert restored_alice is alice_session
+            assert restored_alice.history[0].content == "alice confidential context"
 
 
 class TestSessionRunAssociation:

@@ -25,39 +25,43 @@ class SessionManager:
         self.ttl_seconds = ttl_seconds
         self.max_sessions = max_sessions
         self.restore_callback = restore_callback
-        self._sessions: dict[str, AgentSession] = {}
+        # A logical workspace has separate user-scoped storage roots.  Keep
+        # the live session and its turn lock scoped the same way, otherwise a
+        # guessed/reused session_id could expose another user's in-memory
+        # history before persistence is consulted.
+        self._sessions: dict[tuple[str, str, str], AgentSession] = {}
         self._sessions_lock = threading.RLock()
-        self._session_turn_locks: dict[str, threading.RLock] = {}
+        self._session_turn_locks: dict[tuple[str, str, str], threading.RLock] = {}
 
     def new_session_id(self) -> str:
         return f"session_{uuid.uuid4().hex[:12]}"
+
+    @staticmethod
+    def _principal_key() -> str:
+        from storage.principal import current_storage_principal, principal_storage_key
+        principal = current_storage_principal()
+        # Unauthenticated/internal callers retain the legacy shared storage
+        # namespace. Authenticated callers use the same stable key as paths.py.
+        return principal_storage_key(principal) if principal else "__legacy__"
+
+    def _key(self, session_id: str, workspace_id: str) -> tuple[str, str, str]:
+        return (self._principal_key(), str(workspace_id), str(session_id))
 
     def get_or_create(self, session_id: str | None, workspace_id: str):
         with self._sessions_lock:
             self._evict_expired_locked()
             sid = session_id or self.new_session_id()
-            if sid not in self._sessions:
+            key = self._key(sid, workspace_id)
+            if key not in self._sessions:
                 session = AgentSession(session_id=sid, workspace_id=workspace_id)
-                self._sessions[sid] = session
-                self._session_turn_locks[sid] = threading.RLock()
+                self._sessions[key] = session
+                self._session_turn_locks[key] = threading.RLock()
                 self._restore(session, sid, workspace_id)
             else:
-                session = self._sessions[sid]
-                # v3.1: Cross-workspace guard — a session from workspace A
-                # must not be reused in workspace B.  If the workspace_id
-                # does not match, create a new session with a fresh id.
-                existing_ws = getattr(session, "workspace_id", "")
-                if existing_ws and existing_ws != workspace_id:
-                    new_sid = self.new_session_id()
-                    session = AgentSession(session_id=new_sid, workspace_id=workspace_id)
-                    self._sessions[new_sid] = session
-                    self._session_turn_locks[new_sid] = threading.RLock()
-                    self._restore(session, new_sid, workspace_id)
-                    sid = new_sid
-                else:
-                    self._session_turn_locks.setdefault(sid, threading.RLock())
+                session = self._sessions[key]
+                self._session_turn_locks.setdefault(key, threading.RLock())
             session._last_access = time.time()
-            return sid, session, self._session_turn_locks[sid]
+            return sid, session, self._session_turn_locks[key]
 
     def snapshot(self) -> dict[str, Any]:
         with self._sessions_lock:
@@ -67,7 +71,7 @@ class SessionManager:
                 "max_sessions": self.max_sessions,
                 "sessions": [
                     {
-                        "session_id": sid,
+                        "session_id": sid[2],
                         "workspace_id": getattr(sess, "workspace_id", ""),
                         "last_access": getattr(sess, "_last_access", 0),
                         "history_len": len(getattr(sess, "history", []) or []),

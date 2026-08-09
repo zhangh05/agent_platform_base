@@ -10,12 +10,12 @@ from storage.records import (
     delete_record_path,
     mutate_jsonl_path,
     read_jsonl_path,
-    runtime_record_file,
+    user_runtime_record_file,
 )
 
 
 def approval_log_path() -> Path:
-    return runtime_record_file("approvals", "tool_approvals.jsonl")
+    return user_runtime_record_file("approvals", "tool_approvals.jsonl")
 
 
 def append_approval_record(record: dict[str, Any], *, path: Path | None = None) -> dict[str, Any]:
