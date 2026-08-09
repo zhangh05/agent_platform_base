@@ -48,23 +48,25 @@ def user_runtime_root() -> Path:
 
 
 def workspace_root(workspace_id: str) -> Path:
-    """Return user-scoped data root for a logical workspace."""
+    """Return the current principal's data root for a logical workspace."""
     from storage.ids import validate_workspace_id
     from storage.principal import (
         current_storage_principal,
         principal_storage_key,
     )
-    logical_root = get_workspace_root() / validate_workspace_id(workspace_id)
+    ws_id = validate_workspace_id(workspace_id)
     principal = current_storage_principal()
     if not principal:
-        return logical_root
-    return logical_root / "users" / principal_storage_key(principal)
+        # Internal bootstrap and maintenance calls have no user identity. API
+        # requests always bind one before business storage is accessed.
+        return get_workspace_root() / ws_id
+    return get_workspace_root() / "users" / principal_storage_key(principal) / "workspaces" / ws_id
 
 
 def workspace_catalog_root(workspace_id: str) -> Path:
     """Return the shared control-plane root for a logical workspace."""
     from storage.ids import validate_workspace_id
-    return get_workspace_root() / validate_workspace_id(workspace_id)
+    return get_workspace_root() / "catalog" / validate_workspace_id(workspace_id)
 
 
 def ensure_workspace_storage_dirs(workspace_id: str) -> None:

@@ -25,6 +25,18 @@ _LOG = logging.getLogger(__name__)
 
 def ensure_workspace(ws_id: str = "default") -> str:
     ws_id = validate_workspace_id(ws_id)
+    catalog = workspace_catalog_root(ws_id)
+    with FileLock(catalog / "sys" / "workspace-init.lock"):
+        yaml_path = catalog / "sys" / "workspace.yaml"
+        if not yaml_path.exists():
+            atomic_write_text(
+                yaml_path,
+                f"id: {ws_id}\nname: {ws_id}\ncreated: {time.time()}\n",
+            )
+        state_path = catalog / "sys" / "state.json"
+        if not state_path.exists():
+            atomic_write_json(state_path, _default_state(ws_id))
+
     ws = workspace_root(ws_id)
     for dirname in ("runs", "sessions", "sys"):
         (ws / dirname).mkdir(parents=True, exist_ok=True)
@@ -76,14 +88,15 @@ def update_workspace_state(ws_id: str, patch: dict) -> dict:
         state["updated_at"] = _now_iso()
         state["runs_count"] = _count_runs(ws_id)
         atomic_write_json(workspace_root(ws_id) / "sys" / "state.json", state)
+    _update_workspace_catalog(ws_id, patch)
     return state
 
 
 def list_workspaces() -> list[dict]:
     workspaces: list[dict] = []
-    base = get_workspace_root()
+    base = get_workspace_root() / "catalog"
     if not base.is_dir():
-        return workspaces
+        ensure_workspace("default")
     dirs = [path for path in base.iterdir() if path.is_dir() and not path.name.startswith(".")]
     dirs.sort(key=lambda path: (0 if path.name == "default" else 1, _is_test_workspace(path.name), path.name))
     for path in dirs:
@@ -113,7 +126,7 @@ def list_workspaces() -> list[dict]:
 
 
 def list_workspace_ids(root: Path | None = None) -> list[str]:
-    base = root or get_workspace_root()
+    base = root or get_workspace_root() / "catalog"
     if not base.is_dir():
         return []
     ids: list[str] = []
@@ -130,15 +143,22 @@ def list_workspace_ids(root: Path | None = None) -> list[str]:
 def rename_workspace(old_id: str, new_id: str) -> dict:
     old_id = validate_workspace_id(old_id)
     new_id = validate_workspace_id(new_id)
-    old_path = workspace_root(old_id)
-    new_path = workspace_root(new_id)
+    old_path = workspace_catalog_root(old_id)
+    new_path = workspace_catalog_root(new_id)
     if not old_path.is_dir():
         return {"ok": False, "error": "workspace not found"}
     if new_path.exists():
         return {"ok": False, "error": "target workspace already exists"}
     try:
+        user_roots = _user_workspace_paths(old_id)
+        if any(path.with_name(new_id).exists() for path in user_roots):
+            return {"ok": False, "error": "target workspace already exists"}
         old_path.rename(new_path)
         _rewrite_workspace_identity(new_path, new_id)
+        for user_path in user_roots:
+            new_user_path = user_path.with_name(new_id)
+            user_path.rename(new_user_path)
+            _rewrite_workspace_identity(new_user_path, new_id)
         try:
             from backend.core.identity import replace_workspace
             replace_workspace(old_id, new_id)
@@ -153,11 +173,13 @@ def delete_workspace(ws_id: str) -> dict:
     ws_id = validate_workspace_id(ws_id)
     if ws_id == "default":
         return {"ok": False, "error": "cannot delete default workspace"}
-    ws_path = workspace_root(ws_id)
+    ws_path = workspace_catalog_root(ws_id)
     if not ws_path.is_dir():
         return {"ok": False, "error": "workspace not found"}
     try:
         shutil.rmtree(ws_path)
+        for user_path in _user_workspace_paths(ws_id):
+            shutil.rmtree(user_path)
         try:
             from backend.core.identity import replace_workspace
             replace_workspace(ws_id)
@@ -395,3 +417,32 @@ def _is_test_workspace(ws_id: str) -> int:
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _update_workspace_catalog(ws_id: str, patch: dict) -> None:
+    """Keep shared workspace metadata out of any one user's data directory."""
+    shared = {key: value for key, value in (patch or {}).items()
+              if key in {"organization_id", "owner_username", "name"}}
+    if not shared:
+        return
+    path = workspace_catalog_root(ws_id) / "sys" / "state.json"
+    with FileLock(path.with_name("state.lock")):
+        try:
+            state = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            state = _default_state(ws_id)
+        state.update(shared)
+        atomic_write_json(path, state)
+
+
+def _user_workspace_paths(ws_id: str) -> list[Path]:
+    """Return every user-owned data directory for a logical workspace."""
+    users_root = get_workspace_root() / "users"
+    if not users_root.is_dir():
+        return []
+    paths: list[Path] = []
+    for user_root in users_root.iterdir():
+        candidate = user_root / "workspaces" / ws_id
+        if candidate.is_dir():
+            paths.append(candidate)
+    return paths

@@ -4,7 +4,8 @@
 
 | Path | Purpose | Git |
 | --- | --- | --- |
-| `workspaces/<workspace_id>/` | User workspace files and app data | ignored |
+| `workspaces/users/<user_key>/workspaces/<workspace_id>/` | User workspace files and app data | ignored |
+| `workspaces/catalog/<workspace_id>/` | Shared workspace metadata | ignored |
 | `workspaces/_runtime/` | Durable application/runtime records that are not owned by one user workspace | ignored |
 | `logs/` | Local logs | ignored |
 | `config/providers/` | Provider config and secrets | ignored |
@@ -12,7 +13,7 @@
 
 ## Boundary Rules
 
-- Workspace data is scoped by validated `workspace_id`.
+- Workspace data is scoped by validated `workspace_id` and the authenticated user.
 - Non-workspace runtime records are scoped under `workspaces/_runtime/`.
 - Store functions should not invent a workspace for caller mistakes.
 - Deletion must be scoped and explicit.
