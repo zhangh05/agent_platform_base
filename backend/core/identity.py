@@ -45,17 +45,28 @@ def ensure_identity_storage_ids() -> int:
     This upgrades identity metadata only. It deliberately does not move or
     retain legacy user payloads; those roots are no longer a supported source.
     """
+    to_provision: list[tuple[str, str, list[str]]] = []
     with FileLock(_path().with_name("users.lock")):
         data = _read()
         changed = 0
         for user in data.get("users", []):
             user_id = str(user.get("user_id") or "")
             if re.fullmatch(r"usr_[0-9a-f]{32}", user_id):
-                continue
-            user["user_id"] = f"usr_{uuid.uuid4().hex}"
-            changed += 1
+                assigned_id = user_id
+            else:
+                assigned_id = f"usr_{uuid.uuid4().hex}"
+                user["user_id"] = assigned_id
+                changed += 1
+            to_provision.append((
+                str(user.get("username") or ""), assigned_id,
+                list(user.get("workspace_ids") or []),
+            ))
         if changed:
             atomic_write_json(_path(), data)
+    from storage.workspace_store import provision_user_storage
+    for username, user_id, workspace_ids in to_provision:
+        if username:
+            provision_user_storage(username, user_id, workspace_ids)
     return changed
 
 

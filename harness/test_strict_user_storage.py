@@ -101,4 +101,5 @@ def test_identity_upgrade_assigns_immutable_ids_without_preserving_legacy_roots(
     assert ensure_identity_storage_ids() == 1
     user_id = resolve_user_storage_id("legacy")
     assert user_id.startswith("usr_") and len(user_id) == 36
+    assert (user_data_root(user_id) / "profile.json").is_file()
     assert not (tmp_path / "users" / "legacy-old-root").exists()
