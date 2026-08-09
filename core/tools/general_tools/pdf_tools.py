@@ -37,7 +37,7 @@ def handle_pdf_extract_text(inv: ToolInvocation) -> dict:
     # ── File size limit (10MB) ──
     MAX_PDF_SIZE = 10 * 1024 * 1024
     if file_size > MAX_PDF_SIZE:
-        return _result(False, {
+        return _result(inv, False, {
             "ok": False,
             "error": f"PDF file too large ({file_size} bytes, max {MAX_PDF_SIZE})",
         })
@@ -47,7 +47,7 @@ def handle_pdf_extract_text(inv: ToolInvocation) -> dict:
         with open(target, "rb") as f:
             header = f.read(4)
         if not header.startswith(b"%PDF"):
-            return _result(False, {
+            return _result(inv, False, {
                 "ok": False,
                 "error": "not a PDF file",
                 "file_size": file_size,
@@ -86,7 +86,7 @@ def handle_pdf_extract_text(inv: ToolInvocation) -> dict:
             _method = "pypdf2"
         except ImportError:
             # No PyPDF2 available — return dependency missing, no text fallback
-            return _result(False, {
+            return _result(inv, False, {
                 "ok": False,
                 "error": "pdf dependency missing (PyPDF2 not installed)",
                 "file_size": file_size,
