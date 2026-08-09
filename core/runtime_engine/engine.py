@@ -2,7 +2,7 @@
 SSOT Runtime Engine — production QueryLoop entrypoint.
 
 The active runtime has one execution path:
-  request context -> fast/clarification gates -> QueryLoop -> audit/result.
+  request context -> QueryLoop -> audit/result.
 
 QueryLoop owns planning, tool execution, bounded tracking, retry metadata,
 and final synthesis. Any stage failure returns structured SSOTRuntimeError
@@ -312,23 +312,7 @@ class SSOTRuntimeEngine:
 
             clarification = build_operational_clarification(ctx.user_input, task_intent)
             if clarification:
-                self._emit_stage(RESPONSE_STARTED, t_total)
-                self._emit_stage(RESPONSE_COMPLETED, t_total)
-                self._emit_stage(TURN_COMPLETED, t_total)
-                metrics.capture_response(0.0)
-                await self._stop_heartbeat()
-                return self._build_result(
-                    ctx, node_results, clarification["response"],
-                    errors, metrics, budget, t_total, "low", False,
-                    extra={
-                        "planner_skipped": True,
-                        "used_tools": False,
-                        "requires_clarification": True,
-                        "clarification_fields": clarification["missing"],
-                        "skip_reason": "ambiguous_operational_request",
-                        "task_intent": task_intent.intent_type,
-                    },
-                )
+                ctx.extras["operational_clarification"] = clarification
 
             # ── QueryLoop: the only tool-capable execution path ──────────────
             # The loop owns planner LLM calls, tool execution, bounded tracking,
@@ -667,23 +651,22 @@ def build_operational_clarification(
     user_input: str,
     intent: TaskIntentResult | None = None,
 ) -> dict[str, Any] | None:
-    """Return a user-facing clarification for ambiguous login/command requests.
+    """Return model-visible guidance for ambiguous login/command requests.
 
-    Planner empty-node protection is intentionally strict, but a request like
-    "你登录刷命令" is not a planner failure. It is missing product-level
-    inputs: target and command. Handle that before spending an LLM call.
+    This must not answer before QueryLoop. It only supplies a scoped hint so the
+    LLM can decide whether to ask for missing details or use safe tools.
     """
     text = (user_input or "").strip()
     if not text:
         return None
-    intent = intent or detect_task_intent(text)
-    if intent.intent_type != "command_check":
-        return None
-
     lower = text.lower()
     has_login_intent = any(k in text for k in _LOGIN_HINTS) or "ssh" in lower or "telnet" in lower
     has_command_literal = any(k in text for k in _COMMAND_LITERAL_HINTS)
     has_goal_hint = any(k in text for k in _COMMAND_GOAL_HINTS)
+    intent = intent or detect_task_intent(text)
+    if intent.intent_type != "command_check" and not has_login_intent and not has_command_literal:
+        return None
+
     has_target = _has_target_hint(text)
 
     missing: list[str] = []
@@ -695,16 +678,15 @@ def build_operational_clarification(
     if not missing:
         return None
 
-    response = (
-        "我还不能直接执行这个操作，因为缺少关键信息。\n\n"
-        f"需要补充：{'、'.join(missing)}。\n\n"
-        "你可以这样说：\n"
-        "- 在当前工作区读取 `docs/example.md`\n"
-        "- 执行本地命令 `uname -a`\n"
-        "- 对上传的数据生成摘要报告\n\n"
-        "补齐后我会按底座工具边界执行；只有 `rm -f`、`delete` 等破坏性命令才会进入高危审批。"
+    guidance = (
+        "The current request looks operational but may be underspecified. "
+        f"Potentially missing fields: {'、'.join(missing)}. "
+        "Do not invent targets, credentials, commands, or device state. "
+        "If safe progress is impossible without these fields, ask a concise "
+        "clarifying question. If safe read-only discovery is available, the LLM "
+        "may choose tools normally."
     )
-    return {"missing": missing, "response": response}
+    return {"missing": missing, "guidance": guidance}
 
 
 # Meta-questions about past behaviour — these are conversational

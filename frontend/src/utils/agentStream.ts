@@ -56,7 +56,7 @@ export function finalizeStreamText(streamedText: string, finalResponse: string):
   // No backend response → always trust what was streamed
   if (!f) return s;
 
-  // No streamed content (e.g. pure fast-path or error) → use backend
+  // No streamed content (e.g. response-only fallback or error) → use backend
   if (!s) return f;
 
   // Backend returned a known placeholder but we already streamed

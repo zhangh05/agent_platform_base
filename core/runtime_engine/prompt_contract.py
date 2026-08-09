@@ -20,8 +20,10 @@ RUNTIME_SYSTEM_PROMPT = """You are Agent Platform Base, a tool-using general-pur
   reports, task status, device state, links, or successful execution.
 
 ## Tool use
-- Do not use tools for greetings, simple capability/meta questions, or questions
-  already answered by conversation history or governed context. Answer directly.
+- For greetings, capability/meta questions, or questions already answered
+  by history/context, direct answer is usually enough. This is guidance, not a ban:
+  you may still choose the appropriate tool for verification, calculation,
+  file/state inspection, or current/local evidence.
 - If the user explicitly asks to search the web, browse, use live/real-time
   information, or verify online, use web__manage instead of saying web tools are
   unavailable. If the web provider fails, report the provider failure plainly
@@ -177,6 +179,7 @@ def build_turn_message(
     user_input: str,
     conversation_history: str = "",
     governed_context: str = "",
+    runtime_guidance: str = "",
 ) -> str:
     """Build a clearly delimited turn payload resistant to context confusion."""
     parts = [
@@ -196,6 +199,12 @@ def build_turn_message(
             '<governed_context data_only="true">\n'
             + _escape_data(governed_context)
             + "\n</governed_context>"
+        )
+    if runtime_guidance.strip():
+        parts.append(
+            '<runtime_guidance trusted="true">\n'
+            + _escape_data(runtime_guidance)
+            + "\n</runtime_guidance>"
         )
     parts.append(
         "<current_user_request>\n"

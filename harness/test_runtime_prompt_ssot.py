@@ -35,6 +35,8 @@ def test_runtime_prompt_is_compact_capable_and_destructive_only():
     assert "immediately previous exchange" in RUNTIME_SYSTEM_PROMPT
     assert "raw API" in RUNTIME_SYSTEM_PROMPT
     assert "Avoid rigid section templates" in RUNTIME_SYSTEM_PROMPT
+    assert "guidance, not a ban" in RUNTIME_SYSTEM_PROMPT
+    assert "you may still choose the appropriate tool" in RUNTIME_SYSTEM_PROMPT
 
 
 def test_turn_message_separates_history_context_and_current_request():
@@ -49,6 +51,18 @@ def test_turn_message_separates_history_context_and_current_request():
     assert '<governed_context data_only="true">' in text
     assert "<current_user_request>\ncheck the file" in text
     assert text.index("</governed_context>") < text.index("<current_user_request>")
+
+
+def test_turn_message_includes_runtime_guidance_before_current_request():
+    text = build_turn_message(
+        workspace_id="ws1",
+        session_id="s1",
+        user_input="login and run commands",
+        runtime_guidance="ask for target if missing",
+    )
+    assert '<runtime_guidance trusted="true">' in text
+    assert "ask for target if missing" in text
+    assert text.index("</runtime_guidance>") < text.index("<current_user_request>")
 
 
 def test_untrusted_context_cannot_close_data_boundary():

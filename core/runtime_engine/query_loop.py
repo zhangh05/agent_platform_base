@@ -1535,6 +1535,10 @@ class QueryLoop:
         """Build initial messages with cacheable prefix."""
         conversation_block = ctx.extras.get("conversation_history_block") or ""
         retrieved_block = ctx.extras.get("retrieved_context_block") or ""
+        operational_hint = ctx.extras.get("operational_clarification") or {}
+        runtime_guidance = ""
+        if isinstance(operational_hint, dict):
+            runtime_guidance = str(operational_hint.get("guidance") or "")
 
         return [
             LLMMessage(
@@ -1547,6 +1551,7 @@ class QueryLoop:
                 user_input=ctx.user_input,
                 conversation_history=str(conversation_block),
                 governed_context=str(retrieved_block),
+                runtime_guidance=runtime_guidance,
             )),
         ]
 

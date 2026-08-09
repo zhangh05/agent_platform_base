@@ -153,3 +153,33 @@ def test_short_unit_correction_uses_tool_visible_query_loop_with_history():
     assert calls
     assert "RECENT CONVERSATION HISTORY" in calls[0].get("user", "")
     assert calls[0].get("tools") is not None
+
+
+def test_ambiguous_operational_request_still_reaches_query_loop():
+    calls: list[dict] = []
+
+    def llm_mock(**kwargs):
+        calls.append(kwargs)
+        return "要连接哪台设备、执行什么检查？"
+
+    engine = SSOTRuntimeEngine(
+        config=SSOTRuntimeConfig(),
+        llm_invoke=llm_mock,
+        tool_runtime=mock.MagicMock(),
+    )
+
+    result = asyncio.run(engine.run(
+        user_input="你登录刷命令",
+        workspace_id="test",
+    ))
+
+    assert result.success
+    assert result.final_response == "要连接哪台设备、执行什么检查？"
+    assert result.metadata.get("planner_skipped") is False
+    assert result.metadata.get("query_loop") is True
+    assert "requires_clarification" not in result.metadata
+    assert "skip_reason" not in result.metadata
+    assert calls
+    assert calls[0].get("tools") is not None
+    assert "<runtime_guidance trusted=\"true\">" in calls[0].get("user", "")
+    assert "Potentially missing fields" in calls[0].get("user", "")
