@@ -2,7 +2,7 @@
 
 v3.11: verifies that planner tokens do NOT leak to the user token
 channel, direct-answer / response tokens DO, and that the narrow
-fast-path classifier correctly routes simple queries.
+fast-path classifier keeps ordinary questions tool-visible.
 """
 
 import asyncio
@@ -30,14 +30,14 @@ class TestFastPathClassifier:
         d = classify_direct_answer("hello")
         assert d.enabled is True
 
-    def test_definition_gets_fast_path(self):
+    def test_definition_uses_tool_visible_runtime(self):
         d = classify_direct_answer("解释一下 OSPF 是什么")
-        assert d.enabled is True
-        assert d.route == "simple_question"
+        assert d.enabled is False
+        assert d.reason.startswith("simple_question_tool_choice")
 
-    def test_what_is_fast_path(self):
+    def test_what_is_uses_tool_visible_runtime(self):
         d = classify_direct_answer("NAT 是什么")
-        assert d.enabled is True
+        assert d.enabled is False
 
     def test_explicit_web_search_rejects_fast_path(self):
         d = classify_direct_answer("我先测试你的联网搜索，联网搜索一下什么是 K8s")
@@ -60,13 +60,13 @@ class TestFastPathClassifier:
         d = classify_direct_answer("ping 8.8.8.8")
         assert d.enabled is False
 
-    def test_translate_fast_path(self):
+    def test_translate_uses_tool_visible_runtime(self):
         d = classify_direct_answer("翻译这段英语")
-        assert d.enabled is True
+        assert d.enabled is False
 
-    def test_rewrite_fast_path(self):
+    def test_rewrite_uses_tool_visible_runtime(self):
         d = classify_direct_answer("帮我润色一下这段话")
-        assert d.enabled is True
+        assert d.enabled is False
 
     def test_empty_input(self):
         d = classify_direct_answer("")
@@ -80,9 +80,9 @@ class TestFastPathClassifier:
     # ── v3.11.1: troubleshooting-intent boundary tests ──────────────
 
     def test_ospf_definition(self):
-        """'解释一下 OSPF 是什么' is a pure definition → fast path."""
+        """'解释一下 OSPF 是什么' is ordinary QA → tool-visible runtime."""
         d = classify_direct_answer("解释一下 OSPF 是什么")
-        assert d.enabled is True
+        assert d.enabled is False
 
     def test_ospf_neighbor_down_reason(self):
         """'解释一下 OSPF 邻居起不来的原因' has troubleshooting intent → full SSOT Runtime."""
@@ -90,9 +90,9 @@ class TestFastPathClassifier:
         assert d.enabled is False
 
     def test_nat_definition(self):
-        """'NAT 是什么' → fast path."""
+        """'NAT 是什么' → tool-visible runtime."""
         d = classify_direct_answer("NAT 是什么")
-        assert d.enabled is True
+        assert d.enabled is False
 
     def test_nat_policy_failure(self):
         """'NAT 策略不生效是什么原因' has network+troubleshooting → full SSOT Runtime."""
@@ -100,9 +100,9 @@ class TestFastPathClassifier:
         assert d.enabled is False
 
     def test_mtu_definition(self):
-        """'MTU 是什么' → fast path."""
+        """'MTU 是什么' → tool-visible runtime."""
         d = classify_direct_answer("MTU 是什么")
-        assert d.enabled is True
+        assert d.enabled is False
 
     def test_mtu_mismatch(self):
         """'MTU 不匹配是什么现象' has troubleshooting → full SSOT Runtime."""
@@ -119,10 +119,10 @@ class TestFastPathClassifier:
         d = classify_direct_answer("帮我分析防火墙策略不生效")
         assert d.enabled is False
 
-    def test_translate_text_fast_path(self):
-        """'翻译这段英文' → fast path (pure text task)."""
+    def test_translate_text_uses_tool_visible_runtime(self):
+        """'翻译这段英文' → tool-visible runtime; LLM may still answer directly."""
         d = classify_direct_answer("翻译这段英文")
-        assert d.enabled is True
+        assert d.enabled is False
 
     def test_translate_file(self):
         """'翻译 README.md' or '翻译这个文件' → hard-tool keyword → full SSOT Runtime."""
@@ -163,8 +163,8 @@ class TestFastPathGenerator:
         assert meta.get("route") == "greeting"
         assert meta.get("direct_answer_latency_ms", 0) > 0
 
-    def test_definition_skips_planner(self):
-        """'解释一下 OSPF 是什么' uses fast path — planner never invoked."""
+    def test_definition_uses_full_ssot_runtime(self):
+        """Ordinary definition questions stay tool-visible through SSOT Runtime."""
         planner_called = []
 
         def llm_mock(**kwargs):
@@ -185,10 +185,9 @@ class TestFastPathGenerator:
         assert result.success
 
         meta = result.metadata
-        assert meta.get("fast_path") is True
-        assert meta.get("planner_skipped") is True
-        assert meta.get("used_tools") is False
-        assert meta.get("route") == "simple_question"
+        assert meta.get("fast_path") is False
+        assert meta.get("planner_skipped") is False
+        assert len(planner_called) >= 1
 
     def test_what_does_it_mean_uses_history_without_tools(self):
         """'什么意思' after a prior result should explain history, not rerun tools."""

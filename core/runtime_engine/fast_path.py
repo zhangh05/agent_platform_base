@@ -1,8 +1,8 @@
 """Fast-path classifier — narrow-rule direct-answer routing.
 
 Purpose: skip the full SSOT Runtime planner/compiler/execution pipeline for
-queries that clearly do not need tools (greetings, definition questions,
-translation, summarisation).  The classifier is intentionally *narrow*:
+queries that clearly do not need tools (greetings and short conversation
+follow-ups).  The classifier is intentionally *narrow*:
 only patterns that are unambiguous get the fast path; everything else
 falls through to full SSOT Runtime.
 
@@ -19,7 +19,7 @@ from dataclasses import dataclass
 @dataclass
 class FastPathDecision:
     enabled: bool
-    route: str          # "greeting" | "simple_question" | "direct_answer" | ""
+    route: str          # "greeting" | "direct_answer" | ""
     reason: str
 
 
@@ -56,8 +56,8 @@ _HARD_TOOL_KEYWORDS = (
 
 
 # ── Network-domain keywords (protocols, devices, concepts) ────────
-# Alone these do NOT block fast path (e.g. "NAT 是什么" is fine).
-# Combined with troubleshooting keywords they DO block.
+# Kept for troubleshooting-boundary documentation/tests. Ordinary network
+# definitions now go through the tool-visible runtime as well.
 
 _NETWORK_KEYWORDS = (
     "OSPF", "BGP", "ISIS", "SRv6", "MTU", "NAT", "VLAN",
@@ -167,21 +167,19 @@ def classify_direct_answer(user_input: str) -> FastPathDecision:
 
     Returns:
         FastPathDecision with ``enabled=True`` only for clear-cut
-        non-tool scenarios (greetings, definition questions, etc.).
+        non-tool scenarios (greetings and short conversation follow-ups).
 
     Decision tree:
       1. Empty → full SSOT Runtime
       2. Greeting (short) → fast path
-      3. Simple-question whitelist matched?
-         a. Hard-tool keyword in input → full SSOT Runtime
-         b. Network + troubleshooting combo → full SSOT Runtime
-         c. Otherwise → fast path
+      3. Simple-question whitelist matched? → full SSOT Runtime
+         The LLM sees the tool catalog and decides whether a tool is useful.
       4. No whitelist match → full SSOT Runtime
 
     This ordering prevents:
       - "解释一下 OSPF 邻居起不来的原因"  → fast-path blocked (network+troubleshooting)
       - "帮我分析防火墙策略不生效"        → fast-path blocked (troubleshooting)
-      - "NAT 是什么 / OSPF 是什么"        → fast path (pure definition)
+      - "NAT 是什么 / OSPF 是什么"        → planner-visible; LLM may answer or call tools
     """
     text = (user_input or "").strip()
     if not text:
@@ -232,8 +230,10 @@ def classify_direct_answer(user_input: str) -> FastPathDecision:
         )
 
     # 3c. Pure simple question (definition, translation, etc.)
-    #     with no tool/troubleshooting intent → fast path.
+    #     still goes through SSOT Runtime so the LLM can choose whether
+    #     tools are helpful. Agent value comes from tool-visible judgment,
+    #     not from pre-routing ordinary questions away from tools.
     return FastPathDecision(
-        enabled=True, route="simple_question",
-        reason=f"simple question pattern: {matched_pat}",
+        enabled=False, route="",
+        reason=f"simple_question_tool_choice: {matched_pat}",
     )
