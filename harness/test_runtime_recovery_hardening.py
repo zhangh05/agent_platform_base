@@ -16,6 +16,42 @@ from agent.llm.schemas import LLMMessage, LLMToolCall
 from agent.runtime.turn_persistence import _history_tool_context
 
 
+def test_guessed_docx_image_path_is_repaired_to_managed_attachment_action():
+    loop = QueryLoop(SSOTRuntimeConfig(), {}, None)
+    ctx = StatelessContext(
+        workspace_id="default", session_id="s1", request_id="r1", user_input="解释图片",
+        extras={"attachments": [{
+            "file_id": "file_docx", "kind": "file",
+            "mime_type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        }]},
+    )
+    nodes = [ExecutionNode(
+        id="call-1", tool="workspace.file",
+        args={"action": "read_image", "filepath": "data/docx_images/image4.png"},
+    )]
+
+    loop._repair_guessed_document_image_paths(ctx, nodes)
+
+    assert nodes[0].args == {
+        "action": "extract_document_image", "file_id": "file_docx", "image_index": 4,
+    }
+    assert ctx.extras["attachment_path_repairs"][0]["from"] == "guessed_docx_image_path"
+
+
+def test_non_web_tool_fallback_never_exposes_internal_tool_transcript():
+    from core.runtime_engine.query_loop import StreamingToolResult
+
+    loop = QueryLoop(SSOTRuntimeConfig(), {}, None)
+    text = loop._build_tool_result_fallback(None, [StreamingToolResult(
+        tool_name="workspace.file", call_id="call-1", ok=False, output={},
+        error="file not found: data/docx_images/image4.png",
+    )])
+
+    assert "data/docx_images" not in text
+    assert "workspace.file" not in text
+    assert "可靠答复" in text
+
+
 def test_malformed_tool_arguments_become_recoverable_validation_feedback():
     loop = QueryLoop.__new__(QueryLoop)
     call = loop._parse_tool_calls([

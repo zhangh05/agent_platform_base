@@ -58,7 +58,21 @@ def run_ssot_turn(
 
     try:
         from backend.core.chat_attachments import build_attachment_runtime_guidance
-        attachment_guidance = build_attachment_runtime_guidance(metadata_in.get("attachments"))
+        # Follow-up turns do not repeat an upload. Keep the latest managed file
+        # references available as trusted runtime metadata so the model can reuse
+        # the FileStore id instead of hallucinating a transient workspace path.
+        current_attachments = list(metadata_in.get("attachments") or [])
+        historical_attachments = _recent_session_attachments(session)
+        known_attachments = _active_attachment_references(
+            workspace_id,
+            _merge_attachment_references(
+            current_attachments,
+            historical_attachments,
+            ),
+        )
+        if known_attachments:
+            metadata_in["attachments"] = known_attachments
+        attachment_guidance = build_attachment_runtime_guidance(known_attachments)
         if attachment_guidance:
             metadata_in["runtime_guidance"] = attachment_guidance
     except Exception:
@@ -1111,6 +1125,75 @@ def _build_history_block(
     except Exception:
         _LOG.debug("conversation history block build failed", exc_info=True)
         return ""
+
+
+def _recent_session_attachments(session, *, limit: int = 8) -> list[dict[str, Any]]:
+    """Return recent user attachment references for a same-session follow-up.
+
+    Only FileStore metadata already persisted with a user message is reused.
+    This is not a filesystem lookup and never revives files from another
+    workspace or session.
+    """
+    workspace_id = str(getattr(session, "workspace_id", "") or "")
+    session_id = str(getattr(session, "session_id", "") or "")
+    if not workspace_id or not session_id:
+        return []
+    try:
+        from storage.message_store import SessionMessageStore
+
+        items: list[dict[str, Any]] = []
+        for message in reversed(SessionMessageStore(session_id=session_id, ws_id=workspace_id).get_messages()):
+            if str(message.get("role") or "") != "user":
+                continue
+            raw = (message.get("metadata") or {}).get("attachments") or []
+            if isinstance(raw, list):
+                items.extend(item for item in raw if isinstance(item, dict))
+            if len(items) >= limit:
+                break
+        return items[:limit]
+    except Exception:
+        _LOG.debug("recent attachment lookup failed", exc_info=True)
+        return []
+
+
+def _merge_attachment_references(*groups: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Deduplicate validated attachment metadata while retaining caller order."""
+    merged: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for group in groups:
+        for item in group:
+            file_id = str(item.get("file_id") or "").strip()
+            if not file_id or file_id in seen:
+                continue
+            seen.add(file_id)
+            merged.append(dict(item))
+            if len(merged) >= 8:
+                return merged
+    return merged
+
+
+def _active_attachment_references(
+    workspace_id: str,
+    attachments: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Keep only active, current-workspace FileStore records for reuse."""
+    if not workspace_id:
+        return []
+    try:
+        from backend.core.chat_attachments import normalize_chat_attachments
+
+        active: list[dict[str, Any]] = []
+        for attachment in attachments:
+            try:
+                active.extend(normalize_chat_attachments(workspace_id, [attachment]))
+            except ValueError:
+                # A historic message may reference a file the user removed.
+                # It must never become a stale trusted handle in a later turn.
+                continue
+        return active
+    except Exception:
+        _LOG.debug("attachment revalidation failed", exc_info=True)
+        return []
 
 
 def _load_context_messages(session) -> list[dict[str, str]]:

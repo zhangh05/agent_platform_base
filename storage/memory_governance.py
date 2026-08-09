@@ -402,7 +402,11 @@ class MemoryWriteGate:
                         "warnings": skipped}
             else:
                 score = int(candidate.metadata.get("llm_score", 0) or 0)
-                auto_safe_types = {"semantic_fact", "episodic_case", "procedural_rule"}
+                # A generated procedural instruction can easily turn one
+                # task's transient recovery tactic into a workspace-wide rule.
+                # Keep it pending until a human confirms it; verified tools
+                # may establish facts and cases, not standing operating policy.
+                auto_safe_types = {"semantic_fact", "episodic_case"}
                 authority = str(candidate.metadata.get("authority") or "")
                 if (
                     is_subagent

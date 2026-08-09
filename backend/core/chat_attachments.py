@@ -76,9 +76,13 @@ def build_attachment_runtime_guidance(attachments: Any) -> str:
     if not files:
         return ""
     return (
-        "Trusted attachment references for this turn: " + ", ".join(files) + ". "
-        "For each non-image attachment needed for the request, first call "
-        "workspace__file(action=\"extract_document\", file_id=...). "
-        "Do not guess a path, use workspace__filestore import, read a binary "
-        "document as text, or use exec to parse the attachment."
+        "Trusted managed attachment references: " + ", ".join(files) + ". "
+        "These file_id values are the only authority for this attachment, including "
+        "follow-up questions in the same conversation. For each non-image attachment "
+        "needed for the request, first call workspace__file(action=\"extract_document\", "
+        "file_id=...). For a DOCX embedded image, use workspace__file(action="
+        "\"extract_document_image\", file_id=..., image_index=...) after the document "
+        "has established the image count. Never guess a workspace path or filename "
+        "such as data/docx_images/imageN.png; never use glob, read_image, import, or "
+        "exec to locate a managed attachment or its embedded images."
     )

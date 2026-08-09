@@ -52,6 +52,8 @@ def test_file_attachment_guidance_is_trusted_and_uses_canonical_extract_action()
     assert "file_manual" in guidance
     assert "file_image" not in guidance
     assert 'workspace__file(action="extract_document"' in guidance
+    assert "extract_document_image" in guidance
+    assert "data/docx_images/imageN.png" in guidance
 
 
 def test_websocket_attachment_validation_uses_authenticated_user_scope(monkeypatch, tmp_path):

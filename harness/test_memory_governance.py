@@ -136,6 +136,23 @@ class TestAuthorityGate:
         assert result["ok"] is True
         assert result["status"] == "pending"
 
+    def test_verified_agent_procedure_stays_pending_for_human_confirmation(self, isolated_memory):
+        record = MemoryRecord(
+            workspace_id="ws_procedure_confirmation",
+            memory_type="procedural_rule",
+            source="agent_suggestion",
+            content="For DOCX images, use the managed attachment id.",
+            summary="DOCX image extraction procedure",
+            metadata={
+                "memory_key": "file_analysis.docx_images",
+                "authority": "verified_tool",
+                "authority_rank": 70,
+                "llm_score": 5,
+                "llm_keep": True,
+            },
+        )
+        assert MemoryWriteGate().write(record)["status"] == "pending"
+
     def test_subagent_never_activates(self, isolated_memory):
         record = MemoryRecord(
             workspace_id="ws_subagent",

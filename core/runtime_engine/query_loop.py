@@ -1460,7 +1460,11 @@ class QueryLoop:
                         err_lower = str(r.error).lower()
                         # Tool not found (wrong name)
                         if "not found" in err_lower:
-                            key = f"not_found:{r.tool_name}"
+                            # Different missing paths are different mistakes.
+                            # Treating all of them as one repeated failure turns
+                            # a single bad batch into a false doom-loop before
+                            # the recovery instruction can take effect.
+                            key = f"not_found:{r.tool_name}:{' '.join(err_lower.split())[:180]}"
                             failure_counts[key] = failure_counts.get(key, 0) + 1
                             if failure_counts[key] >= 3:
                                 return finish(
@@ -1662,7 +1666,11 @@ class QueryLoop:
         """
         try:
             system_prompt, stream_scope, stream_to_user = self._llm_call_mode(messages, ctx)
-            tools_for_call = None if self._is_response_only(messages) else self._cached_tools
+            # Response nudges are an instruction to synthesize now, not a
+            # second fast-path or capability downgrade. Every LLM turn keeps
+            # the same visible tool surface; the model may still choose a
+            # necessary safe verification action.
+            tools_for_call = self._cached_tools
             if self._llm_invoke is not None:
                 raw = await asyncio.wait_for(
                     asyncio.to_thread(
@@ -1932,6 +1940,13 @@ class QueryLoop:
         and approval boundaries directly on the current call batch.
         """
         nodes = self._tool_calls_to_nodes(tool_calls)
+        # Older prompts and model priors sometimes invent paths such as
+        # data/docx_images/image2.png. Those files are deliberately not part of
+        # the workspace API. When a managed DOCX attachment is in this turn's
+        # trusted context, repair that legacy shape into the canonical action
+        # before validation/execution instead of letting a guessed path burn the
+        # tool budget.
+        self._repair_guessed_document_image_paths(ctx, nodes)
         from .semantic_validator import SemanticValidator
         from .pre_execution_repair import (
             PreExecutionRepairEngine,
@@ -2054,6 +2069,45 @@ class QueryLoop:
         }
 
     @staticmethod
+    def _repair_guessed_document_image_paths(
+        ctx: StatelessContext,
+        nodes: list[ExecutionNode],
+    ) -> None:
+        attachments = ctx.extras.get("attachments") or []
+        docx_ids = [
+            str(item.get("file_id") or "").strip()
+            for item in attachments
+            if isinstance(item, dict)
+            and "wordprocessingml.document" in str(item.get("mime_type") or "").lower()
+            and str(item.get("file_id") or "").strip()
+        ]
+        if len(docx_ids) != 1:
+            return
+        pattern = re.compile(r"(?:^|/)docx_images/image(\d+)\.(?:png|jpe?g|gif|webp)$", re.IGNORECASE)
+        repairs = []
+        for node in nodes:
+            args = dict(node.args or {})
+            if node.tool != "workspace.file" or str(args.get("action") or "") != "read_image":
+                continue
+            match = pattern.search(str(args.get("filepath") or "").strip())
+            if not match:
+                continue
+            image_index = int(match.group(1))
+            node.args = {
+                "action": "extract_document_image",
+                "file_id": docx_ids[0],
+                "image_index": image_index,
+            }
+            repairs.append({
+                "node_id": node.id,
+                "from": "guessed_docx_image_path",
+                "file_id": docx_ids[0],
+                "image_index": image_index,
+            })
+        if repairs:
+            ctx.extras.setdefault("attachment_path_repairs", []).extend(repairs)
+
+    @staticmethod
     def _tool_calls_to_nodes(tool_calls: List[LLMToolCall]) -> list[ExecutionNode]:
         from .action_alias import resolve_action_alias
 
@@ -2139,6 +2193,19 @@ class QueryLoop:
         for result in failed_results[:6]:
             error = str(result.error or "tool returned failure").replace("\n", " ")[:240]
             failures.append(f"- {result.tool_name}: {error}")
+        guessed_document_image_path = any(
+            "docx_images/image" in str(result.error or "").lower()
+            for result in failed_results
+        )
+        if guessed_document_image_path:
+            return (
+                RESPONSE_ONLY_MARKER
+                + " A guessed DOCX image path does not exist. Do not try another "
+                "data/docx_images path and do not expose this internal error. If a "
+                "managed attachment file_id is already in the trusted context, explain "
+                "that embedded images must be read through extract_document_image; "
+                "otherwise give the user a concise, actionable answer without further tools."
+            )
         return (
             "[RUNTIME TOOL RECOVERY]\n"
             "One or more tool calls failed:\n"
@@ -2467,6 +2534,18 @@ class QueryLoop:
                 warn_count += 1
             else:
                 ok_count += 1
+
+        # A generic execution transcript is not an answer.  Keep the one
+        # deliberately user-facing web-source fallback below, but never turn
+        # filesystem paths, commands, or tool names into a chat reply when the
+        # model failed to synthesize the evidence.
+        if not (results and all(r.tool_name.replace("__", ".") == "web.manage" for r in results)):
+            if fail_count:
+                return (
+                    "本次处理未能形成可靠答复，已停止继续尝试以避免重复或错误操作。"
+                    "请重新发送该请求；如果涉及附件，请保留在同一会话中。"
+                )
+            return "必要信息已获取，但模型未能生成完整答复。请重试此请求。"
 
         if results and all(r.tool_name.replace("__", ".") == "web.manage" for r in results):
             lines.append("联网处理结果：")
