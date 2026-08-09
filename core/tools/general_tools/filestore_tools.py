@@ -166,7 +166,10 @@ def handle_file_extract_document(inv, *, file_id: str = "", limit: int = 50_000)
             warnings=warnings,
         )
 
-    bounded_limit = max(1, min(int(limit or 50_000), 50_000))
+    try:
+        bounded_limit = max(1, min(int(limit or 50_000), 50_000))
+    except (TypeError, ValueError):
+        return _fail("workspace.file", "invalid_limit", file_id=file_id)
     return _ok(
         "workspace.file",
         file_id=file_id,
@@ -187,7 +190,10 @@ def handle_file_extract_document_image(inv, *, file_id: str = "", image_index: i
 
     args = getattr(inv, "arguments", None) or {}
     file_id = file_id or str(args.get("file_id") or "")
-    image_index = int(args.get("image_index", image_index) or 1)
+    try:
+        image_index = int(args.get("image_index", image_index) or 1)
+    except (TypeError, ValueError):
+        return _fail("workspace.file", "invalid_image_index", file_id=file_id)
     ws = getattr(inv, "workspace_id", None) or ""
     record = get_file_record(ws, file_id)
     if not record:
@@ -233,8 +239,11 @@ def handle_file_extract_document_images(
 
     args = getattr(inv, "arguments", None) or {}
     file_id = file_id or str(args.get("file_id") or "")
-    start_index = int(args.get("start_index", start_index) or 1)
-    limit = max(1, min(int(args.get("limit", limit) or limit), 8))
+    try:
+        start_index = int(args.get("start_index", start_index) or 1)
+        limit = max(1, min(int(args.get("limit", limit) or limit), 8))
+    except (TypeError, ValueError):
+        return _fail("workspace.file", "invalid_image_batch_range", file_id=file_id)
     ws = getattr(inv, "workspace_id", None) or ""
     record = get_file_record(ws, file_id)
     if not record:
@@ -257,12 +266,19 @@ def handle_file_extract_document_images(
     except (OSError, ValueError, zipfile.BadZipFile) as exc:
         return _fail("workspace.file", "embedded_image_extract_failed", file_id=file_id, detail=str(exc)[:200])
 
-    attachments: list[dict[str, Any]] = []
+    # Validate the whole batch before persisting anything.  Otherwise an
+    # unsupported image at the end leaves orphaned temporary records behind.
+    supported_images = {"jpg": "jpeg", "jpeg": "jpeg", "png": "png", "gif": "gif", "webp": "webp"}
+    prepared: list[tuple[int, str, bytes, str, str]] = []
     for index, name, raw in extracted:
         suffix = Path(name).suffix.lower().lstrip(".")
-        kind = {"jpg": "jpeg", "jpeg": "jpeg", "png": "png", "gif": "gif", "webp": "webp"}.get(suffix)
+        kind = supported_images.get(suffix)
         if not kind:
             return _fail("workspace.file", "unsupported_embedded_image_format", file_id=file_id, image_index=index)
+        prepared.append((index, name, raw, suffix, kind))
+
+    attachments: list[dict[str, Any]] = []
+    for index, name, raw, suffix, kind in prepared:
         image_record = import_user_upload(
             ws, BytesIO(raw), f"{Path(str(record.get('original_name') or 'document')).stem}_image_{index}.{suffix}",
             logical_type="tmp", file_kind=kind, binary=True, source="document_image_extract",
