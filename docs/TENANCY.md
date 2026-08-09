@@ -21,10 +21,9 @@ compatibility, but the management API creates ordinary users only.
 Ordinary users have three assignable roles: `viewer`, `operator`, and `developer`.
 `Admin` explicitly grants one or more logical workspaces and the first grant is the
 user's default workspace. Business data is then isolated by the composite key
-`(username, workspace_id)`: two users in the same workspace do not share sessions,
-runs, memory, knowledge, artifacts, files, or data-center results. The configured
-administrator retains the legacy workspace data path so an identity-mode upgrade does
-not hide existing production data. Frontend session selection, conversation cache,
+`(username, workspace_id)`: including `Admin`, two users in the same workspace do
+not share sessions, runs, memory, knowledge, artifacts, files, or data-center
+results. Frontend session selection, conversation cache,
 drafts, and diagnostics use the same user/workspace scope. Accounts can be disabled
 without deleting their data, and access changes do not require a password reset. API
 tokens remain platform-level service credentials and should be restricted and rotated.

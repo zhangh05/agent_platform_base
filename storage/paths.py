@@ -34,17 +34,15 @@ def user_runtime_root() -> Path:
 
     Runtime-wide service state remains in ``runtime_root``. User-visible
     runtime records (for example approval audits) belong below this root but
-    must not be shared between authenticated users. The configured legacy
-    administrator deliberately retains the pre-identity location.
+    must not be shared between authenticated users.
     """
     from storage.principal import (
         current_storage_principal,
         principal_storage_key,
-        uses_legacy_admin_storage,
     )
 
     principal = current_storage_principal()
-    if not principal or uses_legacy_admin_storage(principal):
+    if not principal:
         return runtime_root()
     return runtime_root() / "users" / principal_storage_key(principal)
 
@@ -55,11 +53,10 @@ def workspace_root(workspace_id: str) -> Path:
     from storage.principal import (
         current_storage_principal,
         principal_storage_key,
-        uses_legacy_admin_storage,
     )
     logical_root = get_workspace_root() / validate_workspace_id(workspace_id)
     principal = current_storage_principal()
-    if not principal or uses_legacy_admin_storage(principal):
+    if not principal:
         return logical_root
     return logical_root / "users" / principal_storage_key(principal)
 

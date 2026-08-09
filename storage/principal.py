@@ -1,16 +1,14 @@
 """Request-scoped storage identity.
 
-Business records are isolated by the pair ``(username, workspace_id)``.  The
-configured administrator keeps the legacy workspace path so existing data
-remains visible after identity support is enabled; ordinary users are stored
-under a stable per-user directory inside each workspace.
+Business records are isolated by the pair ``(username, workspace_id)``. Every
+authenticated user, including the configured administrator, is stored under a
+stable per-user directory inside each workspace.
 """
 
 from __future__ import annotations
 
 import contextvars
 import hashlib
-import os
 import re
 from contextlib import contextmanager
 from functools import wraps
@@ -53,11 +51,6 @@ def principal_storage_key(username: str) -> str:
     safe = re.sub(r"[^A-Za-z0-9_.-]+", "_", value).strip("._-") or "user"
     digest = hashlib.sha256(value.casefold().encode("utf-8")).hexdigest()[:12]
     return f"{safe[:40]}-{digest}"
-
-
-def uses_legacy_admin_storage(username: str) -> bool:
-    configured = os.environ.get("AGENT_PLATFORM_LOGIN_USERNAME", "").strip()
-    return bool(configured and username and username.casefold() == configured.casefold())
 
 
 def bind_storage_principal(func):
