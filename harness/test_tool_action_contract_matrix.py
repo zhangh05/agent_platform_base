@@ -2,12 +2,31 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from core.runtime_engine.models import ExecutionNode
 from core.runtime_engine.semantic_validator import SemanticValidator
 from core.tools.action_requirements import ACTION_REQUIRED_ALL, ACTION_REQUIRED_ANY
 from core.tools.canonical_registry import CANONICAL_REGISTRY
+
+
+def _registered_action_requirements() -> tuple[dict, dict]:
+    """Merge domain-neutral base requirements with installed extensions."""
+    required_all = dict(ACTION_REQUIRED_ALL)
+    required_any = dict(ACTION_REQUIRED_ANY)
+    from extensions.runtime import get_extension_tool_specs
+    for spec, _handler in get_extension_tool_specs():
+        requirements = (spec.metadata or {}).get("action_requirements") or {}
+        for action, fields in (requirements.get("all") or {}).items():
+            required_all[(spec.tool_id, action)] = tuple(fields)
+        for action, groups in (requirements.get("any") or {}).items():
+            required_any[(spec.tool_id, action)] = tuple(tuple(group) for group in groups)
+    return required_all, required_any
+
+
+REGISTERED_REQUIRED_ALL, REGISTERED_REQUIRED_ANY = _registered_action_requirements()
 
 
 def _action_enums(*, include_extensions: bool = True) -> dict[str, set[str]]:
@@ -46,6 +65,7 @@ def _validator_for_tool(tool_id: str) -> SemanticValidator:
             "args_schema": spec.input_schema,
             "description": spec.description,
             "risk_level": spec.risk_level,
+            "metadata": spec.metadata,
         }
     return SemanticValidator(registry)
 
@@ -61,16 +81,37 @@ def test_alias_canonical_actions_equal_public_schema_actions():
 
 def test_action_requirements_reference_public_actions_and_arguments():
     public = _action_enums()
-    for requirements in (ACTION_REQUIRED_ALL, ACTION_REQUIRED_ANY):
+    for requirements, is_all in ((REGISTERED_REQUIRED_ALL, True), (REGISTERED_REQUIRED_ANY, False)):
         for (tool_id, action), fields in requirements.items():
             assert tool_id in public
             assert action in public[tool_id], (tool_id, action)
             properties = _tool_properties(tool_id)
-            flattened = fields if requirements is ACTION_REQUIRED_ALL else (
+            flattened = fields if is_all else (
                 field for alternatives in fields for field in alternatives
             )
             for field_name in flattened:
                 assert field_name in properties, (tool_id, action, field_name)
+
+
+def test_base_action_requirements_remain_domain_neutral():
+    assert all(not tool_id.startswith("network.operations.") for tool_id, _action in ACTION_REQUIRED_ALL)
+    assert all(not tool_id.startswith("network.operations.") for tool_id, _action in ACTION_REQUIRED_ANY)
+    core_root = Path(__file__).resolve().parents[1] / "core"
+    assert "network.operations." not in "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in core_root.rglob("*.py")
+    )
+
+
+def test_extension_action_requirements_remain_with_the_extension():
+    from extensions.runtime import get_extension_tool_specs
+
+    specs = {spec.tool_id: spec for spec, _handler in get_extension_tool_specs()}
+    device = specs["network.operations.device.manage"]
+    requirements = device.metadata["action_requirements"]
+
+    assert requirements["any"]["probe"] == (("asset_id", "host"),)
+    assert requirements["any"]["read"] == (("asset_id", "host"),)
 
 
 def test_public_schemas_expose_handler_consumed_arguments():
@@ -100,16 +141,16 @@ def test_public_schemas_expose_handler_consumed_arguments():
     "tool_id,action,field_name",
     [
         (tool_id, action, field_name)
-        for (tool_id, action), fields in ACTION_REQUIRED_ALL.items()
+        for (tool_id, action), fields in REGISTERED_REQUIRED_ALL.items()
         for field_name in fields
     ],
 )
 def test_each_required_argument_is_rejected_when_missing(tool_id, action, field_name):
     args = {"action": action}
-    for required in ACTION_REQUIRED_ALL[(tool_id, action)]:
+    for required in REGISTERED_REQUIRED_ALL[(tool_id, action)]:
         if required != field_name:
             args[required] = _sample_value(required)
-    for alternatives in ACTION_REQUIRED_ANY.get((tool_id, action), ()):
+    for alternatives in REGISTERED_REQUIRED_ANY.get((tool_id, action), ()):
         args[alternatives[0]] = _sample_value(alternatives[0])
 
     result = _validator_for_tool(tool_id).validate([
@@ -124,15 +165,15 @@ def test_each_required_argument_is_rejected_when_missing(tool_id, action, field_
     "tool_id,action,alternatives",
     [
         (tool_id, action, alternatives)
-        for (tool_id, action), groups in ACTION_REQUIRED_ANY.items()
+        for (tool_id, action), groups in REGISTERED_REQUIRED_ANY.items()
         for alternatives in groups
     ],
 )
 def test_each_required_alternative_group_is_rejected_when_empty(tool_id, action, alternatives):
     args = {"action": action}
-    for required in ACTION_REQUIRED_ALL.get((tool_id, action), ()):
+    for required in REGISTERED_REQUIRED_ALL.get((tool_id, action), ()):
         args[required] = _sample_value(required)
-    for other_group in ACTION_REQUIRED_ANY.get((tool_id, action), ()):
+    for other_group in REGISTERED_REQUIRED_ANY.get((tool_id, action), ()):
         if other_group != alternatives:
             args[other_group[0]] = _sample_value(other_group[0])
 
@@ -208,9 +249,9 @@ def test_representative_read_actions_return_non_generic_runtime_summaries(temp_d
 )
 def test_semantic_validator_rejects_wrong_public_argument_types(tool_id, action, field_name, value):
     args = {"action": action, field_name: value}
-    for required in ACTION_REQUIRED_ALL.get((tool_id, action), ()):
+    for required in REGISTERED_REQUIRED_ALL.get((tool_id, action), ()):
         args.setdefault(required, _sample_value(required))
-    for alternatives in ACTION_REQUIRED_ANY.get((tool_id, action), ()):
+    for alternatives in REGISTERED_REQUIRED_ANY.get((tool_id, action), ()):
         args.setdefault(alternatives[0], _sample_value(alternatives[0]))
 
     result = SemanticValidator().validate([

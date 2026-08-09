@@ -527,6 +527,7 @@ def _build_ssot_runtime_tool_registry(allowed_tool_ids=None) -> dict[str, dict[s
             "category": item.get("category") or "",
             "risk_level": item.get("risk_level") or "low",
             "action_profiles": profiles,
+            "metadata": item.get("metadata") or {},
         }
     return tools
 
@@ -544,6 +545,7 @@ def _build_runtime_context_budget(registry: dict[str, dict[str, Any]]):
             "input_schema": meta.get("args_schema", {}),
             "risk_level": meta.get("risk_level", "low"),
             "action_profiles": meta.get("action_profiles", []),
+            "metadata": meta.get("metadata", {}),
         })
         for tool_id, meta in sorted(registry.items())
     ]

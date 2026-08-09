@@ -70,14 +70,6 @@ ACTION_REQUIRED_ALL: dict[tuple[str, str], tuple[str, ...]] = {
     ("workspace.artifact", "delete"): ("artifact_id",),
     ("workspace.filestore", "references"): ("file_id",),
     ("workspace.filestore", "import"): ("filepath",),
-    ("network.operations.assets_write", "save"): ("asset",),
-    ("network.operations.assets_write", "delete"): ("asset_id",),
-    ("network.operations.inspection", "run"): ("asset_ids",),
-    ("network.operations.inspection", "get"): ("task_id",),
-    ("network.operations.inspection", "cancel"): ("task_id",),
-    ("network.operations.baseline", "create"): ("task_id",),
-    ("network.operations.baseline", "confirm"): ("baseline_id",),
-    ("network.operations.baseline", "diff"): ("task_id",),
 }
 
 
@@ -89,8 +81,6 @@ ACTION_REQUIRED_ANY: dict[tuple[str, str], tuple[tuple[str, ...], ...]] = {
     ("knowledge.manage", "read"): (("chunk_id", "source_id"),),
     ("agent.manage", "get"): (("subtask_id", "child_session_id"),),
     ("agent.manage", "merge"): (("subtask_id", "child_session_id"),),
-    ("network.operations.device.manage", "probe"): (("asset_id", "host"),),
-    ("network.operations.device.manage", "read"): (("asset_id", "host"),),
 }
 
 

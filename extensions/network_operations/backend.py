@@ -250,6 +250,9 @@ def register():
                 "category": "ops",
                 "risk_level": "medium",
                 "permission_action": "write",
+                "action_requirements": {
+                    "all": {"save": ["asset"], "delete": ["asset_id"]},
+                },
                 "handler": assets_write,
                 "input_schema": {
                     "type": "object",
@@ -291,6 +294,9 @@ def register():
                 "category": "ops",
                 "risk_level": "medium",
                 "permission_action": "network",
+                "action_requirements": {
+                    "any": {"probe": [["asset_id", "host"]], "read": [["asset_id", "host"]]},
+                },
                 "handler": device_manage,
                 "timeout_seconds": 90,
                 "input_schema": {
@@ -322,6 +328,9 @@ def register():
                 "category": "ops",
                 "risk_level": "medium",
                 "permission_action": "network",
+                "action_requirements": {
+                    "all": {"run": ["asset_ids"], "get": ["task_id"], "cancel": ["task_id"]},
+                },
                 "handler": inspection,
                 "timeout_seconds": 120,
                 "input_schema": {
@@ -343,6 +352,9 @@ def register():
                 "category": "ops",
                 "risk_level": "medium",
                 "permission_action": "write",
+                "action_requirements": {
+                    "all": {"create": ["task_id"], "confirm": ["baseline_id"], "diff": ["task_id"]},
+                },
                 "handler": baseline,
                 "input_schema": {
                     "type": "object",

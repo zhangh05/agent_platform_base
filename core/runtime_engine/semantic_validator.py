@@ -140,9 +140,13 @@ class SemanticValidator:
         contract,
         result: SemanticValidationResult,
     ) -> None:
-        if contract is None:
+        if contract is not None:
+            schema = contract.input_schema
+        else:
+            registry_item = self._registry.get(node.tool) or {}
+            schema = registry_item.get("args_schema") or registry_item.get("input_schema") or {}
+        if not isinstance(schema, dict):
             return
-        schema = contract.input_schema
         required = schema.get("required", [])
         properties = schema.get("properties", {})
 
@@ -249,7 +253,15 @@ class SemanticValidator:
         action = str(node.args.get("action") or "shell").strip().lower()
         key = (node.tool, action)
 
-        for field_name in ACTION_REQUIRED_ALL.get(key, ()):
+        registry_item = self._registry.get(node.tool) or {}
+        metadata = registry_item.get("metadata") or {}
+        requirements = metadata.get("action_requirements") or {}
+        extension_all = requirements.get("all") if isinstance(requirements, dict) else {}
+        extension_any = requirements.get("any") if isinstance(requirements, dict) else {}
+        extension_all = extension_all if isinstance(extension_all, dict) else {}
+        extension_any = extension_any if isinstance(extension_any, dict) else {}
+
+        for field_name in tuple(ACTION_REQUIRED_ALL.get(key, ())) + tuple(extension_all.get(action) or ()):
             if not _has_argument_value(node.args, field_name):
                 result.errors.append(SemanticError(
                     node_id=node.id,
@@ -257,7 +269,7 @@ class SemanticValidator:
                     message=f"Node '{node.id}' missing required arg '{field_name}' for {node.tool} action={action}",
                 ))
 
-        for alternatives in ACTION_REQUIRED_ANY.get(key, ()):
+        for alternatives in tuple(ACTION_REQUIRED_ANY.get(key, ())) + tuple(extension_any.get(action) or ()):
             if not any(_has_argument_value(node.args, field_name) for field_name in alternatives):
                 result.errors.append(SemanticError(
                     node_id=node.id,

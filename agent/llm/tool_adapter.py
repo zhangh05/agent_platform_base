@@ -115,7 +115,7 @@ def _build_tool_description(tool: dict, metadata: dict, canonical_tool_id: str) 
     boundary = _format_action_profiles(tool.get("action_profiles") or metadata.get("action_profiles"))
     if boundary:
         parts.append(f"Action boundaries: {boundary}")
-    requirements = _format_action_requirements(canonical_tool_id)
+    requirements = _format_action_requirements(canonical_tool_id, metadata)
     if requirements:
         parts.append(f"Required arguments by action: {requirements}")
     return " ".join(p for p in parts if p)[:1200]
@@ -184,24 +184,30 @@ def _default_param_description(name: str) -> str:
     return _PARAM_DESCRIPTIONS.get(str(name or ""), "")
 
 
-def _format_action_requirements(tool_id: str) -> str:
+def _format_action_requirements(tool_id: str, metadata: dict | None = None) -> str:
     """Expose conditional action requirements in the LLM-visible description."""
     try:
         from core.tools.action_requirements import ACTION_REQUIRED_ALL, ACTION_REQUIRED_ANY
     except Exception:
         return ""
 
+    requirements = (metadata or {}).get("action_requirements") or {}
+    extension_all = requirements.get("all") if isinstance(requirements, dict) else {}
+    extension_any = requirements.get("any") if isinstance(requirements, dict) else {}
+    extension_all = extension_all if isinstance(extension_all, dict) else {}
+    extension_any = extension_any if isinstance(extension_any, dict) else {}
+
     chunks: list[str] = []
     actions = sorted({
         action for (tid, action) in set(ACTION_REQUIRED_ALL) | set(ACTION_REQUIRED_ANY)
         if tid == tool_id
-    })
+    } | set(extension_all) | set(extension_any))
     for action in actions:
         bits: list[str] = []
-        all_fields = ACTION_REQUIRED_ALL.get((tool_id, action), ())
+        all_fields = tuple(ACTION_REQUIRED_ALL.get((tool_id, action), ())) + tuple(extension_all.get(action) or ())
         if all_fields:
             bits.append("+".join(all_fields))
-        for alternatives in ACTION_REQUIRED_ANY.get((tool_id, action), ()):
+        for alternatives in tuple(ACTION_REQUIRED_ANY.get((tool_id, action), ())) + tuple(extension_any.get(action) or ()):
             bits.append(" or ".join(alternatives))
         if bits:
             chunks.append(f"{action}=>{'; '.join(bits)}")

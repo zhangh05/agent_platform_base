@@ -98,6 +98,26 @@ def _build_tools(manifest: ExtensionManifest, contribution: dict[str, Any]) -> t
             raise ExtensionValidationError(
                 f"tool {tool_id} requires a declared {permission_action} permission"
             )
+        action_requirements = item.get("action_requirements") or {}
+        if not isinstance(action_requirements, dict):
+            raise ExtensionValidationError(f"action_requirements must be an object: {tool_id}")
+        required_all = action_requirements.get("all") or {}
+        required_any = action_requirements.get("any") or {}
+        if not isinstance(required_all, dict) or not isinstance(required_any, dict):
+            raise ExtensionValidationError(f"action_requirements all/any must be objects: {tool_id}")
+        properties = (item.get("input_schema") or {}).get("properties") or {}
+        actions = set((properties.get("action") or {}).get("enum") or [])
+        for action, fields in required_all.items():
+            if action not in actions or not isinstance(fields, (list, tuple)):
+                raise ExtensionValidationError(f"invalid action requirement for {tool_id}: {action}")
+            if any(str(field) not in properties for field in fields):
+                raise ExtensionValidationError(f"unknown action requirement field for {tool_id}: {action}")
+        for action, groups in required_any.items():
+            if action not in actions or not isinstance(groups, (list, tuple)):
+                raise ExtensionValidationError(f"invalid action alternative requirement for {tool_id}: {action}")
+            for group in groups:
+                if not isinstance(group, (list, tuple)) or not group or any(str(field) not in properties for field in group):
+                    raise ExtensionValidationError(f"invalid action alternative fields for {tool_id}: {action}")
         seen.add(tool_id)
 
         def workspace_scoped_handler(invocation: ToolInvocation, *, _handler=handler) -> dict:
@@ -133,7 +153,16 @@ def _build_tools(manifest: ExtensionManifest, contribution: dict[str, Any]) -> t
             requires_approval=requires_approval,
             callable_by_llm=bool(item.get("callable_by_llm", True)),
             permission_action=permission_action,
-            metadata={"extension_id": manifest.extension_id},
+            metadata={
+                "extension_id": manifest.extension_id,
+                "action_requirements": {
+                    "all": {str(action): tuple(str(field) for field in fields) for action, fields in required_all.items()},
+                    "any": {
+                        str(action): tuple(tuple(str(field) for field in group) for group in groups)
+                        for action, groups in required_any.items()
+                    },
+                },
+            },
         ), workspace_scoped_handler))
     missing = set(manifest.tools) - seen
     if missing:

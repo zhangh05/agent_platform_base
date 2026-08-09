@@ -737,5 +737,6 @@ def to_openai_tools() -> list[dict[str, Any]]:
                 category=spec.category,
                 base_permission=spec.permission_action,
             ),
+            "metadata": spec.metadata,
         }))
     return out

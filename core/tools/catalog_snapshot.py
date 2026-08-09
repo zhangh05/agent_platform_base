@@ -45,9 +45,6 @@ _EXEC_ACTIONS = {"shell", "python", "slash", "background", "stream"}
 _NETWORK_ACTIONS = {"fetch", "weather", "deep_search"}
 _NETWORK_TOOLS = {
     "web.manage",
-    "network.operations.device_probe",
-    "network.operations.device.manage",
-    "network.operations.inspection",
 }
 
 
@@ -59,6 +56,10 @@ def _action_permission(tool_id: str, action: str, base_permission: str) -> str:
         tool_id in _NETWORK_TOOLS
         or action in _NETWORK_ACTIONS
     ):
+        return "network"
+    # Extensions declare their own permission_action.  Preserve it without
+    # naming any product extension in the base catalog helper.
+    if base_permission == "network":
         return "network"
     if action in _WRITE_ACTIONS or action in {"delete", "remove", "purge", "destroy", "drop", "rewind", "session_rewind"}:
         return "write"
