@@ -570,9 +570,11 @@ def delete_artifact(workspace_id: str, artifact_id: str, hard: bool = False) -> 
         rec.lifecycle = "deleted"
         rec.updated_at = now_iso()
         _save_artifact_record(rec)
-        if rec.file_id:
-            from storage.file_store import soft_delete_file
-            soft_delete_file(workspace_id, rec.file_id)
+        # FileStore ownership is independent from an artifact projection: a
+        # file can be attached to another artifact, a conversation, or a
+        # knowledge source.  Soft-deleting it here made a recoverable artifact
+        # delete silently hide still-live data.  Keep the payload intact; the
+        # artifact lifecycle is the only state this action changes.
     from storage.events import publish
     publish(workspace_id, "artifact", "deleted", artifact_id)
     return True

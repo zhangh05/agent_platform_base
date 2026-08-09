@@ -150,6 +150,21 @@ class TestRetry:
         assert result["ok"] is False
         assert result.get("retry_not_supported") is True
 
+    def test_retry_merged_tool_is_denied_without_persisted_action(self):
+        ws = f"ws_rma_{uuid.uuid4().hex[:8]}"
+        task = TaskState.new(workspace_id=ws, session_id="s1")
+        # The manifest says safe_to_retry, but this tool also has an import
+        # action. RuntimeStep intentionally does not persist arguments.
+        task.add_step(RuntimeStep(step_id="s-import", task_id=task.task_id,
+                                  kind="tool", status="failed",
+                                  tool_id="workspace.filestore",
+                                  title="Import file"))
+        save_task(task)
+
+        result = retry_step(task.task_id, "s-import", ws)
+        assert result["ok"] is False
+        assert result.get("retry_not_supported") is True
+
     def test_retry_creates_attempt_not_overwrite(self):
         ws = f"ws_ra_{uuid.uuid4().hex[:8]}"
         task = TaskState.new(workspace_id=ws, session_id="s1")

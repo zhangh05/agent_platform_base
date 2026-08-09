@@ -105,6 +105,8 @@ def _build_tools(manifest: ExtensionManifest, contribution: dict[str, Any]) -> t
         required_any = action_requirements.get("any") or {}
         if not isinstance(required_all, dict) or not isinstance(required_any, dict):
             raise ExtensionValidationError(f"action_requirements all/any must be objects: {tool_id}")
+        approval_actions = tuple(str(action) for action in (item.get("approval_actions") or ()))
+        approval_when_truthy = tuple(str(field) for field in (item.get("approval_when_truthy") or ()))
         properties = (item.get("input_schema") or {}).get("properties") or {}
         actions = set((properties.get("action") or {}).get("enum") or [])
         for action, fields in required_all.items():
@@ -162,6 +164,8 @@ def _build_tools(manifest: ExtensionManifest, contribution: dict[str, Any]) -> t
                         for action, groups in required_any.items()
                     },
                 },
+                "approval_actions": approval_actions,
+                "approval_when_truthy": approval_when_truthy,
             },
         ), workspace_scoped_handler))
     missing = set(manifest.tools) - seen
@@ -230,7 +234,41 @@ def _manifest_root(registry: ExtensionRegistry, extension_id: str) -> Path:
 
 
 def get_extension_tool_specs() -> list[tuple[ToolSpec, Callable[[ToolInvocation], dict]]]:
-    return [item for extension in load_extensions() for item in extension.tools]
+    tools = [item for extension in load_extensions() for item in extension.tools]
+    _sync_runtime_contracts(spec for spec, _handler in tools)
+    return tools
+
+
+def _sync_runtime_contracts(specs) -> None:
+    """Make installed tools visible to the same safety gate as core tools.
+
+    Tool specs are the extension SSOT.  Without this bridge, extension calls
+    reached QueryLoop but were unknown to RiskPolicyEngine and therefore
+    skipped its common risk accounting entirely.
+    """
+    from core.runtime_engine.contracts import ToolContract, register_contract
+
+    side_effect_for_permission = {
+        "read": "read",
+        "write": "mutate_local",
+        "exec": "execute_command",
+        "network": "external_request",
+    }
+    for spec in specs:
+        register_contract(ToolContract(
+            name=spec.tool_id,
+            display_name=spec.name,
+            description=spec.description,
+            input_schema=dict(spec.input_schema or {}),
+            side_effect=side_effect_for_permission.get(spec.permission_action, "mutate_local"),
+            risk_level=spec.risk_level,
+            idempotent=spec.permission_action == "read",
+            timeout_seconds=spec.timeout_seconds,
+            max_retries=1 if spec.permission_action == "read" else 0,
+            requires_approval=spec.requires_approval,
+            approval_actions=frozenset(str(action).lower() for action in spec.metadata.get("approval_actions", ())),
+            approval_when_truthy=frozenset(str(field) for field in spec.metadata.get("approval_when_truthy", ())),
+        ))
 
 
 def register_extension_routes(app: Any) -> None:

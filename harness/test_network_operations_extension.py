@@ -144,6 +144,15 @@ def test_device_manage_is_registered_as_network_operations_extension_tool():
         assert required in properties, required
 
 
+def test_extension_tools_are_registered_with_runtime_risk_contracts():
+    from core.runtime_engine.contracts import get_contract
+
+    contract = get_contract("network.operations.device.manage")
+    assert contract is not None
+    assert contract.risk_level == "medium"
+    assert contract.side_effect == "external_request"
+
+
 def test_device_manage_is_exposed_to_llm_as_extension_tool():
     from core.tools.canonical_registry import CANONICAL_REGISTRY, to_openai_tools, to_tool_specs
 

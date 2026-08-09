@@ -143,18 +143,6 @@ def assets_write(invocation):
     return {"ok": True, "asset": service.save_asset(invocation.workspace_id, dict(asset))}
 
 
-def device_probe(invocation):
-    args = invocation.arguments or {}
-    return service.probe_asset(
-        invocation.workspace_id,
-        str(args.get("asset_id") or ""),
-        accept_host_key=bool(args.get("accept_host_key")),
-        read=bool(args.get("read")),
-        commands=args.get("commands") or [],
-        timeout=int(args.get("timeout") or 15),
-    )
-
-
 def device_manage(invocation):
     """Probe or read a network device.
 
@@ -261,6 +249,7 @@ def register():
                 "action_requirements": {
                     "all": {"save": ["asset"], "delete": ["asset_id"]},
                 },
+                "approval_actions": ["delete"],
                 "handler": assets_write,
                 "input_schema": {
                     "type": "object",
@@ -274,28 +263,6 @@ def register():
                 },
             },
             {
-                "tool_id": "network.operations.device_probe",
-                "name": "设备连接测试",
-                "description": "需要证明设备当前连通性、SSH 身份、认证或提示符时主动使用。仅操作已保存 asset_id；accept_host_key=True 才信任新指纹。read=True 只能执行只读命令，结果只证明本次探测时刻。",
-                "category": "ops",
-                "risk_level": "medium",
-                "permission_action": "network",
-                "handler": device_probe,
-                "timeout_seconds": 60,
-                "input_schema": {
-                    "type": "object",
-                    "properties": {
-                        **common,
-                        "asset_id": {"type": "string"},
-                        "accept_host_key": {"type": "boolean"},
-                        "read": {"type": "boolean"},
-                        "commands": {"type": "array", "items": {"type": "string"}},
-                        "timeout": {"type": "integer"},
-                    },
-                    "required": ["asset_id"],
-                },
-            },
-            {
                 "tool_id": "network.operations.device.manage",
                 "name": "网络设备只读探测",
                 "description": "需要设备当前证据时主动调用。probe 验证 TCP/SSH/指纹/认证/提示符；read 还执行明确的只读 commands。优先使用 asset_id；临时目标需 host 和认证参数。仅 accept_host_key=True 可信任新指纹，命令输出必须结合时间和目标标识引用。",
@@ -305,6 +272,7 @@ def register():
                 "action_requirements": {
                     "any": {"probe": [["asset_id", "host"]], "read": [["asset_id", "host"]]},
                 },
+                "approval_when_truthy": ["accept_host_key"],
                 "handler": device_manage,
                 "timeout_seconds": 90,
                 "input_schema": {
@@ -363,6 +331,7 @@ def register():
                 "action_requirements": {
                     "all": {"create": ["task_id"], "confirm": ["baseline_id"], "diff": ["task_id"]},
                 },
+                "approval_actions": ["confirm"],
                 "handler": baseline,
                 "input_schema": {
                     "type": "object",

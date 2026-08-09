@@ -9,7 +9,6 @@
   "tools": [
     "network.operations.assets_read",
     "network.operations.assets_write",
-    "network.operations.device_probe",
     "network.operations.device.manage",
     "network.operations.inspection",
     "network.operations.baseline"

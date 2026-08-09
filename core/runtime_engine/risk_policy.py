@@ -151,6 +151,45 @@ class RiskPolicyEngine:
                     "risk_reason": "recoverable_artifact_deletion",
                 })
 
+            # Recoverable file deletion is still a durable state change.  It
+            # belongs to a merged base tool with safe read actions, so keep
+            # this approval boundary action-aware.
+            action = str(node.args.get("action") or "").lower()
+            guarded_action = node.tool == "workspace.file" and action == "delete"
+            if guarded_action:
+                if node.id not in assessment.approval_nodes:
+                    assessment.approval_nodes.append(node.id)
+                assessment.requires_approval = True
+                node.approval_required = True
+                reason = "workspace_file_delete"
+                assessment.approval_reason = assessment.approval_reason or reason
+                assessment.approval_details.append({
+                    "node_id": node.id,
+                    "tool": node.tool,
+                    "action": action,
+                    "risk_reason": reason,
+                })
+
+            # Extensions provide their action-level approval boundary through
+            # ToolSpec metadata, then the runtime contract mirrors it here.
+            # The base must not know product/extension tool IDs.
+            extension_guarded = (
+                action in contract.approval_actions
+                or any(bool(node.args.get(field)) for field in contract.approval_when_truthy)
+            )
+            if extension_guarded:
+                if node.id not in assessment.approval_nodes:
+                    assessment.approval_nodes.append(node.id)
+                assessment.requires_approval = True
+                node.approval_required = True
+                assessment.approval_reason = assessment.approval_reason or "extension_sensitive_action"
+                assessment.approval_details.append({
+                    "node_id": node.id,
+                    "tool": node.tool,
+                    "action": action,
+                    "risk_reason": "extension_sensitive_action",
+                })
+
             # ── Unified command policy check ──
             if node.tool == "exec.run" and "command" in node.args:
                 cmd = node.args.get("command", "")

@@ -24,6 +24,8 @@ class ToolContract:
     rollback_supported: bool = False
     optional: bool = False
     priority: str = "normal"
+    approval_actions: frozenset[str] = field(default_factory=frozenset)
+    approval_when_truthy: frozenset[str] = field(default_factory=frozenset)
 
 
 BUILTIN_CONTRACTS: dict[str, ToolContract] = {
@@ -286,6 +288,17 @@ def get_retry_contract(
 
 def get_contract(tool_name: str) -> ToolContract | None:
     normalized = str(tool_name or "").replace("__", ".")
+    contract = BUILTIN_CONTRACTS.get(normalized)
+    if contract is not None:
+        return contract
+    # Extension ToolSpecs are the public source of truth.  Load their
+    # contracts lazily so direct RiskPolicy use has the exact same boundary as
+    # QueryLoop, without creating an import-time core/extension cycle.
+    try:
+        from extensions.runtime import get_extension_tool_specs
+        get_extension_tool_specs()
+    except Exception:
+        return None
     return BUILTIN_CONTRACTS.get(normalized)
 
 

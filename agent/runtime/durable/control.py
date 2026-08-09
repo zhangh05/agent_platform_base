@@ -32,12 +32,19 @@ def _get_manifest(tool_id: str | None):
 
 
 def _is_retryable(step: RuntimeStep) -> bool:
-    """Check if a step can be safely retried, based on manifest idempotency."""
+    """Return whether a persisted step has enough information for safe replay.
+
+    RuntimeStep stores a tool id but deliberately does not retain tool
+    arguments.  A merged tool can expose both reads and writes, so its
+    tool-level manifest cannot prove a particular old step was read-only.
+    Never replay such a step on a guess.
+    """
     m = _get_manifest(step.tool_id)
     if m and m.destructive:
         return False
-    if m:
-        return m.idempotency == "safe_to_retry"
+    if m and step.tool_id:
+        from core.runtime_engine.contracts import ALWAYS_READ_ONLY_TOOLS
+        return step.tool_id in ALWAYS_READ_ONLY_TOOLS and m.idempotency == "safe_to_retry"
     # Fallback for non-tool steps: model/message/checkpoint are safe
     return step.kind in ("message", "model", "validation", "checkpoint")
 

@@ -71,6 +71,21 @@ def test_artifact_delete_requires_explicit_approval(risk_engine):
     assert result.approval_nodes == ["delete-artifact"]
 
 
+@pytest.mark.parametrize(
+    ("tool", "args", "reason"),
+    [
+        ("workspace.file", {"action": "delete", "filepath": "report.md"}, "workspace_file_delete"),
+        ("network.operations.assets_write", {"action": "delete", "asset_id": "asset_1"}, "extension_sensitive_action"),
+        ("network.operations.baseline", {"action": "confirm", "baseline_id": "baseline_1"}, "extension_sensitive_action"),
+        ("network.operations.device.manage", {"action": "probe", "asset_id": "asset_1", "accept_host_key": True}, "extension_sensitive_action"),
+    ],
+)
+def test_durable_delete_and_network_trust_actions_require_approval(risk_engine, tool, args, reason):
+    result = risk_engine.assess([_node("guarded", tool, **args)])
+    assert result.requires_approval is True
+    assert result.approval_reason == reason
+
+
 def test_3_exec_no_approval_trigger(risk_engine):
     """≤5 harmless exec commands do not require approval."""
     nodes = [_node(str(i), "exec.run", command=f"cmd{i}") for i in range(3)]
