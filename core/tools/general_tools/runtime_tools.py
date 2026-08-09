@@ -31,7 +31,9 @@ def handle_knowledge_reindex(inv: ToolInvocation) -> dict:
         validate_workspace_id(ws)
         from agent.modules.knowledge.service import reindex_source
         result = reindex_source(ws, source_id)
-        return _ok(inv, "", {"reindexed": result.get("ok", False)})
+        if not result.get("ok"):
+            return _error_inv(inv, str(result.get("error") or "reindex_failed")[:200])
+        return _ok(inv, "", {"reindexed": True, "source_id": source_id})
     except Exception as e:
         return _error_inv(inv, str(e)[:200])
 
@@ -44,7 +46,10 @@ def handle_knowledge_search(inv: ToolInvocation) -> dict:
         validate_workspace_id(ws)
         from agent.modules.knowledge.service import search_chunks
         result = search_chunks(workspace_id=ws, query=query, top_k=limit)
-        results = result.get("hits", []) if result.get("ok") else []
+        if not result.get("ok"):
+            errors = result.get("errors") or [result.get("error") or "knowledge_search_failed"]
+            return _error_inv(inv, str(errors[0])[:200])
+        results = result.get("hits", [])
         safe_results = []
         for r in results:
             d = r.as_dict() if hasattr(r, 'as_dict') else r
@@ -191,8 +196,26 @@ def handle_runtime_health(inv: ToolInvocation) -> dict:
         return _error_inv(inv, str(e)[:200])
 
 def handle_runtime_selfcheck(inv: ToolInvocation) -> dict:
+    ws = _caller_workspace(inv)
     try:
-        return _ok(inv, "", {"message": "selfcheck passed — no issues detected"})
+        from core.runtime.selfcheck import run_selfcheck
+
+        result = run_selfcheck(ws)
+        payload = result.as_dict()
+        selfcheck_status = str(payload.get("status") or "unknown")
+        issues = list(payload.get("issues") or [])
+        return _ok(inv, "", {
+            "selfcheck_status": selfcheck_status,
+            "healthy": selfcheck_status == "healthy",
+            "issue_count": len(issues),
+            "issues": issues[:20],
+            "checks": payload.get("checks") or {},
+            "message": (
+                "selfcheck passed — no issues detected"
+                if selfcheck_status == "healthy"
+                else f"selfcheck completed with status={selfcheck_status} and {len(issues)} issue(s)"
+            ),
+        })
     except Exception as e:
         return _error_inv(inv, str(e)[:200])
 

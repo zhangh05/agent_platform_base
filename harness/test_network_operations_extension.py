@@ -4,7 +4,7 @@ import json
 from types import SimpleNamespace
 
 from extensions.network_operations import service
-from extensions.network_operations.backend import assets_write
+from extensions.network_operations.backend import assets_read, assets_write, inspection
 from extensions.network_operations.device_tools import (
     MAX_READ_ONLY_COMMANDS,
     is_read_only_command as device_is_read_only_command,
@@ -130,6 +130,18 @@ def test_assets_write_requires_explicit_action_and_non_empty_asset(monkeypatch, 
     assert "action" not in service.get_asset("default", saved["asset"]["asset_id"], include_secret=True)
 
 
+def test_network_reads_report_missing_records_as_failures(monkeypatch, tmp_path):
+    _setup(monkeypatch, tmp_path)
+    missing_asset = assets_read(SimpleNamespace(
+        workspace_id="default", arguments={"asset_id": "asset_missing"},
+    ))
+    missing_task = inspection(SimpleNamespace(
+        workspace_id="default", arguments={"action": "get", "task_id": "inspection_missing"},
+    ))
+    assert missing_asset == {"ok": False, "error": "asset_not_found", "asset_id": "asset_missing"}
+    assert missing_task == {"ok": False, "error": "inspection_not_found", "task_id": "inspection_missing"}
+
+
 def test_device_manage_is_registered_as_network_operations_extension_tool():
     from extensions.runtime import get_extension_tool_specs
 
@@ -151,6 +163,15 @@ def test_extension_tools_are_registered_with_runtime_risk_contracts():
     assert contract is not None
     assert contract.risk_level == "medium"
     assert contract.side_effect == "external_request"
+
+
+def test_read_only_extension_tools_get_safe_retry_contracts():
+    from core.runtime_engine.contracts import get_retry_contract
+
+    contract = get_retry_contract("network.operations.assets_read", {})
+    assert contract is not None
+    assert contract.idempotent is True
+    assert contract.max_retries >= 1
 
 
 def test_device_manage_is_exposed_to_llm_as_extension_tool():

@@ -24,7 +24,7 @@ def _permission_action(action_class: str) -> str:
 _WRITE_ACTIONS = {
     "add", "create", "update", "confirm", "review", "profile_set",
     "save", "tag", "edit", "patch", "write", "write_artifact", "import",
-    "session_checkpoint", "review_update", "baseline_create",
+    "session_checkpoint", "review_update", "baseline_create", "reindex",
     "check", "topology_build", "impact", "incident_create",
     "incident_update", "change_create", "change_precheck",
     "change_postcheck", "change_update", "schedule_create",
@@ -41,16 +41,23 @@ _READ_ACTIONS = {
     "aggregate", "sort", "render", "pivot", "join", "extract", "match",
     "redact", "diff", "document", "references", "read_image", "glob",
 }
-_EXEC_ACTIONS = {"shell", "python", "slash", "background", "stream"}
+_EXEC_ACTIONS = {
+    "shell", "python", "slash", "background", "stream",
+}
 _NETWORK_ACTIONS = {"fetch", "weather", "deep_search"}
 _NETWORK_TOOLS = {
     "web.manage",
+    "browser.manage",
 }
 
 
 def _action_permission(tool_id: str, action: str, base_permission: str) -> str:
     action = str(action or "").strip().lower()
     if tool_id == "exec.run" or action in _EXEC_ACTIONS:
+        return "exec"
+    if tool_id == "skill.manage" and action == "mcp_call":
+        return "exec"
+    if tool_id == "agent.manage" and action in {"spawn", "cancel", "merge"}:
         return "exec"
     if (
         tool_id in _NETWORK_TOOLS

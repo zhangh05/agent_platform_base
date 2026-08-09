@@ -268,6 +268,7 @@ def _sync_runtime_contracts(specs) -> None:
             requires_approval=spec.requires_approval,
             approval_actions=frozenset(str(action).lower() for action in spec.metadata.get("approval_actions", ())),
             approval_when_truthy=frozenset(str(field) for field in spec.metadata.get("approval_when_truthy", ())),
+            always_read_only=spec.permission_action == "read",
         ))
 
 

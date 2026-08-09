@@ -123,7 +123,10 @@ def register_routes(app):
 def assets_read(invocation):
     asset_id = str((invocation.arguments or {}).get("asset_id") or "")
     if asset_id:
-        return {"ok": True, "asset": service.get_asset(invocation.workspace_id, asset_id)}
+        asset = service.get_asset(invocation.workspace_id, asset_id)
+        if not asset:
+            return {"ok": False, "error": "asset_not_found", "asset_id": asset_id}
+        return {"ok": True, "asset": asset}
     return {"ok": True, "assets": service.list_assets(invocation.workspace_id)}
 
 
@@ -205,7 +208,11 @@ def inspection(invocation):
     if action == "run":
         return {"ok": True, "task": service.start_inspection(invocation.workspace_id, args.get("asset_ids"), args.get("commands"), background=True)}
     if action == "get":
-        return {"ok": True, "task": service.get_inspection(invocation.workspace_id, str(args.get("task_id") or ""))}
+        task_id = str(args.get("task_id") or "")
+        task = service.get_inspection(invocation.workspace_id, task_id)
+        if not task:
+            return {"ok": False, "error": "inspection_not_found", "task_id": task_id}
+        return {"ok": True, "task": task}
     if action == "cancel":
         return {"ok": service.cancel_inspection(invocation.workspace_id, str(args.get("task_id") or ""))}
     return {"ok": True, "inspections": service.list_inspections(invocation.workspace_id)}

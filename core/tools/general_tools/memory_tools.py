@@ -103,12 +103,9 @@ def handle_memory_create(inv: ToolInvocation) -> dict:
             return _error_inv(inv, "memory write blocked by policy")
         if result.get("rejected"):
             reason = result.get("error", result.get("summary", "unknown"))
-            return _ok(inv, "", {
-                "ok": False, "memory_id": memory_id, "status": "rejected",
-                "_hint": f"记忆被门控拒绝：{reason}。不要包含密码/密钥/API Key，确保内容有价值。",
-            })
+            return _error_inv(inv, f"memory_write_rejected: {reason}")
         return _ok(inv, "", {
-            "memory_id": memory_id, "status": status,
+            "memory_id": memory_id, "memory_status": status,
             "_hint": (
                 f"记忆已记录（{status}状态）。"
                 + ("待用户确认后生效。" if status == "pending" else "")
@@ -191,7 +188,12 @@ def handle_memory_confirm(inv: ToolInvocation) -> dict:
         ws = _caller_workspace(inv)
         from storage.memory_governance import confirm_memory
         result = confirm_memory(ws, memory_id)
-        return _ok(inv, "", {"memory_id": memory_id, **result})
+        if not result.get("ok"):
+            return _error_inv(inv, str(result.get("error") or "memory_confirm_failed")[:200])
+        return _ok(inv, "", {
+            "memory_id": memory_id,
+            "memory_status": result.get("status", ""),
+        })
     except Exception as e:
         return _error_inv(inv, str(e)[:200])
 
@@ -249,8 +251,15 @@ def handle_memory_set_profile(inv: ToolInvocation) -> dict:
             confidence=1.0, created_by="user", redacted=True,
         )
         gate = MemoryWriteGate()
-        gate.write(rec)
-        return _ok(inv, "", {"field": field, "saved": True})
+        result = gate.write(rec)
+        if not result.get("ok"):
+            return _error_inv(inv, str(result.get("error") or "profile_save_rejected")[:200])
+        return _ok(inv, "", {
+            "field": field,
+            "saved": True,
+            "memory_id": result.get("memory_id", ""),
+            "memory_status": result.get("status", ""),
+        })
     except Exception as e:
         return _error_inv(inv, str(e)[:200])
 
@@ -316,7 +325,7 @@ def handle_memory_update(inv: ToolInvocation) -> dict:
         return _ok(inv, "", {
             "memory_id": result_memory_id,
             "supersedes_memory_id": memory_id,
-            "status": result.get("status"),
+            "memory_status": result.get("status"),
             "updated": not duplicate and not replacing_active,
             "duplicate": duplicate,
             "_hint": (
@@ -338,8 +347,12 @@ def handle_memory_delete_soft(inv: ToolInvocation) -> dict:
         ws = _caller_workspace(inv)
         from storage.memory_governance import reject_memory
         result = reject_memory(ws, memory_id)
+        if not result.get("ok"):
+            return _error_inv(inv, str(result.get("error") or "memory_delete_failed")[:200])
         return _ok(inv, "", {
-            "memory_id": memory_id, "deleted": True, **result,
+            "memory_id": memory_id,
+            "deleted": True,
+            "memory_status": result.get("status", ""),
             "_hint": "记忆已软删除。",
         })
     except Exception as e:

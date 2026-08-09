@@ -26,6 +26,7 @@ class ToolContract:
     priority: str = "normal"
     approval_actions: frozenset[str] = field(default_factory=frozenset)
     approval_when_truthy: frozenset[str] = field(default_factory=frozenset)
+    always_read_only: bool = False
 
 
 BUILTIN_CONTRACTS: dict[str, ToolContract] = {
@@ -254,6 +255,9 @@ READ_ONLY_ACTIONS: dict[str, frozenset[str]] = {
 
 def is_read_only_call(tool_name: str, arguments: dict[str, Any] | None = None) -> bool:
     normalized = str(tool_name or "").replace("__", ".")
+    contract = get_contract(normalized)
+    if contract and contract.always_read_only:
+        return True
     if normalized in ALWAYS_READ_ONLY_TOOLS:
         return True
     action = str((arguments or {}).get("action") or "").lower().strip()

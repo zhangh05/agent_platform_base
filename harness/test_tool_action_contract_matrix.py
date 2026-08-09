@@ -138,6 +138,111 @@ def test_public_schemas_expose_handler_consumed_arguments():
 
 
 @pytest.mark.parametrize(
+    ("tool_id", "action", "permission"),
+    [
+        ("browser.manage", "navigate", "network"),
+        ("browser.manage", "click", "network"),
+        ("agent.manage", "spawn", "exec"),
+        ("agent.manage", "cancel", "exec"),
+        ("skill.manage", "mcp_call", "exec"),
+        ("knowledge.manage", "reindex", "write"),
+    ],
+)
+def test_action_profiles_describe_real_side_effect_permissions(tool_id, action, permission):
+    from core.tools.catalog_snapshot import build_action_profiles_for_tool
+
+    entry = CANONICAL_REGISTRY[tool_id]
+    profiles = build_action_profiles_for_tool(
+        tool_id,
+        input_schema=entry.input_schema,
+        base_permission=entry.permission_action or "read",
+    )
+    actual = next(profile for profile in profiles if profile["action"] == action)
+    assert actual["permission_action"] == permission
+
+
+def test_selfcheck_reports_real_status_instead_of_unconditional_success(monkeypatch):
+    from core.tools.general_tools.runtime_tools import handle_runtime_selfcheck
+    from core.tools.schemas import ToolInvocation
+
+    class FakeResult:
+        def as_dict(self):
+            return {
+                "status": "degraded",
+                "issues": [{"code": "BROKEN_REFERENCE"}],
+                "checks": {"workspace_root": "ok"},
+            }
+
+    monkeypatch.setattr("core.runtime.selfcheck.run_selfcheck", lambda _ws: FakeResult())
+    result = handle_runtime_selfcheck(ToolInvocation(
+        tool_id="system.manage", workspace_id="test_ws", arguments={"action": "selfcheck"},
+    ))
+    assert result["ok"] is True
+    assert result["status"] == "ok"
+    assert result["selfcheck_status"] == "degraded"
+    assert result["healthy"] is False
+    assert result["issue_count"] == 1
+
+
+def test_knowledge_reindex_propagates_service_failure(monkeypatch):
+    from core.tools.general_tools.runtime_tools import handle_knowledge_reindex
+    from core.tools.schemas import ToolInvocation
+
+    monkeypatch.setattr("agent.modules.knowledge.service.reindex_source", lambda *_args: {"ok": False, "error": "source_not_found"})
+    result = handle_knowledge_reindex(ToolInvocation(
+        tool_id="knowledge.manage", workspace_id="test_ws", arguments={"action": "reindex", "source_id": "missing"},
+    ))
+    assert result["ok"] is False
+    assert "source_not_found" in result["error"]
+
+
+def test_knowledge_search_propagates_service_failure(monkeypatch):
+    from core.tools.general_tools.runtime_tools import handle_knowledge_search
+    from core.tools.schemas import ToolInvocation
+
+    monkeypatch.setattr(
+        "agent.modules.knowledge.service.search_chunks",
+        lambda **_kwargs: {"ok": False, "error": "knowledge_index_unavailable"},
+    )
+    result = handle_knowledge_search(ToolInvocation(
+        tool_id="knowledge.manage", workspace_id="test_ws", arguments={"action": "search", "query": "故障手册"},
+    ))
+    assert result["ok"] is False
+    assert "knowledge_index_unavailable" in result["error"]
+
+
+@pytest.mark.parametrize(
+    ("handler_name", "governance_name", "arguments"),
+    [
+        ("handle_memory_confirm", "confirm_memory", {"action": "confirm", "memory_id": "mem_missing"}),
+        ("handle_memory_delete_soft", "reject_memory", {"action": "delete", "memory_id": "mem_missing"}),
+    ],
+)
+def test_memory_mutations_propagate_governance_failures(monkeypatch, handler_name, governance_name, arguments):
+    import core.tools.general_tools.memory_tools as memory_tools
+    from core.tools.schemas import ToolInvocation
+
+    monkeypatch.setattr(f"storage.memory_governance.{governance_name}", lambda *_args: {"ok": False, "error": "not found"})
+    handler = getattr(memory_tools, handler_name)
+    result = handler(ToolInvocation(tool_id="memory.manage", workspace_id="test_ws", arguments=arguments))
+    assert result["ok"] is False
+    assert "not found" in result["error"]
+
+
+def test_memory_confirmation_preserves_governance_status(monkeypatch):
+    from core.tools.general_tools.memory_tools import handle_memory_confirm
+    from core.tools.schemas import ToolInvocation
+
+    monkeypatch.setattr("storage.memory_governance.confirm_memory", lambda *_args: {"ok": True, "status": "active"})
+    result = handle_memory_confirm(ToolInvocation(
+        tool_id="memory.manage", workspace_id="test_ws", arguments={"action": "confirm", "memory_id": "mem_1"},
+    ))
+    assert result["ok"] is True
+    assert result["status"] == "ok"
+    assert result["memory_status"] == "active"
+
+
+@pytest.mark.parametrize(
     "tool_id,action,field_name",
     [
         (tool_id, action, field_name)
