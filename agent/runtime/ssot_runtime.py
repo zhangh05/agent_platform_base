@@ -56,6 +56,14 @@ def run_ssot_turn(
     user_input = (getattr(turn.op, "user_input", "") or "").strip()
     metadata_in = dict(getattr(turn.op, "metadata", {}) or {})
 
+    try:
+        from backend.core.chat_attachments import build_attachment_runtime_guidance
+        attachment_guidance = build_attachment_runtime_guidance(metadata_in.get("attachments"))
+        if attachment_guidance:
+            metadata_in["runtime_guidance"] = attachment_guidance
+    except Exception:
+        _LOG.warning("attachment runtime guidance preparation failed", exc_info=True)
+
     # Build the full LLM-visible tool registry first. RuntimeContextBudget
     # deducts its schema cost before assigning history/retrieval capacity.
     ssot_registry = _build_ssot_runtime_tool_registry(allowed_tool_ids)

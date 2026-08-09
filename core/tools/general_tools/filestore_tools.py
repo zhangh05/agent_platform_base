@@ -8,7 +8,11 @@ from core.tools.general_tools.shared import _caller_workspace, _contract, _error
 from typing import Any
 
 
-_EXTRACTABLE_FILE_KINDS = frozenset({"docx", "pdf"})
+_STRUCTURED_DOCUMENT_KINDS = frozenset({"docx", "pdf", "xlsx", "pptx"})
+_TEXT_ATTACHMENT_KINDS = frozenset({
+    "text", "config", "markdown", "json", "yaml", "xml", "csv", "html", "log", "script", "diff",
+})
+_EXTRACTABLE_FILE_KINDS = _STRUCTURED_DOCUMENT_KINDS | _TEXT_ATTACHMENT_KINDS
 _MAX_EXTRACT_BYTES = 100 * 1024 * 1024
 
 
@@ -78,7 +82,7 @@ def handle_file_preview(inv, *, file_id: str = "", limit: int = 500) -> dict[str
 
 
 def handle_file_extract_document(inv, *, file_id: str = "", limit: int = 50_000) -> dict[str, Any]:
-    """Extract a managed DOCX or PDF by FileStore id without exposing its path.
+    """Extract a managed chat attachment by FileStore id without exposing its path.
 
     Attachments arrive as FileStore records, not importable workspace paths.  This
     is deliberately a read-only, file-id based action so the model does not need
@@ -119,20 +123,26 @@ def handle_file_extract_document(inv, *, file_id: str = "", limit: int = 50_000)
 
     try:
         raw = resolve_file_path(ws, file_id).read_bytes()
-        document = parse_document(
-            raw,
-            fmt=file_kind,
-            title=str(rec.get("original_name") or file_id),
-            source_type="attachment",
-            metadata={"file_id": file_id},
-        )
+        if file_kind in _TEXT_ATTACHMENT_KINDS:
+            content = raw.decode("utf-8", errors="replace")
+            warnings: list[str] = []
+            title = str(rec.get("original_name") or file_id)
+        else:
+            document = parse_document(
+                raw,
+                fmt=file_kind,
+                title=str(rec.get("original_name") or file_id),
+                source_type="attachment",
+                metadata={"file_id": file_id},
+            )
+            content = document.normalized_markdown or ""
+            warnings = list(document.warnings or [])
+            title = document.title or rec.get("original_name")
     except UnsupportedFormatError as exc:
         return _fail("workspace.file", "unsupported_document_format", file_id=file_id, detail=str(exc))
     except Exception as exc:
         return _fail("workspace.file", "document_extract_failed", file_id=file_id, detail=str(exc)[:200])
 
-    content = document.normalized_markdown or ""
-    warnings = list(document.warnings or [])
     if not content.strip():
         return _fail(
             "workspace.file",
@@ -147,7 +157,7 @@ def handle_file_extract_document(inv, *, file_id: str = "", limit: int = 50_000)
         "workspace.file",
         file_id=file_id,
         file_kind=file_kind,
-        title=document.title or rec.get("original_name"),
+        title=title,
         content=content[:bounded_limit],
         size_bytes=size_bytes,
         truncated=len(content) > bounded_limit,

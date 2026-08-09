@@ -30,6 +30,10 @@ def _detect_format(path_or_ext: Union[str, Path, bytes]) -> str:
             return "docx"
         if s.endswith(".pdf"):
             return "pdf"
+        if s.endswith(".xlsx"):
+            return "xlsx"
+        if s.endswith(".pptx"):
+            return "pptx"
         return ""
     # bytes: sniff magic bytes
     if isinstance(path_or_ext, (bytes, bytearray)):
@@ -107,4 +111,12 @@ def parse_document(
         from . import pdf as _pdf
         return _pdf.parse(raw, title=title, author=author, source_type=source_type,
                           scope=scope, language=language, metadata=metadata)
+    if fmt == "xlsx":
+        from . import xlsx as _xlsx
+        return _xlsx.parse(raw, title=title, author=author, source_type=source_type,
+                           scope=scope, language=language, metadata=metadata)
+    if fmt == "pptx":
+        from . import pptx as _pptx
+        return _pptx.parse(raw, title=title, author=author, source_type=source_type,
+                           scope=scope, language=language, metadata=metadata)
     raise UnsupportedFormatError(f"unsupported format: {fmt!r}")

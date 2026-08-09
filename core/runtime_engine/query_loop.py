@@ -1581,9 +1581,10 @@ class QueryLoop:
         conversation_block = ctx.extras.get("conversation_history_block") or ""
         retrieved_block = ctx.extras.get("retrieved_context_block") or ""
         operational_hint = ctx.extras.get("operational_clarification") or {}
-        runtime_guidance = ""
+        guidance_parts = [str(ctx.extras.get("runtime_guidance") or "").strip()]
         if isinstance(operational_hint, dict):
-            runtime_guidance = str(operational_hint.get("guidance") or "")
+            guidance_parts.append(str(operational_hint.get("guidance") or "").strip())
+        runtime_guidance = "\n".join(part for part in guidance_parts if part)
 
         return [
             LLMMessage(

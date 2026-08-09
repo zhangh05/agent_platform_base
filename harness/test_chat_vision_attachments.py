@@ -41,6 +41,19 @@ def test_unknown_attachment_is_rejected():
         normalize_chat_attachments("test_ws", [{"file_id": "file_missing"}])
 
 
+def test_file_attachment_guidance_is_trusted_and_uses_canonical_extract_action():
+    from backend.core.chat_attachments import build_attachment_runtime_guidance
+
+    guidance = build_attachment_runtime_guidance([
+        {"file_id": "file_manual", "kind": "file"},
+        {"file_id": "file_image", "kind": "image"},
+    ])
+
+    assert "file_manual" in guidance
+    assert "file_image" not in guidance
+    assert 'workspace__file(action="extract_document"' in guidance
+
+
 def test_websocket_attachment_validation_uses_authenticated_user_scope(monkeypatch, tmp_path):
     monkeypatch.setenv("NA_WORKSPACE_ROOT", str(tmp_path))
     from storage.principal import storage_principal

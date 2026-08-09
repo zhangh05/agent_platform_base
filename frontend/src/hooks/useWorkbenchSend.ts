@@ -112,7 +112,6 @@ export function useWorkbenchSend({
 
       setAttachments((previous) => previous.map((attachment) => ({ ...attachment, uploading: true })));
       const uploaded: ChatStreamAttachment[] = [];
-      const readableFileRefs: string[] = [];
       const failedNames: string[] = [];
       for (const attachment of pendingAttachments) {
         try {
@@ -140,7 +139,6 @@ export function useWorkbenchSend({
             previewUrl: attachment.previewUrl,
           };
           uploaded.push(item);
-          if (item.kind === "file") readableFileRefs.push(`file_id=${item.file_id}`);
         } catch { failedNames.push(attachment.name); }
       }
       setAttachments([]);
@@ -153,10 +151,8 @@ export function useWorkbenchSend({
       }
       displayAttachments = uploaded;
       turnMetadata.attachments = uploaded.map(({ previewUrl: _previewUrl, ...item }) => item);
-      if (readableFileRefs.length) {
-        fullText = text ? `${text}\n[可读取附件: ${readableFileRefs.join("; ")}]` : `[可读取附件: ${readableFileRefs.join("; ")}]`;
-      } else if (!fullText) {
-        fullText = "请分析已附加的图片。";
+      if (!fullText) {
+        fullText = "请分析已附加的内容。";
       }
     }
 

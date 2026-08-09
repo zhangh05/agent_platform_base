@@ -377,7 +377,7 @@ def test_workspace_file_extracts_docx_attachment_by_file_id(tmp_workspace):
     assert "先确认链路状态" in result["content"]
 
 
-def test_workspace_file_extract_rejects_non_document_attachment(tmp_workspace):
+def test_workspace_file_extracts_text_attachment_by_file_id(tmp_workspace):
     from core.tools.canonical_registry import CANONICAL_REGISTRY
     from core.tools.schemas import ToolInvocation
     from storage.file_store import write_agent_output
@@ -389,5 +389,53 @@ def test_workspace_file_extract_rejects_non_document_attachment(tmp_workspace):
         arguments={"action": "extract_document", "file_id": record.file_id},
     ))
 
-    assert result["ok"] is False
-    assert result["error"] == "unsupported_document_format"
+    assert result["ok"] is True
+    assert result["content"] == "plain text"
+
+
+@pytest.mark.parametrize(("file_kind", "filename", "expected"), [
+    ("xlsx", "inventory.xlsx", "设备名称"),
+    ("pptx", "briefing.pptx", "倒换安排"),
+])
+def test_workspace_file_extracts_common_office_attachment(tmp_workspace, file_kind, filename, expected):
+    from core.tools.canonical_registry import CANONICAL_REGISTRY
+    from core.tools.schemas import ToolInvocation
+    from storage.file_store import import_user_upload
+
+    source = tmp_workspace / filename
+    if file_kind == "xlsx":
+        openpyxl = pytest.importorskip("openpyxl")
+        book = openpyxl.Workbook()
+        sheet = book.active
+        sheet.append(["设备名称", "状态"])
+        sheet.append(["核心交换机", "正常"])
+        book.save(source)
+    else:
+        pptx = pytest.importorskip("pptx")
+        deck = pptx.Presentation()
+        slide = deck.slides.add_slide(deck.slide_layouts[1])
+        slide.shapes.title.text = "倒换安排"
+        slide.placeholders[1].text = "先检查链路。"
+        deck.save(source)
+    record = import_user_upload(
+        "test_ws", source, filename, logical_type="document_input",
+        file_kind=file_kind, binary=True,
+    )
+
+    result = CANONICAL_REGISTRY["workspace.file"].handler(ToolInvocation(
+        tool_id="workspace.file", workspace_id="test_ws",
+        arguments={"action": "extract_document", "file_id": record.file_id},
+    ))
+
+    assert result["ok"] is True
+    assert expected in result["content"]
+
+
+def test_every_non_image_chat_upload_kind_has_a_canonical_read_path():
+    """Keep the chat picker and FileStore extraction capability aligned."""
+    from core.tools.general_tools.filestore_tools import _EXTRACTABLE_FILE_KINDS
+    from storage.policy import BINARY_KINDS, TEXT_KINDS
+
+    picker_kinds = {"text", "config", "markdown", "json", "yaml", "xml", "html", "pdf", "docx", "xlsx", "pptx"}
+    assert picker_kinds <= (set(BINARY_KINDS) | set(TEXT_KINDS))
+    assert picker_kinds <= _EXTRACTABLE_FILE_KINDS

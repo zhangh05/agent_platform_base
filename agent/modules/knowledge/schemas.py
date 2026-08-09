@@ -33,7 +33,7 @@ from typing import Optional
 
 
 SUPPORTED_FORMATS = ("md", "markdown", "txt", "html", "htm",
-                     "docx", "pdf")
+                     "docx", "pdf", "xlsx", "pptx")
 
 SOURCE_TYPES = ("book", "manual", "rfc", "project_doc", "attachment", "memory")
 

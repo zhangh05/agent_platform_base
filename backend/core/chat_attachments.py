@@ -56,3 +56,29 @@ def normalize_chat_attachments(workspace_id: str, raw: Any) -> list[dict[str, An
             "kind": "image" if is_image else "file",
         })
     return result
+
+
+def build_attachment_runtime_guidance(attachments: Any) -> str:
+    """Build trusted, turn-scoped tool guidance from validated attachments.
+
+    File ids must reach the model so it can make the canonical extraction call,
+    but they are runtime metadata rather than words the user typed. Keeping them
+    here avoids polluting persisted chat text and makes the tool boundary
+    deterministic for every attachment-bearing turn.
+    """
+    if not isinstance(attachments, list):
+        return ""
+    files = [
+        str(item.get("file_id") or "").strip()
+        for item in attachments
+        if isinstance(item, dict) and item.get("kind") == "file" and item.get("file_id")
+    ]
+    if not files:
+        return ""
+    return (
+        "Trusted attachment references for this turn: " + ", ".join(files) + ". "
+        "For each non-image attachment needed for the request, first call "
+        "workspace__file(action=\"extract_document\", file_id=...). "
+        "Do not guess a path, use workspace__filestore import, read a binary "
+        "document as text, or use exec to parse the attachment."
+    )

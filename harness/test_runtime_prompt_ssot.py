@@ -67,6 +67,26 @@ def test_turn_message_includes_runtime_guidance_before_current_request():
     assert text.index("</runtime_guidance>") < text.index("<current_user_request>")
 
 
+def test_query_loop_combines_attachment_and_operational_guidance():
+    from core.runtime_engine.models import StatelessContext
+    from core.runtime_engine.query_loop import QueryLoop
+
+    loop = QueryLoop.__new__(QueryLoop)
+    ctx = StatelessContext(
+        request_id="request-attachment-guidance",
+        user_input="分析附件",
+        workspace_id="ws1",
+        session_id="s1",
+        extras={
+            "runtime_guidance": "attachment guidance",
+            "operational_clarification": {"guidance": "operational guidance"},
+        },
+    )
+    messages = loop._build_initial(ctx)
+    assert "attachment guidance" in messages[1].content
+    assert "operational guidance" in messages[1].content
+
+
 def test_untrusted_context_cannot_close_data_boundary():
     text = build_turn_message(
         workspace_id="ws1",
