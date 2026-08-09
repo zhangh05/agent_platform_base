@@ -277,7 +277,7 @@ def _merge_result_projection(run_id: str, ws_id: str, result, context) -> None:
         _log.warning("Cannot write result projection for run %s", run_id, exc_info=True)
 
 
-def _safe_tool_calls(tool_calls: list) -> list:
+def _safe_tool_calls(tool_calls: list, *, limit: int = 20) -> list:
     # Auto-tracking can emit dozens of status polls for one background task.
     # Keep the original model-requested call and only the latest poll for each
     # tracked call. Full poll history remains in trace/tracking_events; the run
@@ -298,7 +298,7 @@ def _safe_tool_calls(tool_calls: list) -> list:
     compacted.sort(key=lambda item: item[0])
 
     safe = []
-    for _, call in compacted[:20]:
+    for _, call in compacted[:max(0, int(limit))]:
         safe.append({
             "call_id": str(call.get("call_id", ""))[:120],
             "tool_id": str(call.get("tool_id", ""))[:120],
@@ -315,7 +315,24 @@ def _history_tool_context(result) -> list[dict]:
     """Return bounded, redacted tool facts suitable for chat continuation."""
     if result is None:
         return []
-    compact = _safe_tool_calls(list(getattr(result, "tool_calls", None) or []))
+    compact = _safe_tool_calls(
+        list(getattr(result, "tool_calls", None) or []),
+        limit=80,
+    )
+    limit = 8
+    # Follow-up questions need terminal failures and the newest evidence more
+    # often than the first calls in a long turn. Keep those facts while
+    # retaining chronological order for readable conversation context.
+    selected = {
+        index for index, item in enumerate(compact)
+        if not item["ok"]
+    }
+    if len(selected) > limit:
+        selected = set(sorted(selected)[-limit:])
+    for index in range(len(compact) - 1, -1, -1):
+        if len(selected) >= limit:
+            break
+        selected.add(index)
     return [
         {
             "tool_id": item["tool_id"],
@@ -323,7 +340,8 @@ def _history_tool_context(result) -> list[dict]:
             "summary": item["summary"],
             "errors": item["errors"],
         }
-        for item in compact[:8]
+        for index, item in enumerate(compact)
+        if index in selected
     ]
 
 

@@ -20,6 +20,7 @@ import copy
 import hashlib
 import inspect
 import json
+import logging
 import re
 import time
 from dataclasses import asdict
@@ -56,6 +57,37 @@ from .prompt_contract import (
 # function-calling tools field on every planner call.
 QUERY_LOOP_SYSTEM_PROMPT = RUNTIME_SYSTEM_PROMPT
 RESPONSE_ONLY_MARKER = "[RESPONSE_ONLY]"
+
+_LOG = logging.getLogger(__name__)
+
+
+def _normalize_llm_error(error: Any) -> str:
+    """Convert provider-specific failures into stable, safe runtime codes."""
+    value = str(error or "").strip().lower()
+    if value in {
+        "llm_call_timeout", "llm_rate_limited", "llm_auth_failed",
+        "llm_configuration_error", "llm_provider_error", "no_response",
+    }:
+        return value
+    if "timeout" in value or "timed out" in value:
+        return "llm_call_timeout"
+    if "429" in value or "rate limit" in value or "too many request" in value:
+        return "llm_rate_limited"
+    if any(marker in value for marker in ("401", "403", "unauthorized", "authentication", "api key", "invalid key")):
+        return "llm_auth_failed"
+    if any(marker in value for marker in ("model not found", "invalid model", "configuration", "config")):
+        return "llm_configuration_error"
+    return "llm_provider_error"
+
+
+def _llm_failure_message(error_code: str) -> str:
+    messages = {
+        "llm_call_timeout": "模型响应超时，请稍后重试。",
+        "llm_rate_limited": "模型服务当前繁忙，请稍后重试。",
+        "llm_auth_failed": "模型服务认证失败，请联系管理员检查模型配置。",
+        "llm_configuration_error": "模型服务配置不可用，请联系管理员检查配置。",
+    }
+    return messages.get(error_code, "模型服务暂时不可用，请稍后重试。")
 
 
 _TOOL_DEFINITION_CACHE: dict[str, List[dict]] = {}
@@ -1190,13 +1222,18 @@ class QueryLoop:
             if response is None or response.error:
                 final_resp: str
                 if all_results:
-                    final_resp = self._build_tool_result_fallback(ctx, all_results)
+                    final_resp = (
+                        self._build_tool_result_fallback(ctx, all_results)
+                        + "\n\n"
+                        + _llm_failure_message(response.error if response else "no_response")
+                        + "已保留以上已完成的工具结果。"
+                    )
                 elif response is not None and response.content and response.content.strip():
                     final_resp = response.content.strip()
                 elif response is not None:
-                    final_resp = "LLM 调用失败"
+                    final_resp = _llm_failure_message(response.error)
                 else:
-                    final_resp = "LLM 调用失败"
+                    final_resp = _llm_failure_message("no_response")
                 return finish(
                     final_response=final_resp,
                     tool_results=all_results,
@@ -1624,13 +1661,17 @@ class QueryLoop:
                     ),
                     timeout=300,
                 )
-                return self._coerce_llm_response(raw)
+                response = self._coerce_llm_response(raw)
+                if response.error:
+                    response.error = _normalize_llm_error(response.error)
+                return response
         except asyncio.TimeoutError:
             self._llm_call_count += 1
             return LLMResponse(error="llm_call_timeout")
         except Exception as e:
             self._llm_call_count += 1  # P1-7: count against budget even on error
-            return LLMResponse(error=str(e))
+            _LOG.warning("LLM invocation raised %s", type(e).__name__)
+            return LLMResponse(error=_normalize_llm_error(type(e).__name__))
 
     @staticmethod
     def _llm_call_mode(
