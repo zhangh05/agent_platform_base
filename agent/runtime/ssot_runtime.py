@@ -129,8 +129,7 @@ def run_ssot_turn(
         final_response = _final_response(runtime_result)
         if not final_response:
             if tool_calls:
-                ok_count = sum(1 for c in tool_calls if c.get('ok'))
-                final_response = f"服务已完成。共调用 {ok_count} 个工具。"
+                final_response = _tool_result_fallback_from_projected_calls(tool_calls)
             else:
                 final_response = "抱歉，服务暂时无法处理您的请求，请稍后重试。"
         events.extend(_project_events(runtime_result, trace_id, turn.turn_id))
@@ -613,8 +612,9 @@ def _invoke_llm_for_ssot_runtime(**kwargs):
     caller_extra = kwargs.get("extra") or {}
     stream_scope = str(caller_extra.get("stream_scope") or "internal").lower()
     is_planner = stream_scope == "planner"
-    # Preserve an explicit empty list: QueryLoop uses it for final-response-only
-    # calls where the model must synthesize existing results without tools.
+    # Preserve the exact tool list supplied by QueryLoop. QueryLoop keeps tools
+    # visible on response/synthesis turns; an empty list should only appear if a
+    # caller intentionally supplied one.
     tools = kwargs.get("tools")
     session_id = str(kwargs.get("session_id") or caller_extra.get("session_id") or "").strip()
     workspace_id = str(kwargs.get("workspace_id") or caller_extra.get("workspace_id") or "").strip()
@@ -731,9 +731,8 @@ def _final_response(runtime_result) -> str:
         text, _ = sanitize_provider_output(text)
         text = text.strip()
 
-    # v3.16: if the final response is a known placeholder but we
-    # have actual tool results, return empty string — let the caller
-    # do a runtime-aware retry instead of surfacing a useless stub.
+    # If the final response is a known placeholder, return empty so the caller
+    # can surface a tool-result-based fallback instead of a useless stub.
     if text and _is_bogus_final(text):
         text = ""
 
@@ -741,6 +740,54 @@ def _final_response(runtime_result) -> str:
         return text
     # No tool results and no text — return empty so caller can fall back.
     return ""
+
+
+def _tool_result_fallback_from_projected_calls(tool_calls: list[dict[str, Any]]) -> str:
+    """Build a useful user-facing fallback from projected tool-call results."""
+    if not tool_calls:
+        return ""
+
+    ok_count = sum(1 for call in tool_calls if call.get("ok"))
+    fail_count = len(tool_calls) - ok_count
+    lines = [
+        f"工具结果已返回：成功 {ok_count} 个"
+        + (f"，失败 {fail_count} 个" if fail_count else "")
+    ]
+
+    for call in tool_calls[:10]:
+        tool_id = str(call.get("tool_id") or "tool")
+        status = "✅" if call.get("ok") else "❌"
+        summary = str(call.get("summary") or "").strip()
+        result = call.get("result") if isinstance(call.get("result"), dict) else {}
+        lines.append(f"\n### {status} {tool_id}")
+        if summary and summary not in {"Tool completed", "Tool failed"}:
+            lines.append(summary[:1200] + ("..." if len(summary) > 1200 else ""))
+        command = result.get("command") or result.get("description")
+        if command:
+            lines.append(f"> `{str(command)[:160]}`")
+        if result.get("exit_code") is not None:
+            lines.append(f"Exit: exit_code={result.get('exit_code')}")
+        stdout = str(result.get("stdout") or "").strip()
+        stderr = str(result.get("stderr") or "").strip()
+        if stdout:
+            lines.append(f"```\n{stdout[:1200]}\n```")
+        if stderr:
+            lines.append(f"```\n{stderr[:1200]}\n```")
+        artifacts = call.get("artifacts") if isinstance(call.get("artifacts"), list) else []
+        if artifacts:
+            ids = [
+                str(item.get("artifact_id") or item.get("title") or "").strip()
+                for item in artifacts[:5]
+                if isinstance(item, dict)
+            ]
+            ids = [value for value in ids if value]
+            if ids:
+                lines.append("产物：" + "、".join(ids))
+
+    if len(tool_calls) > 10:
+        lines.append(f"\n其余 {len(tool_calls) - 10} 个工具结果已省略。")
+
+    return "\n".join(lines).strip()
 
 
 def _project_tool_calls(runtime_result) -> list[dict[str, Any]]:

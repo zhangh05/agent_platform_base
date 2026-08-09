@@ -183,3 +183,60 @@ def test_ambiguous_operational_request_still_reaches_query_loop():
     assert calls[0].get("tools") is not None
     assert "<runtime_guidance trusted=\"true\">" in calls[0].get("user", "")
     assert "Potentially missing fields" in calls[0].get("user", "")
+
+
+def test_response_nudge_does_not_hide_tools_from_llm():
+    calls: list[dict] = []
+
+    def llm_mock(**kwargs):
+        calls.append(kwargs)
+        return "我会基于已有结果回答。"
+
+    engine = SSOTRuntimeEngine(
+        config=SSOTRuntimeConfig(),
+        llm_invoke=llm_mock,
+        tool_runtime=mock.MagicMock(),
+    )
+
+    result = asyncio.run(engine.run(
+        user_input="根据已有结果总结",
+        workspace_id="test",
+        extras={"response_only": True, "response_only_reason": "test"},
+    ))
+
+    assert result.success
+    assert result.metadata.get("planner_skipped") is False
+    assert calls
+    assert calls[0].get("extra", {}).get("stream_scope") == "response"
+    assert calls[0].get("tools") is not None
+
+
+def test_adapter_tool_fallback_surfaces_actual_tool_output():
+    from agent.runtime.ssot_runtime import (
+        _final_response,
+        _tool_result_fallback_from_projected_calls,
+    )
+
+    class RuntimeResult:
+        final_response = "工具执行成功"
+
+    assert _final_response(RuntimeResult()) == ""
+
+    text = _tool_result_fallback_from_projected_calls([
+        {
+            "tool_id": "exec.run",
+            "ok": True,
+            "summary": "命令执行完成",
+            "result": {
+                "command": "uname -a",
+                "exit_code": 0,
+                "stdout": "Linux test-host 6.8.0",
+            },
+            "artifacts": [],
+        }
+    ])
+
+    assert "服务已完成" not in text
+    assert "exec.run" in text
+    assert "uname -a" in text
+    assert "Linux test-host" in text

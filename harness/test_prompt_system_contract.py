@@ -181,7 +181,7 @@ def test_extra_context_cannot_bypass_registry_budget():
     assert any(warning.startswith("context_truncated_to:") for warning in rendered.warnings)
 
 
-def test_tool_result_keeps_runtime_contract_until_response_only_marker():
+def test_tool_result_keeps_runtime_contract_with_response_nudge_marker():
     from agent.llm.schemas import LLMMessage
     from core.runtime_engine.prompt_contract import RUNTIME_SYSTEM_PROMPT
     from core.runtime_engine.query_loop import (

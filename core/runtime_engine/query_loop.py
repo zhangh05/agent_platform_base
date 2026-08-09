@@ -1066,8 +1066,8 @@ class QueryLoop:
 
         # Trusted UI workflows may hand off explicit artifact ids after a
         # background task completes. Read those workspace-scoped artifacts
-        # through the canonical runtime before planning, then use one
-        # final-response-only LLM call when the content is complete.
+        # through the canonical runtime before planning, then let the LLM decide
+        # whether the prefetched evidence is enough or more tools are needed.
         if self._is_cancelled(ctx):
             return finish(final_response="任务已取消。", error="cancelled_by_user")
         prefetch_ids = list(dict.fromkeys(
@@ -1107,7 +1107,8 @@ class QueryLoop:
                     messages,
                     RESPONSE_ONLY_MARKER
                     + " Complete artifacts were prefetched above. Analyze them and "
-                    "answer the original request now; do not call tools.",
+                    "answer the original request if the evidence is sufficient. "
+                    "Tools remain available if more verification is needed.",
                 )
 
         if ctx.extras.get("response_only") and not self._is_response_only(messages):
@@ -1116,7 +1117,8 @@ class QueryLoop:
                 messages,
                 RESPONSE_ONLY_MARKER
                 + f" Response-only mode ({reason}). Use the facts already supplied, "
-                "do not call tools, and do not invent missing evidence.",
+                "do not invent missing evidence. Tools remain available if the "
+                "current request genuinely needs verification or inspection.",
             )
 
         while iterations < max_iterations:
@@ -1381,7 +1383,8 @@ class QueryLoop:
                         messages,
                     RESPONSE_ONLY_MARKER
                         + " The complete artifact content is included above. "
-                        "Analyze it and answer the original request now; do not read files or call tools.",
+                        "Analyze it and answer the original request if sufficient. "
+                        "Tools remain available if more verification is needed.",
                     )
 
                 # ── Doom-loop detection ──
@@ -1471,7 +1474,8 @@ class QueryLoop:
                         RESPONSE_ONLY_MARKER
                         + " You just received tool results. "
                         "Now answer the user's original question in natural language. "
-                        "Do NOT call any more tools — produce the final response directly."
+                        "If the evidence is still insufficient, you may choose another "
+                        "safe tool call instead of inventing an answer."
                     )
                     messages.append(LLMMessage(role="user", content=reminder))
                     continue
@@ -1590,9 +1594,7 @@ class QueryLoop:
         """
         try:
             system_prompt, stream_scope, stream_to_user = self._llm_call_mode(messages, ctx)
-            tools_for_call = (
-                [] if self._is_response_only(messages) else self._cached_tools
-            )
+            tools_for_call = self._cached_tools
             if self._llm_invoke is not None:
                 raw = await asyncio.wait_for(
                     asyncio.to_thread(
@@ -1644,8 +1646,7 @@ class QueryLoop:
             # A tool result is evidence for the next reasoning step, not proof
             # that the workflow is complete. Keep the full execution contract so
             # the model can issue dependent calls, recover from validation
-            # errors, or finish naturally. Only an explicit marker above enters
-            # the tool-free response mode.
+            # errors, or finish naturally.
             return build_runtime_system_prompt(ctx.extras), "continuation", True
         return build_runtime_system_prompt(ctx.extras), "planner", False
 
@@ -1679,13 +1680,12 @@ class QueryLoop:
         preserves the relevant context without bypassing the injected adapter.
         """
         parts: list[str] = []
-        response_only = self._is_response_only(messages)
         for m in messages:
             if m.role == "system":
                 continue
             label = m.role.upper()
             content = m.content
-            if m.tool_calls and not response_only:
+            if m.tool_calls:
                 parts.append(
                     f"{label} TOOL_CALLS: "
                     f"{json.dumps(m.tool_calls, ensure_ascii=False, default=str)}"
