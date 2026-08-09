@@ -142,8 +142,15 @@ def handle_artifact_delete_soft(inv: ToolInvocation) -> dict:
     try:
         validate_workspace_id(ws)
         from artifacts.store import delete_artifact
-        ok = delete_artifact(ws, art_id, hard=True)
-        return _ok(inv, f"Artifact {art_id} deleted={ok}.", {"deleted": ok}) if ok else _error_inv(inv, "delete failed")
+        # This LLM-visible operation must stay recoverable. Permanent removal
+        # is maintenance-only and never belongs to a conversational tool call.
+        ok = delete_artifact(ws, art_id, hard=False)
+        return _ok(inv, f"Artifact {art_id} moved to recoverable deletion state.", {
+            "artifact_id": art_id,
+            "deleted": ok,
+            "recoverable": True,
+            "lifecycle": "deleted" if ok else "",
+        }) if ok else _error_inv(inv, "delete failed")
     except Exception as e:
         return _error_inv(inv, str(e)[:200])
 

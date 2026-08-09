@@ -60,6 +60,17 @@ def test_allow_readonly_tools(risk_engine):
     assert result.safe_to_run is True
 
 
+def test_artifact_delete_requires_explicit_approval(risk_engine):
+    result = risk_engine.assess([
+        _node("delete-artifact", "workspace.artifact", action="delete", artifact_id="art_test"),
+    ])
+
+    assert result.hard_block is False
+    assert result.requires_approval is True
+    assert result.approval_reason == "artifact_delete"
+    assert result.approval_nodes == ["delete-artifact"]
+
+
 def test_3_exec_no_approval_trigger(risk_engine):
     """≤5 harmless exec commands do not require approval."""
     nodes = [_node(str(i), "exec.run", command=f"cmd{i}") for i in range(3)]

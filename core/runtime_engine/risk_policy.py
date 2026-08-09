@@ -131,6 +131,26 @@ class RiskPolicyEngine:
                 assessment.requires_approval = True
                 node.approval_required = True
 
+            # A conversational artifact deletion is recoverable, but it still
+            # hides a durable user result and cascades to its FileStore record.
+            # Require explicit approval for this action without penalising the
+            # normal list/read/save/tag operations of the merged tool.
+            if (
+                node.tool == "workspace.artifact"
+                and str(node.args.get("action") or "").lower() == "delete"
+            ):
+                if node.id not in assessment.approval_nodes:
+                    assessment.approval_nodes.append(node.id)
+                assessment.requires_approval = True
+                node.approval_required = True
+                assessment.approval_reason = assessment.approval_reason or "artifact_delete"
+                assessment.approval_details.append({
+                    "node_id": node.id,
+                    "tool": node.tool,
+                    "action": "delete",
+                    "risk_reason": "recoverable_artifact_deletion",
+                })
+
             # ── Unified command policy check ──
             if node.tool == "exec.run" and "command" in node.args:
                 cmd = node.args.get("command", "")
