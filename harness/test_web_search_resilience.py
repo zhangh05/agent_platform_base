@@ -180,6 +180,21 @@ def test_primary_ddgs_results_keep_domain_quality_and_citation():
     assert results[0]["citation"] == "[1] kubernetes.io"
 
 
+def test_curated_fallback_builds_exact_cve_and_rfc_primary_urls():
+    from core.tools.general_tools.web_tools import _curated_official_results
+
+    cve = _curated_official_results(
+        "核对 CVE-2026-12345 受影响版本",
+        ["nvd.nist.gov", "cve.org"],
+        4,
+    )
+    assert cve[0]["url"] == "https://nvd.nist.gov/vuln/detail/CVE-2026-12345"
+    assert cve[1]["url"] == "https://www.cve.org/CVERecord?id=CVE-2026-12345"
+
+    rfc = _curated_official_results("RFC 4271 BGP", ["rfc-editor.org"], 2)
+    assert rfc[0]["url"] == "https://www.rfc-editor.org/rfc/rfc4271.html"
+
+
 def test_web_tool_schema_exposes_source_authority_policy():
     from agent.runtime.ssot_runtime import _build_ssot_runtime_tool_registry
     from core.runtime_engine.query_loop import _build_cached_tool_definitions

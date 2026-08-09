@@ -3,6 +3,7 @@ from __future__ import annotations
 from core.tools.schemas import ToolInvocation
 from storage.ids import validate_workspace_id
 """Web tool handlers — search, weather, news, fetch."""
+import re
 import threading
 import time
 
@@ -89,19 +90,48 @@ _CURATED_OFFICIAL_SEARCH_TARGETS = [
 def _curated_official_results(query: str, domains: list[str], limit: int) -> list[dict]:
     q = query.lower()
     results: list[dict] = []
-    for item in _CURATED_OFFICIAL_SEARCH_TARGETS:
-        if not any(keyword in q for keyword in item["keywords"]):
-            continue
-        domain = _domain_from_url_or_host(item["url"])
+
+    def append_result(title: str, url: str, snippet: str) -> None:
+        if len(results) >= limit:
+            return
+        domain = _domain_from_url_or_host(url)
         if domains and not _domain_matches_any(domain, domains):
-            continue
+            return
         results.append(_build_web_result(
-            title=item["title"],
-            url=item["url"],
-            snippet=item["snippet"],
+            title=title,
+            url=url,
+            snippet=snippet,
             source="curated_official_fallback",
             rank=len(results) + 1,
         ))
+
+    cve_match = re.search(r"\b(CVE-\d{4}-\d{4,})\b", query, flags=re.I)
+    if cve_match:
+        cve_id = cve_match.group(1).upper()
+        append_result(
+            f"NVD：{cve_id}",
+            f"https://nvd.nist.gov/vuln/detail/{cve_id}",
+            f"NVD 中 {cve_id} 的官方漏洞详情页。",
+        )
+        append_result(
+            f"CVE.org：{cve_id}",
+            f"https://www.cve.org/CVERecord?id={cve_id}",
+            f"CVE.org 中 {cve_id} 的官方记录页。",
+        )
+
+    rfc_match = re.search(r"\bRFC[\s-]?(\d{3,5})\b", query, flags=re.I)
+    if rfc_match:
+        rfc_number = rfc_match.group(1)
+        append_result(
+            f"RFC {rfc_number}",
+            f"https://www.rfc-editor.org/rfc/rfc{rfc_number}.html",
+            f"RFC Editor 发布的 RFC {rfc_number} 正文。",
+        )
+
+    for item in _CURATED_OFFICIAL_SEARCH_TARGETS:
+        if not any(keyword in q for keyword in item["keywords"]):
+            continue
+        append_result(item["title"], item["url"], item["snippet"])
         if len(results) >= limit:
             break
     return results
