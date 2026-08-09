@@ -22,10 +22,10 @@ def test_non_web_tool_fallback_never_exposes_internal_tool_transcript():
     loop = QueryLoop(SSOTRuntimeConfig(), {}, None)
     text = loop._build_tool_result_fallback(None, [StreamingToolResult(
         tool_name="workspace.file", call_id="call-1", ok=False, output={},
-        error="file not found: data/docx_images/image4.png",
+        error="file not found: private-image.png",
     )])
 
-    assert "data/docx_images" not in text
+    assert "private-image.png" not in text
     assert "workspace.file" not in text
     assert "可靠答复" in text
 

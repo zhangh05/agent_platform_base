@@ -82,7 +82,7 @@ def build_attachment_runtime_guidance(attachments: Any) -> str:
         "needed for the request, first call workspace__file(action=\"extract_document\", "
         "file_id=...). For a DOCX embedded image, use workspace__file(action="
         "\"extract_document_image\", file_id=..., image_index=...) after the document "
-        "has established the image count. Never guess a workspace path or filename "
-        "such as data/docx_images/imageN.png; never use glob, read_image, import, or "
-        "exec to locate a managed attachment or its embedded images."
+        "has established the image count. Never infer a workspace path or filename; "
+        "never use glob, read_image, import, or exec to locate a managed attachment "
+        "or its embedded images."
     )

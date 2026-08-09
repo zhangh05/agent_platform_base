@@ -2147,19 +2147,6 @@ class QueryLoop:
         for result in failed_results[:6]:
             error = str(result.error or "tool returned failure").replace("\n", " ")[:240]
             failures.append(f"- {result.tool_name}: {error}")
-        guessed_document_image_path = any(
-            "docx_images/image" in str(result.error or "").lower()
-            for result in failed_results
-        )
-        if guessed_document_image_path:
-            return (
-                RESPONSE_ONLY_MARKER
-                + " A guessed DOCX image path does not exist. Do not try another "
-                "data/docx_images path and do not expose this internal error. If a "
-                "managed attachment file_id is already in the trusted context, explain "
-                "that embedded images must be read through extract_document_image; "
-                "otherwise give the user a concise, actionable answer without further tools."
-            )
         return (
             "[RUNTIME TOOL RECOVERY]\n"
             "One or more tool calls failed:\n"
