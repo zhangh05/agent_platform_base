@@ -31,7 +31,7 @@ class TestRenderer:
     def test_rendered_has_safe_context(self):
         from prompts.renderer import render_prompt
         r = render_prompt("response_compose", {"intent": "analyze_data"}, "analyze")
-        assert "Agent Platform Base" in r.text
+        assert "联智中枢" in r.text
 
     def test_rendered_has_user_input(self):
         from prompts.renderer import render_prompt
@@ -79,7 +79,7 @@ class TestRenderer:
         messages = _build_prompt_messages("assistant_chat", safe_context={}, user_input="你好")
 
         assert messages[0].role == "system"
-        assert "You are Agent Platform Base" in messages[0].content
+        assert "You are 联智中枢" in messages[0].content
         assert "without the production tool loop" in messages[0].content
         assert "Agent Platform Base explanation layer. Follow prompt exactly" not in messages[0].content
         assert messages[1].role == "user"

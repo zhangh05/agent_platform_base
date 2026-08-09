@@ -4,7 +4,7 @@ import { formatDate } from './format';
 export function sanitizeAssistantText(text: string): string {
   const raw = text ?? "";
   if (
-    /I'm Agent Platform Base,\s*your AI assistant/i.test(raw) ||
+    /I'm (Agent Platform Base|联智中枢),\s*your AI assistant/i.test(raw) ||
     /What would you like to do today\?/i.test(raw)
   ) {
     return [

@@ -43,7 +43,7 @@ describe("Experience polish", () => {
     await waitFor(() => {
       expect(useSessionStore.getState().currentWorkspaceId).toBe("default");
     });
-    expect(await screen.findByText("Agent App Starter · v1.0.2")).toBeInTheDocument();
+    expect(await screen.findByText("v1.0.2")).toBeInTheDocument();
   });
 
   it("always uses default workspace on startup", async () => {
@@ -134,8 +134,8 @@ describe("Experience polish", () => {
 
     render(<App />);
 
-    expect(await screen.findByText("Agent App Starter · v0.4")).toBeInTheDocument();
-    expect(screen.queryByText("Agent App Starter · vv0.4")).not.toBeInTheDocument();
+    expect(await screen.findByText("v0.4")).toBeInTheDocument();
+    expect(screen.queryByText("vv0.4")).not.toBeInTheDocument();
   });
 
   it("uses run ids to select audit runs with blank turn ids", async () => {

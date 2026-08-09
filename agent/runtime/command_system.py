@@ -369,7 +369,7 @@ def _cmd_agent(args: str, session_id: Optional[str], context: Optional[dict]) ->
     """Show agent info."""
     lines = [
         "# Agent Info",
-        "Agent Platform Base Node v1.0",
+        "联智中枢节点 v1.0",
         "Runtime: Codex-style agentic loop",
         "Tools: General + Agent + Skill + Runtime",
         "Commands: Use /help for available slash commands.",

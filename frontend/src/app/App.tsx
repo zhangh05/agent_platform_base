@@ -230,7 +230,7 @@ function LoginScreen({ onLogin }: { onLogin: (status: Awaited<ReturnType<typeof 
     <main className="login-page">
       <section className="login-panel" aria-labelledby="login-title">
         <div className="login-brand">
-          <span className="login-kicker">Agent Platform Base</span>
+          <span className="login-kicker">联智中枢</span>
           <h1 id="login-title">登录工作台</h1>
           <p>请输入账户凭据继续。</p>
         </div>
@@ -333,10 +333,10 @@ function AppShell({ canLogout, onLogout, session }: { canLogout: boolean; onLogo
           {mobileNavOpen ? <IconChevronLeft size={16} /> : <IconMenu size={16} />}
         </button>
 
-        <Link className="brand" to="/workbench" aria-label="Agent Platform Base" viewTransition>
+        <Link className="brand" to="/workbench" aria-label="联智中枢" viewTransition>
           <span className="brand-text">
-            <span>Agent Platform Base</span>
-            <small>Agent App Starter{version ? ` · ${formatVersion(version)}` : ""}</small>
+            <span>联智中枢</span>
+            <small>{version ? formatVersion(version) : ""}</small>
           </span>
         </Link>
 

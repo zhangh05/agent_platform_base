@@ -117,7 +117,7 @@ def _handle_exec(inv: ToolInvocation) -> dict:
         return handle_slash_run(inv)
     if action == "shell":
         if str((inv.arguments or {}).get("target") or "local").lower() != "local":
-            return {"ok": False, "error": "Agent Platform Base supports local execution only"}
+            return {"ok": False, "error": "联智中枢仅支持本地执行"}
         if str((inv.arguments or {}).get("shell") or "").lower() == "powershell":
             return handle_powershell_approved_script(inv)
         return handle_command_approved_exec(inv)

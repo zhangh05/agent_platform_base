@@ -1,6 +1,6 @@
 # backend/main.py
 """
-Agent Platform Base — unified backend entry point.
+联智中枢 — unified backend entry point.
 
 Start:
     python3 backend/main.py --port 8011
@@ -409,7 +409,7 @@ app = create_app()
 
 def main():
     import argparse
-    parser = argparse.ArgumentParser(description="Agent Platform Base — Unified Backend")
+    parser = argparse.ArgumentParser(description="联智中枢 — Unified Backend")
     parser.add_argument("--port", type=int, default=UNIFIED_PORT, help="Port to listen on (default: 8011)")
     parser.add_argument("--host", type=str, default="127.0.0.1", help="Host to bind to")
     args = parser.parse_args()
@@ -417,7 +417,7 @@ def main():
     port = args.port
     app.config["PORT"] = port
 
-    print(f"Agent Platform Base running on http://{args.host}:{port}")
+    print(f"联智中枢 running on http://{args.host}:{port}")
     print(f"  API mode: {API_MODE}")
     print(f"  Build: {BUILD_COMMIT}")
 

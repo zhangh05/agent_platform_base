@@ -52,7 +52,7 @@ class TestForbiddenPatterns:
 
     def test_browser_title_is_platform_base(self):
         index = open(FRONTEND_INDEX, encoding="utf-8").read()
-        assert "<title>Agent Platform Base</title>" in index
+        assert "<title>联智中枢</title>" in index
         assert "Network Agent" not in index
 
     def test_no_port_8020(self):

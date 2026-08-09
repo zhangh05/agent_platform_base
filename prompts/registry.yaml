@@ -1,5 +1,5 @@
 version: "2.0.0"
-description: "Agent Platform Base Prompt Registry"
+description: "联智中枢提示词注册表"
 prompts:
   - prompt_id: assistant.chat.v2
     task: assistant_chat
