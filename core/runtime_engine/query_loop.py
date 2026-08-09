@@ -1616,6 +1616,10 @@ class QueryLoop:
                             "stream_to_user": stream_to_user,
                             "workspace_id": ctx.workspace_id,
                             "session_id": ctx.session_id,
+                            # File references, never image bytes.  The adapter
+                            # resolves these only for the first model-planning
+                            # request so subsequent tool iterations stay lean.
+                            "vision_attachments": list(ctx.extras.get("attachments") or []),
                         },
                     ),
                     timeout=300,

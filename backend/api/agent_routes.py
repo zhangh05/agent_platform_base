@@ -116,6 +116,13 @@ def agent_message():
         metadata = {}
     if not isinstance(metadata, dict):
         metadata = {}
+    try:
+        from backend.core.chat_attachments import normalize_chat_attachments
+        metadata["attachments"] = normalize_chat_attachments(
+            ws_id, metadata.get("attachments"),
+        )
+    except ValueError as exc:
+        return _json_error("BAD_REQUEST", str(exc), 400)
     from backend.core.agent_contract import normalize_metadata
     metadata = normalize_metadata(metadata, transport="http", stream_mode=stream_mode)
 

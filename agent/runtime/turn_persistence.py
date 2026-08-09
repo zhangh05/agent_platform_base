@@ -106,6 +106,7 @@ def persist_run_record(session, turn, result, context) -> None:
                 store.write_message(run_id, "user", user_input, metadata={
                     "created_at": state.created_at,
                     "intent": state.intent,
+                    "attachments": list((getattr(turn.op, "metadata", {}) or {}).get("attachments") or []),
                 })
             if final_response:
                 store.write_message(run_id, "assistant", final_response, metadata={

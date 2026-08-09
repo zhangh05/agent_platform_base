@@ -470,6 +470,8 @@ def _guess_mime(name: str, binary: bool = False) -> str:
         ".yaml": "text/yaml", ".yml": "text/yaml", ".xml": "text/xml",
         ".csv": "text/csv", ".html": "text/html", ".log": "text/plain",
         ".pdf": "application/pdf", ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+        ".gif": "image/gif", ".webp": "image/webp",
     }
     return mime_map.get(ext, "application/octet-stream" if binary else "text/plain")
 

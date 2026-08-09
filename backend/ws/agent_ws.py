@@ -184,6 +184,14 @@ def register_ws_routes(app):
                 if not isinstance(metadata, dict):
                     metadata = {}
                 try:
+                    from backend.core.chat_attachments import normalize_chat_attachments
+                    metadata["attachments"] = normalize_chat_attachments(
+                        workspace_id, metadata.get("attachments"),
+                    )
+                except ValueError as exc:
+                    ws.send(json.dumps({"type": "error", "message": str(exc)}, ensure_ascii=True))
+                    continue
+                try:
                     from backend.core.agent_contract import metadata_size, normalize_metadata
                     if metadata_size(metadata) > _MAX_WS_METADATA_JSON:
                         ws.send(json.dumps({"type": "error", "message": "metadata too large (max 16KB)"}, ensure_ascii=True))

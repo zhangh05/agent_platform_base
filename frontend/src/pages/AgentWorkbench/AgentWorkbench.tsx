@@ -109,7 +109,9 @@ export function TaskWorkbench() {
 
   const [viewMode, setViewMode] = useState<ViewMode>("chat");
   const [input, setInput] = useState("");
-  const [attachments, setAttachments] = useState<Array<{ id: string; name: string; size: string; file: File; uploading?: boolean }>>([]);
+  const [attachments, setAttachments] = useState<Array<{
+    id: string; name: string; size: string; file: File; uploading?: boolean; previewUrl?: string;
+  }>>([]);
 
   // ── Scroll architecture (v4.1) ──
   // A plain scroll container is enough for the capped chat history and avoids
@@ -371,43 +373,63 @@ export function TaskWorkbench() {
     setInput("");
     clearDraft();
     let fullText = text;
-    const turnMetadata = metadataOverride || pendingAutoMetadataRef.current || {};
+    const turnMetadata = { ...(metadataOverride || pendingAutoMetadataRef.current || {}) };
     pendingAutoMetadataRef.current = null;
+    let effectiveSessionId = currentSessionId;
 
     if (hasAttachments) {
+      // A real session id lets attachment records and the turn share the same
+      // durable owner even when the user starts by pasting an image.
+      if (!effectiveSessionId) {
+        try {
+          const created = await sessionsApi.create(currentWorkspaceId, text.slice(0, 60));
+          effectiveSessionId = created.session.session_id;
+          useSessionStore.getState().setCurrentSession(effectiveSessionId);
+          switchSession(effectiveSessionId);
+        } catch {
+          toast({ kind: "error", title: "无法创建会话", body: "图片未发送，请稍后重试。" });
+          return;
+        }
+      }
       setAttachments((prev) => prev.map((a) => ({ ...a, uploading: true })));
       const results: string[] = [];
-      const fileRefs: string[] = [];
+      const uploadedAttachments: Array<{ file_id: string }> = [];
+      const readableFileRefs: string[] = [];
       for (const a of attachments) {
         try {
           const form = new FormData();
           form.append("file", a.file);
-          form.append("artifact_type", "general");
+          form.append("artifact_type", "chat_attachment");
           form.append("title", a.name);
           form.append("workspace_id", currentWorkspaceId);
+          form.append("session_id", effectiveSessionId);
           const res = await apiRequest<{ ok: boolean; file: { file_id: string; path?: string; logical_type?: string }; artifact?: unknown; warnings?: string[] }>({
             method: "POST", url: `/workspaces/${currentWorkspaceId}/artifacts/upload`, data: form,
           });
           const fid = res.ok ? res.file?.file_id : "";
           if (fid) {
             results.push(a.name);
-            fileRefs.push(`file_id=${fid}`);
+            uploadedAttachments.push({ file_id: fid });
+            if (!a.file.type.startsWith("image/")) readableFileRefs.push(`file_id=${fid}`);
           } else {
             results.push(`${a.name}(失败)`);
           }
         } catch { results.push(`${a.name}(失败)`); }
       }
       setAttachments([]);
+      attachments.forEach((a) => { if (a.previewUrl) URL.revokeObjectURL(a.previewUrl); });
+      if (uploadedAttachments.length) turnMetadata.attachments = uploadedAttachments;
       if (results.length > 0) {
-        let uploadNote = `\n[已上传文件: ${results.join("、")}]`;
-        if (fileRefs.length > 0) {
-          uploadNote += `\n[文件路径: ${fileRefs.join("; ")}]`;
-        }
+        let uploadNote = `\n[已附加文件: ${results.join("、")}]`;
+        // Text and document attachments remain readable through the canonical
+        // workspace file tool. Images are delivered directly to a vision model
+        // and deliberately do not expose an implementation-only id in chat.
+        if (readableFileRefs.length) uploadNote += `\n[可读取附件: ${readableFileRefs.join("; ")}]`;
         fullText = text ? text + uploadNote : uploadNote;
       }
     }
 
-    const scratch = currentSessionId ?? "_scratch";
+    const scratch = effectiveSessionId ?? "_scratch";
     if (options?.appendUser !== false) {
       appendUser(fullText, scratch);
     }
@@ -452,7 +474,7 @@ export function TaskWorkbench() {
       ws.send(JSON.stringify({
         type: "message",
         user_input: fullText,
-        session_id: currentSessionId,
+        session_id: effectiveSessionId,
         workspace_id: currentWorkspaceId,
         metadata: turnMetadata,
         auth_token: getApiAccessToken(),
@@ -709,7 +731,7 @@ export function TaskWorkbench() {
         const res = await agentApi.run({
           message: fullText,
           workspace_id: currentWorkspaceId,
-          session_id: currentSessionId,
+          session_id: effectiveSessionId,
           metadata: turnMetadata,
         });
         const resolvedSid = (res.session_id && res.session_id !== "—" ? res.session_id : currentSessionId) ?? undefined;
@@ -782,12 +804,20 @@ export function TaskWorkbench() {
     if (list.length < files.length) toast({ kind: "warning", title: "部分文件跳过", body: "单文件不能超过 50 MB" });
     setAttachments((prev) => [
       ...prev,
-      ...list.map((f) => ({ id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, name: f.name, size: formatFileSize(f.size), file: f })),
+      ...list.map((f) => ({
+        id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+        name: f.name, size: formatFileSize(f.size), file: f,
+        previewUrl: f.type.startsWith("image/") ? URL.createObjectURL(f) : undefined,
+      })),
     ]);
   }
 
   function removeAttachment(id: string) {
-    setAttachments((prev) => prev.filter((a) => a.id !== id));
+    setAttachments((prev) => {
+      const removed = prev.find((a) => a.id === id);
+      if (removed?.previewUrl) URL.revokeObjectURL(removed.previewUrl);
+      return prev.filter((a) => a.id !== id);
+    });
   }
 
   function pickFile() {
@@ -946,7 +976,7 @@ export function TaskWorkbench() {
           <div className="wb-attachments">
             {attachments.map((a) => (
               <span key={a.id} className="tag wb-attachment-tag">
-                {a.uploading ? <span className="spinner wb-attachment-spinner" /> : "📄"}
+                {a.uploading ? <span className="spinner wb-attachment-spinner" /> : a.previewUrl ? <img className="wb-attachment-preview" src={a.previewUrl} alt="待识别图片" /> : "📄"}
                 <span className="wb-attachment-name">{a.name}</span>
                 <button onClick={() => removeAttachment(a.id)} className="wb-attachment-remove" type="button">&times;</button>
               </span>

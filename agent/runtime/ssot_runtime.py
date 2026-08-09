@@ -630,6 +630,23 @@ def _invoke_llm_for_ssot_runtime(**kwargs):
     if caller_extra:
         extra.update(caller_extra)
 
+    user_content: str | list[dict] = user
+    # The planner is the only stage that needs the original image.  Keep the
+    # normal text transcript for continuation/synthesis turns and never place
+    # encoded bytes in metadata, history, trace or persistence.
+    if is_planner and caller_extra.get("vision_attachments"):
+        try:
+            from agent.runtime.vision_inputs import build_vision_content
+            image_parts, vision_warnings = build_vision_content(
+                caller_extra.get("vision_attachments"), workspace_id,
+            )
+            if image_parts:
+                user_content = [{"type": "text", "text": user}, *image_parts]
+            if vision_warnings:
+                extra["vision_warnings"] = vision_warnings
+        except Exception:
+            _LOG.warning("vision attachment preparation failed", exc_info=True)
+
     config_override = {}
     timeout = kwargs.get("timeout")
     if timeout is not None:
@@ -645,7 +662,7 @@ def _invoke_llm_for_ssot_runtime(**kwargs):
         task="assistant_chat",
         messages=[
             LLMMessage(role="system", content=system),
-            LLMMessage(role="user", content=user),
+            LLMMessage(role="user", content=user_content),
         ],
         tools=tools,
         user_input=user,

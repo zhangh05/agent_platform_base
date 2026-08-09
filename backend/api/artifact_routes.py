@@ -55,6 +55,14 @@ def _guess_upload_kind(filename: str, artifact_type: str = "") -> tuple:
     """Return (file_kind, binary) for uploaded file."""
     name = (filename or "").lower()
     at = (artifact_type or "").lower()
+    if name.endswith(".png"):
+        return "png", True
+    if name.endswith((".jpg", ".jpeg")):
+        return "jpeg", True
+    if name.endswith(".gif"):
+        return "gif", True
+    if name.endswith(".webp"):
+        return "webp", True
     if name.endswith(".pdf"):
         return "pdf", True
     if name.endswith(".docx"):
@@ -149,6 +157,16 @@ def register_artifact_routes(app):
         sensitivity = request.form.get("sensitivity", "")
         run_id = request.form.get("run_id", "")
         session_id = request.form.get("session_id", "")
+
+        # A chat attachment is intentionally distinct from a generic artifact:
+        # it can be referenced by a turn, while the payload itself remains in
+        # workspace-managed storage rather than in the chat message.
+        if artifact_type == "chat_attachment" and session_id:
+            from storage.ids import validate_session_id
+            try:
+                session_id = validate_session_id(session_id)
+            except ValueError:
+                return jsonify({"ok": False, "error": "invalid_session_id"}), 400
 
         file_kind, binary = _guess_upload_kind(f.filename, artifact_type)
 
