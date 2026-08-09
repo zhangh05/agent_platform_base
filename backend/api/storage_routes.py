@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from flask import Response, jsonify, request, stream_with_context
+from flask import Response, jsonify, request, send_file, stream_with_context
 
 from storage.ids import validate_workspace_id
 
@@ -55,6 +55,20 @@ def register_storage_routes(app) -> None:
         if content is None:
             return jsonify({"ok": False, "error": "file_not_found"}), 404
         return jsonify({"ok": True, **content})
+
+    @app.route("/api/storage/files/<file_id>/preview")
+    def api_storage_file_preview(file_id):
+        """Serve an in-workspace image for chat attachment rendering."""
+        try:
+            workspace_id = validate_workspace_id(request.args.get("workspace_id", ""))
+            from storage.file_store import get_file_record, resolve_file_path
+            record = get_file_record(workspace_id, file_id)
+            mime_type = str((record or {}).get("mime_type") or "").lower()
+            if not record or record.get("lifecycle", "active") != "active" or not mime_type.startswith("image/"):
+                return jsonify({"ok": False, "error": "image_not_found"}), 404
+            return send_file(resolve_file_path(workspace_id, file_id), mimetype=mime_type, conditional=True, max_age=3600)
+        except (OSError, ValueError):
+            return jsonify({"ok": False, "error": "image_not_found"}), 404
 
     @app.route("/api/storage/files/<file_id>", methods=["DELETE"])
     def api_storage_file_delete(file_id):

@@ -386,6 +386,7 @@ export function TaskWorkbench() {
     const turnMetadata = { ...(metadataOverride || pendingAutoMetadataRef.current || {}) };
     pendingAutoMetadataRef.current = null;
     let effectiveSessionId = currentSessionId;
+    let displayAttachments: Array<{ file_id: string; name: string; mime_type: string; size_bytes: number; kind: "image" | "file"; previewUrl?: string }> = [];
 
     if (hasAttachments) {
       // A real session id lets attachment records and the turn share the same
@@ -403,7 +404,7 @@ export function TaskWorkbench() {
       }
       setAttachments((prev) => prev.map((a) => ({ ...a, uploading: true })));
       const results: string[] = [];
-      const uploadedAttachments: Array<{ file_id: string }> = [];
+      const uploadedAttachments: Array<{ file_id: string; name: string; mime_type: string; size_bytes: number; kind: "image" | "file"; previewUrl?: string }> = [];
       const readableFileRefs: string[] = [];
       for (const a of attachments) {
         try {
@@ -419,7 +420,10 @@ export function TaskWorkbench() {
           const fid = res.ok ? res.file?.file_id : "";
           if (fid) {
             results.push(a.name);
-            uploadedAttachments.push({ file_id: fid });
+            uploadedAttachments.push({
+              file_id: fid, name: a.name, mime_type: a.file.type || "application/octet-stream",
+              size_bytes: a.file.size, kind: a.file.type.startsWith("image/") ? "image" : "file", previewUrl: a.previewUrl,
+            });
             if (!a.file.type.startsWith("image/")) readableFileRefs.push(`file_id=${fid}`);
           } else {
             results.push(`${a.name}(失败)`);
@@ -427,21 +431,21 @@ export function TaskWorkbench() {
         } catch { results.push(`${a.name}(失败)`); }
       }
       setAttachments([]);
-      attachments.forEach((a) => { if (a.previewUrl) URL.revokeObjectURL(a.previewUrl); });
-      if (uploadedAttachments.length) turnMetadata.attachments = uploadedAttachments;
+      if (uploadedAttachments.length) turnMetadata.attachments = uploadedAttachments.map(({ previewUrl: _previewUrl, ...attachment }) => attachment);
+      displayAttachments = uploadedAttachments;
       if (results.length > 0) {
-        let uploadNote = `\n[已附加文件: ${results.join("、")}]`;
+        let uploadNote = "";
         // Text and document attachments remain readable through the canonical
         // workspace file tool. Images are delivered directly to a vision model
         // and deliberately do not expose an implementation-only id in chat.
-        if (readableFileRefs.length) uploadNote += `\n[可读取附件: ${readableFileRefs.join("; ")}]`;
-        fullText = text ? text + uploadNote : uploadNote;
+        if (readableFileRefs.length) uploadNote = `\n[可读取附件: ${readableFileRefs.join("; ")}]`;
+        fullText = text ? text + uploadNote : uploadNote || "请分析已附加的图片。";
       }
     }
 
     const scratch = effectiveSessionId ?? "_scratch";
     if (options?.appendUser !== false) {
-      appendUser(fullText, scratch);
+      appendUser(text, scratch, displayAttachments.length ? displayAttachments : undefined);
     }
     const streamingMsgId = appendAssistantStreaming(scratch);
     userScrolledUpRef.current = false; // reset scroll state when sending a new message

@@ -8,6 +8,7 @@ import { ResultInline } from "./ResultInline";
 import { StreamingContent } from "./StreamingContent";
 import { ThinkingBlock } from "./ThinkingBlock";
 import hljs from "highlight.js/lib/core";
+import { useSessionStore } from "../../../stores/session";
 
 const COPY_FEEDBACK_MS = 2000;
 
@@ -79,6 +80,7 @@ function handleCodeCopyClick(event: React.MouseEvent<HTMLDivElement>) {
 }
 
 export const MessageRow = memo(function MessageRow({ m, idx: _idx, total: _total, lastUserInput, onRetryOriginal }: MessageRowProps) {
+  const workspaceId = useSessionStore((s) => s.currentWorkspaceId);
   const handleRetry = useCallback(() => {
     if (lastUserInput) onRetryOriginal(lastUserInput);
   }, [lastUserInput, onRetryOriginal]);
@@ -86,7 +88,17 @@ export const MessageRow = memo(function MessageRow({ m, idx: _idx, total: _total
   if (m.role === "user") {
     return (
       <div className="message-row user" data-testid="chat-user">
-        <div className="message-stack"><div className="chat-bubble user">{m.text}</div></div>
+        <div className="message-stack"><div className="chat-bubble user">
+          {m.text && <div className="user-message-text">{m.text}</div>}
+          {m.attachments?.length ? <div className="chat-attachments">
+            {m.attachments.map((attachment) => attachment.kind === "image" ? (
+              <a className="chat-image-attachment" key={attachment.file_id} href={attachment.previewUrl || `/api/storage/files/${encodeURIComponent(attachment.file_id)}/preview?workspace_id=${encodeURIComponent(workspaceId || "")}`} target="_blank" rel="noreferrer" title="点击查看原图">
+                <img src={attachment.previewUrl || `/api/storage/files/${encodeURIComponent(attachment.file_id)}/preview?workspace_id=${encodeURIComponent(workspaceId || "")}`} alt={attachment.name} />
+                <span>{attachment.name}</span>
+              </a>
+            ) : <span className="chat-file-attachment" key={attachment.file_id}>📄 {attachment.name}</span>)}
+          </div> : null}
+        </div></div>
         <div className="message-avatar user">我</div>
       </div>
     );
@@ -178,6 +190,7 @@ export const MessageRow = memo(function MessageRow({ m, idx: _idx, total: _total
 }, (prev, next) => {
   return prev.m.text === next.m.text
     && prev.m.status === next.m.status
+    && prev.m.attachments === next.m.attachments
     && prev.m.toolCalls === next.m.toolCalls
     && prev.m.result === next.m.result
     && prev.m.progressText === next.m.progressText

@@ -523,6 +523,7 @@ export interface SessionMessage {
   trace_id?: string;
   quality_summary?: Record<string, unknown>;
   llm_metadata?: Record<string, unknown>;
+  metadata?: Record<string, unknown>;
 }
 
 export interface Workspace {

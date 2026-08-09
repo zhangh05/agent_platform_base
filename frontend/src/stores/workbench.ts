@@ -68,6 +68,7 @@ export interface ChatMsg {
   /** Monotonic timer (ms) for the latest SSOT Runtime stage, used to
    *  render the small "(已等待 5.4s)" suffix. */
   progressElapsedMs?: number;
+  attachments?: Array<{ file_id: string; name: string; mime_type: string; size_bytes: number; kind: "image" | "file"; previewUrl?: string }>;
 }
 
 const MAX_MSGS_PER_SESSION = 100;
@@ -202,7 +203,7 @@ interface WorkbenchState {
 
   switchSession: (session_id: string | null) => void;
   moveSessionMessages: (from_session_id: string, to_session_id: string) => void;
-  appendUser: (text: string, session_id: string | null) => void;
+  appendUser: (text: string, session_id: string | null, attachments?: ChatMsg["attachments"]) => void;
   /** Create a streaming assistant placeholder before response arrives */
   appendAssistantStreaming: (session_id: string | null) => string;
   /** Update an existing message (streaming→ready/error, append tool calls) */
@@ -283,7 +284,7 @@ export const useWorkbenchStore = create<WorkbenchState>()(
         });
       },
 
-      appendUser: (text, session_id) => {
+      appendUser: (text, session_id, attachments) => {
         const sid = session_id ?? get().currentSessionId ?? "_scratch";
         const msg: ChatMsg = {
           id: nextId(),
@@ -291,6 +292,7 @@ export const useWorkbenchStore = create<WorkbenchState>()(
           text,
           status: "ready",
           created_at: new Date().toISOString(),
+          attachments,
         };
         set((s) => {
           const cur = s.bySession[sid] ?? [];
@@ -576,6 +578,9 @@ export const useWorkbenchStore = create<WorkbenchState>()(
           status: "ready",
           created_at: m.created_at,
           run_id: m.run_id,
+          attachments: Array.isArray(m.metadata?.attachments)
+            ? m.metadata.attachments as ChatMsg["attachments"]
+            : undefined,
           // `result` 不可从后端还原, 渲染为纯文本气泡 (无 inline 工具调用)
         })));
         set((s) => {
@@ -608,6 +613,7 @@ export const useWorkbenchStore = create<WorkbenchState>()(
                     serverMsg.role === "assistant" && serverMsg.text.trim()
                       ? serverMsg.text
                       : localMatch.text,
+                  attachments: serverMsg.attachments ?? localMatch.attachments,
                 }
               : serverMsg;
             combined.push(nextMsg);
