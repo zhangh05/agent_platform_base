@@ -21,6 +21,7 @@ pages may still require browser.manage for rendered content.
 from __future__ import annotations
 
 import hashlib
+import ipaddress
 import logging
 import re
 import threading
@@ -82,24 +83,35 @@ def _cache_put(key: str, result: dict) -> None:
 
 # ── URL Safety ────────────────────────────────────────────────────────
 
-_PRIVATE_IP_PREFIXES = ("10.", "172.16.", "172.17.", "172.18.", "172.19.",
-                         "172.20.", "172.21.", "172.22.", "172.23.", "172.24.",
-                         "172.25.", "172.26.", "172.27.", "172.28.", "172.29.",
-                         "172.30.", "172.31.", "192.168.", "127.", "0.")
-
-
 def _is_private_url(url: str) -> bool:
     parsed = urlparse(url)
     host = (parsed.hostname or "").lower()
-    if host in ("localhost", "127.0.0.1", "::1", "0.0.0.0"):
+    if host == "localhost":
         return True
-    return any(host.startswith(p) for p in _PRIVATE_IP_PREFIXES)
+    return _is_private_ip(host)
 
 
 def _is_private_ip(ip: str) -> bool:
-    if ip in ("127.0.0.1", "::1", "0.0.0.0", "localhost"):
+    if str(ip or "").lower() == "localhost":
         return True
-    return any(ip.startswith(p) for p in _PRIVATE_IP_PREFIXES)
+    try:
+        # Everything that is not globally routable is out of bounds for a
+        # public-web tool: loopback, RFC1918, CGNAT, link-local, multicast,
+        # documentation ranges, IPv6 ULA and unspecified addresses.
+        return not ipaddress.ip_address(str(ip)).is_global
+    except ValueError:
+        return False
+
+
+def _resolved_addresses(host: str) -> set[str]:
+    """Resolve every A/AAAA candidate so mixed DNS answers cannot bypass SSRF checks."""
+    import socket
+
+    return {
+        str(item[4][0])
+        for item in socket.getaddrinfo(host, None, type=socket.SOCK_STREAM)
+        if item and item[4]
+    }
 
 
 def _check_cross_domain_redirect(final_url: str, original_url: str) -> dict | None:
@@ -450,9 +462,10 @@ def fetch_and_extract(
         # DNS safety check
         parsed = urlparse(url)
         if parsed.hostname:
-            resolved_ip = socket.gethostbyname(parsed.hostname)
-            if _is_private_ip(resolved_ip):
-                return {"ok": False, "url": url, "error": f"blocked: resolved IP {resolved_ip} is private/loopback"}
+            resolved_ips = _resolved_addresses(parsed.hostname)
+            private_ip = next((ip for ip in resolved_ips if _is_private_ip(ip)), "")
+            if private_ip:
+                return {"ok": False, "url": url, "error": f"blocked: resolved IP {private_ip} is not public"}
 
         # HTTP request with stream to cap response size (anti-DoS)
         resp = requests.get(
@@ -494,9 +507,10 @@ def fetch_and_extract(
             try:
                 final_host = urlparse(final_url).hostname
                 if final_host:
-                    final_ip = socket.gethostbyname(final_host)
-                    if _is_private_ip(final_ip):
-                        return {"ok": False, "url": url, "error": f"blocked: redirect to private IP {final_ip}"}
+                    final_ips = _resolved_addresses(final_host)
+                    private_ip = next((ip for ip in final_ips if _is_private_ip(ip)), "")
+                    if private_ip:
+                        return {"ok": False, "url": url, "error": f"blocked: redirect to non-public IP {private_ip}"}
             except Exception:
                 pass
 

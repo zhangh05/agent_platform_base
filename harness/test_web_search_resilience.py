@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 
 def test_web_manage_search_degrades_to_official_candidate_when_search_providers_fail(monkeypatch):
     import sys
@@ -47,6 +49,19 @@ def test_web_manage_search_degrades_to_official_candidate_when_search_providers_
     assert result["provider"] == "curated_official_fallback"
     assert result["results"][0]["url"] == "https://kubernetes.io/docs/"
     assert "搜索服务暂时不可用" in result["summary"]
+
+
+@pytest.mark.parametrize("value", ["127.0.0.1", "10.1.2.3", "100.64.0.1", "::1", "fc00::1", "fe80::1", "0.0.0.0"])
+def test_web_fetch_blocks_all_non_public_ip_ranges(value):
+    from core.tools.general_tools.web_content import _is_private_ip
+
+    assert _is_private_ip(value) is True
+
+
+def test_web_fetch_allows_global_ip():
+    from core.tools.general_tools.web_content import _is_private_ip
+
+    assert _is_private_ip("8.8.8.8") is False
 
 
 def test_web_tool_fallback_is_human_readable():
