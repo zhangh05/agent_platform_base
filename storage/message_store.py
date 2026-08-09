@@ -218,7 +218,7 @@ class SessionMessageStore:
                         k: meta[k] for k in ("run_id", "intent", "status",
                                               "capability", "quality_summary",
                                               "manual_review_count", "trace_id",
-                                              "llm_metadata", "attachments", "redacted")
+                                              "llm_metadata", "attachments", "tool_context", "redacted")
                         if k in meta
                     }
 

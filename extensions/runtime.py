@@ -199,6 +199,23 @@ def load_extensions(*, registry: ExtensionRegistry | None = None, refresh: bool 
             migrations=tuple(contribution.get("migrations") or ()),
         ))
     result = tuple(loaded)
+    # Validate the aggregate extension surface while loading, so a deployment
+    # never defers an ID conflict until the first request builds tool specs.
+    extension_tool_ids = [spec.tool_id for extension in result for spec, _ in extension.tools]
+    extension_tool_id_set = set(extension_tool_ids)
+    duplicate_extension_ids = sorted(
+        tool_id for tool_id in extension_tool_id_set
+        if extension_tool_ids.count(tool_id) > 1
+    )
+    from core.tools.canonical_registry import CANONICAL_REGISTRY
+    core_conflicts = sorted(extension_tool_id_set & set(CANONICAL_REGISTRY))
+    if duplicate_extension_ids or core_conflicts:
+        problems = []
+        if duplicate_extension_ids:
+            problems.append(f"duplicate extension tool ids: {duplicate_extension_ids}")
+        if core_conflicts:
+            problems.append(f"extension tools conflict with core tools: {core_conflicts}")
+        raise ExtensionValidationError("; ".join(problems))
     if use_default_registry and not refresh:
         _CACHE = result
     return result

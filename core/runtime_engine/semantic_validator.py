@@ -118,6 +118,11 @@ class SemanticValidator:
 
         # B. Argument schema
         self._validate_args(node, contract, result)
+        # Malformed JSON is already a complete, recoverable argument error.
+        # Avoid layering misleading missing-action/required-field diagnostics
+        # on top of it before the model has a chance to resend valid JSON.
+        if node.args.get("__invalid_tool_arguments_json__"):
+            return
         self._validate_action_specific_required_args(node, result)
 
         # C. Path safety
@@ -146,6 +151,17 @@ class SemanticValidator:
             registry_item = self._registry.get(node.tool) or {}
             schema = registry_item.get("args_schema") or registry_item.get("input_schema") or {}
         if not isinstance(schema, dict):
+            return
+        parse_error = node.args.get("__invalid_tool_arguments_json__")
+        if parse_error:
+            result.errors.append(SemanticError(
+                node_id=node.id,
+                code="INVALID_TOOL_ARGUMENTS_JSON",
+                message=(
+                    f"Node '{node.id}' supplied malformed JSON tool arguments: "
+                    f"{str(parse_error)[:240]}"
+                ),
+            ))
             return
         required = schema.get("required", [])
         properties = schema.get("properties", {})

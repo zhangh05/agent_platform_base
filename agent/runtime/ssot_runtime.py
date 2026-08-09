@@ -778,6 +778,9 @@ def _tool_result_fallback_from_projected_calls(tool_calls: list[dict[str, Any]])
         + (f"，失败 {fail_count} 个" if fail_count else "")
     ]
 
+    if len(tool_calls) > 10:
+        lines.append(f"以下仅展示前 10 条，共 {len(tool_calls)} 条。")
+
     for call in tool_calls[:10]:
         tool_id = str(call.get("tool_id") or "tool")
         status = "✅" if call.get("ok") else "❌"
@@ -1182,6 +1185,23 @@ def _append_context_message(messages: list[dict[str, str]], seen: set[str], raw:
     if key in seen:
         return
     seen.add(key)
+    # Persisted assistant messages can carry a compact, redacted execution
+    # breadcrumb. Keep it with the assistant turn; do not recreate protocol
+    # tool messages or inject raw tool output into later model context.
+    tool_context = ((raw.get("metadata") or {}).get("tool_context") or [])
+    if role == "assistant" and isinstance(tool_context, list):
+        facts = []
+        for item in tool_context[:8]:
+            if not isinstance(item, dict):
+                continue
+            tool_id = str(item.get("tool_id") or "tool")[:120]
+            status = "succeeded" if item.get("ok") else "failed"
+            summary = str(item.get("summary") or "").strip().replace("\n", " ")[:300]
+            errors = "; ".join(str(error)[:160] for error in list(item.get("errors") or [])[:2])
+            detail = summary or errors
+            facts.append(f"- {tool_id}: {status}" + (f" — {detail}" if detail else ""))
+        if facts:
+            content += "\n\n[Tool execution summary]\n" + "\n".join(facts)
     messages.append({"role": role, "content": content})
 
 

@@ -2,7 +2,12 @@
 
 from __future__ import annotations
 
+import logging
+
 from .manifest import CapabilityManifest
+
+
+_LOG = logging.getLogger(__name__)
 
 
 MANIFESTS: dict[str, CapabilityManifest] = {
@@ -221,6 +226,7 @@ def get_manifest(tool_id: str) -> CapabilityManifest | None:
                     input_schema=spec.input_schema,
                 )
     except Exception:
+        _LOG.warning("Unable to load extension manifest for %s", tool_id, exc_info=True)
         return None
     return None
 
@@ -234,7 +240,7 @@ def get_all_manifests() -> dict[str, CapabilityManifest]:
             if extension_manifest:
                 manifests[spec.tool_id] = extension_manifest
     except Exception:
-        pass
+        _LOG.warning("Unable to load extension manifests", exc_info=True)
     return manifests
 
 

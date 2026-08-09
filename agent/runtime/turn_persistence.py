@@ -113,6 +113,10 @@ def persist_run_record(session, turn, result, context) -> None:
                     "created_at": state.created_at,
                     "intent": state.intent,
                     "trace_id": result.trace_id if result else "",
+                    # The full audit remains in the run record and trace.
+                    # Conversation recovery receives only bounded, redacted
+                    # evidence breadcrumbs for a later follow-up turn.
+                    "tool_context": _history_tool_context(result),
                 })
 
         # v1.0.3.2: persist trace events to disk. Some provider paths do not
@@ -305,6 +309,22 @@ def _safe_tool_calls(tool_calls: list) -> list:
             "metadata": _safe_metadata(call.get("metadata") or {}, max_depth=1),
         })
     return safe
+
+
+def _history_tool_context(result) -> list[dict]:
+    """Return bounded, redacted tool facts suitable for chat continuation."""
+    if result is None:
+        return []
+    compact = _safe_tool_calls(list(getattr(result, "tool_calls", None) or []))
+    return [
+        {
+            "tool_id": item["tool_id"],
+            "ok": item["ok"],
+            "summary": item["summary"],
+            "errors": item["errors"],
+        }
+        for item in compact[:8]
+    ]
 
 
 def _safe_metadata(value, max_depth: int = 3):

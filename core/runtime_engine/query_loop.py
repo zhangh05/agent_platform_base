@@ -1818,8 +1818,18 @@ class QueryLoop:
             if isinstance(args, str):
                 try:
                     args = json.loads(args)
-                except json.JSONDecodeError:
-                    args = {}
+                except json.JSONDecodeError as exc:
+                    # Keep malformed provider arguments visible to the
+                    # semantic validation/recovery path instead of executing
+                    # the call as an ambiguous empty object.
+                    args = {"__invalid_tool_arguments_json__": str(exc)[:240]}
+                else:
+                    if not isinstance(args, dict):
+                        args = {
+                            "__invalid_tool_arguments_json__": (
+                                "tool arguments must decode to a JSON object"
+                            ),
+                        }
             
             # Normalise double-underscore to dots
             tname = tname.replace("__", ".")
