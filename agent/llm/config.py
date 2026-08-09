@@ -135,12 +135,18 @@ def get_llm_status() -> dict:
         "health": health,
         "recent_failure": _read_recent_failure(),
         "last_success": _read_recent_success(),
+        "vision_supported": _vision_supported(provider),
         "red_lines": [
             "no_fake_execution", "no_secret_leak",
             "no_call_module_directly",
             "no_fake_planned_module_result",
         ],
     }
+
+
+def _vision_supported(provider: dict) -> bool:
+    from agent.llm.capabilities import supports_vision
+    return supports_vision(provider)
 
 
 def _provider_health(provider: dict) -> dict:

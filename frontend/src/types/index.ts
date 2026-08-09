@@ -636,6 +636,7 @@ export interface LlmStatus {
   provider: string;
   model: string;
   provider_type: string;
+  vision_supported?: boolean;
   safe_mode: boolean;
   key_loaded: boolean;
   key_source: string;

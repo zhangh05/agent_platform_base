@@ -636,14 +636,19 @@ def _invoke_llm_for_ssot_runtime(**kwargs):
     # encoded bytes in metadata, history, trace or persistence.
     if is_planner and caller_extra.get("vision_attachments"):
         try:
-            from agent.runtime.vision_inputs import build_vision_content
-            image_parts, vision_warnings = build_vision_content(
-                caller_extra.get("vision_attachments"), workspace_id,
-            )
-            if image_parts:
-                user_content = [{"type": "text", "text": user}, *image_parts]
-            if vision_warnings:
-                extra["vision_warnings"] = vision_warnings
+            from agent.llm.capabilities import supports_vision
+            from agent.llm.config import resolve_provider_config
+            if supports_vision(resolve_provider_config()):
+                from agent.runtime.vision_inputs import build_vision_content
+                image_parts, vision_warnings = build_vision_content(
+                    caller_extra.get("vision_attachments"), workspace_id,
+                )
+                if image_parts:
+                    user_content = [{"type": "text", "text": user}, *image_parts]
+                if vision_warnings:
+                    extra["vision_warnings"] = vision_warnings
+            else:
+                extra["vision_warnings"] = ["当前模型不支持图片识别，图片未发送给模型。"]
         except Exception:
             _LOG.warning("vision attachment preparation failed", exc_info=True)
 

@@ -61,6 +61,10 @@ def test_planner_receives_multimodal_message(monkeypatch):
         "agent.runtime.vision_inputs.build_vision_content",
         lambda *_: ([{"type": "image_url", "image_url": {"url": "data:image/png;base64,AA=="}}], []),
     )
+    monkeypatch.setattr(
+        "agent.llm.config.resolve_provider_config",
+        lambda: {"model": "gpt-4o-mini"},
+    )
 
     def fake_invoke(**kwargs):
         captured.update(kwargs)
@@ -76,3 +80,10 @@ def test_planner_receives_multimodal_message(monkeypatch):
     assert isinstance(content, list)
     assert content[0] == {"type": "text", "text": "look at this"}
     assert content[1]["type"] == "image_url"
+
+
+def test_minimax_m3_is_not_treated_as_a_vision_model():
+    from agent.llm.capabilities import supports_vision
+
+    assert supports_vision({"provider": "minimax", "model": "MiniMax-M3"}) is False
+    assert supports_vision({"model": "gpt-4o-mini"}) is True

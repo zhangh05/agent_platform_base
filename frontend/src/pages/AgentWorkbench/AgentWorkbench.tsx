@@ -159,7 +159,7 @@ export function TaskWorkbench() {
 
   const thinkFilter = useRef<{ mode: import("../../utils/displayText").ThinkFilterState }>({ mode: "idle" });
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const [llmHealth, setLlmHealth] = useState<{ connected: boolean; provider?: string; model?: string; recentFailure?: string }>({ connected: false });
+  const [llmHealth, setLlmHealth] = useState<{ connected: boolean; provider?: string; model?: string; recentFailure?: string; visionSupported?: boolean }>({ connected: false });
   const toast = useToastStore((s) => s.show);
   const abortRef = useRef<AbortController | null>(null);
   // System and message streams use separate refs for system WebSocket and message WebSocket
@@ -199,6 +199,7 @@ export function TaskWorkbench() {
       setLlmHealth({
         connected: s.connected, provider: s.provider || s.provider_type || "",
         model: s.model || "", recentFailure: s.recent_failure?.error_type ? s.recent_failure.error_summary : undefined,
+        visionSupported: s.vision_supported,
       });
     }).catch(() => {});
   }, []);
@@ -362,11 +363,20 @@ export function TaskWorkbench() {
     options?: { appendUser?: boolean },
   ) {
     const hasAttachments = attachments.length > 0;
+    const hasImages = attachments.some((attachment) => attachment.file.type.startsWith("image/"));
     const raw = typeof textOverride === "string" ? textOverride : input;
     const text = raw.trim();
     if ((!text && !hasAttachments) || sending) return;
     if (!currentWorkspaceId) {
       toast({ kind: "warning", title: "未选择工作区", body: "请在左侧选择一个工作区" });
+      return;
+    }
+    if (hasImages && llmHealth.visionSupported === false) {
+      toast({
+        kind: "warning",
+        title: "当前模型不支持识图",
+        body: "请在系统管理的模型设置中切换到支持图片输入的模型后再发送。图片仍保留在输入框中。",
+      });
       return;
     }
 
