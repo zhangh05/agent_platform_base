@@ -1940,13 +1940,6 @@ class QueryLoop:
         and approval boundaries directly on the current call batch.
         """
         nodes = self._tool_calls_to_nodes(tool_calls)
-        # Older prompts and model priors sometimes invent paths such as
-        # data/docx_images/image2.png. Those files are deliberately not part of
-        # the workspace API. When a managed DOCX attachment is in this turn's
-        # trusted context, repair that legacy shape into the canonical action
-        # before validation/execution instead of letting a guessed path burn the
-        # tool budget.
-        self._repair_guessed_document_image_paths(ctx, nodes)
         from .semantic_validator import SemanticValidator
         from .pre_execution_repair import (
             PreExecutionRepairEngine,
@@ -2067,45 +2060,6 @@ class QueryLoop:
             "risk_level": risk.risk_level,
             "approval_required": False,
         }
-
-    @staticmethod
-    def _repair_guessed_document_image_paths(
-        ctx: StatelessContext,
-        nodes: list[ExecutionNode],
-    ) -> None:
-        attachments = ctx.extras.get("attachments") or []
-        docx_ids = [
-            str(item.get("file_id") or "").strip()
-            for item in attachments
-            if isinstance(item, dict)
-            and "wordprocessingml.document" in str(item.get("mime_type") or "").lower()
-            and str(item.get("file_id") or "").strip()
-        ]
-        if len(docx_ids) != 1:
-            return
-        pattern = re.compile(r"(?:^|/)docx_images/image(\d+)\.(?:png|jpe?g|gif|webp)$", re.IGNORECASE)
-        repairs = []
-        for node in nodes:
-            args = dict(node.args or {})
-            if node.tool != "workspace.file" or str(args.get("action") or "") != "read_image":
-                continue
-            match = pattern.search(str(args.get("filepath") or "").strip())
-            if not match:
-                continue
-            image_index = int(match.group(1))
-            node.args = {
-                "action": "extract_document_image",
-                "file_id": docx_ids[0],
-                "image_index": image_index,
-            }
-            repairs.append({
-                "node_id": node.id,
-                "from": "guessed_docx_image_path",
-                "file_id": docx_ids[0],
-                "image_index": image_index,
-            })
-        if repairs:
-            ctx.extras.setdefault("attachment_path_repairs", []).extend(repairs)
 
     @staticmethod
     def _tool_calls_to_nodes(tool_calls: List[LLMToolCall]) -> list[ExecutionNode]:
