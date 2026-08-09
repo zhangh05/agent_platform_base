@@ -5,15 +5,12 @@ import json, time as _time, hashlib, logging, re, uuid
 from dataclasses import dataclass, field, asdict
 from pathlib import Path
 from typing import Any, Callable, Optional, Literal
-from storage.paths import workspace_root
+from storage.paths import user_memory_root
 from storage.atomic_io import atomic_write_json
 from storage.time_utils import from_iso, now_iso, to_iso
 from storage.redaction import contains_secret as storage_contains_secret
 from storage.redaction import redact_dict, redact_text
 
-
-def _ws_root(ws_id: str) -> Path:
-    return workspace_root(ws_id)
 
 Scope = Literal["global","workspace","session","task"]
 MemoryType = Literal[
@@ -119,7 +116,7 @@ class MemoryRecord:
 
 
 class MemoryStore:
-    """Persist memory records per workspace."""
+    """Persist one governed long-term memory collection per user."""
 
     def __init__(self):
         pass
@@ -129,8 +126,8 @@ class MemoryStore:
         return validate_workspace_id(ws_id)
 
     def _dir(self, ws_id: str) -> Path:
-        validated = self._validated_ws_id(ws_id)
-        return _ws_root(validated) / "memory"
+        self._validated_ws_id(ws_id)  # workspace remains required provenance.
+        return user_memory_root()
 
     def _path(self, ws_id: str, memory_id: str) -> Path:
         memory_id = str(memory_id or "")
@@ -268,7 +265,9 @@ class MemoryStore:
         for r in all_recs:
             if not r.is_retrievable(): continue
             if r.scope == "global": pass
-            elif r.scope == "workspace" and r.workspace_id != ws_id: continue
+            # A user's long-term memory is shared across their workspaces.
+            # ``workspace_id`` remains provenance, not a storage/visibility wall.
+            elif r.scope == "workspace": pass
             elif r.scope == "session" and r.session_id != session_id: continue
             elif r.scope == "task":
                 if not session_id or r.session_id != session_id: continue

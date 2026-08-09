@@ -5,6 +5,7 @@
 | Path | Purpose | Git |
 | --- | --- | --- |
 | `workspaces/users/<user_id>/` | One user's durable root, created with the account | ignored |
+| `workspaces/users/<user_id>/memory/` | One shared governed long-term memory collection for that user | ignored |
 | `workspaces/users/<user_id>/workspaces/<workspace_id>/` | User workspace files, runs, memory, knowledge, artifacts, objects, and approval audit | ignored |
 | `workspaces/catalog/<workspace_id>/` | Shared workspace metadata | ignored |
 | `workspaces/_runtime/` | Platform-only identity, extension, and service-control records | ignored |

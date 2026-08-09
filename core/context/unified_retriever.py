@@ -397,24 +397,32 @@ class UnifiedRetriever:
         task_id: str = "",
         **kwargs,
     ) -> list[dict]:
-        """Convenience: search memory_hit items only."""
-        # Retrieve extra candidates before enforcing the governance lifecycle.
-        # Pending, rejected, expired and conflict records are not prompt facts.
-        candidates = self.search(
-            query,
-            item_type="memory_hit",
-            top_k=top_k,
+        """Search the user's governed memory SSOT, shared across workspaces."""
+        from storage.memory_governance import MemoryStore
+
+        records = MemoryStore().search(self.workspace_id, query, limit=max(top_k * 3, top_k))
+        if records:
+            candidates = [
+                dict(record, item_id=f"mh_{record.get('memory_id', '')}", memory_status=record.get("status", ""))
+                for record in records
+            ]
+            visible = [
+                item for item in candidates
+                if str(item.get("status") or "").lower() == "active"
+                and str(item.get("memory_type") or "") in SUPPORTED_MEMORY_TYPES
+                and self._memory_scope_visible(item, session_id=session_id, task_id=task_id)
+            ]
+            return visible[:top_k]
+
+        # ContextStore is a historical projection/test seam, not memory SSOT.
+        return self.search(
+            query, item_type="memory_hit", top_k=top_k,
             result_filter=lambda hit: (
-                str(hit.get("memory_status") or hit.get("status") or "").lower()
-                in {"active", "confirmed"}
+                str(hit.get("memory_status") or hit.get("status") or "").lower() in {"active", "confirmed"}
                 and str(hit.get("memory_type") or "") in SUPPORTED_MEMORY_TYPES
-                and self._memory_scope_visible(
-                    hit, session_id=session_id, task_id=task_id
-                )
-            ),
-            **kwargs,
-        )
-        return candidates[:top_k]
+                and self._memory_scope_visible(hit, session_id=session_id, task_id=task_id)
+            ), **kwargs,
+        )[:top_k]
 
     def search_knowledge(self, query: str, top_k: int = 5, **kwargs) -> list[dict]:
         """Convenience: search knowledge_chunk items only."""

@@ -89,6 +89,18 @@ def test_workspace_objects_and_approval_audit_follow_user_workspace_root(monkeyp
         assert get_object_store("team_b").get("uploads/example.bin") is None
 
 
+def test_one_user_memory_is_shared_across_their_workspaces(monkeypatch, tmp_path):
+    monkeypatch.setenv("NA_WORKSPACE_ROOT", str(tmp_path))
+    upsert_user("alice", "password", "viewer", "org", ["one", "two"])
+    from storage.memory_governance import MemoryRecord, MemoryStore, MemoryWriteGate
+
+    with storage_principal("alice"):
+        record = MemoryRecord(workspace_id="one", memory_type="profile", source="user", status="active", content="Alice prefers concise answers.")
+        assert MemoryWriteGate().write(record)["ok"] is True
+        assert MemoryStore().get("two", record.memory_id) is not None
+        assert MemoryStore().list_retrievable("two")[0]["memory_id"] == record.memory_id
+
+
 def test_identity_upgrade_assigns_immutable_ids_without_preserving_legacy_roots(monkeypatch, tmp_path):
     monkeypatch.setenv("NA_WORKSPACE_ROOT", str(tmp_path))
     from storage.atomic_io import atomic_write_json

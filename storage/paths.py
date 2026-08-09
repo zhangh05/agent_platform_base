@@ -57,6 +57,16 @@ def user_runtime_root() -> Path:
     return user_data_root(principal_storage_key(principal)) / "runtime"
 
 
+def user_memory_root() -> Path:
+    """Return the current user's one shared long-term memory root."""
+    from storage.principal import current_storage_principal, principal_storage_key
+
+    principal = current_storage_principal()
+    if not principal:
+        return runtime_root() / "memory"
+    return user_data_root(principal_storage_key(principal)) / "memory"
+
+
 def workspace_root(workspace_id: str) -> Path:
     """Return the current principal's data root for a logical workspace."""
     from storage.ids import validate_workspace_id
