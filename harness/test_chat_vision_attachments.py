@@ -41,6 +41,20 @@ def test_unknown_attachment_is_rejected():
         normalize_chat_attachments("test_ws", [{"file_id": "file_missing"}])
 
 
+def test_websocket_attachment_validation_uses_authenticated_user_scope(monkeypatch, tmp_path):
+    monkeypatch.setenv("NA_WORKSPACE_ROOT", str(tmp_path))
+    from storage.principal import storage_principal
+    from storage.file_store import import_user_upload
+    from backend.ws.agent_ws import _normalize_ws_attachments
+
+    source = tmp_path / "note.txt"
+    source.write_text("private note", encoding="utf-8")
+    with storage_principal("alice"):
+        record = import_user_upload("team", str(source), "note.txt", logical_type="chat_attachment", file_kind="text")
+
+    assert _normalize_ws_attachments("alice", "team", [{"file_id": record.file_id}])[0]["file_id"] == record.file_id
+
+
 def test_vision_content_is_ephemeral_data_url(image_attachment):
     from agent.runtime.vision_inputs import build_vision_content
 

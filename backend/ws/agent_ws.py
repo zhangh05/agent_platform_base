@@ -32,6 +32,15 @@ _log = logging.getLogger("ws.agent")
 _MAX_WS_INPUT_LENGTH = 262144  # 256KB — supports long user inputs
 _MAX_WS_METADATA_JSON = 16384
 
+
+def _normalize_ws_attachments(username: str, workspace_id: str, raw):
+    """Validate attachments under the authenticated user's storage scope."""
+    from backend.core.chat_attachments import normalize_chat_attachments
+    from storage.principal import storage_principal
+
+    with storage_principal(username):
+        return normalize_chat_attachments(workspace_id, raw)
+
 # v3.16: Global connection registry for broadcasting system events
 # (job_updated, run_status) to all active clients.
 _active_ws_connections: dict[str, tuple[str, str, object]] = {}  # key → (username, workspace_id, ws)
@@ -184,9 +193,8 @@ def register_ws_routes(app):
                 if not isinstance(metadata, dict):
                     metadata = {}
                 try:
-                    from backend.core.chat_attachments import normalize_chat_attachments
-                    metadata["attachments"] = normalize_chat_attachments(
-                        workspace_id, metadata.get("attachments"),
+                    metadata["attachments"] = _normalize_ws_attachments(
+                        authenticated_username, workspace_id, metadata.get("attachments"),
                     )
                 except ValueError as exc:
                     ws.send(json.dumps({"type": "error", "message": str(exc)}, ensure_ascii=True))
