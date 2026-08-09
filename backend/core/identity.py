@@ -39,6 +39,26 @@ def resolve_user_storage_id(username: str) -> str:
     return _bootstrap_storage_id(value)
 
 
+def ensure_identity_storage_ids() -> int:
+    """Assign immutable IDs to any identity records created before this rule.
+
+    This upgrades identity metadata only. It deliberately does not move or
+    retain legacy user payloads; those roots are no longer a supported source.
+    """
+    with FileLock(_path().with_name("users.lock")):
+        data = _read()
+        changed = 0
+        for user in data.get("users", []):
+            user_id = str(user.get("user_id") or "")
+            if re.fullmatch(r"usr_[0-9a-f]{32}", user_id):
+                continue
+            user["user_id"] = f"usr_{uuid.uuid4().hex}"
+            changed += 1
+        if changed:
+            atomic_write_json(_path(), data)
+    return changed
+
+
 def identity_enabled() -> bool:
     return os.environ.get("AGENT_PLATFORM_IDENTITY_ENABLED", "false").strip().lower() in {"1", "true", "yes", "on"}
 

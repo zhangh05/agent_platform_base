@@ -1,5 +1,5 @@
 from storage.paths import user_data_root, user_runtime_root, workspace_root
-from backend.core.identity import delete_user, resolve_user_storage_id, upsert_user
+from backend.core.identity import delete_user, ensure_identity_storage_ids, resolve_user_storage_id, upsert_user
 from storage.principal import principal_storage_key, storage_principal
 from storage.workspace_store import (
     delete_workspace,
@@ -87,3 +87,18 @@ def test_workspace_objects_and_approval_audit_follow_user_workspace_root(monkeyp
 
     with storage_principal("bob"):
         assert get_object_store("team_b").get("uploads/example.bin") is None
+
+
+def test_identity_upgrade_assigns_immutable_ids_without_preserving_legacy_roots(monkeypatch, tmp_path):
+    monkeypatch.setenv("NA_WORKSPACE_ROOT", str(tmp_path))
+    from storage.atomic_io import atomic_write_json
+    from storage.records import runtime_record_file
+
+    atomic_write_json(runtime_record_file("identity", "users.json"), {
+        "users": [{"username": "legacy", "password_hash": "x", "role": "viewer"}],
+        "organizations": [], "memberships": [],
+    })
+    assert ensure_identity_storage_ids() == 1
+    user_id = resolve_user_storage_id("legacy")
+    assert user_id.startswith("usr_") and len(user_id) == 36
+    assert not (tmp_path / "users" / "legacy-old-root").exists()

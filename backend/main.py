@@ -71,6 +71,9 @@ def _validated_workspace_id(raw=""):
 def create_app():
     app = Flask(__name__, static_folder=None)
     app.config["PORT"] = UNIFIED_PORT
+    from backend.core.identity import ensure_identity_storage_ids, identity_enabled
+    if identity_enabled():
+        ensure_identity_storage_ids()
     from agent.runtime.memory_hooks import install_memory_governance_hooks
     install_memory_governance_hooks()
     from observability.metrics import install_http_metrics
