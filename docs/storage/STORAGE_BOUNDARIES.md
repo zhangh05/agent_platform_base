@@ -4,17 +4,19 @@
 
 | Path | Purpose | Git |
 | --- | --- | --- |
-| `workspaces/users/<user_key>/workspaces/<workspace_id>/` | User workspace files and app data | ignored |
+| `workspaces/users/<user_id>/` | One user's durable root, created with the account | ignored |
+| `workspaces/users/<user_id>/workspaces/<workspace_id>/` | User workspace files, runs, memory, knowledge, artifacts, objects, and approval audit | ignored |
 | `workspaces/catalog/<workspace_id>/` | Shared workspace metadata | ignored |
-| `workspaces/_runtime/` | Durable application/runtime records that are not owned by one user workspace | ignored |
+| `workspaces/_runtime/` | Platform-only identity, extension, and service-control records | ignored |
 | `logs/` | Local logs | ignored |
 | `config/providers/` | Provider config and secrets | ignored |
 | `artifacts/` | Source code for artifact store, not artifact payload data | tracked |
 
 ## Boundary Rules
 
-- Workspace data is scoped by validated `workspace_id` and the authenticated user.
-- Non-workspace runtime records are scoped under `workspaces/_runtime/`.
+- Workspace data is scoped by immutable `user_id`, validated `workspace_id`, and the authenticated user.
+- Creating an account provisions its user root and every granted workspace; deleting it removes that root.
+- Only platform control-plane state belongs under `workspaces/_runtime/`.
 - Store functions should not invent a workspace for caller mistakes.
 - Deletion must be scoped and explicit.
 - Redacted summaries may be returned in list APIs; raw secret-bearing payloads must not.

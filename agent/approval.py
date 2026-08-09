@@ -551,20 +551,20 @@ def _summarize_args(args: dict) -> str:
     return ", ".join(items[:5])
 
 
-def _default_persist_path() -> Path:
+def _default_persist_path(workspace_id: str = "") -> Path:
     if _APPROVALS_FILE is not None:
         return Path(_APPROVALS_FILE)
     from storage.approval_record_store import approval_log_path
 
-    return approval_log_path()
+    return approval_log_path(workspace_id)
 
 
 # Singleton
 _approval_stores: dict[str, ApprovalStore] = {}
 
-def get_approval_store() -> ApprovalStore:
-    """Return the approval store for the current principal-scoped log path."""
-    path = _default_persist_path()
+def get_approval_store(workspace_id: str = "") -> ApprovalStore:
+    """Return the approval store scoped to the current user and workspace."""
+    path = _default_persist_path(workspace_id)
     key = str(path)
     with _get_lock():
         if key not in _approval_stores:

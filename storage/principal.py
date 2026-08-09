@@ -1,16 +1,14 @@
 """Request-scoped storage identity.
 
-Business records are isolated by the pair ``(username, workspace_id)``. Every
-authenticated user, including the configured administrator, is stored under a
-stable per-user directory inside each workspace.
+Business records are isolated by the pair ``(immutable_user_id, workspace_id)``.
+Every authenticated user, including the configured administrator, is stored
+under a stable per-user directory inside each workspace.
 """
 
 from __future__ import annotations
 
 import contextvars
-import hashlib
 import os
-import re
 from contextlib import contextmanager
 from functools import wraps
 from typing import Iterator
@@ -48,10 +46,16 @@ def storage_principal(username: str) -> Iterator[None]:
 
 
 def principal_storage_key(username: str) -> str:
-    value = str(username or "").strip()
-    safe = re.sub(r"[^A-Za-z0-9_.-]+", "_", value).strip("._-") or "user"
-    digest = hashlib.sha256(value.casefold().encode("utf-8")).hexdigest()[:12]
-    return f"{safe[:40]}-{digest}"
+    """Return the immutable storage ID for an authenticated principal.
+
+    A username is a login/display attribute, not a durable storage key.  The
+    identity adapter persists an ID for managed users; the environment-defined
+    bootstrap administrator has a deterministic system ID until it is managed
+    by that adapter.
+    """
+    from backend.core.identity import resolve_user_storage_id
+
+    return resolve_user_storage_id(username)
 
 
 def known_storage_principals() -> list[str]:

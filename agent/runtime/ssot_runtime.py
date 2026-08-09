@@ -419,7 +419,7 @@ def _build_approval_handler(
     """Create the production approval pause/resume callback for QueryLoop."""
 
     async def _handle(ctx, gate: dict[str, Any]) -> bool:
-        store = get_approval_store()
+        store = get_approval_store(workspace_id)
         approval_ids: list[str] = []
         details = list(gate.get("approval_details") or [])
         for detail in details:

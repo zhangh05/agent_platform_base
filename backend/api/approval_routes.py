@@ -56,10 +56,10 @@ def register_approval_routes(app) -> None:
     def api_approvals_pending():
         """GET pending approvals, filtered by workspace and optionally session."""
         from agent.approval import get_approval_store
-        store = get_approval_store()
         ws_id, err = _validated_ws_id(request.args.get("workspace_id", ""))
         if err:
             return err
+        store = get_approval_store(ws_id)
         session_id = request.args.get("session_id", "")
         pending = store.get_pending(session_id, workspace_id=ws_id)
         return jsonify({
@@ -74,7 +74,6 @@ def register_approval_routes(app) -> None:
         if not _admin_token_allowed():
             return jsonify({"ok": False, "error": "admin_access_required"}), 403
         from agent.approval import get_approval_store
-        store = get_approval_store()
         data = request.get_json(silent=True) or {}
 
         # Require the current decision field.
@@ -89,6 +88,7 @@ def register_approval_routes(app) -> None:
         ws_id, err = _validated_ws_id(str(data.get("workspace_id", "")))
         if err:
             return err
+        store = get_approval_store(ws_id)
 
         req = store.resolve(approval_id, allowed, workspace_id=ws_id, resolver=resolver, reason=reason)
         if req is None:
@@ -126,10 +126,10 @@ def register_approval_routes(app) -> None:
     def api_approvals_history():
         """GET resolved approval history (Guardian audit)."""
         from agent.approval import get_approval_store
-        store = get_approval_store()
         ws_id, err = _validated_ws_id(request.args.get("workspace_id", ""))
         if err:
             return err
+        store = get_approval_store(ws_id)
         session_id = request.args.get("session_id", "")
         tool_id = request.args.get("tool_id", "")
         try:

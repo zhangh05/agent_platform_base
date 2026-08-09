@@ -99,7 +99,7 @@ def interrupt_before_tool(
     approval_id = ""
     try:
         from agent.approval import get_approval_store
-        store = get_approval_store()
+        store = get_approval_store(ws_id)
         req = store.create(
             session_id=session_id,
             tool_id=tool_invocation.get("tool_id", ""),

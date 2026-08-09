@@ -10,11 +10,19 @@ from storage.records import (
     delete_record_path,
     mutate_jsonl_path,
     read_jsonl_path,
-    user_runtime_record_file,
+    workspace_record_file,
 )
 
 
-def approval_log_path() -> Path:
+def approval_log_path(workspace_id: str = "") -> Path:
+    """Return the approval audit log for one user workspace.
+
+    The empty form is retained only for direct unit tests that construct an
+    isolated store themselves. Production callers must supply workspace_id.
+    """
+    if workspace_id:
+        return workspace_record_file(workspace_id, "approvals", "tool_approvals.jsonl")
+    from storage.records import user_runtime_record_file
     return user_runtime_record_file("approvals", "tool_approvals.jsonl")
 
 

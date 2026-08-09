@@ -1,4 +1,5 @@
-from storage.paths import user_runtime_root, workspace_root
+from storage.paths import user_data_root, user_runtime_root, workspace_root
+from backend.core.identity import delete_user, resolve_user_storage_id, upsert_user
 from storage.principal import principal_storage_key, storage_principal
 from storage.workspace_store import (
     delete_workspace,
@@ -17,7 +18,7 @@ def test_configured_admin_uses_strict_user_and_workspace_paths(monkeypatch, tmp_
 
     with storage_principal("Admin"):
         assert workspace_root("default") == tmp_path / "users" / key / "workspaces" / "default"
-        assert user_runtime_root() == tmp_path / "_runtime" / "users" / key
+        assert user_runtime_root() == tmp_path / "users" / key / "runtime"
 
 
 def test_workspace_catalog_is_separate_from_user_data(monkeypatch, tmp_path):
@@ -55,3 +56,34 @@ def test_workspace_rename_and_delete_cover_every_user_data_root(monkeypatch, tmp
     for username in ("Admin", "network"):
         key = principal_storage_key(username)
         assert not (tmp_path / "users" / key / "workspaces" / "team_new").exists()
+
+
+def test_user_creation_eagerly_provisions_immutable_root_and_delete_removes_it(monkeypatch, tmp_path):
+    monkeypatch.setenv("NA_WORKSPACE_ROOT", str(tmp_path))
+    user = upsert_user("alice", "password", "viewer", "org", ["team"], home_workspace_id="team")
+
+    user_id = resolve_user_storage_id("alice")
+    root = user_data_root(user_id)
+    assert user["username"] == "alice"
+    assert (root / "profile.json").is_file()
+    assert (root / "workspaces" / "team" / "sessions").is_dir()
+
+    delete_user("alice")
+    assert not root.exists()
+
+
+def test_workspace_objects_and_approval_audit_follow_user_workspace_root(monkeypatch, tmp_path):
+    monkeypatch.setenv("NA_WORKSPACE_ROOT", str(tmp_path))
+    upsert_user("alice", "password", "viewer", "org", ["team"])
+    upsert_user("bob", "password", "viewer", "org_b", ["team_b"])
+    from storage.approval_record_store import approval_log_path
+    from storage.object_store import get_object_store
+
+    with storage_principal("alice"):
+        objects = get_object_store("team")
+        objects.put("uploads/example.bin", b"alice")
+        assert objects.root == workspace_root("team") / "objects"
+        assert approval_log_path("team") == workspace_root("team") / "approvals" / "tool_approvals.jsonl"
+
+    with storage_principal("bob"):
+        assert get_object_store("team_b").get("uploads/example.bin") is None

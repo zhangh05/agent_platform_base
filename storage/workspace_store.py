@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Optional
 
 from storage.atomic_io import atomic_write_json, atomic_write_text
-from storage.paths import ensure_workspace_storage_dirs, get_workspace_root, workspace_catalog_root, workspace_root
+from storage.paths import ensure_workspace_storage_dirs, get_workspace_root, user_data_root, workspace_catalog_root, workspace_root
 from storage.run_record_store import is_run_record_file
 from storage.ids import is_valid_workspace_id, validate_workspace_id
 from storage.locking import FileLock
@@ -59,6 +59,36 @@ def ensure_workspace(ws_id: str = "default") -> str:
             if not index_path.exists():
                 atomic_write_text(index_path, "")
     return ws_id
+
+
+def provision_user_storage(username: str, user_id: str, workspace_ids: list[str]) -> None:
+    """Create a user's durable root and every workspace they are granted.
+
+    This is called by identity management, not by a first chat request, so a
+    newly created account has an auditable filesystem boundary immediately.
+    """
+    from storage.principal import storage_principal
+
+    root = user_data_root(user_id)
+    root.mkdir(parents=True, exist_ok=True)
+    profile = root / "profile.json"
+    if not profile.exists():
+        atomic_write_json(profile, {
+            "schema_version": 1,
+            "user_id": user_id,
+            "username": str(username),
+            "created_at": _now_iso(),
+        })
+    with storage_principal(username):
+        for workspace_id in sorted(set(workspace_ids or [])):
+            ensure_workspace(workspace_id)
+
+
+def delete_user_storage(user_id: str) -> None:
+    """Remove only the validated data roots belonging to one deleted user."""
+    root = user_data_root(user_id)
+    if root.exists():
+        shutil.rmtree(root)
 
 
 def get_workspace_state(ws_id: str = "default") -> dict:

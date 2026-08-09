@@ -8,9 +8,11 @@ their own workspace root constants.
 from __future__ import annotations
 
 import os
+import re
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
+_USER_ID_PATTERN = re.compile(r"^usr_[0-9a-f]{32}$")
 
 
 def get_workspace_root() -> Path:
@@ -29,12 +31,20 @@ def runtime_root() -> Path:
     return get_workspace_root() / "_runtime"
 
 
+def user_data_root(user_id: str) -> Path:
+    """Return the validated root that owns one user's durable data."""
+    value = str(user_id or "").strip()
+    if not _USER_ID_PATTERN.fullmatch(value):
+        raise ValueError("invalid user storage id")
+    return get_workspace_root() / "users" / value
+
+
 def user_runtime_root() -> Path:
     """Return the current principal's runtime-data root.
 
     Runtime-wide service state remains in ``runtime_root``. User-visible
-    runtime records (for example approval audits) belong below this root but
-    must not be shared between authenticated users.
+    runtime records belong inside the user's own root, never beside other
+    users under the platform runtime directory.
     """
     from storage.principal import (
         current_storage_principal,
@@ -44,7 +54,7 @@ def user_runtime_root() -> Path:
     principal = current_storage_principal()
     if not principal:
         return runtime_root()
-    return runtime_root() / "users" / principal_storage_key(principal)
+    return user_data_root(principal_storage_key(principal)) / "runtime"
 
 
 def workspace_root(workspace_id: str) -> Path:

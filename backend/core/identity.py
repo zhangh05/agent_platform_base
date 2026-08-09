@@ -13,6 +13,7 @@ import hmac
 import os
 import re
 import secrets
+import uuid
 from typing import Any
 
 from storage.atomic_io import atomic_write_json
@@ -20,6 +21,22 @@ from storage.records import runtime_record_file
 from storage.locking import FileLock
 
 _ROLES = {"owner", "admin", "developer", "operator", "viewer"}
+
+
+def _bootstrap_storage_id(username: str) -> str:
+    """Stable ID for the configured administrator before it is in identity."""
+    return "usr_" + hashlib.sha256(str(username or "").strip().casefold().encode("utf-8")).hexdigest()[:32]
+
+
+def resolve_user_storage_id(username: str) -> str:
+    """Resolve a durable user ID without exposing identity internals to storage."""
+    value = str(username or "").strip()
+    for user in _read().get("users", []):
+        if str(user.get("username") or "") == value:
+            existing = str(user.get("user_id") or "")
+            if re.fullmatch(r"usr_[0-9a-f]{32}", existing):
+                return existing
+    return _bootstrap_storage_id(value)
 
 
 def identity_enabled() -> bool:
@@ -79,7 +96,7 @@ def upsert_user(username: str, password: str, role: str = "viewer", organization
             raise ValueError("workspace is already assigned to another organization")
         previous = next((item for item in data["users"] if item.get("username") == username), {})
         users = [item for item in data["users"] if item.get("username") != username]
-        record = {"username": username, "password_hash": _hash_password(password), "role": role, "organization_id": organization_id, "workspace_ids": allowed, "home_workspace_id": home_workspace_id or previous.get("home_workspace_id", ""), "enabled": previous.get("enabled", True) is not False}
+        record = {"user_id": str(previous.get("user_id") or "") if re.fullmatch(r"usr_[0-9a-f]{32}", str(previous.get("user_id") or "")) else f"usr_{uuid.uuid4().hex}", "username": username, "password_hash": _hash_password(password), "role": role, "organization_id": organization_id, "workspace_ids": allowed, "home_workspace_id": home_workspace_id or previous.get("home_workspace_id", ""), "enabled": previous.get("enabled", True) is not False}
         users.append(record)
         data["users"] = users
         if existing_organization is None:
@@ -88,6 +105,8 @@ def upsert_user(username: str, password: str, role: str = "viewer", organization
         memberships.append({"username": username, "organization_id": organization_id, "role": role, "workspace_ids": list(allowed)})
         data["memberships"] = memberships
         atomic_write_json(_path(), data)
+    from storage.workspace_store import provision_user_storage
+    provision_user_storage(username, record["user_id"], allowed)
     return _project_user(data, record)
 
 
@@ -113,7 +132,7 @@ def list_users() -> list[dict[str, Any]]:
 
 
 def delete_user(username: str) -> dict[str, Any]:
-    """Remove a login account and its memberships without deleting audit data."""
+    """Remove a login account, memberships, and its isolated durable data."""
     username = str(username or "").strip()
     if not username:
         raise ValueError("username is required")
@@ -123,6 +142,9 @@ def delete_user(username: str) -> dict[str, Any]:
         if user is None:
             raise ValueError("user not found")
         projected = _project_user(data, user)
+        user_id = resolve_user_storage_id(username)
+        from storage.workspace_store import delete_user_storage
+        delete_user_storage(user_id)
         data["users"] = [item for item in data["users"] if item.get("username") != username]
         data["memberships"] = [item for item in data["memberships"] if item.get("username") != username]
         atomic_write_json(_path(), data)
@@ -217,7 +239,10 @@ def update_user_access(username: str, role: str, organization_id: str, workspace
         memberships.append({"username": username, "organization_id": organization_id, "role": role, "workspace_ids": allowed})
         data["memberships"] = memberships
         atomic_write_json(_path(), data)
-        return _project_user(data, user)
+        projected = _project_user(data, user)
+    from storage.workspace_store import provision_user_storage
+    provision_user_storage(username, resolve_user_storage_id(username), allowed)
+    return projected
 
 
 def create_organization(organization_id: str, name: str) -> dict[str, Any]:

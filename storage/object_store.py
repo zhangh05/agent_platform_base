@@ -6,13 +6,17 @@ import hashlib
 from pathlib import Path
 
 from storage.atomic_io import atomic_write_bytes
-from storage.paths import runtime_root
+from storage.paths import get_workspace_root, runtime_root, workspace_root
 from storage.backend import backend_mode
 
 
 class LocalObjectStore:
-    def __init__(self, root: str | Path | None = None):
-        self.root = Path(root) if root else runtime_root() / "objects"
+    def __init__(self, root: str | Path | None = None, *, workspace_id: str = ""):
+        # Business objects name a workspace and inherit the authenticated
+        # user's data root. The global default is platform-control only.
+        self.root = Path(root) if root else (
+            workspace_root(workspace_id) / "objects" if workspace_id else runtime_root() / "objects"
+        )
 
     def _path(self, key: str) -> Path:
         parts = str(key).split("/")
@@ -100,11 +104,23 @@ def object_store_mode() -> str:
     return "s3" if legacy in {"s3", "object"} else "local"
 
 
-def get_object_store():
+def _workspace_object_prefix(workspace_id: str) -> str:
+    """Build the same user/workspace namespace for remote object stores."""
+    root = workspace_root(workspace_id)
+    try:
+        relative = root.relative_to(get_workspace_root())
+    except ValueError as exc:
+        raise ValueError("workspace object root escapes storage root") from exc
+    return (relative / "objects").as_posix()
+
+
+def get_object_store(workspace_id: str = ""):
     import os
     if object_store_mode() == "s3":
         bucket = os.environ.get("AGENT_PLATFORM_OBJECT_STORE_BUCKET", "").strip()
         if not bucket:
             raise RuntimeError("AGENT_PLATFORM_OBJECT_STORE_BUCKET is required")
-        return S3ObjectStore(bucket, os.environ.get("AGENT_PLATFORM_OBJECT_STORE_PREFIX", ""))
-    return LocalObjectStore()
+        base_prefix = os.environ.get("AGENT_PLATFORM_OBJECT_STORE_PREFIX", "").strip("/")
+        scoped_prefix = "/".join(part for part in (base_prefix, _workspace_object_prefix(workspace_id)) if part) if workspace_id else base_prefix
+        return S3ObjectStore(bucket, scoped_prefix)
+    return LocalObjectStore(workspace_id=workspace_id)

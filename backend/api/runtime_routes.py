@@ -96,7 +96,7 @@ def _validate_approved_tool_invocation(approval_id: str, tool_id: str, workspace
     try:
         from agent.approval import get_approval_store
 
-        history = get_approval_store().get_history(tool_id=tool_id, workspace_id=workspace_id, limit=500)
+        history = get_approval_store(workspace_id).get_history(tool_id=tool_id, workspace_id=workspace_id, limit=500)
         for rec in history:
             if (
                 rec.get("approval_id") == approval_id
