@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect, useCallback } from "react";
 import { sessionsApi, settingsApi, sseApi } from "../../api";
-import { apiRequest, getApiAccessToken } from "../../api/client";
+import { getApiAccessToken } from "../../api/client";
 import { useSessionStore } from "../../stores/session";
 import { useWorkbenchStore, type ChatMsg } from "../../stores/workbench";
 import { useToastStore } from "../../stores/toast";
@@ -14,7 +14,7 @@ import { formatFileSize } from "../../utils/format";
 import { QUICK_CHIPS } from "./WorkbenchQuickChips";
 import { MessageRow } from "./components/MessageRow";
 import { scopedLocalStorageKey } from "../../utils/userScope";
-import { useChatStream, type ChatStreamAttachment } from "../../hooks/useChatStream";
+import { useWorkbenchSend, type PendingAttachment } from "../../hooks/useWorkbenchSend";
 
 /* ── View mode ── */
 type ViewMode = "chat" | "timeline";
@@ -69,9 +69,7 @@ export function TaskWorkbench() {
 
   const [viewMode, setViewMode] = useState<ViewMode>("chat");
   const [input, setInput] = useState("");
-  const [attachments, setAttachments] = useState<Array<{
-    id: string; name: string; size: string; file: File; uploading?: boolean; previewUrl?: string;
-  }>>([]);
+  const [attachments, setAttachments] = useState<PendingAttachment[]>([]);
 
   // ── Scroll architecture (v4.1) ──
   // A plain scroll container is enough for the capped chat history and avoids
@@ -120,7 +118,6 @@ export function TaskWorkbench() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [llmHealth, setLlmHealth] = useState<{ connected: boolean; provider?: string; model?: string; recentFailure?: string; visionSupported?: boolean }>({ connected: false });
   const toast = useToastStore((s) => s.show);
-  const stopStreamRef = useRef<() => void>(() => {});
   // System and message streams use separate refs for system WebSocket and message WebSocket
   // to prevent race conditions where message streaming overwrites the
   // system WS reference and vice versa.
@@ -132,12 +129,6 @@ export function TaskWorkbench() {
   // callback keeps a constant reference and avoids re-rendering every row.
   const handleRetryOriginal = useCallback((text: string) => {
     onSendRef.current(text);
-  }, []);
-
-  // Stop generation: abort active request + close message WebSocket
-  // Only close the message WebSocket; the persistent system stream stays alive.
-  const stopGeneration = useCallback(() => {
-    stopStreamRef.current();
   }, []);
 
   // Preserve current session id ref for cleanup
@@ -235,23 +226,22 @@ export function TaskWorkbench() {
     safeRemoveLocal(draftKey);
   }, [draftKey]);
 
-  const { send: sendStream, stop: stopStream } = useChatStream(
-    {
-      workspaceId: currentWorkspaceId,
-      sessionId: currentSessionId,
-      llmHealth,
-    },
-    {
-      // The hook performs the store migration itself. Keep this callback for
-      // page-owned effects added later without duplicating session routing.
-      onSessionResolved: () => {},
-      onResult: () => { keepAtBottom(); },
-      onInterruption: (message) => {
-        toast({ kind: "warning", title: "实时连接中断", body: message });
-      },
-    },
-  );
-  stopStreamRef.current = stopStream;
+  const { send: onSend, stop: stopGeneration } = useWorkbenchSend({
+    workspaceId: currentWorkspaceId,
+    sessionId: currentSessionId,
+    input,
+    attachments,
+    sending,
+    visionSupported: llmHealth.visionSupported,
+    setInput,
+    setAttachments,
+    clearDraft,
+    prepareToSend: () => { userScrolledUpRef.current = false; },
+    keepAtBottom,
+    switchSession,
+    toast,
+    pendingAutoMetadataRef,
+  });
 
   // Auto-grow input
   useEffect(() => {
@@ -327,97 +317,6 @@ export function TaskWorkbench() {
       }
     };
   }, [currentSessionId, currentWorkspaceId]);
-
-  const onSend = useCallback(async (
-    textOverride?: string,
-    metadataOverride?: Record<string, unknown>,
-  ) => {
-    const pendingAttachments = attachments;
-    const hasAttachments = pendingAttachments.length > 0;
-    const hasImages = pendingAttachments.some((attachment) => attachment.file.type.startsWith("image/"));
-    const text = (typeof textOverride === "string" ? textOverride : input).trim();
-    if ((!text && !hasAttachments) || sending) return;
-    if (!currentWorkspaceId) {
-      toast({ kind: "warning", title: "未选择工作区", body: "请在左侧选择一个工作区" });
-      return;
-    }
-    if (hasImages && llmHealth.visionSupported === false) {
-      toast({
-        kind: "warning",
-        title: "当前模型不支持识图",
-        body: "请在系统管理的模型设置中切换到支持图片输入的模型后再发送。图片仍保留在输入框中。",
-      });
-      return;
-    }
-
-    setInput("");
-    clearDraft();
-    const turnMetadata = { ...(metadataOverride || pendingAutoMetadataRef.current || {}) };
-    pendingAutoMetadataRef.current = null;
-    let effectiveSessionId = currentSessionId;
-    let fullText = text;
-    let displayAttachments: ChatStreamAttachment[] = [];
-
-    if (hasAttachments) {
-      if (!effectiveSessionId) {
-        try {
-          const created = await sessionsApi.create(currentWorkspaceId, text.slice(0, 60));
-          effectiveSessionId = created.session.session_id;
-          useSessionStore.getState().setCurrentSession(effectiveSessionId);
-          switchSession(effectiveSessionId);
-        } catch {
-          toast({ kind: "error", title: "无法创建会话", body: "图片未发送，请稍后重试。" });
-          return;
-        }
-      }
-
-      setAttachments((prev) => prev.map((attachment) => ({ ...attachment, uploading: true })));
-      const uploaded: ChatStreamAttachment[] = [];
-      const readableFileRefs: string[] = [];
-      for (const attachment of pendingAttachments) {
-        try {
-          const form = new FormData();
-          form.append("file", attachment.file);
-          form.append("artifact_type", "chat_attachment");
-          form.append("title", attachment.name);
-          form.append("workspace_id", currentWorkspaceId);
-          form.append("session_id", effectiveSessionId);
-          const result = await apiRequest<{ ok: boolean; file: { file_id: string } }>({
-            method: "POST",
-            url: `/workspaces/${currentWorkspaceId}/artifacts/upload`,
-            data: form,
-          });
-          if (!result.ok || !result.file?.file_id) continue;
-          const item: ChatStreamAttachment = {
-            file_id: result.file.file_id,
-            name: attachment.name,
-            mime_type: attachment.file.type || "application/octet-stream",
-            size_bytes: attachment.file.size,
-            kind: attachment.file.type.startsWith("image/") ? "image" : "file",
-            previewUrl: attachment.previewUrl,
-          };
-          uploaded.push(item);
-          if (item.kind === "file") readableFileRefs.push(`file_id=${item.file_id}`);
-        } catch { /* Keep sending any attachments that did upload. */ }
-      }
-      setAttachments([]);
-      if (!uploaded.length) {
-        toast({ kind: "error", title: "附件上传失败", body: "未能上传附件，请稍后重试。" });
-        return;
-      }
-      displayAttachments = uploaded;
-      turnMetadata.attachments = uploaded.map(({ previewUrl: _previewUrl, ...item }) => item);
-      if (readableFileRefs.length) {
-        fullText = text ? `${text}\n[可读取附件: ${readableFileRefs.join("; ")}]` : `[可读取附件: ${readableFileRefs.join("; ")}]`;
-      } else if (!fullText) {
-        fullText = "请分析已附加的图片。";
-      }
-    }
-
-    userScrolledUpRef.current = false;
-    requestAnimationFrame(() => keepAtBottom());
-    await sendStream({ text: fullText, attachments: displayAttachments, effectiveSessionId, turnMetadata });
-  }, [attachments, clearDraft, currentSessionId, currentWorkspaceId, input, keepAtBottom, llmHealth.visionSupported, sendStream, sending, switchSession, toast]);
 
   useEffect(() => {
     onSendRef.current = onSend;
