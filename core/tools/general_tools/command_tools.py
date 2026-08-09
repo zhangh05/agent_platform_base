@@ -93,8 +93,8 @@ def handle_command_approved_exec(inv: ToolInvocation) -> dict:
                 "warnings": safety["warnings"], "suspicious": safety["suspicious"]}
 
     # v3.7: pass through cwd, env_vars, timeout
-    cwd = (inv.arguments.get("working_dir") or "").strip() or None
-    if cwd is None:
+    requested_cwd = (inv.arguments.get("working_dir") or "").strip()
+    if not requested_cwd:
         # Agent commands operate in the caller's durable user + workspace
         # directory by default.  Running from the application source tree made
         # relative paths returned by workspace.file unreadable and allowed
@@ -104,6 +104,18 @@ def handle_command_approved_exec(inv: ToolInvocation) -> dict:
         workspace_id = _caller_workspace(inv)
         ensure_workspace_storage_dirs(workspace_id)
         cwd = str(workspace_root(workspace_id))
+    else:
+        # Commands may only use a directory below the caller's workspace.
+        # An arbitrary absolute cwd would bypass the storage boundary even
+        # though the command itself is approval-gated.
+        workspace_id = _caller_workspace(inv)
+        from core.tools.general_tools.shared import _workspace_path
+        try:
+            cwd = str(_workspace_path(workspace_id, requested_cwd))
+        except ValueError as exc:
+            return _error_inv(inv, str(exc))
+        if not os.path.isdir(cwd):
+            return _error_inv(inv, "working_dir does not exist in this workspace")
     env_vars = inv.arguments.get("env_vars")
     timeout = inv.arguments.get("timeout")
     if timeout is not None:
@@ -119,7 +131,7 @@ def handle_command_approved_exec(inv: ToolInvocation) -> dict:
         }
 
     result = _run_shell(command, cwd=cwd, env=env_vars, timeout=timeout)
-    result.setdefault("working_dir", "." if not inv.arguments.get("working_dir") else cwd)
+    result.setdefault("working_dir", requested_cwd or ".")
     # Attach safety metadata + description to result
     if safety["warnings"]:
         result["warnings"] = safety["warnings"]

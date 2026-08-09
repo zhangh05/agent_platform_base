@@ -156,6 +156,19 @@ def test_exec_defaults_to_current_workspace(monkeypatch, tmp_path):
     assert result["working_dir"] == "."
 
 
+def test_exec_rejects_workdir_outside_current_workspace(monkeypatch, tmp_path):
+    from core.tools.schemas import ToolInvocation
+    from core.tools.general_tools import command_tools
+
+    monkeypatch.setenv("NA_WORKSPACE_ROOT", str(tmp_path))
+    result = command_tools.handle_command_approved_exec(ToolInvocation(
+        tool_id="exec.run", workspace_id="default",
+        arguments={"action": "shell", "command": "pwd", "working_dir": "/tmp"},
+    ))
+    assert result["ok"] is False
+    assert "path_escape_denied" in result["error"]
+
+
 def test_path_redaction_preserves_markdown_delimiters_and_spacing():
     from core.tools.redaction import redact_string
     from storage.redaction import redact_text
