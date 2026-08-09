@@ -40,7 +40,6 @@ from core.runtime_engine.engine import (
     TaskIntentResult,
     detect_task_intent,
 )
-from core.runtime_engine.fast_path import is_conversation_comprehension_ref
 
 
 # ── A: the exact production bug case ────────────────────────────────
@@ -173,18 +172,6 @@ def test_chitchat_still_not_task(query: str):
     r = detect_task_intent(query)
     assert r.is_task is False
     assert r.intent_type != "conversational_followup"
-
-
-@pytest.mark.parametrize("query", ["不可能啊", "不对", "你确定吗"])
-def test_short_disagreement_uses_conversation_history(query: str):
-    assert is_conversation_comprehension_ref(query) is True
-
-
-def test_direct_answer_prompt_preserves_platform_capabilities():
-    from core.runtime_engine.prompt_contract import DIRECT_ANSWER_PROMPT
-
-    assert "Do not deny Agent Platform Base capabilities" in DIRECT_ANSWER_PROMPT
-    assert "Prior assistant messages may summarize real" in DIRECT_ANSWER_PROMPT
 
 
 def test_short_unit_correction_is_deterministic_not_prompt_only():

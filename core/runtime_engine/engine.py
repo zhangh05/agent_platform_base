@@ -324,118 +324,16 @@ class SSOTRuntimeEngine:
                     ctx, node_results, deterministic.response,
                     errors, metrics, budget, t_total, "low", False,
                     extra={
-                        "fast_path": True,
                         "route": deterministic.route,
                         "planner_skipped": True,
                         "used_tools": False,
-                        "direct_answer_latency_ms": 0.0,
                         "skip_reason": deterministic.reason,
                         "deterministic_answer": True,
                         "conversation_history_used": bool(conv_history_block),
                     },
                 )
 
-            # ── v3.11: Fast-path classifier ───────────────────────────────
-            # Simple greetings / definition questions skip the planner
-            # and go to a direct-answer LLM call.  This cuts
-            # first_answer_token_ms dramatically and avoids burning
-            # an LLM call just to say "I don't need any tools."
-            #
-            # v3.13+: conversation-ref queries ("我上句话说了什么") and
-            # comprehension followups ("什么意思") inject session.history into
-            # the direct-answer prompt.  They are conversation-scoped, not new
-            # tool tasks, so the query loop would waste calls and can even
-            # re-run tools unnecessarily.
-            from .fast_path import (
-                classify_direct_answer,
-                is_conversation_ref,
-                is_conversation_comprehension_ref,
-                FastPathDecision,
-            )
-
-            fast = classify_direct_answer(user_input)
-            is_conv_ref = bool(is_conversation_ref(user_input) and conv_history_block)
-            is_conv_comprehension = bool(
-                is_conversation_comprehension_ref(user_input) and conv_history_block
-            )
-
-            # ── v3.14: task-intent override for fast path ────────────
-            # If the input has task-intent verbs but the narrow classifier
-            # still matched (e.g. "分析这个是什么问题" matches "是什么"),
-            # force full SSOT Runtime so the planner can produce tool nodes.
             task_intent = detect_task_intent(user_input)
-            if task_intent.is_task and task_intent.requires_tool_likely and fast.enabled:
-                fast = FastPathDecision(
-                    enabled=False, route="",
-                    reason=f"task_intent_override: {task_intent.intent_type}",
-                )
-
-            # v3.13: conversation-ref with history → force fast-path.
-            # These queries ("我上句话说了什么", "我说了什么") are clearly
-            # not tool requests and the planner would waste a call.  We
-            # route them through direct-answer with history injected.
-            if is_conv_ref and not fast.enabled:
-                fast = FastPathDecision(
-                    enabled=True, route="conversation_ref",
-                    reason="conversation-ref with history available",
-                )
-
-            if is_conv_comprehension and not fast.enabled:
-                fast = FastPathDecision(
-                    enabled=True, route="conversation_explain",
-                    reason="conversation-comprehension with history available",
-                )
-
-            if fast.enabled:
-                self._emit_stage(RESPONSE_STARTED, t_total)
-                direct_latency_start = time.monotonic()
-
-                try:
-                    direct_resp = await self._generate_direct_answer(
-                        ctx, budget,
-                        conversation_context=(
-                            conv_history_block
-                            if (is_conv_ref or is_conv_comprehension)
-                            else None
-                        ),
-                    )
-                    final_response = (direct_resp or "").strip()
-                except asyncio.CancelledError:
-                    raise
-                except Exception as exc:
-                    final_response = "暂时无法生成回复，模型服务调用失败。请稍后重试或检查 LLM 配置。"
-                    errors.append(build_error(
-                        "FAST_PATH_FAILURE",
-                        f"direct_answer failed: {str(exc)[:300]}",
-                        stage="engine",
-                        risk_level="low",
-                    ))
-                direct_answer_latency_ms = (
-                    time.monotonic() - direct_latency_start
-                ) * 1000
-
-                self._emit_stage(RESPONSE_COMPLETED, t_total)
-                self._emit_stage(TURN_COMPLETED, t_total)
-
-                metrics.capture_response(direct_answer_latency_ms)
-                metrics.set_llm_calls(budget.llm_calls or 1)
-
-                await self._stop_heartbeat()
-                return self._build_result(
-                    ctx, node_results, final_response,
-                    errors, metrics, budget, t_total, "low", False,
-                    extra={
-                        "fast_path": True,
-                        "route": fast.route,
-                        "planner_skipped": True,
-                        "used_tools": False,
-                        "direct_answer_latency_ms": direct_answer_latency_ms,
-                        "skip_reason": fast.reason,
-                        "conversation_ref": is_conv_ref,
-                        "conversation_comprehension": is_conv_comprehension,
-                        "conversation_history_used": bool(is_conv_ref or is_conv_comprehension),
-                    },
-                )
 
             clarification = build_operational_clarification(ctx.user_input, task_intent)
             if clarification:
@@ -537,64 +435,6 @@ class SSOTRuntimeEngine:
 
 
     # ========================================================================
-    # Direct answer (fast path)
-    # ========================================================================
-
-    async def _generate_direct_answer(
-        self,
-        ctx: StatelessContext,
-        budget: BudgetController,
-        conversation_context: str | None = None,
-    ) -> str:
-        """Generate a direct answer without tools or JSON planning."""
-        llm_budget = budget.check_llm_call()
-        if not llm_budget.ok:
-            return ""
-
-        from .prompt_contract import DIRECT_ANSWER_PROMPT, build_turn_message
-
-        user_message = build_turn_message(
-            workspace_id=ctx.workspace_id,
-            session_id=ctx.session_id,
-            user_input=ctx.user_input,
-            conversation_history=conversation_context or "",
-            governed_context=(
-                str(ctx.extras.get("retrieved_context_block") or "")
-                if conversation_context else ""
-            ),
-        )
-        result = await asyncio.to_thread(
-            self._llm_invoke,
-            system=DIRECT_ANSWER_PROMPT,
-            user=user_message,
-            workspace_id=ctx.workspace_id,
-            session_id=ctx.session_id,
-            extra={
-                "runtime_engine": "ssot_runtime",
-                "stream_scope": "direct_answer",
-                "stream_to_user": True,
-                "workspace_id": ctx.workspace_id,
-                "session_id": ctx.session_id,
-            },
-        )
-        if isinstance(result, str):
-            return result
-        # LLMResponse object
-        content = str(getattr(result, "content", "") or "")
-        metadata = dict(getattr(result, "metadata", {}) or {})
-        if metadata.get("output_truncated"):
-            ctx.extras["output_truncated"] = True
-            ctx.extras["output_truncation_reason"] = str(metadata.get("truncation_reason") or "unknown")
-            marker = (
-                "\n\n⚠️ [模型响应超时，以上为已接收的部分内容]"
-                if metadata.get("truncation_reason") == "timeout"
-                else "\n\n⚠️ [回复达到输出长度上限，以上内容可能不完整]"
-            )
-            if marker not in content:
-                content = content.rstrip() + marker
-        return content
-
-    # ========================================================================
     # Result assembly
     # ========================================================================
 
@@ -623,14 +463,11 @@ class SSOTRuntimeEngine:
 
         m = metrics.snapshot()
 
-        # v3.11: merge fast-path metadata tags when present.
         base_meta = {
-            "fast_path": False,
             "route": "",
             "planner_skipped": False,
             "used_tools": len(node_results) > 0,
             "tool_calls": len(node_results),
-            "direct_answer_latency_ms": 0.0,
             # v3.12: approval tracking
             "approval_required": False,
             "hard_block": False,

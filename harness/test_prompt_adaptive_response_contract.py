@@ -11,7 +11,7 @@ def _template(name: str) -> str:
 
 
 def test_runtime_prompt_has_scene_aware_response_policy():
-    from core.runtime_engine.prompt_contract import DIRECT_ANSWER_PROMPT, RUNTIME_SYSTEM_PROMPT
+    from core.runtime_engine.prompt_contract import RUNTIME_SYSTEM_PROMPT
 
     assert "Adaptive response mode" in RUNTIME_SYSTEM_PROMPT
     assert "Simple fact" in RUNTIME_SYSTEM_PROMPT
@@ -20,7 +20,6 @@ def test_runtime_prompt_has_scene_aware_response_policy():
     assert "Failure, blocker, partial, or zero-result" in RUNTIME_SYSTEM_PROMPT
     assert "Operations/network answers" in RUNTIME_SYSTEM_PROMPT
     assert "Avoid rigid section templates" in RUNTIME_SYSTEM_PROMPT
-    assert "Choose an adaptive response shape" in DIRECT_ANSWER_PROMPT
 
 
 def test_prompt_templates_prefer_adaptive_shape_over_rigid_reports():

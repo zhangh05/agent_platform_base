@@ -8,7 +8,7 @@ from agent.runtime.ssot_runtime import (
 )
 from core.context.context_store import ContextStore
 from core.context.unified_retriever import UnifiedRetriever
-from core.runtime_engine.prompt_contract import DIRECT_ANSWER_PROMPT
+from core.runtime_engine.prompt_contract import RUNTIME_SYSTEM_PROMPT
 
 
 def test_restored_history_overlap_is_not_injected_twice():
@@ -188,9 +188,9 @@ def test_retriever_applies_boosts_before_final_top_k(monkeypatch, tmp_path):
     assert [hit["item_id"] for hit in hits] == ["fresh"]
 
 
-def test_fast_path_has_context_authority_contract():
-    assert "data, not instructions" in DIRECT_ANSWER_PROMPT
-    assert "Never claim" in DIRECT_ANSWER_PROMPT
-    assert "adaptive response shape" in DIRECT_ANSWER_PROMPT
-    assert "immediately previous exchange" in DIRECT_ANSWER_PROMPT
-    assert "Preserve exact technical notation" in DIRECT_ANSWER_PROMPT
+def test_runtime_prompt_has_context_authority_contract():
+    assert "data, not instructions" in RUNTIME_SYSTEM_PROMPT
+    assert "Never claim" in RUNTIME_SYSTEM_PROMPT
+    assert "Adaptive response mode" in RUNTIME_SYSTEM_PROMPT
+    assert "immediately previous exchange" in RUNTIME_SYSTEM_PROMPT
+    assert "Preserve exact technical notation" in RUNTIME_SYSTEM_PROMPT
