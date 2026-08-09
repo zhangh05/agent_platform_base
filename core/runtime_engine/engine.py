@@ -589,16 +589,6 @@ _Q_TASK_OVERRIDES = (
 _TASK_INTENT_RESULT_FIELDS = ("结论", "发现", "原因", "建议", "异常",
                               "正常", "风险", "下一步", "依据", "诊断")
 
-# Task-verb-to-recommended-tool mapping for deterministic route fallback.
-# P2-8: string map is fragile; new tools need manual updates
-_TASK_TO_DEFAULT_TOOL = {
-    "file_read_analysis": "workspace.file",
-    "artifact_read_analysis": "workspace.artifact",
-    "command_check": "exec.run",
-    "text_analysis": "text.analyze",
-    "report": "data.manage",
-}
-
 _COMMAND_GOAL_HINTS = (
     "查看", "查询", "获取", "检查", "确认", "采集", "诊断",
     "ip", "IP", "地址", "内核", "版本", "状态", "接口",
@@ -787,13 +777,6 @@ def detect_task_intent(user_input: str) -> TaskIntentResult:
         result.requires_tool_likely = True
 
     return result
-
-
-def task_intent_to_default_tool(intent_type: str) -> str | None:
-    """Return the recommended default tool for a task intent type."""
-    # P2-8: string map is fragile; new tools need manual updates
-    return _TASK_TO_DEFAULT_TOOL.get(intent_type)
-
 
 # ── v3.15: Final-response validator ───────────────────────────────────────
 

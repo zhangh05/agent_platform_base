@@ -17,14 +17,10 @@ Summarize a report artifact or report-like result for an operator.
   failed, skipped, unreachable, and unverified targets in the summary.
 
 ## Output
-Provide:
-1. Main conclusion
-2. Key findings
-3. Coverage and evidence limitations
-4. Warnings or manual-review needs
-5. Suggested next check
-
-Keep it concise and use the user's language.
+Choose the lightest useful shape in the user's language. For a simple report,
+use a concise paragraph. For complex reports, lead with the main conclusion,
+then include key findings, coverage/evidence limits, warnings or manual-review
+needs, and the next check only when it helps.
 
 ## Context
 Intent: {{ intent }}

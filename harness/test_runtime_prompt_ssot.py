@@ -156,6 +156,36 @@ def test_llm_tool_descriptions_include_action_level_boundaries():
     assert "delete=write/high/approval_required" in desc
 
 
+def test_llm_tool_schema_is_action_relevant_and_explains_required_args():
+    from agent.runtime.ssot_runtime import _build_ssot_runtime_tool_registry
+    from core.runtime_engine.query_loop import _build_cached_tool_definitions
+
+    registry = _build_ssot_runtime_tool_registry(["data.manage", "exec.run", "network.operations.device.manage"])
+    tools = {tool["function"]["name"]: tool["function"] for tool in _build_cached_tool_definitions(registry)}
+
+    data_props = tools["data__manage"]["parameters"]["properties"]
+    assert "filepath" not in data_props
+    assert "artifact_id" not in data_props
+    assert "content" not in data_props
+    assert "text" in data_props
+    assert "rows" in data_props
+    assert "Required arguments by action" in tools["data__manage"]["description"]
+    assert "join=>on" in tools["data__manage"]["description"]
+
+    exec_props = tools["exec__run"]["parameters"]["properties"]
+    assert "command" in exec_props
+    assert "minimum" in exec_props["timeout"]
+    assert "maximum" in exec_props["timeout"]
+    assert "query" not in exec_props
+
+    network_desc = tools["network__operations__device__manage"]["description"]
+    assert "Required arguments by action" in network_desc
+    assert "probe=>asset_id or host" in network_desc
+    network_props = tools["network__operations__device__manage"]["parameters"]["properties"]
+    assert network_props["commands"]["items"]["type"] == "string"
+    assert "Read-only commands" in network_props["commands"]["description"]
+
+
 def test_ssot_registry_feeds_action_profiles_to_llm_tools():
     from agent.runtime.ssot_runtime import _build_ssot_runtime_tool_registry
     from core.runtime_engine.query_loop import _build_cached_tool_definitions

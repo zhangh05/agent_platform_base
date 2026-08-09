@@ -16,14 +16,9 @@ Explain artifact metadata and safe summaries so the user understands what was pr
   evidentiary meaning; do not describe one as another.
 
 ## Output
-Provide:
-1. What the artifact is
-2. Why it was created
-3. What it contains at a safe summary level
-4. Important limitations or missing content
-5. How to verify or use it next
-
-Use the user's language.
+Choose the lightest useful shape in the user's language. For a simple artifact,
+use a short paragraph. For complex or risky artifacts, cover what it is, why it
+was created, safe contents, limitations, and the smallest verification/use step.
 
 ## Context
 Intent: {{ intent }}

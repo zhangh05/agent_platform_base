@@ -61,12 +61,19 @@ def tool_spec_to_openai_function(tool: dict) -> dict:
 
     for name, prop in properties.items():
         param = {"type": prop.get("type", "string")}
-        if prop.get("description"):
-            param["description"] = str(prop.get("description", ""))[:200]
+        description = prop.get("description") or _default_param_description(name)
+        if description:
+            param["description"] = str(description)[:240]
         if "enum" in prop:
             param["enum"] = prop["enum"]
         if "default" in prop:
             param["default"] = prop["default"]
+        if "minimum" in prop:
+            param["minimum"] = prop["minimum"]
+        if "maximum" in prop:
+            param["maximum"] = prop["maximum"]
+        if "items" in prop:
+            param["items"] = prop["items"]
         params_def["properties"][name] = param
 
     if not params_def["properties"]:
@@ -108,7 +115,100 @@ def _build_tool_description(tool: dict, metadata: dict, canonical_tool_id: str) 
     boundary = _format_action_profiles(tool.get("action_profiles") or metadata.get("action_profiles"))
     if boundary:
         parts.append(f"Action boundaries: {boundary}")
+    requirements = _format_action_requirements(canonical_tool_id)
+    if requirements:
+        parts.append(f"Required arguments by action: {requirements}")
     return " ".join(p for p in parts if p)[:1200]
+
+
+_PARAM_DESCRIPTIONS = {
+    "workspace_id": "Current workspace id; omit unless explicitly overriding.",
+    "action": "Operation to perform; choose exactly one enum value.",
+    "query": "Search or filter text for search/list actions.",
+    "limit": "Maximum number of items to return.",
+    "filepath": "Workspace-relative file path.",
+    "filename": "Workspace-relative output filename.",
+    "artifact_id": "Artifact id returned by workspace artifact/file tools.",
+    "content": "Content to save or write.",
+    "title": "Human-readable title.",
+    "command": "Shell or slash command for exec.run action=shell|slash.",
+    "code": "Python source for exec.run action=python.",
+    "description": "Short human-readable purpose of this execution.",
+    "working_dir": "Workspace-relative working directory.",
+    "timeout": "Maximum runtime in seconds.",
+    "url": "HTTP or HTTPS URL.",
+    "selector": "CSS selector for browser interaction.",
+    "ref": "Element ref from a previous browser snapshot.",
+    "text": "Text input or text to analyze.",
+    "script": "Browser JavaScript to evaluate.",
+    "key": "Keyboard key name.",
+    "value": "Value to set or store.",
+    "old_string": "Exact existing text to replace.",
+    "new_string": "Replacement text.",
+    "patch_text": "Unified diff patch text.",
+    "pattern": "Glob or regex pattern, depending on action.",
+    "source_id": "Knowledge source id.",
+    "chunk_id": "Knowledge chunk id.",
+    "memory_id": "Memory record id.",
+    "field": "Profile or memory field name.",
+    "tags": "List of tag strings.",
+    "instruction": "Complete standalone instruction for a subagent.",
+    "subtask_id": "Subagent task id returned by spawn.",
+    "child_session_id": "Compatibility alias for subtask id.",
+    "parent_task_id": "Parent task id for merge.",
+    "run_id": "Runtime run id.",
+    "session_id": "Conversation/session id.",
+    "snapshot_id": "Session snapshot id.",
+    "file_id": "FileStore file id.",
+    "asset_id": "Saved network asset id.",
+    "asset": "Network asset object to save.",
+    "asset_ids": "List of saved network asset ids.",
+    "host": "Target host or IP address.",
+    "port": "Target TCP port.",
+    "vendor": "Network vendor/platform hint such as h3c, huawei, cisco, or generic.",
+    "username": "Login username.",
+    "password": "Login password; secret value is redacted by runtime.",
+    "auth_method": "Authentication method.",
+    "private_key": "Private key content for key authentication; secret value is redacted.",
+    "passphrase": "Private key passphrase; secret value is redacted.",
+    "host_key_fingerprint": "Expected SSH host-key fingerprint.",
+    "accept_host_key": "Set true only when the user accepts/trusts the observed host key.",
+    "commands": "Read-only commands to run on a network device.",
+    "baseline_id": "Network inspection baseline id.",
+    "task_id": "Runtime or extension task id.",
+    "confirm": "Explicit confirmation flag for actions that support it.",
+}
+
+
+def _default_param_description(name: str) -> str:
+    return _PARAM_DESCRIPTIONS.get(str(name or ""), "")
+
+
+def _format_action_requirements(tool_id: str) -> str:
+    """Expose conditional action requirements in the LLM-visible description."""
+    try:
+        from core.tools.action_requirements import ACTION_REQUIRED_ALL, ACTION_REQUIRED_ANY
+    except Exception:
+        return ""
+
+    chunks: list[str] = []
+    actions = sorted({
+        action for (tid, action) in set(ACTION_REQUIRED_ALL) | set(ACTION_REQUIRED_ANY)
+        if tid == tool_id
+    })
+    for action in actions:
+        bits: list[str] = []
+        all_fields = ACTION_REQUIRED_ALL.get((tool_id, action), ())
+        if all_fields:
+            bits.append("+".join(all_fields))
+        for alternatives in ACTION_REQUIRED_ANY.get((tool_id, action), ()):
+            bits.append(" or ".join(alternatives))
+        if bits:
+            chunks.append(f"{action}=>{'; '.join(bits)}")
+    if not chunks:
+        return ""
+    text = ", ".join(chunks)
+    return _soft_truncate(text, 360)
 
 
 def _soft_truncate(text: str, limit: int) -> str:

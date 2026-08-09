@@ -10,19 +10,50 @@ from core.tools.action_requirements import ACTION_REQUIRED_ALL, ACTION_REQUIRED_
 from core.tools.canonical_registry import CANONICAL_REGISTRY
 
 
-def _action_enums() -> dict[str, set[str]]:
+def _action_enums(*, include_extensions: bool = True) -> dict[str, set[str]]:
     result = {}
     for tool_id, entry in CANONICAL_REGISTRY.items():
         action = (entry.input_schema.get("properties") or {}).get("action") or {}
         if action.get("enum"):
             result[tool_id] = set(action["enum"])
+    if not include_extensions:
+        return result
+    from extensions.runtime import get_extension_tool_specs
+    for spec, _handler in get_extension_tool_specs():
+        action = (spec.input_schema.get("properties") or {}).get("action") or {}
+        if action.get("enum"):
+            result[spec.tool_id] = set(action["enum"])
     return result
+
+
+def _tool_properties(tool_id: str) -> dict:
+    if tool_id in CANONICAL_REGISTRY:
+        return CANONICAL_REGISTRY[tool_id].input_schema["properties"]
+    from extensions.runtime import get_extension_tool_specs
+    for spec, _handler in get_extension_tool_specs():
+        if spec.tool_id == tool_id:
+            return spec.input_schema.get("properties") or {}
+    raise AssertionError(f"unknown tool_id {tool_id}")
+
+
+def _validator_for_tool(tool_id: str) -> SemanticValidator:
+    if tool_id in CANONICAL_REGISTRY:
+        return SemanticValidator()
+    from extensions.runtime import get_extension_tool_specs
+    registry = {}
+    for spec, _handler in get_extension_tool_specs():
+        registry[spec.tool_id] = {
+            "args_schema": spec.input_schema,
+            "description": spec.description,
+            "risk_level": spec.risk_level,
+        }
+    return SemanticValidator(registry)
 
 
 def test_alias_canonical_actions_equal_public_schema_actions():
     from core.runtime_engine.action_alias import _CANONICAL_ACTIONS
 
-    public = _action_enums()
+    public = _action_enums(include_extensions=False)
     assert set(_CANONICAL_ACTIONS) == set(public)
     for tool_id, actions in public.items():
         assert _CANONICAL_ACTIONS[tool_id] == frozenset(actions), tool_id
@@ -34,7 +65,7 @@ def test_action_requirements_reference_public_actions_and_arguments():
         for (tool_id, action), fields in requirements.items():
             assert tool_id in public
             assert action in public[tool_id], (tool_id, action)
-            properties = CANONICAL_REGISTRY[tool_id].input_schema["properties"]
+            properties = _tool_properties(tool_id)
             flattened = fields if requirements is ACTION_REQUIRED_ALL else (
                 field for alternatives in fields for field in alternatives
             )
@@ -81,7 +112,7 @@ def test_each_required_argument_is_rejected_when_missing(tool_id, action, field_
     for alternatives in ACTION_REQUIRED_ANY.get((tool_id, action), ()):
         args[alternatives[0]] = _sample_value(alternatives[0])
 
-    result = SemanticValidator().validate([
+    result = _validator_for_tool(tool_id).validate([
         ExecutionNode(id="contract", tool=tool_id, args=args),
     ])
 
@@ -105,7 +136,7 @@ def test_each_required_alternative_group_is_rejected_when_empty(tool_id, action,
         if other_group != alternatives:
             args[other_group[0]] = _sample_value(other_group[0])
 
-    result = SemanticValidator().validate([
+    result = _validator_for_tool(tool_id).validate([
         ExecutionNode(id="contract", tool=tool_id, args=args),
     ])
 

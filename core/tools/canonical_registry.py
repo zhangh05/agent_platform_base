@@ -514,14 +514,7 @@ def _entry(
 
 
 _COMMON = {
-    "workspace_id": {"type": "string"},
-    "action": {"type": "string"},
-    "query": {"type": "string"},
-    "limit": {"type": "integer"},
-    "filepath": {"type": "string"},
-    "artifact_id": {"type": "string"},
-    "content": {"type": "string"},
-    "title": {"type": "string"},
+    "workspace_id": {"type": "string", "description": "Current workspace id; normally supplied by runtime."},
 }
 
 _EXEC_ARGS = {
@@ -552,6 +545,7 @@ _BROWSER_ARGS = {
 }
 
 _WEB_ARGS = {
+    "query": {"type": "string", "description": "Search query for action=search|deep_search."},
     "source": {"type": "string", "enum": ["web", "news", "docs"]},
     "url": {"type": "string"}, "location": {"type": "string"},
     "days": {"type": "integer", "minimum": 1, "maximum": 10, "description": "Forecast horizon in days (1-10)."},
@@ -582,6 +576,10 @@ _DATA_ARGS = {
 }
 
 _MEMORY_ARGS = {
+    "query": {"type": "string"},
+    "limit": {"type": "integer", "minimum": 1},
+    "title": {"type": "string"},
+    "content": {"type": "string"},
     "memory_id": {"type": "string"}, "memory_type": {"type": "string"},
     "scope": {"type": "string"}, "field": {"type": "string"},
     "value": {}, "merge": {"type": "boolean"}, "session_id": {"type": "string"},
@@ -597,6 +595,9 @@ _SYSTEM_ARGS = {
 }
 
 _WORKSPACE_FILE_ARGS = {
+    "filepath": {"type": "string", "description": "Workspace-relative path for read/edit/patch/delete."},
+    "content": {"type": "string", "description": "Content for write/write_artifact."},
+    "limit": {"type": "integer", "minimum": 1},
     "offset": {"type": "integer", "minimum": 0}, "subdir": {"type": "string"},
     "pattern": {"type": "string"}, "old_string": {"type": "string"},
     "new_string": {"type": "string"}, "replace_all": {"type": "boolean"},
@@ -613,10 +614,10 @@ _RAW_REGISTRY: list[CanonicalToolEntry] = [
     _entry("browser.manage", _handle_browser, {**_COMMON, **_BROWSER_ARGS, "action": {"type": "string", "enum": ["navigate", "snapshot", "screenshot", "click", "type", "extract", "scroll", "hover", "press_key", "select_option", "evaluate", "wait", "tabs", "network", "console", "navigate_back", "close"]}}, required=["action"], risk="medium", description="Browser automation. navigate/extract require url; click/hover require selector or ref; type requires text and selector/ref."),
     _entry("web.manage", _handle_web, {**_COMMON, **_WEB_ARGS, "action": {"type": "string", "enum": ["search", "fetch", "weather", "deep_search"]}}, required=["action"], description="Web search/fetch/weather. search requires query; deep_search searches then fetches up to top_k source pages; fetch requires url; weather requires location and supports days=1..10."),
     _entry("data.manage", _handle_data, {**_COMMON, **_DATA_ARGS, "action": {"type": "string", "enum": ["parse", "stats", "distinct", "aggregate", "filter", "sort", "render", "pivot", "join"]}}, required=["action"], description="Structured data processing. Supply text or rows; action-specific columns/options are declared in the schema."),
-    _entry("report.manage", _handle_report, {**_COMMON, "action": {"type": "string", "enum": ["save", "diff", "document"]}, "summary": {"type": "string"}, "text_a": {"type": "string"}, "text_b": {"type": "string"}}, required=["action"], description="Report operations. save requires content; diff requires text_a/text_b; document requires summary."),
-    _entry("knowledge.manage", _handle_knowledge, {**_COMMON, "action": {"type": "string", "enum": ["search", "read", "list", "chunk", "import", "reindex"]}, "level": {"type": "string", "enum": ["chunk", "source"]}, "chunk_id": {"type": "string"}, "source_id": {"type": "string"}, "chunk_type": {"type": "string"}, "scope": {"type": "string"}, "include_disabled": {"type": "boolean"}, "include_deleted": {"type": "boolean"}}, required=["action"], risk="medium", description="Knowledge operations. search requires query; read requires chunk_id or source_id; list lists sources; chunk lists chunks; import requires artifact_id; reindex requires source_id."),
+    _entry("report.manage", _handle_report, {**_COMMON, "action": {"type": "string", "enum": ["save", "diff", "document"]}, "title": {"type": "string"}, "content": {"type": "string"}, "summary": {"type": "string"}, "text_a": {"type": "string"}, "text_b": {"type": "string"}}, required=["action"], description="Report operations. save requires content; diff requires text_a/text_b; document requires summary."),
+    _entry("knowledge.manage", _handle_knowledge, {**_COMMON, "action": {"type": "string", "enum": ["search", "read", "list", "chunk", "import", "reindex"]}, "query": {"type": "string"}, "limit": {"type": "integer", "minimum": 1}, "artifact_id": {"type": "string"}, "level": {"type": "string", "enum": ["chunk", "source"]}, "chunk_id": {"type": "string"}, "source_id": {"type": "string"}, "chunk_type": {"type": "string"}, "scope": {"type": "string"}, "include_disabled": {"type": "boolean"}, "include_deleted": {"type": "boolean"}}, required=["action"], risk="medium", description="Knowledge operations. search requires query; read requires chunk_id or source_id; list lists sources; chunk lists chunks; import requires artifact_id; reindex requires source_id."),
     _entry("memory.manage", _handle_memory, {**_COMMON, **_MEMORY_ARGS, "action": {"type": "string", "enum": ["search", "review", "confirm", "create", "update", "delete", "profile_get", "profile_set"]}}, required=["action"], risk="medium", description="Memory operations. create requires content; update/confirm/delete require memory_id; profile_set requires field and value."),
-    _entry("skill.manage", _handle_skill, {**_COMMON, "action": {"type": "string", "enum": ["list", "find", "load", "inspect", "mcp_list_tools", "mcp_call"]}, "skill_name": {"type": "string"}, "provider_id": {"type": "string"}, "tool_name": {"type": "string"}, "arguments": {"type": "object"}, "confirm": {"type": "boolean"}}, required=["action"], risk="medium", permission="exec", description="Skill operations. find requires query; load/inspect require skill_name; MCP actions require provider_id and mcp_call also requires tool_name."),
+    _entry("skill.manage", _handle_skill, {**_COMMON, "action": {"type": "string", "enum": ["list", "find", "load", "inspect", "mcp_list_tools", "mcp_call"]}, "query": {"type": "string"}, "limit": {"type": "integer", "minimum": 1}, "skill_name": {"type": "string"}, "provider_id": {"type": "string"}, "tool_name": {"type": "string"}, "arguments": {"type": "object"}, "confirm": {"type": "boolean"}}, required=["action"], risk="medium", permission="exec", description="Skill operations. find requires query; load/inspect require skill_name; MCP actions require provider_id and mcp_call also requires tool_name."),
     _entry("agent.manage", _handle_agent, {
         **_COMMON,
         "action": {"type": "string", "enum": ["spawn", "list", "get", "status", "cancel", "merge"]},
@@ -629,11 +630,11 @@ _RAW_REGISTRY: list[CanonicalToolEntry] = [
         "subtask_id": {"type": "string"},
         "parent_task_id": {"type": "string"},
     }, required=["action"], description="Subagent task management. action=spawn requires instruction; action=get accepts the subtask_id returned by spawn (child_session_id is a compatibility alias)."),
-    _entry("system.manage", _handle_system, {**_COMMON, **_SYSTEM_ARGS, "action": {"type": "string", "enum": ["diagnostics", "health", "selfcheck", "local_info", "tasks", "audit_log", "run_get", "session_get", "session_checkpoint", "session_rewind", "session_export", "session_snapshot"]}}, required=["action"], risk="medium", description="Runtime health, durable tasks, audit logs, run details, and session operations. run_get requires run_id; session actions require session_id; rewind additionally requires snapshot_id."),
+    _entry("system.manage", _handle_system, {**_COMMON, **_SYSTEM_ARGS, "limit": {"type": "integer", "minimum": 1}, "action": {"type": "string", "enum": ["diagnostics", "health", "selfcheck", "local_info", "tasks", "audit_log", "run_get", "session_get", "session_checkpoint", "session_rewind", "session_export", "session_snapshot"]}}, required=["action"], risk="medium", description="Runtime health, durable tasks, audit logs, run details, and session operations. run_get requires run_id; session actions require session_id; rewind additionally requires snapshot_id."),
     _entry("text.analyze", _handle_text, {**_COMMON, "action": {"type": "string", "enum": ["redact", "extract_entities", "match"]}, "text": {"type": "string"}, "pattern": {"type": "string"}}, required=["action"], description="Text redact, extract and match."),
     _entry("workspace.file", _handle_workspace_file, {**_COMMON, **_WORKSPACE_FILE_ARGS, "action": {"type": "string", "enum": ["list", "read", "read_image", "write", "write_artifact", "edit", "patch", "glob", "delete"]}}, required=["action"], risk="medium", description="Workspace files. read/read_image/edit/patch/delete require filepath; write/write_artifact require filename and content."),
-    _entry("workspace.artifact", _handle_workspace_artifact, {**_COMMON, "action": {"type": "string", "enum": ["list", "read", "save", "tag", "delete"]}, "status": {"type": "string"}, "tags": {"type": "array"}, "artifact_type": {"type": "string"}}, required=["action"], description="Workspace artifact operations."),
-    _entry("workspace.filestore", _handle_workspace_filestore, {**_COMMON, "action": {"type": "string", "enum": ["references", "import"]}, "file_id": {"type": "string"}}, required=["action"], description="FileStore references and import."),
+    _entry("workspace.artifact", _handle_workspace_artifact, {**_COMMON, "action": {"type": "string", "enum": ["list", "read", "save", "tag", "delete"]}, "query": {"type": "string"}, "limit": {"type": "integer", "minimum": 1}, "artifact_id": {"type": "string"}, "content": {"type": "string"}, "title": {"type": "string"}, "status": {"type": "string"}, "tags": {"type": "array", "items": {"type": "string"}}, "artifact_type": {"type": "string"}}, required=["action"], description="Workspace artifact operations."),
+    _entry("workspace.filestore", _handle_workspace_filestore, {**_COMMON, "action": {"type": "string", "enum": ["references", "import"]}, "file_id": {"type": "string"}, "filepath": {"type": "string"}}, required=["action"], description="FileStore references and import."),
     _entry("workspace.metadata.get", _handle_workspace_metadata, {"workspace_id": {"type": "string"}}, description="Workspace metadata."),
     _entry("workspace.document.pdf.extract_text", _handle_pdf_extract, {"workspace_id": {"type": "string"}, "filepath": {"type": "string"}, "page_range": {"type": "string"}}, required=["filepath"], description="Extract PDF text."),
 ]

@@ -16,14 +16,10 @@ Explain why specific items require human review and what the operator should che
   replace review with generic advice.
 
 ## Output
-Provide:
-1. Why review is required
-2. What to verify
-3. Risk if ignored
-4. Exact evidence needed to resolve it
-5. Suggested next action
-
-Keep it operational and use the user's language.
+Choose the lightest useful shape. For a simple review item, answer in a short
+operational paragraph. For multiple or risky items, cover why review is required,
+what to verify, risk if ignored, exact evidence needed, and the next action.
+Use the user's language.
 
 ## Context
 Intent: {{ intent }}
