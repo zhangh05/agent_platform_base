@@ -233,7 +233,7 @@ def handle_runtime_diagnostics(inv: ToolInvocation) -> dict:
 
 
 def handle_runtime_local_info(inv: ToolInvocation) -> dict:
-    """Return stable local host/network facts without shelling out.
+    """Return stable local host/network/time facts without shelling out.
 
     This covers common user requests such as "查看本机 IP 地址" without
     depending on distro-specific commands like ``ip`` or ``ifconfig``.
@@ -241,6 +241,19 @@ def handle_runtime_local_info(inv: ToolInvocation) -> dict:
     import os
     import platform
     import socket
+    from datetime import datetime, timezone
+    from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+    timezone_name = str(
+        os.environ.get("AGENT_PLATFORM_DISPLAY_TIMEZONE") or "Asia/Shanghai"
+    ).strip() or "Asia/Shanghai"
+    try:
+        display_timezone = ZoneInfo(timezone_name)
+    except ZoneInfoNotFoundError:
+        timezone_name = "UTC"
+        display_timezone = timezone.utc
+    now_utc = datetime.now(timezone.utc)
+    now_local = now_utc.astimezone(display_timezone)
 
     hostname = socket.gethostname()
     fqdn = socket.getfqdn()
@@ -282,6 +295,10 @@ def handle_runtime_local_info(inv: ToolInvocation) -> dict:
         "release": platform.release(),
         "machine": platform.machine(),
         "cwd": os.getcwd(),
+        "current_time_utc": now_utc.isoformat(),
+        "current_time_local": now_local.isoformat(),
+        "local_date": now_local.date().isoformat(),
+        "local_timezone": timezone_name,
     })
 
 

@@ -66,6 +66,9 @@ def test_system_contract_exposes_local_info_action():
     data = result.get("data") or result
     assert data.get("hostname")
     assert "ipv4_addresses" in data
+    assert data.get("local_timezone") == "Asia/Shanghai"
+    assert data.get("current_time_local", "").endswith("+08:00")
+    assert len(data.get("local_date", "")) == 10
 
 
 def test_semantic_validator_accepts_future_weather_forecast_args():
