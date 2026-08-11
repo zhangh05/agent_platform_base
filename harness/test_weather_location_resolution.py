@@ -36,3 +36,43 @@ def test_explicit_province_wins_for_unknown_city_name():
     selected = _select_weather_place("乙省 示例市", matches)
 
     assert selected["admin1"] == "乙省"
+
+
+def test_chinese_city_prefers_china_and_population_over_foreign_namesake():
+    from core.tools.general_tools.shared_web import (
+        _known_weather_place,
+        _select_weather_place,
+    )
+
+    matches = [
+        {
+            "name": "Shanghai", "admin1": "Alabama", "country": "United States",
+            "country_code": "US", "feature_code": "PPL", "population": 500,
+        },
+        {
+            "name": "Shanghai", "admin1": "上海市", "country": "中国",
+            "country_code": "CN", "feature_code": "PPLA", "population": 24_000_000,
+        },
+    ]
+
+    selected = _select_weather_place("上海", matches)
+
+    assert selected["country_code"] == "CN"
+    assert _known_weather_place("上海") == {
+        "name": "上海市",
+        "admin1": "上海市",
+        "country": "中国",
+        "latitude": 31.2304,
+        "longitude": 121.4737,
+    }
+
+
+def test_unknown_same_named_city_prefers_major_administrative_place():
+    from core.tools.general_tools.shared_web import _select_weather_place
+
+    matches = [
+        {"name": "示例", "country_code": "CN", "feature_code": "PPL", "population": 300},
+        {"name": "示例", "country_code": "CN", "feature_code": "PPLA", "population": 800_000},
+    ]
+
+    assert _select_weather_place("示例", matches)["feature_code"] == "PPLA"

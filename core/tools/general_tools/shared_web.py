@@ -452,6 +452,7 @@ def _decorate_realtime_search_result(out: dict, *, tool_id: str, query: str,
         result["warnings"] = list(result["warnings"]) + ["backed_by_public_web_search"]
     return result
 _CHINA_CITY_ADMIN_HINTS = {
+    "北京": "北京市", "上海": "上海市", "天津": "天津市", "重庆": "重庆市",
     "广州": "广东", "深圳": "广东", "珠海": "广东", "佛山": "广东",
     "东莞": "广东", "中山": "广东", "江门": "广东", "肇庆": "广东",
     "惠州": "广东",
@@ -459,6 +460,10 @@ _CHINA_CITY_ADMIN_HINTS = {
 }
 
 _KNOWN_WEATHER_PLACES = {
+    "北京": (39.9042, 116.4074),
+    "上海": (31.2304, 121.4737),
+    "天津": (39.0842, 117.2009),
+    "重庆": (29.5630, 106.5516),
     "广州": (23.1291, 113.2644),
     "深圳": (22.5431, 114.0579),
     "珠海": (22.2707, 113.5767),
@@ -528,6 +533,19 @@ def _select_weather_place(location: str, matches: list[dict]) -> dict:
             break
 
     candidates = list(matches)
+    # A Chinese-language place name without an explicit country is still a
+    # strong country hint.  Without this, fuzzy geocoders can rank a tiny
+    # same-named settlement in another country ahead of the intended Chinese
+    # city (for example Shanghai, Alabama).
+    chinese_query = bool(re.search(r"[\u3400-\u9fff]", str(location or "")))
+    if chinese_query or "中国" in str(location) or "china" in str(location).casefold():
+        china = [
+            match for match in candidates
+            if str(match.get("country_code") or "").casefold() == "cn"
+            or _weather_place_token(match.get("country")) in {"中国", "china"}
+        ]
+        if china:
+            candidates = china
     if admin_hint:
         regional = [
             match for match in candidates
@@ -535,12 +553,25 @@ def _select_weather_place(location: str, matches: list[dict]) -> dict:
         ]
         if regional:
             candidates = regional
-    exact = [
-        match for match in candidates
-        if _weather_place_token(match.get("name"))
-        and _weather_place_token(match.get("name")) in location_token
-    ]
-    return (exact or candidates)[0]
+    def _rank(match: dict) -> tuple[int, int, int]:
+        name_token = _weather_place_token(match.get("name"))
+        exact = int(bool(name_token and (
+            name_token in location_token or location_token in name_token
+        )))
+        # Prefer administrative cities/capitals over villages, then use
+        # population as the deterministic tie-breaker. Open-Meteo returns both
+        # fields for normal populated-place matches.
+        feature = str(match.get("feature_code") or "").upper()
+        feature_rank = {
+            "PPLC": 5, "PPLA": 4, "PPLA2": 3, "PPLA3": 2, "PPL": 1,
+        }.get(feature, 0)
+        try:
+            population = max(0, int(match.get("population") or 0))
+        except (TypeError, ValueError):
+            population = 0
+        return exact, feature_rank, population
+
+    return max(candidates, key=_rank)
 
 
 def _lookup_open_meteo_weather(*, location: str, days: int, language: str,
