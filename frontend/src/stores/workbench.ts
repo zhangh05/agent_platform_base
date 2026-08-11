@@ -1,9 +1,10 @@
 /**
  * Workbench store — chat history + run results keyed by session_id,
- * persisted to localStorage so F5 不会丢历史 (plan-C 方案).
+ * Backend session messages are the durable source of truth. The browser only
+ * keeps the latest input draft; F5 restores history from the session API.
  *
  * 状态:
- *  - bySession: Record<session_id, ChatMsg[]> 持久化到 localStorage
+ *  - bySession: Record<session_id, ChatMsg[]> 仅保存在当前页面内存
  *  - results:  Record<session_id, AgentResult[]>  各 session 的运行记录
  *  - currentSessionId: 镜像 useSessionStore.currentSessionId
  *  - sending: 是否在等后端
@@ -659,27 +660,26 @@ export const useWorkbenchStore = create<WorkbenchState>()(
     }),
     {
       name: "na_workbench",
-      version: 3,
+      version: 4,
       storage: createJSONStorage(() => debouncedStorage("na_workbench")),
-      // v3: drop `results` from persistence — Timeline derives runs from
-      // bySession now, so we only need to persist bySession + lastUserInput.
+      // v4: session messages are server-owned. Persisting optimistic/streaming
+      // placeholders created a refresh race where a late rehydrate could
+      // overwrite an already-fetched final answer with "仍在处理…".
       migrate: (persisted: unknown, _version: number) => {
-        // No-op: old `results` field is simply ignored. bySession carries the
-        // agent results inside ChatMsg.result, which is what Timeline reads.
-        return persisted as WorkbenchState;
+        const previous = persisted as Partial<WorkbenchState> | null | undefined;
+        return { lastUserInput: previous?.lastUserInput || "" } as WorkbenchState;
       },
       partialize: (s): Partial<WorkbenchState> => ({
-        bySession: s.bySession,
         lastUserInput: s.lastUserInput,
       }),
       merge: (persisted: unknown, current: WorkbenchState): WorkbenchState => {
         const p = persisted as Record<string, unknown> | null | undefined;
-        const safe = p?.bySession;
-        const merged: Partial<WorkbenchState> = { bySession: {}, lastUserInput: "" };
-        if (safe && typeof safe === "object" && !Array.isArray(safe)) {
-          merged.bySession = safe as Record<string, ChatMsg[]>;
-        }
-        return { ...current, ...merged };
+        // Never replace current messages during a late/manual rehydrate.
+        // AgentWorkbench reconciles them against the authoritative session API.
+        return {
+          ...current,
+          lastUserInput: typeof p?.lastUserInput === "string" ? p.lastUserInput : current.lastUserInput,
+        };
       },
     },
   ),
