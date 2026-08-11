@@ -10,12 +10,19 @@ Design:
 
 Message protocol:
   Client → Server:
-    {"type": "message", "user_input": "...", "session_id": "...", "workspace_id": "default"}
+    {"type": "message", "stream_id": "uuid", "user_input": "...", ...}
+    {"type": "resume", "stream_id": "uuid", "after_seq": 12, ...}
+    {"type": "cancel", "stream_id": "uuid", ...}
 
   Server → Client:
+    {"type": "accepted", "stream_id": "uuid", "resumed": false}
     {"type": "event", "name": "...", "data": {...}}  — live event
     {"type": "done", "final_response": "...", "session_id": "...", "turn_id": "...", "tool_calls_count": 0}
     {"type": "error", "message": "..."}
+
+Transport disconnect is not cancellation. Active turns are buffered in the
+single backend process for replay after a browser refresh; user cancellation
+must use the explicit ``cancel`` frame.
 """
 
 import json
@@ -24,6 +31,7 @@ import queue
 import threading
 import time
 import traceback
+import uuid
 from flask import request
 from flask_sock import Sock
 from backend.core.auth import is_allowed_browser_origin
@@ -33,6 +41,8 @@ _log = logging.getLogger("ws.agent")
 _MAX_WS_INPUT_LENGTH = 262144  # 256KB — supports long user inputs
 _MAX_WS_METADATA_JSON = 16384
 _WS_HEARTBEAT_INTERVAL_SECONDS = 2.0
+_WS_STREAM_RETENTION_SECONDS = 600.0
+_WS_STREAM_MAX_EVENTS = 4000
 
 
 def _heartbeat_payload(started_at: float, now: float | None = None) -> dict:
@@ -46,6 +56,138 @@ def _heartbeat_payload(started_at: float, now: float | None = None) -> dict:
             "elapsed_ms": max(0, int((current - started_at) * 1000)),
         },
     }
+
+
+class _ResumableTurnStream:
+    """In-memory replay buffer whose lifetime is independent of one socket.
+
+    The platform currently runs one backend process. Keeping active streams in
+    this process lets a refreshed browser re-attach without creating a second
+    Agent turn. Completed streams are retained briefly so a reconnect racing
+    with completion can still receive the terminal frame.
+    """
+
+    def __init__(self, stream_id: str, owner: str, workspace_id: str, session_id: str):
+        self.stream_id = stream_id
+        self.owner = owner
+        self.workspace_id = workspace_id
+        self.session_id = session_id
+        self.started_at = time.monotonic()
+        self.completed_at: float | None = None
+        self.cancel_event = threading.Event()
+        self._condition = threading.Condition()
+        self._events: list[dict] = []
+        self._sequence = 0
+        self._terminal = False
+
+    def put(self, event, timeout=None) -> None:  # queue-compatible worker sink
+        del timeout
+        if event is None:
+            with self._condition:
+                self._condition.notify_all()
+            return
+        if not isinstance(event, dict):
+            return
+        with self._condition:
+            self._sequence += 1
+            framed = dict(event)
+            framed["stream_id"] = self.stream_id
+            framed["stream_seq"] = self._sequence
+            self._events.append(framed)
+            if len(self._events) > _WS_STREAM_MAX_EVENTS:
+                del self._events[:len(self._events) - _WS_STREAM_MAX_EVENTS]
+            if framed.get("type") in {"done", "error"}:
+                self._terminal = True
+                self.completed_at = time.monotonic()
+            self._condition.notify_all()
+
+    def put_nowait(self, event) -> None:
+        self.put(event)
+
+    def get_nowait(self):
+        raise queue.Empty
+
+    def events_after(self, sequence: int, timeout: float = 0.5) -> tuple[list[dict], bool, int]:
+        with self._condition:
+            if not self._terminal and self._sequence <= sequence:
+                self._condition.wait(timeout=timeout)
+            events = [event for event in self._events if int(event.get("stream_seq", 0)) > sequence]
+            return events, self._terminal, self._sequence
+
+    def request_cancel(self) -> None:
+        self.cancel_event.set()
+
+
+_resumable_turns: dict[str, _ResumableTurnStream] = {}
+_resumable_turns_lock = threading.Lock()
+
+
+def _stream_owner(username: str) -> str:
+    return username or "__platform_api_token__"
+
+
+def _validate_stream_id(raw) -> str:
+    value = str(raw or "").strip()
+    try:
+        parsed = uuid.UUID(value)
+    except (ValueError, AttributeError, TypeError):
+        raise ValueError("invalid_stream_id")
+    canonical = str(parsed)
+    if value.lower() != canonical:
+        raise ValueError("invalid_stream_id")
+    return canonical
+
+
+def _cleanup_resumable_turns(now: float | None = None) -> None:
+    current = time.monotonic() if now is None else now
+    with _resumable_turns_lock:
+        expired = [
+            stream_id
+            for stream_id, stream in _resumable_turns.items()
+            if stream.completed_at is not None
+            and current - stream.completed_at > _WS_STREAM_RETENTION_SECONDS
+        ]
+        for stream_id in expired:
+            _resumable_turns.pop(stream_id, None)
+
+
+def _lookup_resumable_turn(stream_id: str, owner: str, workspace_id: str) -> _ResumableTurnStream | None:
+    _cleanup_resumable_turns()
+    with _resumable_turns_lock:
+        stream = _resumable_turns.get(stream_id)
+    if stream is None or stream.owner != owner or stream.workspace_id != workspace_id:
+        return None
+    return stream
+
+
+def _register_resumable_turn(stream: _ResumableTurnStream) -> bool:
+    _cleanup_resumable_turns()
+    with _resumable_turns_lock:
+        if stream.stream_id in _resumable_turns:
+            return False
+        _resumable_turns[stream.stream_id] = stream
+        return True
+
+
+def _stream_turn_to_socket(ws, stream: _ResumableTurnStream, after_seq: int = 0) -> None:
+    """Replay buffered frames, then follow new frames until terminal/disconnect."""
+    cursor = max(0, int(after_seq or 0))
+    next_heartbeat_at = time.monotonic() + _WS_HEARTBEAT_INTERVAL_SECONDS
+    while True:
+        events, terminal, latest_seq = stream.events_after(cursor, timeout=0.25)
+        for event in events:
+            ws.send(json.dumps(event, ensure_ascii=True, default=str))
+            cursor = max(cursor, int(event.get("stream_seq", 0)))
+            next_heartbeat_at = time.monotonic() + _WS_HEARTBEAT_INTERVAL_SECONDS
+        if terminal and cursor >= latest_seq:
+            return
+        now = time.monotonic()
+        if now >= next_heartbeat_at:
+            heartbeat = _heartbeat_payload(stream.started_at, now)
+            heartbeat["stream_id"] = stream.stream_id
+            heartbeat["stream_seq"] = cursor
+            ws.send(json.dumps(heartbeat, ensure_ascii=True))
+            next_heartbeat_at = now + _WS_HEARTBEAT_INTERVAL_SECONDS
 
 
 def _normalize_ws_attachments(username: str, workspace_id: str, raw):
@@ -105,7 +247,6 @@ def register_ws_routes(app):
         authenticated_role = ""
         authenticated_workspaces: list[str] = []
         ws_key = ""
-        active_cancel_event = None
 
         try:
             while True:
@@ -166,16 +307,9 @@ def register_ws_routes(app):
                     ws.send(json.dumps({"type": "pong", "message": "connected"}, ensure_ascii=True))
                     continue
 
-                if msg.get("type") != "message":
+                message_type = msg.get("type")
+                if message_type not in {"message", "resume", "cancel"}:
                     ws.send(json.dumps({"type": "error", "message": f"Unknown type: {msg.get('type')}"}, ensure_ascii=True))
-                    continue
-
-                user_input = msg.get("user_input", msg.get("message", ""))
-                if not user_input:
-                    ws.send(json.dumps({"type": "error", "message": "Empty user_input"}, ensure_ascii=True))
-                    continue
-                if len(str(user_input)) > _MAX_WS_INPUT_LENGTH:
-                    ws.send(json.dumps({"type": "error", "message": "message too long (max 64KB)"}, ensure_ascii=True))
                     continue
 
                 session_id = msg.get("session_id", "") or ""
@@ -204,6 +338,58 @@ def register_ws_routes(app):
                     ws.send(json.dumps({"type": "error", "message": "workspace_forbidden"}))
                     continue
 
+                try:
+                    stream_id = _validate_stream_id(msg.get("stream_id"))
+                except ValueError as exc:
+                    ws.send(json.dumps({"type": "error", "message": str(exc)}, ensure_ascii=True))
+                    continue
+                owner = _stream_owner(authenticated_username)
+
+                if message_type == "resume":
+                    stream = _lookup_resumable_turn(stream_id, owner, workspace_id)
+                    if stream is None:
+                        ws.send(json.dumps({"type": "error", "message": "stream_not_found"}, ensure_ascii=True))
+                        continue
+                    ws.send(json.dumps({
+                        "type": "accepted",
+                        "stream_id": stream_id,
+                        "resumed": True,
+                    }, ensure_ascii=True))
+                    _stream_turn_to_socket(ws, stream, msg.get("after_seq", 0))
+                    continue
+
+                if message_type == "cancel":
+                    stream = _lookup_resumable_turn(stream_id, owner, workspace_id)
+                    if stream is None:
+                        ws.send(json.dumps({"type": "error", "message": "stream_not_found"}, ensure_ascii=True))
+                        continue
+                    stream.request_cancel()
+                    ws.send(json.dumps({
+                        "type": "cancel_ack",
+                        "stream_id": stream_id,
+                    }, ensure_ascii=True))
+                    return
+
+                user_input = msg.get("user_input", msg.get("message", ""))
+                if not user_input:
+                    ws.send(json.dumps({"type": "error", "message": "Empty user_input"}, ensure_ascii=True))
+                    continue
+                if len(str(user_input)) > _MAX_WS_INPUT_LENGTH:
+                    ws.send(json.dumps({"type": "error", "message": "message too long (max 256KB)"}, ensure_ascii=True))
+                    continue
+
+                # A repeated message carrying the same stream id is an
+                # idempotent re-attach, never a second Agent execution.
+                stream = _lookup_resumable_turn(stream_id, owner, workspace_id)
+                if stream is not None:
+                    ws.send(json.dumps({
+                        "type": "accepted",
+                        "stream_id": stream_id,
+                        "resumed": True,
+                    }, ensure_ascii=True))
+                    _stream_turn_to_socket(ws, stream, msg.get("after_seq", 0))
+                    continue
+
                 metadata = msg.get("metadata", {})
                 if not isinstance(metadata, dict):
                     metadata = {}
@@ -225,65 +411,28 @@ def register_ws_routes(app):
                 from backend.core.agent_contract import normalize_metadata
                 metadata = normalize_metadata(metadata, transport="websocket", stream_mode="live")
 
-                # Event queue for thread-safe communication
-                event_queue = queue.Queue(maxsize=1000)
+                stream = _ResumableTurnStream(stream_id, owner, workspace_id, session_id)
+                if not _register_resumable_turn(stream):
+                    ws.send(json.dumps({"type": "error", "message": "stream_conflict"}, ensure_ascii=True))
+                    continue
                 error_holder = {"error": None}
                 stats = {"live_events": 0}
-
-                active_cancel_event = threading.Event()
                 thread = threading.Thread(
                     target=_run_agent_thread,
                     args=(
                         user_input, session_id, workspace_id, metadata,
-                        event_queue, error_holder, stats, active_cancel_event,
+                        stream, error_holder, stats, stream.cancel_event,
                         authenticated_username,
                     ),
                     daemon=True,
                 )
                 thread.start()
-
-                # Stream events from queue to WebSocket
-                turn_started_at = time.monotonic()
-                next_heartbeat_at = turn_started_at + _WS_HEARTBEAT_INTERVAL_SECONDS
-                while True:
-                    try:
-                        event = event_queue.get(timeout=0.25)
-                    except queue.Empty:
-                        if not thread.is_alive():
-                            try:
-                                event = event_queue.get(timeout=0.5)
-                            except queue.Empty:
-                                break
-                        else:
-                            now = time.monotonic()
-                            if now >= next_heartbeat_at:
-                                try:
-                                    ws.send(json.dumps(
-                                        _heartbeat_payload(turn_started_at, now),
-                                        ensure_ascii=True,
-                                    ))
-                                except Exception:
-                                    active_cancel_event.set()
-                                    return
-                                next_heartbeat_at = now + _WS_HEARTBEAT_INTERVAL_SECONDS
-                            continue
-
-                    if event is None:
-                        break
-
-                    try:
-                        ws.send(json.dumps(event, ensure_ascii=True, default=str))
-                        next_heartbeat_at = time.monotonic() + _WS_HEARTBEAT_INTERVAL_SECONDS
-                    except Exception:
-                        active_cancel_event.set()
-                        return
-
-                if error_holder["error"]:
-                    try:
-                        ws.send(json.dumps({"type": "error", "message": error_holder["error"]}, ensure_ascii=True))
-                    except Exception:
-                        pass
-                active_cancel_event = None
+                ws.send(json.dumps({
+                    "type": "accepted",
+                    "stream_id": stream_id,
+                    "resumed": False,
+                }, ensure_ascii=True))
+                _stream_turn_to_socket(ws, stream, msg.get("after_seq", 0))
 
         except Exception as e:
             try:
@@ -291,8 +440,6 @@ def register_ws_routes(app):
             except Exception:
                 pass
         finally:
-            if active_cancel_event is not None:
-                active_cancel_event.set()
             if ws_key:
                 with _active_ws_lock:
                     _active_ws_connections.pop(ws_key, None)
