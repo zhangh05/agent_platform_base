@@ -477,6 +477,23 @@ _KNOWN_WEATHER_PLACES = {
     "澳门": (22.1987, 113.5439),
 }
 
+_KNOWN_WEATHER_PLACE_ALIASES = {
+    "beijing": "北京",
+    "peking": "北京",
+    "shanghai": "上海",
+    "tianjin": "天津",
+    "chongqing": "重庆",
+    "chungking": "重庆",
+    "guangzhou": "广州",
+    "canton": "广州",
+    "shenzhen": "深圳",
+    "zhuhai": "珠海",
+    "hongkong": "香港",
+    "hongkongchina": "香港",
+    "macau": "澳门",
+    "macao": "澳门",
+}
+
 # A delegated request can launch several weather lookups at once. Bound the
 # public provider traffic so one user turn does not create a burst of 9-18
 # simultaneous HTTP requests and turn transient throttling into false failures.
@@ -499,8 +516,12 @@ def _weather_geocoding_query(location: str) -> str:
 def _known_weather_place(location: str) -> dict:
     """Resolve common PRD cities locally before using a fuzzy geocoder."""
     token = _weather_place_token(location)
+    canonical_alias = next((
+        city for alias, city in _KNOWN_WEATHER_PLACE_ALIASES.items()
+        if alias in token
+    ), "")
     for city, (latitude, longitude) in _KNOWN_WEATHER_PLACES.items():
-        if _weather_place_token(city) in token:
+        if _weather_place_token(city) in token or city == canonical_alias:
             return {
                 "name": city if city in {"香港", "澳门"} else f"{city}市",
                 "admin1": _CHINA_CITY_ADMIN_HINTS[city],

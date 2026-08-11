@@ -65,6 +65,8 @@ def test_chinese_city_prefers_china_and_population_over_foreign_namesake():
         "latitude": 31.2304,
         "longitude": 121.4737,
     }
+    assert _known_weather_place("Beijing, China")["name"] == "北京市"
+    assert _known_weather_place("Shanghai")["longitude"] == 121.4737
 
 
 def test_unknown_same_named_city_prefers_major_administrative_place():
