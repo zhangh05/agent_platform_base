@@ -17,6 +17,11 @@ function escapeHtml(text: string): string {
     .replace(/"/g, '&quot;');
 }
 
+/** Escape arbitrary HTML while allowing only an explicit line-break tag. */
+function escapeInlineHtml(text: string): string {
+  return escapeHtml(text).replace(/&lt;br\s*\/?&gt;/gi, '<br />');
+}
+
 /** Block javascript:, data:, and other dangerous URL schemes. */
 const DANGEROUS_URL_RE = /^(javascript|data|vbscript):/i;
 function safeUrl(url: string): string {
@@ -33,8 +38,6 @@ function safeHref(url: string, label: string): string {
 function normalizeMarkdown(text: string): string {
   return text
     .replace(/\r\n?/g, '\n')
-    .replace(/&lt;br\s*\/?&gt;/gi, '\n')
-    .replace(/<br\s*\/?>/gi, '\n')
     .replace(/[ \t]+\n/g, '\n')
     .replace(/\n{4,}/g, '\n\n\n');
 }
@@ -49,7 +52,7 @@ function renderSoftBreakLines(lines: string[]): string {
   // Escape `|` so it renders as a literal pipe character instead of leaking
   // raw into the HTML (browsers would otherwise render it as-is, which looks
   // like a broken table cell boundary in natural-language paragraphs).
-  const escaped = escapeHtml(lines.join('\n')).replace(/\|/g, '&#124;');
+  const escaped = escapeInlineHtml(lines.join('\n')).replace(/\|/g, '&#124;');
   return renderInline(escaped).replace(/\n/g, '<br />');
 }
 
@@ -122,7 +125,7 @@ function isBulletLike(text: string): boolean {
 }
 
 function renderTableCell(raw: string): string {
-  return renderInline(escapeHtml(raw)).replace(/\n/g, '<br />');
+  return renderInline(escapeInlineHtml(raw)).replace(/\n/g, '<br />');
 }
 
 function isReportTable(headers: string[]): boolean {
@@ -164,8 +167,8 @@ function renderReportCards(headers: string[], rows: string[][]): string {
 
     return [
       '<article class="report-card">',
-      `<div class="report-card-head"><span class="report-card-title">${renderInline(escapeHtml(title))}</span>`,
-      meta ? `<span class="report-card-meta">${renderInline(escapeHtml(meta))}</span>` : '',
+      `<div class="report-card-head"><span class="report-card-title">${renderInline(escapeInlineHtml(title))}</span>`,
+      meta ? `<span class="report-card-meta">${renderInline(escapeInlineHtml(meta))}</span>` : '',
       '</div>',
       body ? `<div class="report-card-body">${renderTableCell(body)}</div>` : '',
       '</article>',
@@ -236,7 +239,7 @@ function renderTable(lines: string[]): RenderedTable | null {
   }
 
   const thead = `<thead><tr>${headers
-    .map((h, i) => `<th style="text-align:${alignments[i] || 'left'}">${renderInline(escapeHtml(h))}</th>`)
+    .map((h, i) => `<th style="text-align:${alignments[i] || 'left'}">${renderInline(escapeInlineHtml(h))}</th>`)
     .join('')}</tr></thead>`;
 
   const tbody = bodyRows.length
@@ -257,24 +260,24 @@ function renderPipeParagraph(line: string): string {
     const [title, meta, ...body] = cells;
     return [
       '<div class="pipe-card">',
-      `<span class="pipe-card-title">${renderInline(escapeHtml(title))}</span>`,
-      `<span class="pipe-card-meta">${renderInline(escapeHtml(meta))}</span>`,
-      `<span class="pipe-card-body">${renderInline(escapeHtml(body.join(' · ')))}</span>`,
+      `<span class="pipe-card-title">${renderInline(escapeInlineHtml(title))}</span>`,
+      `<span class="pipe-card-meta">${renderInline(escapeInlineHtml(meta))}</span>`,
+      `<span class="pipe-card-body">${renderInline(escapeInlineHtml(body.join(' · ')))}</span>`,
       '</div>',
     ].join('');
   }
   if (cells.length === 2) {
     return [
       '<div class="pipe-card">',
-      `<span class="pipe-card-title">${renderInline(escapeHtml(cells[0]))}</span>`,
-      `<span class="pipe-card-body">${renderInline(escapeHtml(cells[1]))}</span>`,
+      `<span class="pipe-card-title">${renderInline(escapeInlineHtml(cells[0]))}</span>`,
+      `<span class="pipe-card-body">${renderInline(escapeInlineHtml(cells[1]))}</span>`,
       '</div>',
     ].join('');
   }
   if (cells.length >= 2) {
-    return `<p class="pipe-row">${cells.map(c => renderInline(escapeHtml(c))).join('<span class="pipe-row-separator"> · </span>')}</p>`;
+    return `<p class="pipe-row">${cells.map(c => renderInline(escapeInlineHtml(c))).join('<span class="pipe-row-separator"> · </span>')}</p>`;
   }
-  return `<p>${renderInline(escapeHtml(line.trim()))}</p>`;
+  return `<p>${renderInline(escapeInlineHtml(line.trim()))}</p>`;
 }
 
 function parseInsightLine(line: string): { label: string; text: string; emphasized: boolean } | null {
@@ -293,8 +296,8 @@ function renderInsightList(lines: string[]): string | null {
   if (items.length < 2) return null;
   return `<div class="insight-list">${items.map((item) => [
     '<div class="insight-item">',
-    `<span class="insight-label">${renderInline(escapeHtml(item!.label))}</span>`,
-    `<span class="insight-text">${renderInline(escapeHtml(item!.text))}</span>`,
+    `<span class="insight-label">${renderInline(escapeInlineHtml(item!.label))}</span>`,
+    `<span class="insight-text">${renderInline(escapeInlineHtml(item!.text))}</span>`,
     '</div>',
   ].join('')).join('')}</div>`;
 }
@@ -335,13 +338,13 @@ export function renderMarkdown(text: string): string {
     const headerMatch = trimmed.match(/^(#{1,6})\s+(.+)$/);
     if (headerMatch) {
       const level = Math.min(headerMatch[1].length, 6);
-      out.push(`<h${level}>${renderInline(escapeHtml(headerMatch[2].trim()))}</h${level}>`);
+      out.push(`<h${level}>${renderInline(escapeInlineHtml(headerMatch[2].trim()))}</h${level}>`);
       i++;
       continue;
     }
 
     if (isChineseSectionHeading(trimmed)) {
-      out.push(`<h3>${renderInline(escapeHtml(trimmed))}</h3>`);
+      out.push(`<h3>${renderInline(escapeInlineHtml(trimmed))}</h3>`);
       i++;
       continue;
     }
@@ -387,7 +390,7 @@ export function renderMarkdown(text: string): string {
       while (i < lines.length && /^[\s]*[-*+]\s+\[[ xX]\]\s+/.test(lines[i])) {
         const match = lines[i].match(/^[\s]*[-*+]\s+\[([ xX])\]\s+(.+)$/)!;
         const checked = match[1].toLowerCase() === 'x';
-        out.push(`<li class="task-list-item${checked ? ' is-complete' : ''}"><span class="task-checkbox" aria-hidden="true">${checked ? '&#10003;' : ''}</span><span>${renderInline(escapeHtml(match[2]))}</span></li>`);
+        out.push(`<li class="task-list-item${checked ? ' is-complete' : ''}"><span class="task-checkbox" aria-hidden="true">${checked ? '&#10003;' : ''}</span><span>${renderInline(escapeInlineHtml(match[2]))}</span></li>`);
         i++;
       }
       out.push('</ul>');
@@ -399,7 +402,7 @@ export function renderMarkdown(text: string): string {
       out.push('<ul>');
       while (i < lines.length && /^[\s]*[-*+]\s+/.test(lines[i])) {
         const item = lines[i].replace(/^[\s]*[-*+]\s+/, '');
-        out.push(`<li>${renderInline(escapeHtml(item))}</li>`);
+        out.push(`<li>${renderInline(escapeInlineHtml(item))}</li>`);
         i++;
       }
       out.push('</ul>');
@@ -420,14 +423,14 @@ export function renderMarkdown(text: string): string {
         out.push('<ol>');
         while (i < lines.length && /^\d+\.\s+/.test(lines[i])) {
           const item = lines[i].replace(/^\d+\.\s+/, '');
-          out.push(`<li>${renderInline(escapeHtml(item))}</li>`);
+          out.push(`<li>${renderInline(escapeInlineHtml(item))}</li>`);
           i++;
         }
         out.push('</ol>');
         continue;
       }
       // Single numbered line (not a real list) — render as paragraph and advance
-      out.push(`<p>${renderInline(escapeHtml(line.trim()))}</p>`);
+      out.push(`<p>${renderInline(escapeInlineHtml(line.trim()))}</p>`);
       i++;
       continue;
     }

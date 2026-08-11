@@ -29,4 +29,29 @@ describe("assistant markdown rendering", () => {
     expect(screen.getByText("10.0.8.4/22")).toBeInTheDocument();
     expect(document.body.textContent).not.toContain("\\n");
   });
+
+  it("keeps br-separated weather details inside their original table cells", () => {
+    const html = renderAssistantHtml(
+      "| 城市 | 8/11 | 8/12 |\n|---|---|---|\n| **广州** | 阴/多云<br>27.6–35.4°C | 雷暴<br>27.6–37.0°C |\n| **深圳** | 阴/多云<br>27.4–34.7°C | 雷暴<br>28.4–35.0°C |",
+    );
+
+    const container = document.createElement("div");
+    container.innerHTML = html;
+    const rows = container.querySelectorAll("tbody tr");
+    const firstRowCells = rows[0]?.querySelectorAll("td");
+
+    expect(rows).toHaveLength(2);
+    expect(firstRowCells).toHaveLength(3);
+    expect(firstRowCells?.[0].textContent).toBe("广州");
+    expect(firstRowCells?.[1].innerHTML).toContain("阴/多云<br>");
+    expect(firstRowCells?.[1].textContent).toContain("27.6–35.4°C");
+  });
+
+  it("allows only br while escaping other inline html", () => {
+    const html = renderAssistantHtml("正常<br>换行 <img src=x onerror=alert(1)>");
+
+    expect(html).toMatch(/正常<br\s*\/>换行/);
+    expect(html).toContain("&lt;img src=x onerror=alert(1)&gt;");
+    expect(html).not.toContain("<img");
+  });
 });

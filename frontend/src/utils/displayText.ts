@@ -40,7 +40,12 @@ function normalizeAssistantMarkdown(text: string): string {
     return `${prefix}${lead}${table}`;
   });
 
-  normalized = normalized.replace(/(\S)\s+(\|[^\n]*\|)\n(\|?\s*:?-{2,})/g, "$1\n$2\n$3");
+  // Split a prose introduction from an inline table header, but never split
+  // the first cell from an already valid pipe-prefixed Markdown table.
+  normalized = normalized.replace(
+    /(^|\n)([^|\n]*\S)\s+(\|[^\n]*\|)\n(\|?\s*:?-{2,})/g,
+    "$1$2\n$3\n$4",
+  );
   normalized = normalized.replace(/\n{3,}/g, "\n\n");
 
   return normalized;
