@@ -716,11 +716,180 @@ class StreamingToolExecutor:
         ctx: StatelessContext | None = None,
         budget=None,
     ) -> List[StreamingToolResult]:
-        """Execute tool calls. Read-only parallel, writes serialised.
+        """Execute one incremental dependency graph and preserve call order."""
+        from .orchestration import (
+            OrchestrationError,
+            StepEvidence,
+            resolve_bindings,
+            validate_incremental_graph,
+        )
+        from .context_budget import project_json_to_tokens
 
-        Returns results in the ORIGINAL tool_calls order so callers can
-        safely zip(results, tool_calls) for idempotent-key tracking.
-        """
+        prior = dict((ctx.extras.get("orchestration_evidence") or {}) if ctx else {})
+        try:
+            layers = validate_incremental_graph(tool_calls, prior)
+        except OrchestrationError as exc:
+            return [StreamingToolResult(
+                tool_name=tc.name,
+                call_id=tc.id,
+                output={"ok": False, "executed": False,
+                        "error_code": "ORCHESTRATION_INVALID", "error": str(exc),
+                        "retryable": True},
+                ok=False,
+                error=str(exc),
+            ) for tc in tool_calls]
+
+        if self._emitter:
+            self._emitter.emit("orchestration_planned", {
+                "step_count": len(tool_calls),
+                "layer_count": len(layers),
+                "parallel_layers": sum(1 for layer in layers if len(layer) > 1),
+            })
+
+        calls_by_step = {str(tc.step_id or tc.id): tc for tc in tool_calls}
+        evidence: dict[str, StepEvidence] = dict(prior)
+        result_by_id: dict[str, StreamingToolResult] = {}
+        stop_requested = False
+
+        for layer_index, layer in enumerate(layers, start=1):
+            if self._emitter:
+                self._emitter.emit("orchestration_layer_started", {
+                    "layer": layer_index, "steps": list(layer),
+                    "parallel": len(layer) > 1,
+                })
+            runnable: list[LLMToolCall] = []
+            for step_id in layer:
+                tc = calls_by_step[step_id]
+                if stop_requested:
+                    error = "execution stopped by an earlier failed step"
+                    result = StreamingToolResult(
+                        tool_name=tc.name, call_id=tc.id,
+                        output={"ok": False, "executed": False,
+                                "error_code": "PLAN_STOPPED", "error": error,
+                                "_orchestration": {
+                                    "step_id": step_id, "depends_on": list(tc.depends_on),
+                                    "layer": layer_index, "parallel": False,
+                                    "failure_policy": tc.failure_policy,
+                                }},
+                        ok=False, error=error,
+                    )
+                    result_by_id[tc.id] = result
+                    evidence[step_id] = StepEvidence(
+                        step_id, tc.id, tc.name, False, result.output, error,
+                    )
+                    if tc.failure_policy == "stop":
+                        stop_requested = True
+                    continue
+                failed_dependencies = [
+                    dep for dep in tc.depends_on
+                    if dep in evidence and not evidence[dep].ok
+                ]
+                if failed_dependencies:
+                    error = f"failed dependencies: {failed_dependencies}"
+                    result = StreamingToolResult(
+                        tool_name=tc.name, call_id=tc.id,
+                        output={"ok": False, "executed": False,
+                                "error_code": "DEPENDENCY_FAILED", "error": error,
+                                "failed_dependencies": failed_dependencies,
+                                "_orchestration": {
+                                    "step_id": step_id, "depends_on": list(tc.depends_on),
+                                    "layer": layer_index, "parallel": len(layer) > 1,
+                                    "failure_policy": tc.failure_policy,
+                                }},
+                        ok=False, error=error,
+                    )
+                    result_by_id[tc.id] = result
+                    evidence[step_id] = StepEvidence(
+                        step_id, tc.id, tc.name, False, result.output, error,
+                    )
+                    continue
+                try:
+                    resolved_args = resolve_bindings(
+                        tc.arguments, tc.result_bindings, evidence,
+                    )
+                except OrchestrationError as exc:
+                    result = StreamingToolResult(
+                        tool_name=tc.name, call_id=tc.id,
+                        output={"ok": False, "executed": False,
+                                "error_code": "RESULT_BINDING_FAILED", "error": str(exc),
+                                "_orchestration": {
+                                    "step_id": step_id, "depends_on": list(tc.depends_on),
+                                    "layer": layer_index, "parallel": len(layer) > 1,
+                                    "failure_policy": tc.failure_policy,
+                                }},
+                        ok=False, error=str(exc),
+                    )
+                    result_by_id[tc.id] = result
+                    evidence[step_id] = StepEvidence(
+                        step_id, tc.id, tc.name, False, result.output, str(exc),
+                    )
+                    if tc.failure_policy == "stop":
+                        stop_requested = True
+                    continue
+                runnable.append(LLMToolCall(
+                    id=tc.id, name=tc.name, arguments=resolved_args,
+                    step_id=step_id, depends_on=list(tc.depends_on),
+                    result_bindings=dict(tc.result_bindings),
+                    failure_policy=tc.failure_policy,
+                ))
+
+            layer_results = await self._execute_independent_calls(
+                runnable, ctx=ctx, budget=budget,
+            )
+            for tc, result in zip(runnable, layer_results):
+                step_id = str(tc.step_id or tc.id)
+                result.output = {
+                    **(result.output or {}),
+                    "_orchestration": {
+                        "step_id": step_id,
+                        "depends_on": list(tc.depends_on),
+                        "layer": layer_index,
+                        "parallel": len(layer) > 1,
+                        "failure_policy": tc.failure_policy,
+                    },
+                }
+                result_by_id[tc.id] = result
+                evidence_output, evidence_truncated = project_json_to_tokens(
+                    dict(result.output or {}), max_tokens=30_000,
+                )
+                if not isinstance(evidence_output, dict):
+                    evidence_output = {"value": evidence_output}
+                if evidence_truncated:
+                    evidence_output["_evidence_projection"] = {"truncated": True}
+                evidence[step_id] = StepEvidence(
+                    step_id, tc.id, tc.name, result.ok,
+                    evidence_output, result.error or "",
+                )
+                if not result.ok and tc.failure_policy == "stop":
+                    stop_requested = True
+            if self._emitter:
+                self._emitter.emit("orchestration_layer_completed", {
+                    "layer": layer_index,
+                    "steps": list(layer),
+                    "succeeded": sum(
+                        1 for step_id in layer
+                        if step_id in evidence and evidence[step_id].ok
+                    ),
+                })
+
+        if ctx is not None:
+            ctx.extras["orchestration_evidence"] = evidence
+            if stop_requested:
+                ctx.extras["orchestration_stop_requested"] = True
+            ctx.extras.setdefault("orchestration_batches", []).append({
+                "layers": [list(layer) for layer in layers],
+                "step_count": len(tool_calls),
+            })
+        return [result_by_id[tc.id] for tc in tool_calls]
+
+    async def _execute_independent_calls(
+        self,
+        tool_calls: List[LLMToolCall],
+        *,
+        ctx: StatelessContext | None = None,
+        budget=None,
+    ) -> List[StreamingToolResult]:
+        """Execute a dependency-free layer: reads parallel, writes barriers."""
         # Build result map keyed by call_id so we can return in original order.
         # Consecutive reads may run together, but every write is an ordering
         # barrier. Executing all reads before all writes changes semantics for
@@ -730,8 +899,17 @@ class StreamingToolExecutor:
         async def execute_read_group(group: list[LLMToolCall]) -> None:
             if not group:
                 return
-            self.max_parallel_width = max(self.max_parallel_width, len(group))
-            tasks = [self._execute_one(tc, ctx=ctx, budget=budget) for tc in group]
+            concurrency_limit = max(1, int(self._config.max_layer_concurrency or 1))
+            self.max_parallel_width = max(
+                self.max_parallel_width, min(len(group), concurrency_limit),
+            )
+            semaphore = asyncio.Semaphore(concurrency_limit)
+
+            async def bounded(tc: LLMToolCall) -> StreamingToolResult:
+                async with semaphore:
+                    return await self._execute_one(tc, ctx=ctx, budget=budget)
+
+            tasks = [bounded(tc) for tc in group]
             # return_exceptions=True: collect every result, even if some fail
             ro_results = await asyncio.gather(*tasks, return_exceptions=True)
             for tc, r in zip(group, ro_results):
@@ -1089,6 +1267,7 @@ class QueryLoop:
                 "context_budget": self._context_budget.as_dict(),
                 "execution_duration_ms": execution_duration_ms,
                 "max_parallel_width": self._executor.max_parallel_width,
+                "orchestration_batches": list(ctx.extras.get("orchestration_batches") or []),
                 "validation_corrections": validation_correction_attempts,
                 "output_truncated": output_truncated,
                 "output_truncation_reason": output_truncation_reason,
@@ -1247,6 +1426,18 @@ class QueryLoop:
 
             # Check for tool calls
             if response.tool_calls:
+                if ctx.extras.get("orchestration_stop_requested"):
+                    return finish(
+                        final_response=(
+                            str(response.content or "").strip()
+                            or self._build_tool_result_fallback(ctx, all_results)
+                        ),
+                        tool_results=all_results,
+                        iterations=iterations,
+                        total_tool_calls=len(all_results),
+                        llm_calls=llm_calls,
+                        metrics={"orchestration_stopped": True},
+                    )
                 # Convert to LLMToolCall objects
                 tool_calls = self._parse_tool_calls(response.tool_calls)
                 tool_calls = self._unique_call_ids(tool_calls, iterations, used_call_ids)
@@ -1431,7 +1622,14 @@ class QueryLoop:
                 messages = self._append_tool_round(messages, tool_calls, results)
                 failed_results = [result for result in results if not result.ok]
                 if failed_results:
-                    recovery_nudge = self._build_tool_failure_recovery_nudge(failed_results)
+                    if ctx.extras.get("orchestration_stop_requested"):
+                        recovery_nudge = (
+                            RESPONSE_ONLY_MARKER
+                            + " A failed plan step requested stop. Do not call more tools in this turn. "
+                            "Explain the partial outcome and concrete blocker using only completed evidence."
+                        )
+                    else:
+                        recovery_nudge = self._build_tool_failure_recovery_nudge(failed_results)
                     messages = self._append_turn_nudge(messages, recovery_nudge)
                     ctx.extras.setdefault("tool_recovery_events", []).append({
                         "iteration": iterations,
@@ -1659,6 +1857,10 @@ class QueryLoop:
                 id=candidate,
                 name=tc.name,
                 arguments=dict(tc.arguments or {}),
+                step_id=(candidate if tc.step_id == base else tc.step_id),
+                depends_on=list(tc.depends_on),
+                result_bindings=dict(tc.result_bindings),
+                failure_policy=tc.failure_policy,
             ))
         return result
 
@@ -1922,20 +2124,34 @@ class QueryLoop:
             tname = tname.replace("__", ".")
             if not tid:
                 tid = f"call_{len(result)}"
+            from .orchestration import extract_orchestration
+            args, step_id, depends_on, bindings, failure_policy = extract_orchestration(
+                args, str(tid),
+            )
+            if not isinstance(tc, dict):
+                step_id = str(getattr(tc, "step_id", "") or step_id)
+                depends_on = list(getattr(tc, "depends_on", None) or depends_on)
+                bindings = dict(getattr(tc, "result_bindings", None) or bindings)
+                failure_policy = str(getattr(tc, "failure_policy", "") or failure_policy)
             
             result.append(LLMToolCall(
                 id=str(tid),
                 name=tname,
                 arguments=args,
+                step_id=step_id,
+                depends_on=depends_on,
+                result_bindings=bindings,
+                failure_policy=failure_policy,
             ))
         return result
 
     @staticmethod
     def _tool_call_key(tc: LLMToolCall) -> str:
-        return (
-            f"{tc.name}:"
-            f"{json.dumps(tc.arguments or {}, sort_keys=True, ensure_ascii=False, default=str)}"
-        )
+        identity = {
+            "arguments": tc.arguments or {},
+            "result_bindings": dict(tc.result_bindings or {}),
+        }
+        return f"{tc.name}:{json.dumps(identity, sort_keys=True, ensure_ascii=False, default=str)}"
 
     def _prepare_tool_calls(
         self,
@@ -1962,6 +2178,29 @@ class QueryLoop:
             ctx.extras["plan_enrichment_events"].extend(
                 asdict(event) for event in enrichment_events
             )
+
+        from .orchestration import OrchestrationError, validate_incremental_graph
+        try:
+            validate_incremental_graph(
+                tool_calls,
+                dict(ctx.extras.get("orchestration_evidence") or {}),
+            )
+        except OrchestrationError as exc:
+            message = str(exc)
+            return {
+                "ok": False,
+                "error": "orchestration_validation_failed",
+                "errors": [message],
+                "validation_errors": [{
+                    "node_id": "plan",
+                    "code": "ORCHESTRATION_INVALID",
+                    "message": message,
+                    "details": {},
+                }],
+                "hard_block": False,
+                "risk_level": "low",
+                "message": f"工具编排校验失败：{message}",
+            }
 
         validator = SemanticValidator(self._tool_registry)
         validation = validator.validate(nodes)
@@ -2040,6 +2279,10 @@ class QueryLoop:
                 id=node.id,
                 name=node.tool,
                 arguments=dict(node.args or {}),
+                step_id=node.step_id,
+                depends_on=list(node.depends_on),
+                result_bindings=dict(node.result_bindings),
+                failure_policy=node.failure_policy,
             )) in approved_keys
             for node in approval_nodes
         )
@@ -2058,10 +2301,15 @@ class QueryLoop:
                 ),
             }
 
-        repaired_calls = [
-            LLMToolCall(id=n.id, name=n.tool, arguments=dict(n.args or {}))
-            for n in nodes
-        ]
+        repaired_calls = [LLMToolCall(
+            id=n.id,
+            name=n.tool,
+            arguments=dict(n.args or {}),
+            step_id=n.step_id,
+            depends_on=list(n.depends_on),
+            result_bindings=dict(n.result_bindings),
+            failure_policy=n.failure_policy,
+        ) for n in nodes]
         return {
             "ok": True,
             "tool_calls": repaired_calls,
@@ -2093,6 +2341,10 @@ class QueryLoop:
                 args=args,
                 action_original=action_original,
                 action_normalized_from_alias=action_normalized_from_alias,
+                step_id=tc.step_id,
+                depends_on=list(tc.depends_on),
+                result_bindings=dict(tc.result_bindings),
+                failure_policy=tc.failure_policy,
             ))
         return nodes
 

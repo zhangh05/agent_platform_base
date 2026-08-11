@@ -137,12 +137,12 @@ export interface WorkflowNode {
 }
 export interface WorkflowDefinition {
   workflow_id: string; name: string; description: string; version: number; status: string;
-  failure_policy: "fail_fast" | "continue"; nodes: WorkflowNode[]; execution_order?: string[];
+  failure_policy: "fail_fast" | "continue"; nodes: WorkflowNode[]; execution_order?: string[]; execution_layers?: string[][];
   created_at?: string; updated_at?: string;
 }
 export interface WorkflowRun {
   run_id: string; workflow_id: string; status: string; started_at: string; finished_at?: string;
-  nodes: Array<{ node_id: string; tool_id: string; status: string; summary?: string; duration_ms?: number }>;
+  nodes: Array<{ node_id: string; tool_id: string; status: string; summary?: string; duration_ms?: number; orchestration?: { layer?: number; parallel?: boolean; depends_on?: string[] } }>;
 }
 export const workflowsApi = {
   list: (workspace_id: string) => apiRequest<{ ok: boolean; workflows: WorkflowDefinition[] }>({ method: "GET", url: "/workflows", params: { workspace_id } }),

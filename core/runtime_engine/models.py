@@ -56,6 +56,10 @@ class ExecutionNode:
     # Action-alias normalization bookkeeping for audit and diagnostics.
     action_original: str = ""
     action_normalized_from_alias: bool = False
+    step_id: str = ""
+    depends_on: list[str] = field(default_factory=list)
+    result_bindings: dict[str, str] = field(default_factory=dict)
+    failure_policy: str = "replan"
 
     @property
     def is_ready(self) -> bool:

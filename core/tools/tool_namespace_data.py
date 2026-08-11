@@ -62,7 +62,7 @@ CATEGORY_DEFS: dict[str, dict[str, str]] = {
 NS_DATA = [
     (
         "exec.run", "exec", "runtime", "multi", "本地命令执行", "exec.run",
-        "Use proactively when a result must be computed or verified on the local runtime. shell/python/slash run in the current user workspace; provide description, inspect outputs and exit_code, then verify requested effects. Persist deliverables through workspace.file.",
+        "Use proactively to compute or verify locally. For action=python, consume prior structured evidence through input_data and assign JSON-serializable output to result for cleaning, comparison, calculation or aggregation. For shell/python/slash, provide a description, inspect output and exit_code, verify requested effects, and persist deliverables through workspace.file.",
         "Do not use for remote SSH/Telnet or product-domain device access.",
         "exec.run",
     ),

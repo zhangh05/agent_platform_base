@@ -256,6 +256,8 @@ function evTypeLabel(rawType: string, ev: RuntimeEvent): string {
   if (t.includes("tool_call_end") || t.includes("tool_call_finish")) return "工具完成";
   if (t.includes("tool_call_fail")) return "工具失败";
   if (t.includes("tool_call")) return "工具调用";
+  if (t.includes("orchestration_layer")) return "协同执行";
+  if (t.includes("orchestration")) return "动态计划";
   // Model/LLM events
   if (t.includes("model_request") || t.includes("llm_request")) return "模型请求";
   if (t.includes("model_response") || t.includes("llm_response")) return "模型响应";

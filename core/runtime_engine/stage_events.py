@@ -38,6 +38,9 @@ RISK_ASSESSED = "risk_assessed"
 BUDGET_OK = "budget_ok"
 EXECUTION_STARTED = "execution_started"
 EXECUTION_COMPLETED = "execution_completed"
+ORCHESTRATION_PLANNED = "orchestration_planned"
+ORCHESTRATION_LAYER_STARTED = "orchestration_layer_started"
+ORCHESTRATION_LAYER_COMPLETED = "orchestration_layer_completed"
 REPAIR_ATTEMPT = "repair_attempt"
 MERGE_COMPLETED = "merge_completed"
 RESPONSE_STARTED = "response_started"
@@ -66,6 +69,9 @@ STAGE_LABELS: dict[str, str] = {
     BUDGET_OK: "预算检查通过",
     EXECUTION_STARTED: "开始执行工具…",
     EXECUTION_COMPLETED: "工具执行完成",
+    ORCHESTRATION_PLANNED: "已生成动态执行计划",
+    ORCHESTRATION_LAYER_STARTED: "正在执行协同步骤",
+    ORCHESTRATION_LAYER_COMPLETED: "协同步骤执行完成",
     REPAIR_ATTEMPT: "重试节点",
     MERGE_COMPLETED: "汇总执行结果",
     RESPONSE_STARTED: "整理回复…",

@@ -876,6 +876,7 @@ def _project_tool_calls(runtime_result) -> list[dict[str, Any]]:
                 "node_id": node_id,
                 "duration_ms": tr.latency_ms,
                 "redacted": bool(data.get("redacted", True)),
+                "orchestration": dict(data.get("_orchestration") or {}),
             },
         })
     return calls
@@ -893,6 +894,27 @@ def _tool_summary(data: dict[str, Any], tr) -> str:
 
 def _project_events(runtime_result, trace_id: str, turn_id: str) -> list[dict[str, Any]]:
     events = []
+    for batch_index, batch in enumerate((runtime_result.metadata or {}).get("orchestration_batches") or []):
+        if not isinstance(batch, dict):
+            continue
+        for layer_index, steps in enumerate(batch.get("layers") or [], start=1):
+            events.append({
+                "event_id": f"orchestration-{turn_id}-{batch_index}-{layer_index}",
+                "event_type": "orchestration_layer_completed",
+                "type": "orchestration_layer_completed",
+                "name": "协同步骤执行完成",
+                "trace_id": trace_id,
+                "run_id": turn_id,
+                "timestamp": time.time(),
+                "status": "completed",
+                "summary": f"第 {layer_index} 组：{len(list(steps or []))} 个步骤",
+                "metadata": {
+                    "batch": batch_index + 1,
+                    "layer": layer_index,
+                    "steps": list(steps or []),
+                    "parallel": len(list(steps or [])) > 1,
+                },
+            })
     for node_id, tr in (runtime_result.node_results or {}).items():
         events.append({
             "type": "tool_call",
@@ -916,6 +938,9 @@ def _project_events(runtime_result, trace_id: str, turn_id: str) -> list[dict[st
             "ok": bool(tr.success),
             "summary": _tool_summary(tr.data if isinstance(tr.data, dict) else {}, tr),
             "duration_ms": tr.latency_ms,
+            "metadata": {"orchestration": dict(
+                (tr.data if isinstance(tr.data, dict) else {}).get("_orchestration") or {}
+            )},
         })
     for idx, ev in enumerate((runtime_result.metadata or {}).get("retry_events") or []):
         if not isinstance(ev, dict):

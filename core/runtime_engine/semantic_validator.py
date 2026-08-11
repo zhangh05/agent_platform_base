@@ -167,7 +167,10 @@ class SemanticValidator:
         properties = schema.get("properties", {})
 
         for field_name in required:
-            if field_name not in node.args or node.args[field_name] is None:
+            if (
+                (field_name not in node.args or node.args[field_name] is None)
+                and field_name not in node.result_bindings
+            ):
                 result.errors.append(SemanticError(
                     node_id=node.id,
                     code="MISSING_REQUIRED_ARG",
@@ -278,7 +281,7 @@ class SemanticValidator:
         extension_any = extension_any if isinstance(extension_any, dict) else {}
 
         for field_name in tuple(ACTION_REQUIRED_ALL.get(key, ())) + tuple(extension_all.get(action) or ()):
-            if not _has_argument_value(node.args, field_name):
+            if not _has_argument_value(node.args, field_name) and field_name not in node.result_bindings:
                 result.errors.append(SemanticError(
                     node_id=node.id,
                     code="MISSING_REQUIRED_ARG",
@@ -286,7 +289,10 @@ class SemanticValidator:
                 ))
 
         for alternatives in tuple(ACTION_REQUIRED_ANY.get(key, ())) + tuple(extension_any.get(action) or ()):
-            if not any(_has_argument_value(node.args, field_name) for field_name in alternatives):
+            if not any(
+                _has_argument_value(node.args, field_name) or field_name in node.result_bindings
+                for field_name in alternatives
+            ):
                 result.errors.append(SemanticError(
                     node_id=node.id,
                     code="MISSING_REQUIRED_ARG",

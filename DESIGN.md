@@ -27,9 +27,9 @@ sequenceDiagram
   UI->>API: message(workspace_id, session_id, text)
   API->>App: submit_user_message()
   App->>SSOT Runtime: run_ssot_turn()
-  SSOT Runtime->>LLM: QueryLoop planning/tool-call iteration
-  SSOT Runtime->>SSOT Runtime: validate visible tool contract + budget
-  SSOT Runtime->>Tools: invoke canonical tool calls
+  SSOT Runtime->>LLM: QueryLoop incremental planning/tool-call iteration
+  SSOT Runtime->>SSOT Runtime: validate tool contract, dependencies, bindings, risk and budget
+  SSOT Runtime->>Tools: execute dependency layers through canonical tools
   Tools->>Tools: manifest/caller/policy/redaction/audit
   Tools-->>SSOT Runtime: ToolResult
   SSOT Runtime->>LLM: same QueryLoop produces the evidence-based response
@@ -66,6 +66,12 @@ canonical tool id
 ```
 
 当前有 16 个 canonical tool。`handler_id` 是内部实现细节，不暴露给 LLM、前端或公共 API。SSOT Runtime 节点不会直接调用 handler，只能通过 `ToolRuntimeClient.invoke()` 进入工具边界。
+
+## 动态工具编排
+
+QueryLoop 不要求模型预先猜测完整工作流。模型可发起普通单工具调用，也可为一小组调用声明稳定步骤标识、依赖和安全结果绑定；每组执行完成后，模型根据真实证据继续、改路或结束。运行时把每组调用校验为增量任务图：独立只读节点在并发上限内执行，有副作用的节点形成顺序屏障，依赖失败会阻止下游执行。
+
+跨工具结果只允许绑定到声明过的分析输入，不能绕过写入、命令或审批参数的风险检查。`exec.run` 的 Python 动作用 `input_data` 接收结构化证据，并通过 `result` 返回 JSON 可序列化结果。固定工作流与对话编排共享相同的依赖层语义；固定流程用于复用已验证经验，不作为限制对话模型的默认路径。
 
 ## Capability Catalog
 

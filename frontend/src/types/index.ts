@@ -842,4 +842,11 @@ export interface InlineToolCall {
   duration_ms?: number;
   errors?: string[];
   artifacts?: Array<{ artifact_id: string; artifact_type: string; title: string }>;
+  orchestration?: {
+    step_id?: string;
+    depends_on?: string[];
+    layer?: number;
+    parallel?: boolean;
+    failure_policy?: string;
+  };
 }

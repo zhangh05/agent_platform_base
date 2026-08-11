@@ -6,6 +6,11 @@ node enters `ToolRuntimeClient`, preserving caller checks, JSON-schema validatio
 risk policy, approval requirements, redaction, quotas, tracing, and workspace
 scope.
 
+Nodes in the same dependency layer are scheduled together: independent
+read-only calls run concurrently within the configured limit, while writes and
+other side-effecting calls remain ordering barriers. Results are persisted in
+stable node order, so concurrency never changes references or audit semantics.
+
 ## Definition
 
 ```json

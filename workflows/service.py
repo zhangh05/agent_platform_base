@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 import re
 from typing import Any
@@ -98,22 +99,27 @@ def validate_definition(payload: dict[str, Any]) -> dict[str, Any]:
         "failure_policy": failure_policy,
         "nodes": normalized,
         "execution_order": order,
+        "execution_layers": _execution_layers(normalized),
     }
 
 
 def _topological_order(nodes: list[dict[str, Any]]) -> list[str]:
+    return [node_id for layer in _execution_layers(nodes) for node_id in layer]
+
+
+def _execution_layers(nodes: list[dict[str, Any]]) -> list[list[str]]:
     dependencies = {node["node_id"]: set(node["depends_on"]) for node in nodes}
-    order: list[str] = []
+    layers: list[list[str]] = []
     while dependencies:
         ready = sorted(node_id for node_id, required in dependencies.items() if not required)
         if not ready:
             raise WorkflowError("workflow graph contains a cycle")
-        order.extend(ready)
+        layers.append(ready)
         for node_id in ready:
             dependencies.pop(node_id)
         for required in dependencies.values():
             required.difference_update(ready)
-    return order
+    return layers
 
 
 def _validate_references(nodes: list[dict[str, Any]]) -> None:
@@ -219,36 +225,36 @@ def execute_workflow(workspace_id: str, workflow_id: str, inputs: dict[str, Any]
     outputs: dict[str, Any] = {}
     nodes_by_id = {node["node_id"]: node for node in definition["nodes"]}
     failed = False
-    for node_id in definition["execution_order"]:
-        if _cancel_requested(workspace_id, run_id, job_id):
-            record["status"] = "cancelled"
-            break
+    def execute_node(node_id: str) -> tuple[dict[str, Any], dict[str, Any], bool]:
         node = nodes_by_id[node_id]
         try:
             scope = {"input": dict(inputs or {}), "nodes": {key: {"output": value} for key, value in outputs.items()}}
             if not bool(_resolve(node.get("when", True), scope)):
-                record["nodes"].append({"node_id": node_id, "tool_id": node["tool_id"], "status": "skipped", "started_at": now_iso(), "finished_at": now_iso()})
-                _save_run(record)
-                continue
+                entry = {"node_id": node_id, "tool_id": node["tool_id"], "status": "skipped", "started_at": now_iso(), "finished_at": now_iso()}
+                return entry, {}, True
             arguments = _resolve(node["arguments"], scope)
             if len(json.dumps(arguments, ensure_ascii=False, default=str).encode()) > 1_048_576:
                 raise WorkflowError(f"resolved arguments are too large: {node_id}")
         except Exception as exc:
-            failed = True
-            record["nodes"].append({"node_id": node_id, "tool_id": node["tool_id"], "status": "failed", "summary": "步骤输入解析失败", "errors": [str(exc)[:500]], "started_at": now_iso(), "finished_at": now_iso()})
-            _save_run(record)
-            if definition["failure_policy"] == "fail_fast": break
-            continue
+            entry = {"node_id": node_id, "tool_id": node["tool_id"], "status": "failed", "summary": "步骤输入解析失败", "errors": [str(exc)[:500]], "started_at": now_iso(), "finished_at": now_iso()}
+            return entry, {}, False
         started_at = now_iso()
         from core.tools.context import ToolRuntimeContext
-        result = _tool_client().invoke(
-            node["tool_id"],
-            arguments,
-            context=ToolRuntimeContext(workspace_id=workspace_id, run_id=run_id, job_id=job_id or None, module="workflow", requested_by="job_runner", approval_id=(approvals or {}).get(node_id)),
-        )
+        try:
+            result = _tool_client().invoke(
+                node["tool_id"],
+                arguments,
+                context=ToolRuntimeContext(workspace_id=workspace_id, run_id=run_id, job_id=job_id or None, module="workflow", requested_by="job_runner", approval_id=(approvals or {}).get(node_id)),
+            )
+        except Exception as exc:
+            entry = {
+                "node_id": node_id, "tool_id": node["tool_id"], "status": "failed",
+                "summary": "工具执行异常", "errors": [str(exc)[:500]],
+                "started_at": started_at, "finished_at": now_iso(),
+            }
+            return entry, {}, False
         success = result.status in {"succeeded", "dry_run"}
-        outputs[node_id] = result.output if success else {}
-        record["nodes"].append({
+        entry = {
             "node_id": node_id,
             "tool_id": node["tool_id"],
             "status": result.status,
@@ -258,11 +264,57 @@ def execute_workflow(workspace_id: str, workflow_id: str, inputs: dict[str, Any]
             "duration_ms": result.duration_ms,
             "started_at": started_at,
             "finished_at": now_iso(),
-        })
-        _save_run(record)
-        if not success:
-            failed = True
-            if definition["failure_policy"] == "fail_fast": break
+        }
+        return entry, (result.output if success else {}), success
+
+    from core.runtime_engine.contracts import is_read_only_call
+    for layer_index, layer in enumerate(definition.get("execution_layers") or _execution_layers(definition["nodes"]), start=1):
+        if _cancel_requested(workspace_id, run_id, job_id):
+            record["status"] = "cancelled"
+            break
+
+        # Independent reads run concurrently. Writes remain ordering barriers,
+        # even when the saved DAG did not declare a dependency between them.
+        groups: list[tuple[bool, list[str]]] = []
+        read_group: list[str] = []
+        for node_id in layer:
+            node = nodes_by_id[node_id]
+            try:
+                scope = {"input": dict(inputs or {}), "nodes": {key: {"output": value} for key, value in outputs.items()}}
+                preview_args = _resolve(node["arguments"], scope)
+            except Exception:
+                preview_args = node["arguments"]
+            if is_read_only_call(node["tool_id"], preview_args):
+                read_group.append(node_id)
+                continue
+            if read_group:
+                groups.append((True, read_group)); read_group = []
+            groups.append((False, [node_id]))
+        if read_group:
+            groups.append((True, read_group))
+
+        for parallel, node_ids in groups:
+            if parallel and len(node_ids) > 1:
+                with ThreadPoolExecutor(max_workers=min(5, len(node_ids)), thread_name_prefix="workflow-read") as pool:
+                    futures = {node_id: pool.submit(execute_node, node_id) for node_id in node_ids}
+                    completed = [(node_id, futures[node_id].result()) for node_id in node_ids]
+            else:
+                completed = [(node_id, execute_node(node_id)) for node_id in node_ids]
+            for node_id, (entry, output, success) in completed:
+                entry["orchestration"] = {
+                    "layer": layer_index,
+                    "parallel": parallel and len(node_ids) > 1,
+                    "depends_on": list(nodes_by_id[node_id].get("depends_on") or []),
+                }
+                record["nodes"].append(entry)
+                outputs[node_id] = output
+                if not success:
+                    failed = True
+            _save_run(record)
+            if failed and definition["failure_policy"] == "fail_fast":
+                break
+        if failed and definition["failure_policy"] == "fail_fast":
+            break
     if record["status"] == "running":
         record["status"] = "failed" if failed else "succeeded"
     record["finished_at"] = now_iso()

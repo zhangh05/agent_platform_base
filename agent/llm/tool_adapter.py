@@ -76,6 +76,32 @@ def tool_spec_to_openai_function(tool: dict) -> dict:
             param["items"] = prop["items"]
         params_def["properties"][name] = param
 
+    # Optional incremental-orchestration controls are available on every
+    # canonical function. They describe relationships between calls; the
+    # QueryLoop strips them before invoking handlers. A normal single call can
+    # omit all four fields.
+    params_def["properties"].update({
+        "plan_step_id": {
+            "type": "string",
+            "description": "Optional stable step id when coordinating multiple tools in this turn.",
+        },
+        "plan_depends_on": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": "Step ids that must finish successfully before this call can run.",
+        },
+        "plan_bindings": {
+            "type": "object",
+            "description": "Optional argument-to-result references, e.g. input_data -> steps.extract.content.",
+        },
+        "plan_failure": {
+            "type": "string",
+            "enum": ["replan", "stop", "continue"],
+            "default": "replan",
+            "description": "What the agent intends after this step fails; runtime still enforces safety.",
+        },
+    })
+
     if not params_def["properties"]:
         params_def.pop("properties")
     if not params_def.get("required"):

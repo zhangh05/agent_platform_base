@@ -53,6 +53,12 @@ class LLMToolCall:
     id: str
     name: str
     arguments: dict = field(default_factory=dict)
+    # Optional dynamic-orchestration metadata.  Ordinary one-off function
+    # calls leave these fields empty and keep their current behaviour.
+    step_id: str = ""
+    depends_on: List[str] = field(default_factory=list)
+    result_bindings: Dict[str, str] = field(default_factory=dict)
+    failure_policy: str = "replan"
 
 
 @dataclass

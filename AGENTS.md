@@ -20,9 +20,10 @@ Frontend
   -> backend/main.py routes or backend/ws/agent_ws.py
   -> agent.app.facade.AgentApp
   -> SSOTRuntimeEngine
-     ├─ Fast-path classifier
-     ├─ Pre-planner guard
-     └─ QueryLoop iterative LLM+tool loop
+     └─ QueryLoop iterative LLM + incremental task-graph loop
+        ├─ optional step dependencies and safe result bindings
+        ├─ bounded parallel reads with write barriers
+        └─ evidence-driven replanning and final synthesis
   -> ToolRuntime.invoke_raw() → registered canonical handlers
   -> durable state, artifacts, memory, trace
 ```

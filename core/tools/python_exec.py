@@ -8,6 +8,7 @@ Security model:
 """
 
 import ast
+import json
 import os
 import shutil
 import subprocess
@@ -181,7 +182,7 @@ def _validate_ast(code: str) -> None:
 
 
 def execute_python_code(code: str, workspace_id: str, run_id: str,
-                        timeout: int = 10) -> dict:
+                        timeout: int = 10, input_data=None) -> dict:
     """Execute Python code in a sandboxed subprocess.
 
     Args:
@@ -218,22 +219,45 @@ def execute_python_code(code: str, workspace_id: str, run_id: str,
             "error": f"Security check failed: {e}",
         }
 
-    # ── 3. Setup temp directory and script path ──
+    # ── 3. Validate and inject bounded structured input ──
+    try:
+        input_json = json.dumps(input_data if input_data is not None else {}, ensure_ascii=False, default=str)
+    except (TypeError, ValueError) as exc:
+        return {
+            "ok": False, "exit_code": -1, "stdout": "", "stderr": "",
+            "timeout_seconds": timeout, "error": f"input_data is not JSON serializable: {exc}",
+        }
+    if len(input_json.encode("utf-8")) > 1_048_576:
+        return {
+            "ok": False, "exit_code": -1, "stdout": "", "stderr": "",
+            "timeout_seconds": timeout, "error": "input_data exceeds 1 MiB",
+        }
+
+    # ── 4. Setup temp directory and script path ──
     safe_run_id = re.sub(r"[^a-zA-Z0-9_-]", "_", str(run_id) or "unknown") or "unknown"
     # Add a preamble that sanitizes the environment
     safe_preamble = (
         "# Auto-generated sandbox preamble — best-effort local sandbox, not container isolation\n"
         "# Safety enforced at AST level (see _validate_ast). No runtime builtin disabling\n"
         "# needed — stdlib modules such as json, collections, enum use eval() internally.\n"
-        "_ = None\n"
+        "import json as _runtime_json\n"
+        f"input_data = _runtime_json.loads({input_json!r})\n"
+    )
+    safe_postamble = (
+        "\ntry:\n"
+        "    _runtime_structured = result\n"
+        "except NameError:\n"
+        "    _runtime_structured = None\n"
+        "if _runtime_structured is not None:\n"
+        "    print('__LIANZHI_STRUCTURED__' + _runtime_json.dumps(_runtime_structured, ensure_ascii=False, default=str))\n"
     )
     temp_dir, script_path = write_python_temp_script(
         workspace_id,
         safe_run_id,
-        safe_preamble + "\n" + code,
+        safe_preamble + "\n" + code + safe_postamble,
     )
 
-    # ── 4. Execute in subprocess with minimal environment ──
+    # ── 5. Execute in subprocess with minimal environment ──
     try:
         safe_env = _build_safe_env()
         result = subprocess.run(
@@ -248,13 +272,25 @@ def execute_python_code(code: str, workspace_id: str, run_id: str,
             (result.stdout or ""),
             (result.stderr or ""),
         )
+        structured_output = None
+        visible_lines = []
+        for line in stdout.splitlines():
+            if line.startswith("__LIANZHI_STRUCTURED__"):
+                try:
+                    structured_output = json.loads(line[len("__LIANZHI_STRUCTURED__"):])
+                except json.JSONDecodeError:
+                    stderr_out = (stderr_out + "\nstructured result serialization failed").strip()
+                continue
+            visible_lines.append(line)
+        stdout = "\n".join(visible_lines)
         return {
-            "ok": True,
+            "ok": result.returncode == 0,
             "exit_code": result.returncode,
             "stdout": stdout,
             "stderr": stderr_out,
+            "structured_output": structured_output,
             "timeout_seconds": timeout,
-            "error": "",
+            "error": "" if result.returncode == 0 else (stderr_out or f"Python exited with code {result.returncode}"),
         }
     except subprocess.TimeoutExpired:
         return {

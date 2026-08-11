@@ -538,6 +538,10 @@ _COMMON = {
 _EXEC_ARGS = {
     "command": {"type": "string", "description": "Shell/slash command; required for action=shell|slash."},
     "code": {"type": "string", "description": "Python source; required for action=python."},
+    "input_data": {
+        "type": "object",
+        "description": "Structured data supplied to action=python as the input_data variable; may be bound from a prior tool step.",
+    },
     "description": {"type": "string"},
     "working_dir": {"type": "string", "description": "Workspace-relative working directory."},
     "timeout": {"type": "integer", "minimum": 1, "maximum": 600},

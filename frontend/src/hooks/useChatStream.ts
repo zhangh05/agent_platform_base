@@ -42,6 +42,9 @@ const STAGE_LABELS: Record<string, string> = {
   budget_ok:           "预算检查通过",
   execution_started:   "开始执行工具…",
   execution_completed: "工具执行完成",
+  orchestration_planned: "已生成动态执行计划",
+  orchestration_layer_started: "正在执行协同步骤…",
+  orchestration_layer_completed: "协同步骤执行完成",
   repair_attempt:      "重试节点",
   merge_completed:     "汇总执行结果",
   response_started:    "整理回复…",
@@ -373,6 +376,7 @@ export function useChatStream(
         duration_ms: tc.duration_ms ?? undefined,
         errors: tc.errors,
         artifacts: tc.artifacts as InlineToolCall["artifacts"],
+        orchestration: (tc.metadata?.orchestration || undefined) as InlineToolCall["orchestration"],
       }));
       useWorkbenchStore.getState().updateAssistant(streamingMsgId, {
         status: wsResult.errors?.length ? "error" : "ready",
@@ -419,6 +423,7 @@ export function useChatStream(
           tool_id: tc.tool_id, tool_name: toolLabel(tc.tool_id), ok: tc.ok,
           summary: tc.summary, duration_ms: tc.duration_ms ?? undefined,
           errors: tc.errors, artifacts: tc.artifacts,
+          orchestration: (tc.metadata?.orchestration || undefined) as InlineToolCall["orchestration"],
         }));
         useWorkbenchStore.getState().updateAssistant(streamingMsgId, {
           status: res.ok ? "ready" : "error",

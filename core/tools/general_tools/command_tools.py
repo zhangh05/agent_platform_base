@@ -237,6 +237,7 @@ def handle_python_exec(inv: ToolInvocation) -> dict:
     workspace_id = _caller_workspace(inv)
     run_id = inv.arguments.get("run_id", "")
     code = str(inv.arguments.get("code", "")).strip()
+    input_data = inv.arguments.get("input_data")
     timeout = min(int(inv.arguments.get("timeout", 30) or 30), 60)  # v3.7: max 60s
 
     if not code:
@@ -250,6 +251,7 @@ def handle_python_exec(inv: ToolInvocation) -> dict:
             workspace_id=workspace_id,
             run_id=run_id,
             timeout=timeout,
+            input_data=input_data,
         )
         description = (inv.arguments.get("description") or "").strip()
         if description:
