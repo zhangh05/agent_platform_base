@@ -173,10 +173,42 @@ export function useChatStream(
     useWorkbenchStore.getState().setSending(false);
   }, []);
 
+  const reconcilePersistedTurn = useCallback(async (record: InflightChatStream): Promise<boolean> => {
+    if (!record.sessionId) return false;
+    try {
+      const response = await sessionsApi.messages(record.sessionId, record.workspaceId);
+      if (!response.messages?.length) return false;
+      useWorkbenchStore.getState().mergeFromBackend(record.sessionId, response.messages);
+
+      // A completed run is persisted as a final assistant message. Check the
+      // tail rather than an arbitrary older assistant so an in-progress turn
+      // (whose latest persisted message is the user request) still resumes WS.
+      const latest = response.messages[response.messages.length - 1];
+      const startedAt = Date.parse(record.startedAt);
+      const completedAt = Date.parse(latest.created_at || "");
+      const belongsToCurrentTurn = latest.role === "assistant"
+        && Number.isFinite(completedAt)
+        && (!Number.isFinite(startedAt) || completedAt >= startedAt - 10_000);
+      if (!belongsToCurrentTurn) return false;
+
+      clearInflightChatStream(record.streamId);
+      useWorkbenchStore.getState().setSending(false);
+      notifyRunCompleted();
+      return true;
+    } catch {
+      return false;
+    }
+  }, []);
+
   const resumeInflightStream = useCallback(async (record: InflightChatStream): Promise<void> => {
     if (detachedRef.current || manualStopRef.current) return;
     const current = readInflightChatStream();
     if (!current || current.streamId !== record.streamId) return;
+
+    // The backend may have finished between unload and remount. Durable
+    // session messages are cheaper and more authoritative than entering the
+    // reconnect loop, especially after a backend restart discarded WS memory.
+    if (await reconcilePersistedTurn(record)) return;
 
     let existing = useWorkbenchStore.getState().bySession[record.scratchSessionId]
       ?.find((message) => message.id === record.messageId);
@@ -351,20 +383,7 @@ export function useChatStream(
       clearInflightChatStream(record.streamId);
     } else {
       if (terminalError === "stream_not_found" && record.sessionId) {
-        try {
-          const response = await sessionsApi.messages(record.sessionId, record.workspaceId);
-          if (response.messages?.length) {
-            useWorkbenchStore.getState().mergeFromBackend(record.sessionId, response.messages);
-            const recovered = useWorkbenchStore.getState().bySession[record.sessionId]
-              ?.find((message) => message.id === record.messageId);
-            if (recovered && recovered.status !== "streaming") {
-              clearInflightChatStream(record.streamId);
-              useWorkbenchStore.getState().setSending(false);
-              notifyRunCompleted();
-              return;
-            }
-          }
-        } catch { /* fall through to an explicit unrecoverable state */ }
+        if (await reconcilePersistedTurn(record)) return;
       }
       const message = terminalError === "stream_not_found"
         ? "原运行已不可恢复，可能是后端服务在执行期间重启。"
@@ -376,7 +395,7 @@ export function useChatStream(
       callbacksRef.current.onInterruption?.(message);
     }
     useWorkbenchStore.getState().setSending(false);
-  }, []);
+  }, [reconcilePersistedTurn]);
 
   useEffect(() => {
     detachedRef.current = false;
