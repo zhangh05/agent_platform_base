@@ -156,3 +156,70 @@ def test_minimax_m3_is_treated_as_a_vision_model():
 
     assert supports_vision({"provider": "minimax", "model": "MiniMax-M3"}) is True
     assert supports_vision({"model": "gpt-4o-mini"}) is True
+
+
+def test_planner_vision_capability_follows_routed_model(monkeypatch):
+    from agent.llm.schemas import LLMResponse
+    from agent.runtime.ssot_runtime import _invoke_llm_for_ssot_runtime
+
+    captured = {}
+    monkeypatch.setattr(
+        "agent.llm.config.resolve_provider_config",
+        lambda: {"enabled": True, "provider": "active", "model": "text-only"},
+    )
+    monkeypatch.setattr(
+        "agent.llm.router.resolve_model_candidates",
+        lambda _task, _active: [{
+            "enabled": True, "provider": "routed", "model": "MiniMax-M3",
+        }],
+    )
+    monkeypatch.setattr(
+        "agent.runtime.vision_inputs.build_vision_content",
+        lambda *_: ([{"type": "image_url", "image_url": {"url": "data:image/png;base64,AA=="}}], []),
+    )
+
+    def fake_invoke(**kwargs):
+        captured.update(kwargs)
+        return LLMResponse(content="ok")
+
+    monkeypatch.setattr("agent.llm.runtime.invoke_llm", fake_invoke)
+    _invoke_llm_for_ssot_runtime(
+        system="system", user="inspect", workspace_id="test_ws",
+        extra={"stream_scope": "planner", "vision_attachments": [{"file_id": "file_x", "kind": "image"}]},
+    )
+
+    assert isinstance(captured["messages"][-1].content, list)
+
+
+def test_planner_does_not_send_image_to_routed_text_model(monkeypatch):
+    from agent.llm.schemas import LLMResponse
+    from agent.runtime.ssot_runtime import _invoke_llm_for_ssot_runtime
+
+    captured = {}
+    monkeypatch.setattr(
+        "agent.llm.config.resolve_provider_config",
+        lambda: {"enabled": True, "provider": "active", "model": "MiniMax-M3"},
+    )
+    monkeypatch.setattr(
+        "agent.llm.router.resolve_model_candidates",
+        lambda _task, _active: [{
+            "enabled": True, "provider": "routed", "model": "text-only",
+        }],
+    )
+    monkeypatch.setattr(
+        "agent.runtime.vision_inputs.build_vision_content",
+        lambda *_: (_ for _ in ()).throw(AssertionError("image must not be built")),
+    )
+
+    def fake_invoke(**kwargs):
+        captured.update(kwargs)
+        return LLMResponse(content="ok")
+
+    monkeypatch.setattr("agent.llm.runtime.invoke_llm", fake_invoke)
+    _invoke_llm_for_ssot_runtime(
+        system="system", user="inspect", workspace_id="test_ws",
+        extra={"stream_scope": "planner", "vision_attachments": [{"file_id": "file_x", "kind": "image"}]},
+    )
+
+    assert isinstance(captured["messages"][-1].content, str)
+    assert captured["extra"]["vision_warnings"]

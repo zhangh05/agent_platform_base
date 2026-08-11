@@ -19,6 +19,9 @@ class LLMClient:
                 if overrides.get(k):
                     cfg[k] = overrides[k]
         self._cfg = cfg
+        # A default client follows task routing. Only a caller that selected
+        # draft/provider settings pins generation to this resolved config.
+        self._generation_override = cfg if overrides else None
 
     def generate(self, task: str, state: AgentState, user_question: str = None) -> SafeLLMOutput:
         from agent.llm.runtime import safe_generate
@@ -26,7 +29,7 @@ class LLMClient:
             task,
             state,
             user_input=user_question or "",
-            config_override=self._cfg,
+            config_override=self._generation_override,
         )
 
     def probe(self, message: str = "Reply with OK.") -> dict:

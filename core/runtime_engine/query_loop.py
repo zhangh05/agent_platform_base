@@ -1827,15 +1827,23 @@ class QueryLoop:
                     tc for tc in tool_calls
                     if candidate_keys[tc.id] in completed_call_keys
                 ]
+                repeated_mutations = [
+                    tc for tc in repeated_calls
+                    if not self._executor._is_read_only_call(tc)
+                ]
+                if repeated_mutations:
+                    return finish(
+                        final_response=self._build_tool_result_fallback(ctx, all_results),
+                        error="duplicate_mutation_call",
+                    )
                 if repeated_calls and len(repeated_calls) == len(tool_calls):
                     return finish(
                         final_response=self._build_tool_result_fallback(ctx, all_results),
                         error="duplicate_tool_call",
                     )
                 # Do not remove only part of a graph: a retained node may depend
-                # on the repeated node. Mixed batches remain bounded by the
-                # request budget and execute intact; the all-repeated guard above
-                # still stops a genuine no-progress loop.
+                # on the repeated node. Repeated reads in a mixed graph are safe
+                # to observe again; an identical mutation is never replayed.
 
                 # Execute tools (parallel read-only, serial writes)
                 execution_started = time.monotonic()

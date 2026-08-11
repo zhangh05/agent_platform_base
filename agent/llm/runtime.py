@@ -18,6 +18,27 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+_PROVIDER_OVERRIDE_KEYS = frozenset({
+    "provider", "provider_type", "default_provider", "model", "base_url",
+    "api_key", "enabled",
+})
+
+
+def resolve_invocation_candidates(task: str, config_override: dict | None = None) -> list[dict]:
+    """Resolve the exact provider candidates an invocation would use."""
+    from agent.llm.config import resolve_provider_config
+
+    active_cfg = resolve_provider_config()
+    override = dict(config_override or {})
+    candidates = [active_cfg]
+    try:
+        if not (_PROVIDER_OVERRIDE_KEYS & set(override)):
+            from agent.llm.router import resolve_model_candidates
+            candidates = resolve_model_candidates(task, active_cfg)
+    except Exception:
+        logger.warning("model route resolution failed; using active provider", exc_info=True)
+    return [{**candidate, **override} for candidate in candidates]
+
 def invoke_llm(
     task: str,
     messages: List[LLMMessage] = None,
@@ -46,25 +67,7 @@ def invoke_llm(
         LLMResponse from provider
     """
     # ── Resolve config ──
-    from agent.llm.config import resolve_provider_config
-    active_cfg = resolve_provider_config()
-    tuning_override = dict(config_override or {})
-    provider_keys = {
-        "provider", "provider_type", "default_provider", "model", "base_url",
-        "api_key", "enabled",
-    }
-    explicit_provider_override = bool(provider_keys & set(tuning_override))
-    provider_candidates = [active_cfg]
-    try:
-        if not explicit_provider_override:
-            from agent.llm.router import resolve_model_candidates
-            provider_candidates = resolve_model_candidates(task, active_cfg)
-    except Exception:
-        logger.warning("model route resolution failed; using active provider", exc_info=True)
-    provider_candidates = [
-        {**candidate, **tuning_override}
-        for candidate in provider_candidates
-    ]
+    provider_candidates = resolve_invocation_candidates(task, config_override)
     cfg = provider_candidates[0]
 
     if not cfg.get("enabled") or cfg.get("provider_type") == "disabled":
@@ -126,15 +129,39 @@ def invoke_llm(
 
     # ── Call provider candidates with retry and real fallback ──
     attempts: list[str] = []
+    skipped_incompatible: list[str] = []
+    request_has_images = any(
+        isinstance(message.content, list)
+        and any(
+            isinstance(part, dict) and part.get("type") in {"image_url", "image"}
+            for part in message.content
+        )
+        for message in messages
+    )
     resp = None
     for candidate in provider_candidates:
+        candidate_name = str(candidate.get("provider") or candidate.get("default_provider") or "unknown")
+        if request_has_images:
+            from agent.llm.capabilities import supports_vision
+            if not supports_vision(candidate):
+                skipped_incompatible.append(candidate_name)
+                continue
         req.model = candidate.get("model", req.model)
-        attempts.append(str(candidate.get("provider") or candidate.get("default_provider") or "unknown"))
+        attempts.append(candidate_name)
         resp = _generate_with_retry(req, candidate)
         if not resp.error:
             break
-    assert resp is not None
-    resp.metadata = {**(resp.metadata or {}), "provider_attempts": attempts, "fallback_used": len(attempts) > 1 and not resp.error}
+    if resp is None:
+        resp = LLMResponse(
+            error="vision_not_supported_by_candidate_models",
+            metadata={"error_type": "vision_not_supported", "retryable": False},
+        )
+    resp.metadata = {
+        **(resp.metadata or {}),
+        "provider_attempts": attempts,
+        "provider_skipped_incompatible": skipped_incompatible,
+        "fallback_used": len(attempts) > 1 and not resp.error,
+    }
     if resp.error:
         return resp
 

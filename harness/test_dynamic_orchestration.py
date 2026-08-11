@@ -486,6 +486,65 @@ def test_read_dedupe_key_changes_after_a_successful_mutation():
     assert loop._completion_key(write, 0) == loop._completion_key(write, 1)
 
 
+def test_repeated_mutation_is_not_replayed_when_mixed_with_a_new_read():
+    from agent.llm.schemas import LLMResponse
+    from core.runtime_engine.engine import SSOTRuntimeEngine
+    from core.runtime_engine.tool_runtime import ToolRuntime
+
+    responses = [
+        LLMResponse(tool_calls=[LLMToolCall(
+            id="write-1", name="workspace.file",
+            arguments={"action": "write", "filename": "state.txt", "content": "ready"},
+        )]),
+        LLMResponse(tool_calls=[
+            LLMToolCall(
+                id="write-2", name="workspace.file",
+                arguments={"action": "write", "filename": "state.txt", "content": "ready"},
+            ),
+            LLMToolCall(
+                id="read-1", name="workspace.file",
+                arguments={"action": "list"},
+            ),
+        ]),
+    ]
+    received = []
+
+    def llm(**_kwargs):
+        return responses.pop(0)
+
+    def handler(arguments):
+        received.append(dict(arguments))
+        return {"ok": True}
+
+    config = SSOTRuntimeConfig(max_query_loop_iterations=4)
+    runtime = ToolRuntime(config)
+    runtime.register("workspace.file", handler)
+    registry = {
+        "workspace.file": {
+            "description": "files",
+            "args_schema": {
+                "type": "object",
+                "required": ["action"],
+                "properties": {
+                    "action": {"type": "string", "enum": ["list", "write"]},
+                    "filename": {"type": "string"},
+                    "content": {"type": "string"},
+                },
+            },
+        },
+    }
+    engine = SSOTRuntimeEngine(
+        config=config, llm_invoke=llm, tool_registry=registry, tool_runtime=runtime,
+    )
+    result = asyncio.run(engine.run(
+        "write once", workspace_id="default", session_id="session",
+    ))
+
+    assert received == [{"action": "write", "filename": "state.txt", "content": "ready"}]
+    assert result.success is False
+    assert "duplicate_mutation_call" in result.errors
+
+
 def test_plain_json_plan_text_is_not_an_alternate_tool_call_path():
     from agent.llm.schemas import LLMResponse
     from core.runtime_engine.query_loop import QueryLoop

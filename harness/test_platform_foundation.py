@@ -262,6 +262,50 @@ def test_safe_generate_does_not_turn_active_config_into_provider_override(monkey
     assert seen[0]["model"] == "routed-model"
 
 
+def test_image_request_never_falls_back_to_text_only_provider(monkeypatch):
+    from agent.llm.runtime import invoke_llm
+    from agent.llm.schemas import LLMMessage, LLMResponse
+
+    seen = []
+    monkeypatch.setattr(
+        "agent.llm.config.resolve_provider_config",
+        lambda: {
+            "enabled": True, "provider_type": "openai_compatible",
+            "provider": "active-text", "model": "text-only",
+        },
+    )
+    monkeypatch.setattr(
+        "agent.llm.router.resolve_model_candidates",
+        lambda _task, _active: [
+            {
+                "enabled": True, "provider_type": "openai_compatible",
+                "provider": "routed-vision", "model": "MiniMax-M3",
+            },
+            {
+                "enabled": True, "provider_type": "openai_compatible",
+                "provider": "active-text", "model": "text-only",
+            },
+        ],
+    )
+
+    def generate(_request, config):
+        seen.append(config["provider"])
+        return LLMResponse(error="provider_http_400: failed")
+
+    monkeypatch.setattr("agent.llm.provider.generate", generate)
+    response = invoke_llm(
+        "assistant_chat",
+        messages=[LLMMessage(role="user", content=[
+            {"type": "text", "text": "inspect"},
+            {"type": "image_url", "image_url": {"url": "data:image/png;base64,AA=="}},
+        ])],
+    )
+
+    assert seen == ["routed-vision"]
+    assert response.error
+    assert response.metadata["provider_skipped_incompatible"] == ["active-text"]
+
+
 def test_mcp_runs_through_governed_skill_tool(monkeypatch, tmp_path):
     monkeypatch.setenv("NA_WORKSPACE_ROOT", str(tmp_path))
     from storage.workspace_store import ensure_workspace

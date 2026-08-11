@@ -631,7 +631,7 @@ def _make_tool_handler(
 
 
 def _invoke_llm_for_ssot_runtime(**kwargs):
-    from agent.llm.runtime import invoke_llm
+    from agent.llm.runtime import invoke_llm, resolve_invocation_candidates
     from agent.runtime.token_tracker import record_llm_call
 
     system = str(kwargs.get("system") or "")
@@ -656,6 +656,17 @@ def _invoke_llm_for_ssot_runtime(**kwargs):
     if caller_extra:
         extra.update(caller_extra)
 
+    config_override = {}
+    timeout = kwargs.get("timeout")
+    if timeout is not None:
+        config_override["timeout"] = int(timeout)
+    temperature = kwargs.get("temperature")
+    if temperature is not None:
+        config_override["temperature"] = float(temperature)
+    max_tokens = kwargs.get("max_tokens")
+    if max_tokens is not None:
+        config_override["max_tokens"] = int(max_tokens)
+
     messages = [
         LLMMessage(
             role=str(message.role),
@@ -677,8 +688,10 @@ def _invoke_llm_for_ssot_runtime(**kwargs):
     if stream_scope == "planner" and caller_extra.get("vision_attachments"):
         try:
             from agent.llm.capabilities import supports_vision
-            from agent.llm.config import resolve_provider_config
-            if supports_vision(resolve_provider_config()):
+            effective_config = resolve_invocation_candidates(
+                "assistant_chat", config_override,
+            )[0]
+            if supports_vision(effective_config):
                 from agent.runtime.vision_inputs import build_vision_content
                 image_parts, vision_warnings = build_vision_content(
                     caller_extra.get("vision_attachments"), workspace_id,
@@ -703,17 +716,6 @@ def _invoke_llm_for_ssot_runtime(**kwargs):
                 extra["vision_warnings"] = ["当前模型不支持图片识别，图片未发送给模型。"]
         except Exception:
             _LOG.warning("vision attachment preparation failed", exc_info=True)
-
-    config_override = {}
-    timeout = kwargs.get("timeout")
-    if timeout is not None:
-        config_override["timeout"] = int(timeout)
-    temperature = kwargs.get("temperature")
-    if temperature is not None:
-        config_override["temperature"] = float(temperature)
-    max_tokens = kwargs.get("max_tokens")
-    if max_tokens is not None:
-        config_override["max_tokens"] = int(max_tokens)
 
     resp = invoke_llm(
         task="assistant_chat",

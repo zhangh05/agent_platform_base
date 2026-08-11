@@ -136,6 +136,26 @@ class TestSafeGenerateWiring:
         assert seen["config_override"]["provider"] == "custom"
         assert seen["config_override"]["model"] == "draft-model"
 
+    def test_default_client_preserves_task_routing(self, monkeypatch):
+        from agent.llm.client import LLMClient
+        from agent.llm.schemas import SafeLLMOutput
+        from agent.state import AgentState
+
+        seen = {}
+        monkeypatch.setattr(
+            "agent.llm.config.resolve_provider_config",
+            lambda: {"enabled": True, "provider": "active", "model": "active-model"},
+        )
+
+        def fake_safe_generate(_task, _state, **kwargs):
+            seen["config_override"] = kwargs.get("config_override")
+            return SafeLLMOutput(answer="ok")
+
+        monkeypatch.setattr("agent.llm.runtime.safe_generate", fake_safe_generate)
+        LLMClient().generate("context_qa", AgentState(), "question")
+
+        assert seen["config_override"] is None
+
     def test_all_prompt_registry_tasks_allowed_by_llm_policy(self):
         from agent.llm.schemas import ALLOWED_TASKS
         from prompts.loader import load_prompt_registry
