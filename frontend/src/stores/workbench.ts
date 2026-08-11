@@ -13,7 +13,7 @@
  *  - 每个会话最多 100 条消息
  *  - 最多保留 20 个最近会话
  *  - 超出后按最近一条消息时间执行 LRU 淘汰
- *  - localStorage key: "na_workbench"
+ *  - localStorage key: "na_workbench_v4" (draft metadata only)
  */
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
@@ -659,16 +659,15 @@ export const useWorkbenchStore = create<WorkbenchState>()(
       },
     }),
     {
-      name: "na_workbench",
-      version: 4,
-      storage: createJSONStorage(() => debouncedStorage("na_workbench")),
-      // v4: session messages are server-owned. Persisting optimistic/streaming
+      // Use a new physical key rather than migrating the old chat cache. Even
+      // calling JSON.parse on legacy multi-MB results blocks the browser main
+      // thread before migrate() can discard them.
+      name: "na_workbench_v4",
+      version: 1,
+      storage: createJSONStorage(() => debouncedStorage("na_workbench_v4")),
+      // Session messages are server-owned. Persisting optimistic/streaming
       // placeholders created a refresh race where a late rehydrate could
       // overwrite an already-fetched final answer with "仍在处理…".
-      migrate: (persisted: unknown, _version: number) => {
-        const previous = persisted as Partial<WorkbenchState> | null | undefined;
-        return { lastUserInput: previous?.lastUserInput || "" } as WorkbenchState;
-      },
       partialize: (s): Partial<WorkbenchState> => ({
         lastUserInput: s.lastUserInput,
       }),

@@ -140,6 +140,8 @@ describe("workbench backend message merge", () => {
 
   it("does not let persisted streaming placeholders overwrite a backend answer after refresh", async () => {
     setActiveUserScope("Admin", "default");
+    // Legacy chat caches must not even be parsed during hydration. They may be
+    // very large because old versions persisted full tool/run results.
     localStorage.setItem("na_workbench:Admin:default", JSON.stringify({
       version: 3,
       state: {

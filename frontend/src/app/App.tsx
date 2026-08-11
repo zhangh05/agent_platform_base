@@ -1,5 +1,5 @@
 import { BrowserRouter, Link, Navigate, NavLink, useLocation } from "../router";
-import { Suspense, memo, useCallback, useEffect, useMemo, useState } from "react";
+import { Suspense, memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { FormEvent, ReactNode } from "react";
 import { ErrorBoundary } from "../components/ErrorBoundary";
 import { SkeletonList, SkeletonTable } from "../components/common";
@@ -52,10 +52,12 @@ function clearUserScopedFrontendState(nextSession?: Awaited<ReturnType<typeof au
     : (nextSession?.home_workspace_id || (allowed.includes(currentWorkspace) ? currentWorkspace : allowed[0]) || "");
   setActiveUserScope(nextSession?.username || "", nextWorkspace);
   useSessionStore.getState().resetForUser(nextWorkspace);
+  useWorkbenchStore.getState().resetForUser();
   if (nextSession?.username) void useWorkbenchStore.persist.rehydrate();
   else {
     try {
       localStorage.removeItem(scopedLocalStorageKey("na_workbench"));
+      localStorage.removeItem(scopedLocalStorageKey("na_workbench_v4"));
       localStorage.removeItem(scopedLocalStorageKey("na_session", false));
     } catch { /* storage can be unavailable */ }
     void useWorkbenchStore.persist.rehydrate();
@@ -275,6 +277,7 @@ function AppShell({ canLogout, onLogout, session }: { canLogout: boolean; onLogo
   const toggleMobileNav = useUIStore((s) => s.toggleMobileNav);
   const setMobileNavOpen = useUIStore((s) => s.setMobileNavOpen);
   const currentWorkspaceId = useSessionStore((s) => s.currentWorkspaceId);
+  const workbenchScopeRef = useRef("");
 
   const location = useLocation();
   const extensionRegistry = useExtensionRegistry();
@@ -307,6 +310,11 @@ function AppShell({ canLogout, onLogout, session }: { canLogout: boolean; onLogo
 
   useEffect(() => {
     if (!session?.username || !currentWorkspaceId) return;
+    const nextScope = `${session.username}:${currentWorkspaceId}`;
+    if (workbenchScopeRef.current && workbenchScopeRef.current !== nextScope) {
+      useWorkbenchStore.getState().resetForUser();
+    }
+    workbenchScopeRef.current = nextScope;
     setActiveWorkspaceScope(currentWorkspaceId);
     void useWorkbenchStore.persist.rehydrate();
   }, [session?.username, currentWorkspaceId]);
