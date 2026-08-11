@@ -271,7 +271,10 @@ def is_read_only_call(
     for profile in (tool_metadata or {}).get("action_profiles") or ():
         if (
             str(profile.get("action") or "").lower() == action
-            and str(profile.get("permission_action") or "").lower() == "read"
+            and (
+                profile.get("read_only") is True
+                or str(profile.get("permission_action") or "").lower() == "read"
+            )
         ):
             return True
     return action in READ_ONLY_ACTIONS.get(normalized, frozenset())

@@ -280,7 +280,7 @@ def _sync_runtime_contracts(specs) -> None:
             read_only_actions=frozenset(
                 str(profile.get("action") or "").lower()
                 for profile in action_profiles
-                if profile.get("permission_action") == "read"
+                if profile.get("read_only") is True
             ),
         ))
 

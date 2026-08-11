@@ -39,7 +39,8 @@ _READ_ACTIONS = {
     "incident_list", "change_list", "schedule_list", "report", "summary",
     "filter", "protocol", "align", "scan", "parse", "stats", "distinct",
     "aggregate", "sort", "render", "pivot", "join", "extract", "match",
-    "redact", "diff", "document", "references", "read_image", "glob", "probe",
+    "redact", "diff", "document", "references", "read_image", "glob",
+    "probe", "snapshot", "wait", "console", "network",
 }
 _EXEC_ACTIONS = {
     "shell", "python", "slash", "background", "stream",
@@ -64,15 +65,32 @@ def _action_permission(tool_id: str, action: str, base_permission: str) -> str:
         or action in _NETWORK_ACTIONS
     ):
         return "network"
+    # Network permission remains a network authorization boundary even when
+    # an individual action is observational and safe to schedule as a read.
+    if base_permission == "network":
+        return "network"
     if action in _WRITE_ACTIONS or action in {"delete", "remove", "purge", "destroy", "drop", "rewind", "session_rewind"}:
         return "write"
     if action in _READ_ACTIONS:
         return "read"
-    # Extensions declare their own permission_action. Preserve it for actions
-    # whose semantics cannot be inferred from the common action vocabulary.
-    if base_permission == "network":
-        return "network"
     return base_permission or "read"
+
+
+def _action_is_read_only(tool_id: str, action: str, base_permission: str) -> bool:
+    """Scheduling/idempotency semantics, independent of authorization class."""
+    action = str(action or "").strip().lower()
+    if tool_id == "exec.run" or action in _EXEC_ACTIONS:
+        return False
+    if action in _WRITE_ACTIONS or action in {
+        "delete", "remove", "purge", "destroy", "drop", "rewind",
+        "session_rewind", "cancel",
+    }:
+        return False
+    if action in _NETWORK_ACTIONS:
+        return True
+    if action in _READ_ACTIONS:
+        return True
+    return base_permission == "read"
 
 
 def build_action_profiles_for_tool(
@@ -148,6 +166,7 @@ def _action_profiles(
             "risk_level": risk_level,
             "requires_approval": requires_approval,
             "permission_action": _action_permission(tool_id, action, base_permission),
+            "read_only": _action_is_read_only(tool_id, action, base_permission),
         })
     return profiles
 
