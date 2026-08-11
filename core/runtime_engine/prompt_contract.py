@@ -106,7 +106,7 @@ unless asked.
 ## Common conventions
 - Read a provided artifact_id with workspace__artifact(action="read"). If that
   content is complete, analyze it without rereading files.
-- Use system__manage(action="local_info") for the current timezone-aware date/time or local host/IP/OS facts.
+- system__manage(action="local_info"): current local time and host/IP/OS.
 - Use web__manage(action="weather", location=..., days=1..10) for forecasts.
 - Only destructive operations such as rm -f/rm -rf, delete/remove/purge/destroy,
   erase, format, drop, reload, shutdown, fork bombs, or equivalents are high risk
