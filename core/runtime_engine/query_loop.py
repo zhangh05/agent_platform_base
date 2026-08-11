@@ -149,6 +149,7 @@ TOOL_MESSAGE_MAX_CHARS = 50_000    # Per-tool output cap fed to LLM; balances ar
 ARTIFACT_ANALYSIS_MAX_CHARS = 100_000
 FALLBACK_TOOL_MAX_CHARS = 2000
 MAX_VALIDATION_CORRECTION_ROUNDS = 3
+MAX_RESPONSE_QUALITY_CORRECTION_ROUNDS = 2
 
 _PRIORITY_OUTPUT_KEYS = (
     "ok", "status", "task_id", "task", "tracking", "progress", "done",
@@ -1495,6 +1496,7 @@ class QueryLoop:
         # Doom-loop detection: key=(tool, args_hash) → consecutive_failures
         failure_counts: Dict[str, int] = {}
         validation_correction_attempts = 0
+        response_quality_attempts = 0
         completed_call_keys: set[str] = set()
         mutation_epoch = 0
         used_call_ids: set[str] = set()
@@ -2031,6 +2033,55 @@ class QueryLoop:
                     final_text = "抱歉，我无法生成回复。请重新描述您的问题后再试。"
             else:
                 final_text = final_text.strip()
+
+            from .response_quality import (
+                build_response_quality_nudge,
+                validate_response_quality,
+            )
+            quality_issues = validate_response_quality(
+                final_text,
+                user_input=ctx.user_input,
+                tool_results=all_results,
+            )
+            if (
+                quality_issues
+                and response_quality_attempts < MAX_RESPONSE_QUALITY_CORRECTION_ROUNDS
+                and iterations < max_iterations
+            ):
+                response_quality_attempts += 1
+                ctx.extras.setdefault("response_quality_events", []).append({
+                    "attempt": response_quality_attempts,
+                    "issues": [issue.code for issue in quality_issues],
+                })
+                messages.append(LLMMessage(role="assistant", content=final_text))
+                messages.append(LLMMessage(
+                    role="user",
+                    content=build_response_quality_nudge(quality_issues),
+                ))
+                continue
+            if quality_issues:
+                ctx.extras.setdefault("response_quality_events", []).append({
+                    "attempt": response_quality_attempts,
+                    "issues": [issue.code for issue in quality_issues],
+                    "exhausted": True,
+                })
+                safe_fallback = (
+                    self._build_tool_result_fallback(ctx, all_results)
+                    if all_results
+                    else "本次回复未通过文本质量检查，已停止展示不可靠内容。请重试该请求。"
+                )
+                return finish(
+                    final_response=safe_fallback,
+                    tool_results=all_results,
+                    iterations=iterations,
+                    total_tool_calls=len(all_results),
+                    llm_calls=llm_calls,
+                    error="response_quality_failed",
+                    metrics={
+                        "response_quality_corrections": response_quality_attempts,
+                        "response_quality_issues": [issue.code for issue in quality_issues],
+                    },
+                )
             elapsed = (time.monotonic() - t_start) * 1000
 
             return finish(
@@ -2052,6 +2103,7 @@ class QueryLoop:
                     "max_parallel_width": self._executor.max_parallel_width,
                     "output_truncated": output_truncated,
                     "output_truncation_reason": output_truncation_reason,
+                    "response_quality_corrections": response_quality_attempts,
                 },
             )
 

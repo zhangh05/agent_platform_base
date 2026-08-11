@@ -574,7 +574,13 @@ _WEB_ARGS = {
         "enum": ["auto", "general_web", "official_docs", "network_vendor", "protocol_standard", "security_advisory"],
         "description": "Evidence-source policy. Use auto unless the claim clearly needs official docs, vendor docs, standards, or security advisories.",
     },
-    "url": {"type": "string"}, "location": {"type": "string"},
+    "url": {"type": "string"}, "location": {
+        "type": "string",
+        "description": (
+            "One precise weather location per call. For a region or an all/every request, first resolve an "
+            "explicit location set; never silently replace the requested scope with representative cities."
+        ),
+    },
     "days": {"type": "integer", "minimum": 1, "maximum": 10, "description": "Forecast horizon in days (1-10)."},
     "language": {"type": "string"}, "units": {"type": "string", "enum": ["metric", "imperial"]},
     "recency": {"type": "string"},
@@ -642,7 +648,7 @@ _RAW_REGISTRY: list[CanonicalToolEntry] = [
         "action": {"type": "string", "enum": ["shell", "python", "slash"], "default": "shell"},
     }, required=["action"], risk="medium", permission="exec", description="Local command execution."),
     _entry("browser.manage", _handle_browser, {**_COMMON, **_BROWSER_ARGS, "action": {"type": "string", "enum": ["navigate", "snapshot", "screenshot", "click", "type", "extract", "scroll", "hover", "press_key", "select_option", "evaluate", "wait", "tabs", "network", "console", "navigate_back", "close"]}}, required=["action"], risk="medium", description="Browser automation. navigate/extract require url; click/hover require selector or ref; type requires text and selector/ref."),
-    _entry("web.manage", _handle_web, {**_COMMON, **_WEB_ARGS, "action": {"type": "string", "enum": ["search", "fetch", "weather", "deep_search"]}}, required=["action"], description="Current external evidence via search/fetch/weather. Use proactively for time-sensitive facts, official technical references, versions and vulnerabilities. search finds candidates; fetch verifies page content; deep_search does both for top sources. Select authority_profile and cite returned titles/URLs."),
+    _entry("web.manage", _handle_web, {**_COMMON, **_WEB_ARGS, "action": {"type": "string", "enum": ["search", "fetch", "weather", "deep_search"]}}, required=["action"], description="Current external evidence via search/fetch/weather. Use proactively for time-sensitive facts, official technical references, versions and vulnerabilities. search finds candidates; fetch verifies page content; deep_search does both for top sources. Weather accepts one precise location per call: resolve broad/all scopes explicitly and report exact coverage rather than silently choosing representative locations. Select authority_profile and cite returned titles/URLs."),
     _entry("data.manage", _handle_data, {**_COMMON, **_DATA_ARGS, "action": {"type": "string", "enum": ["parse", "stats", "distinct", "aggregate", "filter", "sort", "render", "pivot", "join"]}}, required=["action"], description="Structured data processing. Supply text or rows; action-specific columns/options are declared in the schema."),
     _entry("report.manage", _handle_report, {**_COMMON, "action": {"type": "string", "enum": ["save", "diff", "document"]}, "title": {"type": "string"}, "content": {"type": "string"}, "summary": {"type": "string"}, "text_a": {"type": "string"}, "text_b": {"type": "string"}}, required=["action"], description="Report operations. save requires content; diff requires text_a/text_b; document requires summary."),
     _entry("knowledge.manage", _handle_knowledge, {**_COMMON, "action": {"type": "string", "enum": ["search", "read", "list", "chunk", "import", "reindex"]}, "query": {"type": "string"}, "limit": {"type": "integer", "minimum": 1}, "artifact_id": {"type": "string"}, "level": {"type": "string", "enum": ["chunk", "source"]}, "chunk_id": {"type": "string"}, "source_id": {"type": "string"}, "chunk_type": {"type": "string"}, "scope": {"type": "string"}, "include_disabled": {"type": "boolean"}, "include_deleted": {"type": "boolean"}}, required=["action"], risk="medium", description="Knowledge operations. search requires query; read requires chunk_id or source_id; list lists sources; chunk lists chunks; import requires artifact_id; reindex requires source_id."),

@@ -62,7 +62,12 @@ def run_ssot_turn(
         # references available as trusted runtime metadata so the model can reuse
         # the FileStore id instead of hallucinating a transient workspace path.
         current_attachments = list(metadata_in.get("attachments") or [])
-        historical_attachments = _recent_session_attachments(session)
+        historical_attachments = (
+            [] if current_attachments else _recent_session_attachments(
+                session,
+                user_input=user_input,
+            )
+        )
         known_attachments = _active_attachment_references(
             workspace_id,
             _merge_attachment_references(
@@ -1068,9 +1073,16 @@ def _current_model_name() -> str:
 
 _HISTORY_RECENT_MESSAGES = 30
 _HISTORY_REFERENCE_PATTERNS = (
-    "前面", "之前", "上次", "刚才", "继续", "还记得", "记得",
-    "那个", "上一轮", "前一轮", "前面的", "之前的", "刚才的",
+    "前面", "之前", "上次", "刚才", "还记得", "记得",
+    "上一轮", "前一轮", "前面的", "之前的", "刚才的",
 )
+_HISTORY_IMMEDIATE_PATTERNS = (
+    "继续", "接着", "详细点", "再详细", "展开", "再说说", "这个", "那个", "然后呢",
+)
+_HISTORY_STOP_TERMS = frozenset({
+    "一下", "一个", "这个", "那个", "什么", "怎么", "如何", "帮我", "看看",
+    "查看", "进行", "需要", "可以", "现在", "目前", "问题", "结果", "分析",
+})
 def _build_retrieved_context_block(
     *, workspace_id: str, session_id: str, task_id: str, user_input: str,
     max_tokens: int = 3000,
@@ -1147,8 +1159,9 @@ def _build_history_block(
 
         from core.runtime_engine.context_budget import estimate_text_tokens, truncate_text_to_tokens
 
-        recent = messages[-_HISTORY_RECENT_MESSAGES:]
-        older = messages[:-_HISTORY_RECENT_MESSAGES]
+        recent, older, include_retrieved = _select_history_messages(messages, user_input)
+        if not recent and not older:
+            return ""
         parts: list[str] = []
         recent_budget = max(800, int(max_tokens * 0.65))
         summary_budget = max(300, int(max_tokens * 0.22))
@@ -1163,7 +1176,7 @@ def _build_history_block(
             summary = _summarize_older_messages(older, max_tokens=summary_budget)
             if summary:
                 parts.append("SESSION SUMMARY:\n" + summary)
-        retrieved = _retrieve_history_references(messages, user_input)
+        retrieved = _retrieve_history_references(messages, user_input) if include_retrieved else []
         if retrieved:
             retrieved_lines = []
             for message in retrieved:
@@ -1189,7 +1202,108 @@ def _build_history_block(
         return ""
 
 
-def _recent_session_attachments(session, *, limit: int = 8) -> list[dict[str, Any]]:
+def _select_history_messages(
+    messages: list[dict[str, str]],
+    user_input: str,
+) -> tuple[list[dict[str, str]], list[dict[str, str]], bool]:
+    """Select only history that can help the current turn.
+
+    Short deictic follow-ups need the immediately preceding exchange, while an
+    explicit long-range reference can use the bounded historical summary.  A
+    standalone topic receives only lexically related prior messages; unrelated
+    turns are omitted instead of consuming context merely because they share a
+    session.
+    """
+    if not messages:
+        return [], [], False
+    text = str(user_input or "").strip()
+    if _is_immediate_followup(text):
+        return messages[-2:], [], False
+    if any(pattern in text for pattern in _HISTORY_REFERENCE_PATTERNS):
+        return (
+            messages[-min(8, _HISTORY_RECENT_MESSAGES):],
+            messages[:-min(8, _HISTORY_RECENT_MESSAGES)],
+            True,
+        )
+
+    query_terms = _history_terms(text)
+    if not query_terms:
+        return [], [], False
+    recent_pool = messages[-_HISTORY_RECENT_MESSAGES:]
+    matched_indexes = {
+        index
+        for index, message in enumerate(recent_pool)
+        if _message_matches_history_terms(message.get("content", ""), query_terms)
+    }
+    if not matched_indexes:
+        return [], [], False
+
+    # Keep the adjacent half of a matched user/assistant exchange so evidence
+    # and its response are not separated.
+    selected_indexes = set(matched_indexes)
+    for index in tuple(matched_indexes):
+        role = str(recent_pool[index].get("role") or "")
+        if role == "assistant" and index > 0:
+            selected_indexes.add(index - 1)
+        elif role == "user" and index + 1 < len(recent_pool):
+            selected_indexes.add(index + 1)
+    selected = [recent_pool[index] for index in sorted(selected_indexes)][-8:]
+    return selected, [], False
+
+
+def _is_immediate_followup(text: str) -> bool:
+    import re
+
+    value = str(text or "").strip()
+    if not value or len(value) > 80:
+        return False
+    if re.fullmatch(
+        r"(?:全部|所有|全都|都要|这些|以上|它们|每个|每一个)[。.!！?？\s]*",
+        value,
+    ):
+        return True
+    return any(value.startswith(pattern) for pattern in _HISTORY_IMMEDIATE_PATTERNS)
+
+
+def _history_terms(text: str) -> set[str]:
+    import re
+
+    value = str(text or "").lower()
+    terms = {
+        token for token in re.findall(r"[a-z0-9][a-z0-9_.:/-]{2,}", value)
+        if token not in _HISTORY_STOP_TERMS
+    }
+    for sequence in re.findall(r"[\u4e00-\u9fff]{2,}", value):
+        if sequence not in _HISTORY_STOP_TERMS:
+            terms.add(sequence)
+        for size in (2, 3, 4):
+            for index in range(max(0, len(sequence) - size + 1)):
+                token = sequence[index:index + size]
+                if token not in _HISTORY_STOP_TERMS:
+                    terms.add(token)
+    return terms
+
+
+def _message_matches_history_terms(text: str, terms: set[str]) -> bool:
+    value = str(text or "").lower()
+    return any(term in value for term in terms)
+
+
+def _attachment_reference_terms(text: str) -> set[str]:
+    value = str(text or "").lower()
+    terms = (
+        "附件", "文件", "文档", "图片", "照片", "截图", "配置", "表格",
+        "pdf", "docx", "word", "xlsx", "excel", "ppt", "日志",
+    )
+    return {term for term in terms if term in value}
+
+
+def _recent_session_attachments(
+    session,
+    *,
+    user_input: str = "",
+    limit: int = 8,
+) -> list[dict[str, Any]]:
     """Return recent user attachment references for a same-session follow-up.
 
     Only FileStore metadata already persisted with a user message is reused.
@@ -1203,16 +1317,30 @@ def _recent_session_attachments(session, *, limit: int = 8) -> list[dict[str, An
     try:
         from storage.message_store import SessionMessageStore
 
+        messages = SessionMessageStore(session_id=session_id, ws_id=workspace_id).get_messages()
+        attachment_message_index = -1
         items: list[dict[str, Any]] = []
-        for message in reversed(SessionMessageStore(session_id=session_id, ws_id=workspace_id).get_messages()):
+        for index in range(len(messages) - 1, -1, -1):
+            message = messages[index]
             if str(message.get("role") or "") != "user":
                 continue
             raw = (message.get("metadata") or {}).get("attachments") or []
             if isinstance(raw, list):
-                items.extend(item for item in raw if isinstance(item, dict))
-            if len(items) >= limit:
+                items = [item for item in raw if isinstance(item, dict)][:limit]
+            if items:
+                attachment_message_index = index
                 break
-        return items[:limit]
+        if not items:
+            return []
+
+        explicit_reference = bool(_attachment_reference_terms(user_input))
+        turns_after_attachment = len(messages) - attachment_message_index - 1
+        # Implicit reuse is intentionally limited to the immediate follow-up.
+        # Older managed files stay available in FileStore but are not injected
+        # into unrelated topics later in the same session.
+        if not explicit_reference and turns_after_attachment > 1:
+            return []
+        return items
     except Exception:
         _LOG.debug("recent attachment lookup failed", exc_info=True)
         return []

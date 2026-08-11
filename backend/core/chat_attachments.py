@@ -86,5 +86,8 @@ def build_attachment_runtime_guidance(attachments: Any) -> str:
         "or summarize all document images, extract every index from 1 through that "
         "count before answering; do not silently analyze only a subset. Never infer a workspace path or filename; "
         "never use glob, read_image, import, or exec to locate a managed attachment "
-        "or its embedded images."
+        "or its embedded images. Extracted content proves only what the attachment records; "
+        "it does not prove current reachability, runtime state, successful authentication, "
+        "or real-world effects. Mark interpretations as inferences and do not treat omitted "
+        "content as proof that a configuration or control is absent."
     )

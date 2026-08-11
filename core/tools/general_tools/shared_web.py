@@ -781,11 +781,11 @@ def _weather_code_label(code: Any) -> str:
         3: "阴/多云",
         45: "雾",
         48: "雾凇",
-        51: "小毛毛雨",
-        53: "中等毛毛雨",
-        55: "大毛毛雨",
-        56: "冻毛毛雨",
-        57: "强冻毛毛雨",
+        51: "零星毛毛雨",
+        53: "毛毛雨",
+        55: "较强毛毛雨",
+        56: "轻微冻雨",
+        57: "较强冻雨",
         61: "小雨",
         63: "中雨",
         65: "大雨",
@@ -796,13 +796,13 @@ def _weather_code_label(code: Any) -> str:
         75: "大雪",
         77: "雪粒",
         80: "小阵雨",
-        81: "中等阵雨",
+        81: "阵雨",
         82: "强阵雨",
         85: "小阵雪",
         86: "强阵雪",
         95: "雷暴",
-        96: "雷暴伴小冰雹",
-        99: "雷暴伴强冰雹",
+        96: "雷暴，可能伴少量冰雹",
+        99: "强雷暴，可能伴冰雹",
     }
     try:
         return labels.get(int(code), "未知")
@@ -830,6 +830,14 @@ def _weather_structured_result(*, tool_id: str, location: str, units: str,
         "language": language,
         "provider": "open_meteo",
     }
+    result["coverage"] = {
+        "requested_locations": [location],
+        "resolved_locations": [
+            str((result.get("resolved_location") or {}).get("name") or location)
+        ],
+        "location_count": 1,
+        "forecast_days": len(result.get("forecast_daily") or []),
+    }
     result["count"] = len(result.get("forecast_daily") or []) or (1 if result.get("current") else 0)
     result["citation"] = "[1] open-meteo.com"
     result["results"] = [{
@@ -842,7 +850,11 @@ def _weather_structured_result(*, tool_id: str, location: str, units: str,
     }]
     result["results_markdown"] = _weather_results_markdown(result)
     result["summary"] = _weather_summary(result)
-    result["answer_hint"] = "直接使用 current/forecast_daily 里的结构化天气字段回答；引用 [1] open-meteo.com，并说明天气预报会变化。"
+    result["answer_hint"] = (
+        "直接使用 current/forecast_daily 里的结构化天气字段回答；引用 [1] open-meteo.com，并说明天气预报会变化。"
+        "多个地点合并时必须逐项核对 coverage，不得把代表地点写成全部范围。先总结趋势和异常日期；"
+        "聊天表格最多 7 列，不要把 10 个日期横向铺成超宽表格。"
+    )
     result["next_actions"] = [
         "用 current 或 forecast_daily 的温度、降水概率/降水量、风速字段直接回答用户。",
         "如果用户要求官方气象台口径，再用 web.manage(action=search/fetch) 交叉验证气象局页面。",
