@@ -852,6 +852,8 @@ def _weather_structured_result(*, tool_id: str, location: str, units: str,
     result["summary"] = _weather_summary(result)
     result["answer_hint"] = (
         "直接使用 current/forecast_daily 里的结构化天气字段回答；引用 [1] open-meteo.com，并说明天气预报会变化。"
+        "多个地点或多日数据默认按地点给趋势、温度区间和显著降水日，不要在对话中逐项铺满全部日数据；"
+        "用户明确需要逐日明细时再给紧凑表格或保存为文件。"
         "多个地点合并时必须逐项核对 coverage，不得把代表地点写成全部范围。先总结趋势和异常日期；"
         "聊天表格最多 7 列，不要把 10 个日期横向铺成超宽表格。"
     )

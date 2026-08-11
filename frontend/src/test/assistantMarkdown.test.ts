@@ -47,6 +47,32 @@ describe("assistant markdown rendering", () => {
     expect(firstRowCells?.[1].textContent).toContain("27.6–35.4°C");
   });
 
+  it("keeps consecutive city forecast tables separated", () => {
+    const html = renderAssistantHtml([
+      "### 广州",
+      "| 日期 | 天气 | 气温 | 降水概率 | 累计降水 | 风速 |",
+      "|---|---|---|---|---|---|",
+      "| 08-11 | 多云 | 27–35 | 12% | 0.0 | 11.2 |",
+      "| 08-12 | 雷暴 | 27–37 | 80% | 5.0 | 13.7 |",
+      "",
+      "### 深圳",
+      "| 日期 | 天气 | 气温 | 降水概率 | 累计降水 | 风速 |",
+      "|---|---|---|---|---|---|",
+      "| 08-11 | 多云 | 27–34 | 8% | 0.0 | 13.8 |",
+      "| 08-12 | 雷暴 | 28–35 | 62% | 0.6 | 15.4 |",
+    ].join("\n"));
+
+    const container = document.createElement("div");
+    container.innerHTML = html;
+    const tables = container.querySelectorAll("table");
+
+    expect(tables).toHaveLength(2);
+    expect(container.querySelectorAll("h3")).toHaveLength(2);
+    expect(tables[0].querySelectorAll("tbody tr")).toHaveLength(2);
+    expect(tables[1].querySelectorAll("tbody tr")).toHaveLength(2);
+    expect(container.textContent).not.toContain("---");
+  });
+
   it("allows only br while escaping other inline html", () => {
     const html = renderAssistantHtml("正常<br>换行 <img src=x onerror=alert(1)>");
 

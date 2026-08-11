@@ -30,18 +30,11 @@ function normalizeAssistantMarkdown(text: string): string {
     .replace(/\\t/g, "  ")
     .replace(/\\`/g, "`");
 
-  normalized = normalized.replace(/(^|\n)(\s*(?:[^|\n]*[：:]\s*)?)((?:\|[^\n]*\|\s*\n?){2,})/g, (_match, prefix: string, intro: string, tableBlock: string) => {
-    const table = tableBlock
-      .split("\n")
-      .map((line) => line.trim())
-      .filter(Boolean)
-      .join("\n");
-    const lead = intro.trim() ? `${intro.trim()}\n` : "";
-    return `${prefix}${lead}${table}`;
-  });
-
   // Split a prose introduction from an inline table header, but never split
-  // the first cell from an already valid pipe-prefixed Markdown table.
+  // the first cell from an already valid pipe-prefixed Markdown table. Keep
+  // existing line boundaries untouched: consuming trailing `\s*` here used
+  // to remove the blank line between consecutive tables and merge the next
+  // heading into the previous table's final cell.
   normalized = normalized.replace(
     /(^|\n)([^|\n]*\S)\s+(\|[^\n]*\|)\n(\|?\s*:?-{2,})/g,
     "$1$2\n$3\n$4",

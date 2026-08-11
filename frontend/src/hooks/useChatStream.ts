@@ -26,7 +26,10 @@ import { notifyRunCompleted } from "../utils/appEvents";
 import { createStreamActivityWatchdog, STREAM_IDLE_TIMEOUT_MS } from "../utils/streamActivity";
 
 const WS_TIMEOUT_MS = 3000;
-const TOKEN_FLUSH_MS = 50;
+// Rendering Markdown is substantially more expensive than receiving tokens.
+// Ten updates per second still looks fluid while avoiding UI starvation on
+// long, table-heavy answers.
+const TOKEN_FLUSH_MS = 100;
 
 // Stage label table mirrors core.runtime_engine/stage_events.py
 const STAGE_LABELS: Record<string, string> = {
@@ -173,7 +176,7 @@ export function useChatStream(
       const socket = new WebSocket(wsUrl);
       msgWsRef.current = socket;
 
-      // Token batching — buffer tokens, flush every 50ms.
+      // Token batching — buffer tokens, flush at a UI-friendly cadence.
       const tokenBufferRef = { pending: "" };
       const thinkFilter: { mode: ThinkFilterState } = { mode: "idle" };
       let streamState = beginModelStep();

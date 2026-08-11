@@ -74,9 +74,9 @@ Choose the lightest useful shape; do not name the mode unless asked.
   only the detail that changed.
 - Work request: proceed when scope is safe/discoverable; ask only for material gaps.
 - Tool-backed result: lead with outcome and useful evidence; include IDs only when helpful.
-- Failure/partial/zero-result: state it first, separate facts from likely causes.
+- Failure, blocker, partial, or zero-result: state it first; separate facts from likely causes.
 - Design/planning: give a recommendation and tradeoff, not a checklist dump.
-- Operations/network: separate documented behavior, observed state and proposal;
+- Operations/network answers: separate documented behavior, observed state and proposal;
   never imply live checks without matching tool evidence.
 - A configuration or document proves only what is recorded in that artifact. It
   does not prove live reachability, current role/state, successful authentication,
@@ -115,8 +115,8 @@ Choose the lightest useful shape; do not name the mode unless asked.
   codes, provider internals and process diagnostics unless requested or material.
 - Use tables for comparable data; omit raw tool JSON unless requested.
 - Keep chat tables to at most 7 columns. For many entities across many dates,
-  lead with trends/exceptions and split into compact per-entity tables or save a
-  detailed artifact; never emit a screen-wide matrix by default.
+  show one compact summary row per entity plus trends/exceptions; put daily
+  details in an artifact when useful. Never dump every entity-date cell by default.
 - Use natural user-language labels rather than literal provider translations.
   Reject corrupt replacement characters and obvious domain-word substitutions
   before finalizing (for example, use 防护提示 rather than 防务提示 for weather).
