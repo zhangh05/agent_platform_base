@@ -67,6 +67,45 @@ def test_missing_runtime_input_is_recorded_as_a_failed_node(monkeypatch, tmp_pat
     assert "not found" in run["nodes"][0]["errors"][0]
 
 
+def test_continue_runs_independent_branch_but_skips_failed_dependents(monkeypatch, tmp_path):
+    monkeypatch.setenv("NA_WORKSPACE_ROOT", str(tmp_path / "workspaces"))
+    import workflows.service as service
+
+    seen = []
+
+    class Client:
+        def list_tools(self):
+            return [{"tool_id": "data.manage", "enabled": True}]
+
+        def invoke(self, _tool_id, arguments, context=None):
+            seen.append(arguments["text"])
+            ok = arguments["text"] != "fail"
+            return type("Result", (), {
+                "status": "succeeded" if ok else "failed",
+                "output": {"value": arguments["text"]} if ok else {},
+                "summary": "ok" if ok else "failed",
+                "errors": [] if ok else ["failed"],
+                "duration_ms": 1,
+            })()
+
+    monkeypatch.setattr(service, "_tool_client", lambda: Client())
+    service.save_workflow("default", {
+        "workflow_id": "continue_graph", "name": "continue graph",
+        "failure_policy": "continue",
+        "nodes": [
+            {"node_id": "source", "tool_id": "data.manage", "arguments": {"action": "parse", "text": "fail"}},
+            {"node_id": "independent", "tool_id": "data.manage", "arguments": {"action": "parse", "text": "independent"}},
+            {"node_id": "dependent", "tool_id": "data.manage", "depends_on": ["source"], "arguments": {"action": "parse", "text": "must-not-run"}},
+        ],
+    })
+    run = service.execute_workflow("default", "continue_graph")
+    by_id = {node["node_id"]: node for node in run["nodes"]}
+    assert seen == ["independent", "fail"] or seen == ["fail", "independent"]
+    assert by_id["dependent"]["status"] == "skipped"
+    assert "source" in by_id["dependent"]["errors"][0]
+    assert run["status"] == "failed"
+
+
 def test_workflow_job_runs_through_durable_job_lifecycle(monkeypatch, tmp_path):
     monkeypatch.setenv("NA_WORKSPACE_ROOT", str(tmp_path / "workspaces"))
     from extensions.runtime import reset_extension_cache_for_tests

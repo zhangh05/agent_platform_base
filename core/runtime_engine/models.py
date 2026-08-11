@@ -128,6 +128,8 @@ class SSOTRuntimeConfig:
     max_total_seconds: int = 60
     max_tool_seconds: int = 30
     max_llm_calls: int = 50
+    max_orchestration_step_tokens: int = 8_000
+    max_orchestration_evidence_tokens: int = 60_000
     tracking_enabled: bool = True
     tracking_max_polls: int = 8
     tracking_max_seconds: int = 45

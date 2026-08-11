@@ -69,8 +69,14 @@ def validate_incremental_graph(calls: Iterable[Any], prior: dict[str, StepEviden
     if len(step_ids) != len(set(step_ids)):
         raise OrchestrationError("duplicate plan_step_id in tool-call batch")
     reused = set(step_ids) & set(prior)
-    if reused:
-        raise OrchestrationError(f"plan_step_id already completed: {sorted(reused)}")
+    reused_successful = {
+        step_id for step_id in reused
+        if bool(getattr(prior.get(step_id), "ok", False))
+    }
+    if reused_successful:
+        raise OrchestrationError(
+            f"plan_step_id already succeeded: {sorted(reused_successful)}"
+        )
     for step_id in step_ids:
         if not STEP_ID_RE.fullmatch(step_id):
             raise OrchestrationError(f"invalid plan_step_id: {step_id}")

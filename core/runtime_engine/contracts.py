@@ -27,6 +27,7 @@ class ToolContract:
     approval_actions: frozenset[str] = field(default_factory=frozenset)
     approval_when_truthy: frozenset[str] = field(default_factory=frozenset)
     always_read_only: bool = False
+    read_only_actions: frozenset[str] = field(default_factory=frozenset)
 
 
 BUILTIN_CONTRACTS: dict[str, ToolContract] = {
@@ -253,7 +254,11 @@ READ_ONLY_ACTIONS: dict[str, frozenset[str]] = {
 }
 
 
-def is_read_only_call(tool_name: str, arguments: dict[str, Any] | None = None) -> bool:
+def is_read_only_call(
+    tool_name: str,
+    arguments: dict[str, Any] | None = None,
+    tool_metadata: dict[str, Any] | None = None,
+) -> bool:
     normalized = str(tool_name or "").replace("__", ".")
     contract = get_contract(normalized)
     if contract and contract.always_read_only:
@@ -261,6 +266,14 @@ def is_read_only_call(tool_name: str, arguments: dict[str, Any] | None = None) -
     if normalized in ALWAYS_READ_ONLY_TOOLS:
         return True
     action = str((arguments or {}).get("action") or "").lower().strip()
+    if contract and action in contract.read_only_actions:
+        return True
+    for profile in (tool_metadata or {}).get("action_profiles") or ():
+        if (
+            str(profile.get("action") or "").lower() == action
+            and str(profile.get("permission_action") or "").lower() == "read"
+        ):
+            return True
     return action in READ_ONLY_ACTIONS.get(normalized, frozenset())
 
 

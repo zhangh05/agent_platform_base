@@ -220,6 +220,28 @@ def test_run_projection_keeps_latest_tracking_poll_only():
     assert projected[1]["summary"] == "completed"
 
 
+def test_run_projection_preserves_orchestration_json_types():
+    from agent.runtime.turn_persistence import _safe_tool_calls
+
+    projected = _safe_tool_calls([{
+        "call_id": "call-a",
+        "tool_id": "data.manage",
+        "ok": True,
+        "metadata": {
+            "orchestration": {
+                "step_id": "parse",
+                "layer": 1,
+                "parallel": False,
+                "depends_on": [],
+            },
+        },
+    }])
+    orchestration = projected[0]["metadata"]["orchestration"]
+    assert orchestration == {
+        "step_id": "parse", "layer": 1, "parallel": False, "depends_on": [],
+    }
+
+
 def test_persist_run_record_uses_result_llm_metadata(monkeypatch, tmp_path):
     """Run-store llm_metadata must mirror AgentResult.metadata['llm']."""
     from agent.runtime.turn_persistence import persist_run_record

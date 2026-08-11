@@ -57,6 +57,8 @@ from typing import Any
 # Transient errors that MIGHT be retried — provided the tool is
 # idempotent + read-only and budget allows.
 ALLOWED_RETRY_ERRORS: frozenset[str] = frozenset({
+    # Handler-reported timeout means the call returned control normally. It is
+    # distinct from TOOL_TIMEOUT_UNCERTAIN, where a worker may still be active.
     "TOOL_TIMEOUT",
     "TOOL_EXCEPTION",
     "TEMPORARY_NETWORK_ERROR",
@@ -74,6 +76,9 @@ ALLOWED_RETRY_ERRORS: frozenset[str] = frozenset({
 # Errors that mean the call is structurally invalid or unsafe.
 # Retry is forbidden regardless of tool contract.
 FORBIDDEN_RETRY_ERRORS: frozenset[str] = frozenset({
+    # A timed-out thread/subprocess may have committed a side effect before
+    # the caller regained control. Never replay an uncertain operation.
+    "TOOL_TIMEOUT_UNCERTAIN",
     "FORBIDDEN_COMMAND",
     "POLICY_BLOCKED",
     "APPROVAL_REQUIRED",

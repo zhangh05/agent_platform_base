@@ -39,7 +39,7 @@ _READ_ACTIONS = {
     "incident_list", "change_list", "schedule_list", "report", "summary",
     "filter", "protocol", "align", "scan", "parse", "stats", "distinct",
     "aggregate", "sort", "render", "pivot", "join", "extract", "match",
-    "redact", "diff", "document", "references", "read_image", "glob",
+    "redact", "diff", "document", "references", "read_image", "glob", "probe",
 }
 _EXEC_ACTIONS = {
     "shell", "python", "slash", "background", "stream",
@@ -64,14 +64,14 @@ def _action_permission(tool_id: str, action: str, base_permission: str) -> str:
         or action in _NETWORK_ACTIONS
     ):
         return "network"
-    # Extensions declare their own permission_action.  Preserve it without
-    # naming any product extension in the base catalog helper.
-    if base_permission == "network":
-        return "network"
     if action in _WRITE_ACTIONS or action in {"delete", "remove", "purge", "destroy", "drop", "rewind", "session_rewind"}:
         return "write"
     if action in _READ_ACTIONS:
         return "read"
+    # Extensions declare their own permission_action. Preserve it for actions
+    # whose semantics cannot be inferred from the common action vocabulary.
+    if base_permission == "network":
+        return "network"
     return base_permission or "read"
 
 
@@ -81,6 +81,7 @@ def build_action_profiles_for_tool(
     input_schema: dict,
     category: str = "",
     base_permission: str = "read",
+    include_policy: bool = True,
 ) -> list[dict]:
     return _action_profiles(
         tool_id,
@@ -88,22 +89,35 @@ def build_action_profiles_for_tool(
         input_schema=input_schema,
         category=category,
         base_permission=base_permission,
+        include_policy=include_policy,
     )
 
 
-def _action_profiles(tool_id: str, actions: list[str], *, input_schema: dict, category: str, base_permission: str) -> list[dict]:
+def _action_profiles(
+    tool_id: str,
+    actions: list[str],
+    *,
+    input_schema: dict,
+    category: str,
+    base_permission: str,
+    include_policy: bool = True,
+) -> list[dict]:
     if not actions:
         return []
-    try:
-        from core.tools.policy import ToolPolicy
-        from core.tools.schemas import ToolInvocation, ToolSpec
-        from core.tools.manifest_registry import get_manifest
-        manifest = get_manifest(tool_id)
-        policy = ToolPolicy()
-    except Exception:
-        policy = None
-        manifest = None
-        ToolInvocation = ToolSpec = None
+    policy = None
+    manifest = None
+    ToolInvocation = ToolSpec = None
+    if include_policy:
+        try:
+            from core.tools.policy import ToolPolicy
+            from core.tools.schemas import ToolInvocation, ToolSpec
+            from core.tools.manifest_registry import get_manifest
+            manifest = get_manifest(tool_id)
+            policy = ToolPolicy()
+        except Exception:
+            policy = None
+            manifest = None
+            ToolInvocation = ToolSpec = None
 
     profiles = []
     for action in actions:
@@ -201,6 +215,7 @@ def build_catalog_snapshot() -> dict:
                 input_schema=cr_entry.input_schema,
                 category=meta["category"],
                 base_permission=permission_action,
+                include_policy=True,
             ),
         }
         tools.append(item)

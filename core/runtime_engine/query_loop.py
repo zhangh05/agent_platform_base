@@ -693,10 +693,17 @@ class StreamingToolExecutor:
     Read-only tools run in parallel; write tools serialised.
     """
 
-    def __init__(self, tool_runtime, config: SSOTRuntimeConfig | None = None, emitter=None):
+    def __init__(
+        self,
+        tool_runtime,
+        config: SSOTRuntimeConfig | None = None,
+        emitter=None,
+        tool_registry: dict[str, dict[str, Any]] | None = None,
+    ):
         self._runtime = tool_runtime
         self._config = config or SSOTRuntimeConfig()
         self._emitter = emitter
+        self._tool_registry = tool_registry or {}
         self.max_parallel_width = 0
 
     def _is_read_only_call(self, tool_call: LLMToolCall) -> bool:
@@ -707,7 +714,11 @@ class StreamingToolExecutor:
         """
         from .contracts import is_read_only_call
 
-        return is_read_only_call(tool_call.name, tool_call.arguments)
+        return is_read_only_call(
+            tool_call.name,
+            tool_call.arguments,
+            self._tool_registry.get(tool_call.name.replace("__", ".")),
+        )
 
     async def execute(
         self,
@@ -739,23 +750,78 @@ class StreamingToolExecutor:
                 error=str(exc),
             ) for tc in tool_calls]
 
+        calls_by_step = {str(tc.step_id or tc.id): tc for tc in tool_calls}
+        prior_depths = dict(
+            (ctx.extras.get("orchestration_depths") or {}) if ctx else {}
+        )
+        step_depths = dict(prior_depths)
+        for layer in layers:
+            for step_id in layer:
+                step_depths[step_id] = 1 + max(
+                    (
+                        int(step_depths.get(dependency, 0))
+                        for dependency in calls_by_step[step_id].depends_on
+                    ),
+                    default=0,
+                )
+        parallel_steps_by_layer = {
+            index: self._parallel_step_ids(layer, calls_by_step)
+            for index, layer in enumerate(layers, start=1)
+        }
+        if budget is not None:
+            reservation = budget.reserve_execution_batch(
+                node_count=len(tool_calls),
+                depth=max(
+                    (step_depths[step_id] for step_id in calls_by_step),
+                    default=0,
+                ),
+                parallel_width=max(
+                    (
+                        min(
+                            self._parallel_width(layer, calls_by_step),
+                            max(1, int(self._config.max_layer_concurrency or 1)),
+                            max(1, int(self._config.max_global_concurrency or 1)),
+                        )
+                        for layer in layers
+                    ),
+                    default=0,
+                ) or min(1, len(tool_calls)),
+            )
+            if not reservation.ok:
+                error = reservation.exceeded or "BUDGET_EXCEEDED"
+                return [StreamingToolResult(
+                    tool_name=tc.name,
+                    call_id=tc.id,
+                    output={
+                        "ok": False,
+                        "executed": False,
+                        "retryable": False,
+                        "error_code": error,
+                        "error": f"execution budget rejected tool batch: {error}",
+                    },
+                    ok=False,
+                    error=error,
+                ) for tc in tool_calls]
+
         if self._emitter:
             self._emitter.emit("orchestration_planned", {
                 "step_count": len(tool_calls),
                 "layer_count": len(layers),
-                "parallel_layers": sum(1 for layer in layers if len(layer) > 1),
+                "parallel_layers": sum(
+                    1 for steps in parallel_steps_by_layer.values() if steps
+                ),
             })
 
-        calls_by_step = {str(tc.step_id or tc.id): tc for tc in tool_calls}
         evidence: dict[str, StepEvidence] = dict(prior)
         result_by_id: dict[str, StreamingToolResult] = {}
         stop_requested = False
 
         for layer_index, layer in enumerate(layers, start=1):
+            parallel_step_ids = parallel_steps_by_layer[layer_index]
             if self._emitter:
                 self._emitter.emit("orchestration_layer_started", {
                     "layer": layer_index, "steps": list(layer),
-                    "parallel": len(layer) > 1,
+                    "parallel": bool(parallel_step_ids),
                 })
             runnable: list[LLMToolCall] = []
             for step_id in layer:
@@ -793,7 +859,7 @@ class StreamingToolExecutor:
                                 "failed_dependencies": failed_dependencies,
                                 "_orchestration": {
                                     "step_id": step_id, "depends_on": list(tc.depends_on),
-                                    "layer": layer_index, "parallel": len(layer) > 1,
+                                    "layer": layer_index, "parallel": False,
                                     "failure_policy": tc.failure_policy,
                                 }},
                         ok=False, error=error,
@@ -814,7 +880,7 @@ class StreamingToolExecutor:
                                 "error_code": "RESULT_BINDING_FAILED", "error": str(exc),
                                 "_orchestration": {
                                     "step_id": step_id, "depends_on": list(tc.depends_on),
-                                    "layer": layer_index, "parallel": len(layer) > 1,
+                                    "layer": layer_index, "parallel": False,
                                     "failure_policy": tc.failure_policy,
                                 }},
                         ok=False, error=str(exc),
@@ -826,6 +892,31 @@ class StreamingToolExecutor:
                     if tc.failure_policy == "stop":
                         stop_requested = True
                     continue
+                binding_error = self._validate_resolved_call(tc, resolved_args)
+                if binding_error:
+                    result = StreamingToolResult(
+                        tool_name=tc.name, call_id=tc.id,
+                        output={
+                            "ok": False, "executed": False,
+                            "error_code": "RESULT_BINDING_INVALID",
+                            "error": binding_error,
+                            "_orchestration": {
+                                "step_id": step_id,
+                                "depends_on": list(tc.depends_on),
+                                "layer": layer_index,
+                                "parallel": False,
+                                "failure_policy": tc.failure_policy,
+                            },
+                        },
+                        ok=False, error=binding_error,
+                    )
+                    result_by_id[tc.id] = result
+                    evidence[step_id] = StepEvidence(
+                        step_id, tc.id, tc.name, False, result.output, binding_error,
+                    )
+                    if tc.failure_policy == "stop":
+                        stop_requested = True
+                    continue
                 runnable.append(LLMToolCall(
                     id=tc.id, name=tc.name, arguments=resolved_args,
                     step_id=step_id, depends_on=list(tc.depends_on),
@@ -833,6 +924,10 @@ class StreamingToolExecutor:
                     failure_policy=tc.failure_policy,
                 ))
 
+            runnable_by_step = {str(tc.step_id or tc.id): tc for tc in runnable}
+            actual_parallel_steps = self._parallel_step_ids(
+                [str(tc.step_id or tc.id) for tc in runnable], runnable_by_step,
+            )
             layer_results = await self._execute_independent_calls(
                 runnable, ctx=ctx, budget=budget,
             )
@@ -844,18 +939,36 @@ class StreamingToolExecutor:
                         "step_id": step_id,
                         "depends_on": list(tc.depends_on),
                         "layer": layer_index,
-                        "parallel": len(layer) > 1,
+                        "parallel": step_id in actual_parallel_steps,
                         "failure_policy": tc.failure_policy,
                     },
                 }
                 result_by_id[tc.id] = result
+                used_evidence_tokens = sum(
+                    estimate_json_tokens(item.output)
+                    for evidence_step_id, item in evidence.items()
+                    if evidence_step_id != step_id
+                    and isinstance(item, StepEvidence)
+                )
+                remaining_evidence_tokens = max(
+                    0,
+                    int(self._config.max_orchestration_evidence_tokens)
+                    - used_evidence_tokens,
+                )
+                step_token_limit = min(
+                    int(self._config.max_orchestration_step_tokens),
+                    remaining_evidence_tokens,
+                )
                 evidence_output, evidence_truncated = project_json_to_tokens(
-                    dict(result.output or {}), max_tokens=30_000,
+                    dict(result.output or {}), max_tokens=max(1, step_token_limit),
                 )
                 if not isinstance(evidence_output, dict):
                     evidence_output = {"value": evidence_output}
-                if evidence_truncated:
-                    evidence_output["_evidence_projection"] = {"truncated": True}
+                if evidence_truncated or step_token_limit <= 0:
+                    evidence_output["_evidence_projection"] = {
+                        "truncated": True,
+                        "reason": "orchestration_evidence_budget",
+                    }
                 evidence[step_id] = StepEvidence(
                     step_id, tc.id, tc.name, result.ok,
                     evidence_output, result.error or "",
@@ -874,6 +987,7 @@ class StreamingToolExecutor:
 
         if ctx is not None:
             ctx.extras["orchestration_evidence"] = evidence
+            ctx.extras["orchestration_depths"] = step_depths
             if stop_requested:
                 ctx.extras["orchestration_stop_requested"] = True
             ctx.extras.setdefault("orchestration_batches", []).append({
@@ -881,6 +995,67 @@ class StreamingToolExecutor:
                 "step_count": len(tool_calls),
             })
         return [result_by_id[tc.id] for tc in tool_calls]
+
+    def _parallel_step_ids(
+        self,
+        layer: list[str],
+        calls_by_step: dict[str, LLMToolCall],
+    ) -> set[str]:
+        """Return steps that truly execute in a concurrent read group."""
+        parallel: set[str] = set()
+        read_group: list[str] = []
+
+        def flush() -> None:
+            if len(read_group) > 1:
+                parallel.update(read_group)
+            read_group.clear()
+
+        for step_id in layer:
+            if self._is_read_only_call(calls_by_step[step_id]):
+                read_group.append(step_id)
+            else:
+                flush()
+        flush()
+        return parallel
+
+    def _parallel_width(
+        self,
+        layer: list[str],
+        calls_by_step: dict[str, LLMToolCall],
+    ) -> int:
+        """Return actual peak concurrency, not total topological width."""
+        peak = 0
+        current_reads = 0
+        for step_id in layer:
+            if self._is_read_only_call(calls_by_step[step_id]):
+                current_reads += 1
+                peak = max(peak, current_reads)
+            else:
+                current_reads = 0
+                peak = max(peak, 1)
+        return peak
+
+    def _validate_resolved_call(
+        self,
+        tool_call: LLMToolCall,
+        resolved_args: dict[str, Any],
+    ) -> str:
+        """Revalidate the final arguments after dependency bindings resolve."""
+        if not tool_call.result_bindings:
+            return ""
+        from .semantic_validator import SemanticValidator
+
+        node = ExecutionNode(
+            id=tool_call.id,
+            tool=tool_call.name.replace("__", "."),
+            args=dict(resolved_args or {}),
+        )
+        validation = SemanticValidator(self._tool_registry).validate([node])
+        if validation.valid:
+            return ""
+        return "; ".join(
+            f"{error.code}: {error.message}" for error in validation.errors
+        )
 
     async def _execute_independent_calls(
         self,
@@ -899,7 +1074,10 @@ class StreamingToolExecutor:
         async def execute_read_group(group: list[LLMToolCall]) -> None:
             if not group:
                 return
-            concurrency_limit = max(1, int(self._config.max_layer_concurrency or 1))
+            concurrency_limit = min(
+                max(1, int(self._config.max_layer_concurrency or 1)),
+                max(1, int(self._config.max_global_concurrency or 1)),
+            )
             self.max_parallel_width = max(
                 self.max_parallel_width, min(len(group), concurrency_limit),
             )
@@ -911,7 +1089,32 @@ class StreamingToolExecutor:
 
             tasks = [bounded(tc) for tc in group]
             # return_exceptions=True: collect every result, even if some fail
-            ro_results = await asyncio.gather(*tasks, return_exceptions=True)
+            gather = asyncio.gather(*tasks, return_exceptions=True)
+            timeout_seconds = self._config.parallel_layer_timeout_ms / 1000.0
+            if budget is not None:
+                timeout_seconds = min(
+                    timeout_seconds,
+                    max(0.001, budget.remaining_execution_seconds()),
+                )
+            try:
+                ro_results = await asyncio.wait_for(gather, timeout=timeout_seconds)
+            except asyncio.TimeoutError:
+                ro_results = [
+                    StreamingToolResult(
+                        tool_name=tc.name,
+                        call_id=tc.id,
+                        output={
+                            "ok": False,
+                            "error_code": "PARALLEL_LAYER_TIMEOUT_UNCERTAIN",
+                            "error": "parallel tool layer exceeded its execution budget; outcomes may be uncertain",
+                            "retryable": False,
+                            "execution_may_continue": True,
+                        },
+                        ok=False,
+                        error="parallel tool layer exceeded its execution budget; outcomes may be uncertain",
+                    )
+                    for tc in group
+                ]
             for tc, r in zip(group, ro_results):
                 if isinstance(r, Exception):
                     result_by_id[tc.id] = StreamingToolResult(
@@ -932,11 +1135,52 @@ class StreamingToolExecutor:
             await execute_read_group(read_group)
             read_group = []
             self.max_parallel_width = max(self.max_parallel_width, 1)
-            result_by_id[tc.id] = await self._execute_one(tc, ctx=ctx, budget=budget)
+            if budget is not None and budget.remaining_execution_seconds() <= 0:
+                result_by_id[tc.id] = self._execution_budget_timeout(tc)
+                continue
+            try:
+                execution = self._execute_one(tc, ctx=ctx, budget=budget)
+                if budget is None:
+                    result_by_id[tc.id] = await execution
+                else:
+                    execution_task = asyncio.create_task(execution)
+                    execution_task.add_done_callback(self._consume_detached_task)
+                    result_by_id[tc.id] = await asyncio.wait_for(
+                        asyncio.shield(execution_task),
+                        timeout=max(0.001, budget.remaining_execution_seconds()),
+                    )
+            except asyncio.TimeoutError:
+                result_by_id[tc.id] = self._execution_budget_timeout(tc)
         await execute_read_group(read_group)
 
         # Return in original order
         return [result_by_id[tc.id] for tc in tool_calls]
+
+    @staticmethod
+    def _execution_budget_timeout(tool_call: LLMToolCall) -> StreamingToolResult:
+        error = "tool execution exceeded the remaining request budget; outcome may be uncertain"
+        return StreamingToolResult(
+            tool_name=tool_call.name,
+            call_id=tool_call.id,
+            output={
+                "ok": False,
+                "error_code": "TOOL_BUDGET_TIMEOUT_UNCERTAIN",
+                "error": error,
+                "retryable": False,
+                "execution_may_continue": True,
+            },
+            ok=False,
+            error=error,
+        )
+
+    @staticmethod
+    def _consume_detached_task(task: asyncio.Task) -> None:
+        if task.cancelled():
+            return
+        try:
+            task.exception()
+        except asyncio.CancelledError:
+            return
 
     async def _execute_one(
         self,
@@ -1216,7 +1460,9 @@ class QueryLoop:
         self._llm_invoke = llm_invoke
         self._emitter = emitter
         self._approval_handler = approval_handler
-        self._executor = StreamingToolExecutor(tool_runtime, config, emitter)
+        self._executor = StreamingToolExecutor(
+            tool_runtime, config, emitter, tool_registry=tool_registry,
+        )
         self._cached_tools = _build_cached_tool_definitions(tool_registry)
         self._context_budget = RuntimeContextBudget.build(
             tools=self._cached_tools,

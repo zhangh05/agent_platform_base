@@ -306,7 +306,7 @@ def _safe_tool_calls(tool_calls: list, *, limit: int = 20) -> list:
             "summary": redact_text(str(call.get("summary", "")))[:800],
             "errors": [redact_text(str(e))[:240] for e in list(call.get("errors") or [])[:5]],
             "warnings": [redact_text(str(w))[:240] for w in list(call.get("warnings") or [])[:5]],
-            "metadata": _safe_metadata(call.get("metadata") or {}, max_depth=1),
+            "metadata": _safe_metadata(call.get("metadata") or {}, max_depth=2),
         })
     return safe
 
@@ -346,8 +346,15 @@ def _history_tool_context(result) -> list[dict]:
 
 
 def _safe_metadata(value, max_depth: int = 3):
+    # Scalars keep their JSON types even at the depth boundary. Converting
+    # booleans/lists to strings corrupts persisted orchestration metadata.
+    if isinstance(value, (int, float, bool)) or value is None:
+        return value
+    if isinstance(value, str):
+        text = redact_text(str(value))
+        return text[:2000] + ("...[truncated]" if len(text) > 2000 else "")
     if max_depth < 0:
-        return str(value)[:300]
+        return [] if isinstance(value, (list, tuple)) else {}
     if isinstance(value, dict):
         out = {}
         for key, item in list(value.items())[:40]:
@@ -357,11 +364,6 @@ def _safe_metadata(value, max_depth: int = 3):
         return out
     if isinstance(value, (list, tuple)):
         return [_safe_metadata(item, max_depth=max_depth - 1) for item in list(value)[:30]]
-    if isinstance(value, (int, float, bool)) or value is None:
-        return value
-    if isinstance(value, str):
-        text = redact_text(str(value))
-        return text[:2000] + ("...[truncated]" if len(text) > 2000 else "")
     return str(value)[:500]
 
 

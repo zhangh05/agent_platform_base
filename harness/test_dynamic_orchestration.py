@@ -9,7 +9,7 @@ import pytest
 
 from agent.llm.schemas import LLMToolCall
 from core.runtime_engine.models import SSOTRuntimeConfig, StatelessContext
-from core.runtime_engine.orchestration import OrchestrationError, validate_incremental_graph
+from core.runtime_engine.orchestration import OrchestrationError, StepEvidence, validate_incremental_graph
 from core.runtime_engine.query_loop import StreamingToolExecutor
 
 
@@ -91,6 +91,41 @@ def test_incremental_graph_keeps_evidence_across_queryloop_rounds():
     assert result.output["text"] == "source"
 
 
+def test_failed_step_can_be_replanned_with_same_stable_id_and_changed_args():
+    class Runtime:
+        def invoke_raw(self, _tool_id, arguments):
+            if arguments.get("text") == "bad":
+                return {"ok": False, "error": "bad input"}
+            return {"ok": True, "text": arguments["text"]}
+
+    ctx = _ctx()
+    executor = StreamingToolExecutor(Runtime(), SSOTRuntimeConfig())
+    first = [LLMToolCall(
+        id="call-1", name="text.analyze",
+        arguments={"action": "match", "text": "bad"}, step_id="inspect",
+    )]
+    assert asyncio.run(executor.execute(first, ctx=ctx))[0].ok is False
+    second = [LLMToolCall(
+        id="call-2", name="text.analyze",
+        arguments={"action": "match", "text": "corrected"}, step_id="inspect",
+    )]
+    result = asyncio.run(executor.execute(second, ctx=ctx))[0]
+    assert result.ok is True
+    assert ctx.extras["orchestration_evidence"]["inspect"].output["text"] == "corrected"
+
+
+def test_successful_step_id_cannot_be_replayed():
+    prior = {
+        "done": StepEvidence("done", "call-1", "text.analyze", True, {"ok": True}),
+    }
+    call = LLMToolCall(
+        id="call-2", name="text.analyze",
+        arguments={"action": "match", "text": "x"}, step_id="done",
+    )
+    with pytest.raises(OrchestrationError, match="already succeeded"):
+        validate_incremental_graph([call], prior)
+
+
 def test_failed_dependency_is_not_executed():
     calls_seen = []
 
@@ -106,6 +141,202 @@ def test_failed_dependency_is_not_executed():
     results = asyncio.run(StreamingToolExecutor(Runtime(), SSOTRuntimeConfig()).execute(calls, ctx=_ctx()))
     assert calls_seen == ["parse"]
     assert results[1].output["error_code"] == "DEPENDENCY_FAILED"
+
+
+def test_bound_arguments_are_revalidated_before_handler_execution():
+    seen = []
+
+    class Runtime:
+        def invoke_raw(self, tool_id, arguments):
+            seen.append((tool_id, dict(arguments)))
+            if tool_id == "data.manage":
+                return {"ok": True, "rows": ["not text"]}
+            return {"ok": True}
+
+    calls = [
+        LLMToolCall(
+            id="a", name="data.manage",
+            arguments={"action": "parse", "text": "x"}, step_id="source",
+        ),
+        LLMToolCall(
+            id="b", name="text.analyze", arguments={"action": "match"},
+            step_id="consume", depends_on=["source"],
+            result_bindings={"text": "steps.source.output.rows"},
+        ),
+    ]
+    results = asyncio.run(StreamingToolExecutor(
+        Runtime(), SSOTRuntimeConfig(), tool_registry={}
+    ).execute(calls, ctx=_ctx()))
+    assert seen == [("data.manage", {"action": "parse", "text": "x"})]
+    assert results[1].output["error_code"] == "RESULT_BINDING_INVALID"
+
+
+def test_execution_budget_rejects_oversized_batch_before_any_handler_runs():
+    from core.runtime_engine.budget_controller import BudgetController
+
+    seen = []
+
+    class Runtime:
+        def invoke_raw(self, _tool_id, arguments):
+            seen.append(arguments)
+            return {"ok": True}
+
+    config = SSOTRuntimeConfig(max_nodes=1)
+    calls = [
+        LLMToolCall(id="a", name="data.manage", arguments={"action": "parse", "text": "a"}, step_id="a"),
+        LLMToolCall(id="b", name="data.manage", arguments={"action": "parse", "text": "b"}, step_id="b"),
+    ]
+    results = asyncio.run(StreamingToolExecutor(Runtime(), config).execute(
+        calls, ctx=_ctx(), budget=BudgetController(config),
+    ))
+    assert seen == []
+    assert {result.output["error_code"] for result in results} == {"TOOL_NODES_EXCEEDED"}
+
+
+def test_execution_budget_rejects_graph_deeper_than_limit():
+    from core.runtime_engine.budget_controller import BudgetController
+
+    class Runtime:
+        def invoke_raw(self, _tool_id, _arguments):
+            raise AssertionError("handler must not run")
+
+    config = SSOTRuntimeConfig(max_depth=1)
+    calls = [
+        LLMToolCall(id="a", name="data.manage", arguments={"action": "parse", "text": "a"}, step_id="a"),
+        LLMToolCall(id="b", name="data.manage", arguments={"action": "stats"}, step_id="b", depends_on=["a"]),
+    ]
+    results = asyncio.run(StreamingToolExecutor(Runtime(), config).execute(
+        calls, ctx=_ctx(), budget=BudgetController(config),
+    ))
+    assert results[0].output["error_code"] == "TOOL_DEPTH_EXCEEDED"
+
+
+def test_execution_depth_is_enforced_across_incremental_rounds():
+    from core.runtime_engine.budget_controller import BudgetController
+
+    class Runtime:
+        def invoke_raw(self, _tool_id, _arguments):
+            return {"ok": True, "text": "ok"}
+
+    config = SSOTRuntimeConfig(max_depth=1)
+    budget = BudgetController(config)
+    ctx = _ctx()
+    executor = StreamingToolExecutor(Runtime(), config)
+    first = [LLMToolCall(
+        id="a", name="text.analyze",
+        arguments={"action": "match", "text": "a"}, step_id="a",
+    )]
+    assert asyncio.run(executor.execute(first, ctx=ctx, budget=budget))[0].ok is True
+    second = [LLMToolCall(
+        id="b", name="text.analyze",
+        arguments={"action": "match", "text": "b"},
+        step_id="b", depends_on=["a"],
+    )]
+    result = asyncio.run(executor.execute(second, ctx=ctx, budget=budget))[0]
+    assert result.output["error_code"] == "TOOL_DEPTH_EXCEEDED"
+
+
+def test_bounded_read_group_is_not_rejected_for_topological_width():
+    from core.runtime_engine.budget_controller import BudgetController
+
+    class Runtime:
+        def invoke_raw(self, _tool_id, _arguments):
+            return {"ok": True}
+
+    config = SSOTRuntimeConfig(max_layer_concurrency=2, max_global_concurrency=2)
+    calls = [
+        LLMToolCall(
+            id=f"call-{index}", name="data.manage",
+            arguments={"action": "parse", "text": str(index)},
+            step_id=f"step_{index}",
+        )
+        for index in range(10)
+    ]
+    results = asyncio.run(StreamingToolExecutor(Runtime(), config).execute(
+        calls, ctx=_ctx(), budget=BudgetController(config),
+    ))
+    assert all(result.ok for result in results)
+
+
+def test_independent_writes_are_serial_and_not_labelled_parallel():
+    class Runtime:
+        def invoke_raw(self, _tool_id, _arguments):
+            return {"ok": True}
+
+    calls = [
+        LLMToolCall(
+            id="a", name="workspace.file",
+            arguments={"action": "write", "filename": "a.txt", "content": "a"},
+            step_id="write_a",
+        ),
+        LLMToolCall(
+            id="b", name="workspace.file",
+            arguments={"action": "write", "filename": "b.txt", "content": "b"},
+            step_id="write_b",
+        ),
+    ]
+    results = asyncio.run(StreamingToolExecutor(
+        Runtime(), SSOTRuntimeConfig(),
+    ).execute(calls, ctx=_ctx()))
+    assert [result.output["_orchestration"]["parallel"] for result in results] == [False, False]
+
+
+def test_orchestration_evidence_respects_total_budget():
+    class Runtime:
+        def invoke_raw(self, _tool_id, _arguments):
+            return {"ok": True, "text": "x" * 20_000}
+
+    config = SSOTRuntimeConfig(
+        max_orchestration_step_tokens=40,
+        max_orchestration_evidence_tokens=40,
+    )
+    ctx = _ctx()
+    call = LLMToolCall(
+        id="a", name="text.analyze",
+        arguments={"action": "match", "text": "x"}, step_id="source",
+    )
+    asyncio.run(StreamingToolExecutor(Runtime(), config).execute([call], ctx=ctx))
+    projection = ctx.extras["orchestration_evidence"]["source"].output
+    assert projection["_evidence_projection"]["truncated"] is True
+
+
+def test_sync_handler_does_not_block_event_loop_and_uncertain_timeout_is_not_retried():
+    from core.runtime_engine.models import ExecutionNode
+    from core.runtime_engine.tool_runtime import ToolRuntime
+
+    config = SSOTRuntimeConfig(single_node_timeout_ms=25, max_retries_per_node=1)
+    runtime = ToolRuntime(config)
+    calls = {"count": 0}
+
+    def slow_handler(_arguments):
+        calls["count"] += 1
+        time.sleep(0.08)
+        return {"ok": True}
+
+    runtime.register("data.manage", slow_handler)
+
+    async def scenario():
+        ticked = False
+
+        async def ticker():
+            nonlocal ticked
+            await asyncio.sleep(0.01)
+            ticked = True
+
+        result, _ = await asyncio.gather(
+            runtime.execute_node(
+                ExecutionNode(id="n", tool="data.manage", args={"action": "parse", "text": "x"}),
+                _ctx(), {},
+            ),
+            ticker(),
+        )
+        assert ticked is True
+        assert result.error_code == "TOOL_TIMEOUT_UNCERTAIN"
+        assert result.metadata["execution_may_continue"] is True
+        await asyncio.sleep(0.09)
+
+    asyncio.run(scenario())
+    assert calls["count"] == 1
 
 
 def test_stop_failure_policy_prevents_later_layers():

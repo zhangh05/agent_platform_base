@@ -223,6 +223,7 @@ def execute_workflow(workspace_id: str, workflow_id: str, inputs: dict[str, Any]
     }
     _save_run(record)
     outputs: dict[str, Any] = {}
+    dependency_outcomes: dict[str, bool] = {}
     nodes_by_id = {node["node_id"]: node for node in definition["nodes"]}
     failed = False
     def execute_node(node_id: str) -> tuple[dict[str, Any], dict[str, Any], bool]:
@@ -273,11 +274,42 @@ def execute_workflow(workspace_id: str, workflow_id: str, inputs: dict[str, Any]
             record["status"] = "cancelled"
             break
 
+        # Continue keeps independent branches alive; it never executes a node
+        # whose declared dependency failed or was skipped.
+        runnable_layer: list[str] = []
+        for node_id in layer:
+            failed_dependencies = [
+                dependency
+                for dependency in nodes_by_id[node_id].get("depends_on") or []
+                if dependency_outcomes.get(dependency) is not True
+            ]
+            if not failed_dependencies:
+                runnable_layer.append(node_id)
+                continue
+            record["nodes"].append({
+                "node_id": node_id,
+                "tool_id": nodes_by_id[node_id]["tool_id"],
+                "status": "skipped",
+                "summary": "依赖步骤未成功，当前步骤未执行",
+                "errors": [f"failed dependencies: {failed_dependencies}"],
+                "started_at": now_iso(),
+                "finished_at": now_iso(),
+                "orchestration": {
+                    "layer": layer_index,
+                    "parallel": False,
+                    "depends_on": list(nodes_by_id[node_id].get("depends_on") or []),
+                },
+            })
+            outputs[node_id] = {}
+            dependency_outcomes[node_id] = False
+        if len(runnable_layer) != len(layer):
+            _save_run(record)
+
         # Independent reads run concurrently. Writes remain ordering barriers,
         # even when the saved DAG did not declare a dependency between them.
         groups: list[tuple[bool, list[str]]] = []
         read_group: list[str] = []
-        for node_id in layer:
+        for node_id in runnable_layer:
             node = nodes_by_id[node_id]
             try:
                 scope = {"input": dict(inputs or {}), "nodes": {key: {"output": value} for key, value in outputs.items()}}
@@ -308,6 +340,9 @@ def execute_workflow(workspace_id: str, workflow_id: str, inputs: dict[str, Any]
                 }
                 record["nodes"].append(entry)
                 outputs[node_id] = output
+                dependency_outcomes[node_id] = bool(
+                    success and entry.get("status") not in {"skipped", "cancelled"}
+                )
                 if not success:
                     failed = True
             _save_run(record)

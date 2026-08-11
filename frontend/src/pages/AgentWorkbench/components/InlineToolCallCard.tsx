@@ -9,6 +9,14 @@ interface InlineToolCallCardProps {
 export function InlineToolCallCard({ toolCall, seq }: InlineToolCallCardProps) {
   const [open, setOpen] = useState(false);
   const errText = toolCall.errors?.join(", ");
+  const orchestration = toolCall.orchestration;
+  const orchestrationStep = typeof orchestration?.step_id === "string" ? orchestration.step_id : "";
+  const orchestrationLayer = typeof orchestration?.layer === "number" && Number.isFinite(orchestration.layer)
+    ? orchestration.layer
+    : null;
+  const orchestrationDependsOn = Array.isArray(orchestration?.depends_on)
+    ? orchestration.depends_on.filter((item): item is string => typeof item === "string")
+    : [];
   return (
     <div className={`tool-call-card ${toolCall.ok ? "ok" : "fail"}`} onClick={() => setOpen(!open)}>
       <div className="tool-call-card-header">
@@ -24,13 +32,13 @@ export function InlineToolCallCard({ toolCall, seq }: InlineToolCallCardProps) {
           {toolCall.duration_ms != null && (
             <div className="tc-duration">{(toolCall.duration_ms / 1000).toFixed(1)}s</div>
           )}
-          {toolCall.orchestration?.step_id && (
+          {orchestrationStep && (
             <div className="tc-orchestration">
-              <span>步骤：{toolCall.orchestration.step_id}</span>
-              {toolCall.orchestration.layer != null && <span>第 {toolCall.orchestration.layer} 组</span>}
-              {toolCall.orchestration.parallel && <span>并行执行</span>}
-              {toolCall.orchestration.depends_on?.length ? (
-                <span>依赖：{toolCall.orchestration.depends_on.join("、")}</span>
+              <span>步骤：{orchestrationStep}</span>
+              {orchestrationLayer != null && <span>第 {orchestrationLayer} 组</span>}
+              {orchestration?.parallel === true && <span>并行执行</span>}
+              {orchestrationDependsOn.length ? (
+                <span>依赖：{orchestrationDependsOn.join("、")}</span>
               ) : null}
             </div>
           )}

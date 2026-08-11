@@ -23,6 +23,7 @@ v4 contract (runtime_contracts.ExecutionContract.TOOL_TRUTH_SINGLE_SOURCE):
 from __future__ import annotations
 
 import asyncio
+import inspect
 import time
 from typing import Any, Awaitable, Callable
 
@@ -255,10 +256,21 @@ class ToolRuntime:
 
         try:
             handler = self._handlers[node.tool]
-            # Run with timeout
+            # Per-tool contracts may be stricter than the request-wide cap.
+            from .contracts import get_contract
+            timeout_ms = int(self._config.single_node_timeout_ms)
+            contract = get_contract(node.tool)
+            contract_ms = int(getattr(contract, "timeout_seconds", 0) or 0) * 1000
+            if contract_ms > 0:
+                timeout_ms = min(timeout_ms, contract_ms)
+            # Shield the handler task so an asyncio timeout does not pretend
+            # that a worker thread was killed. The result is deliberately
+            # uncertain and retry policy must not replay it automatically.
+            task = asyncio.create_task(self._invoke_handler(handler, merged_args))
+            task.add_done_callback(self._consume_detached_result)
             result = await asyncio.wait_for(
-                self._invoke_handler(handler, merged_args),
-                timeout=self._config.single_node_timeout_ms / 1000,
+                asyncio.shield(task),
+                timeout=timeout_ms / 1000,
             )
             elapsed = (time.monotonic() - start) * 1000
             return _normalize_result(node, result, elapsed)
@@ -268,12 +280,16 @@ class ToolRuntime:
                 node_id=node.id,
                 tool=node.tool,
                 success=False,
-                error=f"Tool execution timed out after {self._config.single_node_timeout_ms}ms",
-                error_code="TOOL_TIMEOUT",
+                error=(
+                    f"Tool execution timed out after {timeout_ms}ms; "
+                    "the underlying operation may still be finishing"
+                ),
+                error_code="TOOL_TIMEOUT_UNCERTAIN",
                 error_code_raw="",
-                error_code_norm="TOOL_TIMEOUT",
+                error_code_norm="TOOL_TIMEOUT_UNCERTAIN",
                 latency_ms=elapsed,
                 retry_count=node.retry_count,
+                metadata={"execution_may_continue": True, "automatic_retry_allowed": False},
             )
         except Exception as e:
             elapsed = (time.monotonic() - start) * 1000
@@ -327,10 +343,22 @@ class ToolRuntime:
 
     async def _invoke_handler(self, handler: ToolHandler, args: dict[str, Any]) -> Any:
         """Invoke a handler, supporting both sync and async handlers."""
-        result = handler(args)
-        if asyncio.iscoroutine(result):
-            result = await result
+        if inspect.iscoroutinefunction(handler):
+            return await handler(args)
+        result = await asyncio.to_thread(handler, args)
+        if inspect.isawaitable(result):
+            return await result
         return result
+
+    @staticmethod
+    def _consume_detached_result(task: asyncio.Task) -> None:
+        """Consume late exceptions from shielded timeout tasks."""
+        if task.cancelled():
+            return
+        try:
+            task.exception()
+        except asyncio.CancelledError:
+            return
 
     def _merge_dep_results(
         self,

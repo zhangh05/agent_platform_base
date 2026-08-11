@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass
-from typing import Any
 
 from .models import ExecutionBudget, SSOTRuntimeConfig
 
@@ -26,6 +25,7 @@ class BudgetStatus:
     exceeded: str = ""
     elapsed_total_ms: float = 0.0
     llm_calls_used: int = 0
+    nodes_used: int = 0
 
 
 class BudgetController:
@@ -44,6 +44,7 @@ class BudgetController:
         )
         self._start_time = time.monotonic()
         self._llm_calls = 0
+        self._nodes_used = 0
         self._tool_elapsed_ms = 0.0
         self._tool_stage_started_at: float | None = None
 
@@ -96,6 +97,56 @@ class BudgetController:
 
         return BudgetStatus(ok=True, elapsed_total_ms=elapsed)
 
+    def reserve_execution_batch(
+        self,
+        *,
+        node_count: int,
+        depth: int,
+        parallel_width: int,
+    ) -> BudgetStatus:
+        """Atomically reserve one validated graph batch before execution."""
+        status = self.check_execution()
+        if not status.ok:
+            status.nodes_used = self._nodes_used
+            return status
+        node_count = max(0, int(node_count))
+        depth = max(0, int(depth))
+        parallel_width = max(0, int(parallel_width))
+        if self._nodes_used + node_count > self._budget.max_nodes:
+            return BudgetStatus(
+                ok=False, exceeded="TOOL_NODES_EXCEEDED",
+                elapsed_total_ms=status.elapsed_total_ms,
+                nodes_used=self._nodes_used,
+            )
+        if depth > self._budget.max_depth:
+            return BudgetStatus(
+                ok=False, exceeded="TOOL_DEPTH_EXCEEDED",
+                elapsed_total_ms=status.elapsed_total_ms,
+                nodes_used=self._nodes_used,
+            )
+        if parallel_width > self._budget.max_parallel_width:
+            return BudgetStatus(
+                ok=False, exceeded="TOOL_PARALLEL_WIDTH_EXCEEDED",
+                elapsed_total_ms=status.elapsed_total_ms,
+                nodes_used=self._nodes_used,
+            )
+        self._nodes_used += node_count
+        return BudgetStatus(
+            ok=True,
+            elapsed_total_ms=status.elapsed_total_ms,
+            nodes_used=self._nodes_used,
+        )
+
+    def remaining_execution_seconds(self) -> float:
+        """Return the smaller remaining total/tool wall-clock allowance."""
+        total_remaining = (
+            self._budget.max_total_seconds * 1000 - self.elapsed_ms()
+        )
+        tool_remaining = (
+            self._budget.max_tool_seconds * 1000 - self.tool_elapsed_ms
+        )
+        return max(0.0, min(total_remaining, tool_remaining) / 1000.0)
+
     def begin_execution(self) -> None:
         """Start a tool stage without charging prior LLM/context time."""
         if self._tool_stage_started_at is None:
@@ -121,3 +172,7 @@ class BudgetController:
     @property
     def llm_calls(self) -> int:
         return self._llm_calls
+
+    @property
+    def nodes_used(self) -> int:
+        return self._nodes_used

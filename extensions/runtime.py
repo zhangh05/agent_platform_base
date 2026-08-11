@@ -247,6 +247,7 @@ def _sync_runtime_contracts(specs) -> None:
     skipped its common risk accounting entirely.
     """
     from core.runtime_engine.contracts import ToolContract, register_contract
+    from core.tools.catalog_snapshot import build_action_profiles_for_tool
 
     side_effect_for_permission = {
         "read": "read",
@@ -255,6 +256,13 @@ def _sync_runtime_contracts(specs) -> None:
         "network": "external_request",
     }
     for spec in specs:
+        action_profiles = build_action_profiles_for_tool(
+            spec.tool_id,
+            input_schema=dict(spec.input_schema or {}),
+            category=spec.category,
+            base_permission=spec.permission_action or "read",
+            include_policy=False,
+        )
         register_contract(ToolContract(
             name=spec.tool_id,
             display_name=spec.name,
@@ -269,6 +277,11 @@ def _sync_runtime_contracts(specs) -> None:
             approval_actions=frozenset(str(action).lower() for action in spec.metadata.get("approval_actions", ())),
             approval_when_truthy=frozenset(str(field) for field in spec.metadata.get("approval_when_truthy", ())),
             always_read_only=spec.permission_action == "read",
+            read_only_actions=frozenset(
+                str(profile.get("action") or "").lower()
+                for profile in action_profiles
+                if profile.get("permission_action") == "read"
+            ),
         ))
 
 

@@ -83,7 +83,11 @@ def tool_spec_to_openai_function(tool: dict) -> dict:
     params_def["properties"].update({
         "plan_step_id": {
             "type": "string",
-            "description": "Optional stable step id when coordinating multiple tools in this turn.",
+            "description": (
+                "Optional stable logical step id for multi-tool coordination. "
+                "A failed step may reuse its id only with corrected arguments; "
+                "a successful step id is immutable."
+            ),
         },
         "plan_depends_on": {
             "type": "array",
@@ -98,7 +102,11 @@ def tool_spec_to_openai_function(tool: dict) -> dict:
             "type": "string",
             "enum": ["replan", "stop", "continue"],
             "default": "replan",
-            "description": "What the agent intends after this step fails; runtime still enforces safety.",
+            "description": (
+                "Failure policy: replan corrects or replaces the failed step, "
+                "continue runs only independent branches, and stop ends tool execution. "
+                "Runtime still enforces safety."
+            ),
         },
     })
 

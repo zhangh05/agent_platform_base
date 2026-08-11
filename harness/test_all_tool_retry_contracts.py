@@ -90,6 +90,30 @@ def test_high_risk_merged_tool_boundaries(tool_id, action, expected_read):
     assert is_read_only_call(tool_id, {"action": action}) is expected_read
 
 
+def test_extension_action_profiles_drive_parallel_and_retry_semantics():
+    from extensions.runtime import get_extension_tool_specs
+
+    # Loading extension specs synchronizes their contracts into the common
+    # runtime without naming extension actions in the base contract table.
+    get_extension_tool_specs()
+    expected = {
+        ("network.operations.baseline", "list"): True,
+        ("network.operations.baseline", "diff"): True,
+        ("network.operations.baseline", "create"): False,
+        ("network.operations.inspection", "list"): True,
+        ("network.operations.inspection", "get"): True,
+        ("network.operations.inspection", "run"): False,
+        ("network.operations.device.manage", "probe"): True,
+        ("network.operations.device.manage", "read"): True,
+    }
+    for (tool_id, action), read_only in expected.items():
+        assert is_read_only_call(tool_id, {"action": action}) is read_only
+        contract = get_retry_contract(tool_id, {"action": action})
+        assert contract is not None
+        assert contract.idempotent is read_only
+        assert (contract.max_retries > 0) is read_only
+
+
 @pytest.mark.parametrize(
     ("error", "expected"),
     [
