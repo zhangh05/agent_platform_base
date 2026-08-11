@@ -1,10 +1,9 @@
 /**
  * Workbench store — chat history + run results keyed by session_id,
- * Backend session messages are the durable source of truth. The browser only
- * keeps the latest input draft; F5 restores history from the session API.
+ * persisted to localStorage so F5 不会丢历史 (plan-C 方案).
  *
  * 状态:
- *  - bySession: Record<session_id, ChatMsg[]> 仅保存在当前页面内存
+ *  - bySession: Record<session_id, ChatMsg[]> 持久化到 localStorage
  *  - results:  Record<session_id, AgentResult[]>  各 session 的运行记录
  *  - currentSessionId: 镜像 useSessionStore.currentSessionId
  *  - sending: 是否在等后端
@@ -13,7 +12,7 @@
  *  - 每个会话最多 100 条消息
  *  - 最多保留 20 个最近会话
  *  - 超出后按最近一条消息时间执行 LRU 淘汰
- *  - localStorage key: "na_workbench_v4" (draft metadata only)
+ *  - localStorage key: "na_workbench"
  */
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
@@ -659,26 +658,28 @@ export const useWorkbenchStore = create<WorkbenchState>()(
       },
     }),
     {
-      // Use a new physical key rather than migrating the old chat cache. Even
-      // calling JSON.parse on legacy multi-MB results blocks the browser main
-      // thread before migrate() can discard them.
-      name: "na_workbench_v4",
-      version: 1,
-      storage: createJSONStorage(() => debouncedStorage("na_workbench_v4")),
-      // Session messages are server-owned. Persisting optimistic/streaming
-      // placeholders created a refresh race where a late rehydrate could
-      // overwrite an already-fetched final answer with "仍在处理…".
+      name: "na_workbench",
+      version: 3,
+      storage: createJSONStorage(() => debouncedStorage("na_workbench")),
+      // v3: drop `results` from persistence — Timeline derives runs from
+      // bySession now, so we only need to persist bySession + lastUserInput.
+      migrate: (persisted: unknown, _version: number) => {
+        // No-op: old `results` field is simply ignored. bySession carries the
+        // agent results inside ChatMsg.result, which is what Timeline reads.
+        return persisted as WorkbenchState;
+      },
       partialize: (s): Partial<WorkbenchState> => ({
+        bySession: s.bySession,
         lastUserInput: s.lastUserInput,
       }),
       merge: (persisted: unknown, current: WorkbenchState): WorkbenchState => {
         const p = persisted as Record<string, unknown> | null | undefined;
-        // Never replace current messages during a late/manual rehydrate.
-        // AgentWorkbench reconciles them against the authoritative session API.
-        return {
-          ...current,
-          lastUserInput: typeof p?.lastUserInput === "string" ? p.lastUserInput : current.lastUserInput,
-        };
+        const safe = p?.bySession;
+        const merged: Partial<WorkbenchState> = { bySession: {}, lastUserInput: "" };
+        if (safe && typeof safe === "object" && !Array.isArray(safe)) {
+          merged.bySession = safe as Record<string, ChatMsg[]>;
+        }
+        return { ...current, ...merged };
       },
     },
   ),

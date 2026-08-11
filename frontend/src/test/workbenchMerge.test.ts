@@ -1,6 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { useWorkbenchStore } from "../stores/workbench";
-import { setActiveUserScope } from "../utils/userScope";
 
 describe("workbench backend message merge", () => {
   beforeEach(() => {
@@ -136,48 +135,6 @@ describe("workbench backend message merge", () => {
       "assistant:子 agent 已完成搜索，BGP 邻居建立条件如下。",
     ]);
     expect(messages.every((m) => m.status === "ready")).toBe(true);
-  });
-
-  it("does not let persisted streaming placeholders overwrite a backend answer after refresh", async () => {
-    setActiveUserScope("Admin", "default");
-    // Legacy chat caches must not even be parsed during hydration. They may be
-    // very large because old versions persisted full tool/run results.
-    localStorage.setItem("na_workbench:Admin:default", JSON.stringify({
-      version: 3,
-      state: {
-        bySession: {
-          "sess-refresh": [{
-            id: "old-placeholder",
-            role: "assistant",
-            text: "",
-            status: "streaming",
-            progressText: "仍在处理…",
-            progressElapsedMs: 29000,
-            created_at: "2026-08-11T08:41:14Z",
-          }],
-        },
-      },
-    }));
-
-    useWorkbenchStore.setState({ bySession: {} });
-    await useWorkbenchStore.persist.rehydrate();
-    expect(useWorkbenchStore.getState().bySession).toEqual({});
-
-    useWorkbenchStore.getState().mergeFromBackend("sess-refresh", [{
-      message_id: "run-config:assistant",
-      session_id: "sess-refresh",
-      role: "assistant",
-      content: "设备配置分析已完成。",
-      created_at: "2026-08-11T08:42:12Z",
-      run_id: "run-config",
-    }]);
-    await useWorkbenchStore.persist.rehydrate();
-
-    expect(useWorkbenchStore.getState().bySession["sess-refresh"]).toMatchObject([{
-      status: "ready",
-      text: "设备配置分析已完成。",
-      run_id: "run-config",
-    }]);
   });
 
   it("keeps legitimate repeated backend user turns with the same text", () => {

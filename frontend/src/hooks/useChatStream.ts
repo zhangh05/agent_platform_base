@@ -24,18 +24,9 @@ import { beginModelStep, discardToolCallDraft, finalizeStreamText } from "../uti
 import { agentResultFromWsDone } from "../utils/wsResult";
 import { notifyRunCompleted } from "../utils/appEvents";
 import { createStreamActivityWatchdog, STREAM_IDLE_TIMEOUT_MS } from "../utils/streamActivity";
-import {
-  clearInflightChatStream,
-  newChatStreamId,
-  readInflightChatStream,
-  updateInflightChatStream,
-  writeInflightChatStream,
-  type InflightChatStream,
-} from "../utils/chatStreamRecovery";
 
 const WS_TIMEOUT_MS = 3000;
 const TOKEN_FLUSH_MS = 50;
-const WS_RESUME_ATTEMPTS = 8;
 
 // Stage label table mirrors core.runtime_engine/stage_events.py
 const STAGE_LABELS: Record<string, string> = {
@@ -117,8 +108,6 @@ export function useChatStream(
   const sending = useWorkbenchStore((s) => s.sending);
   const abortRef = useRef<AbortController | null>(null);
   const msgWsRef = useRef<WebSocket | null>(null);
-  const detachedRef = useRef(false);
-  const manualStopRef = useRef(false);
 
   // Stable refs so the send function identity is stable across renders.
   const paramsRef = useRef(params);
@@ -127,33 +116,6 @@ export function useChatStream(
   callbacksRef.current = callbacks;
 
   const stopStream = (): void => {
-    manualStopRef.current = true;
-    const inflight = readInflightChatStream();
-    if (inflight) {
-      const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-      try {
-        const cancelSocket = new WebSocket(`${protocol}//${window.location.host}/ws/agent`);
-        const closeTimer = setTimeout(() => cancelSocket.close(), WS_TIMEOUT_MS);
-        cancelSocket.onopen = () => cancelSocket.send(JSON.stringify({
-          type: "cancel",
-          stream_id: inflight.streamId,
-          session_id: inflight.sessionId,
-          workspace_id: inflight.workspaceId,
-          auth_token: getApiAccessToken(),
-        }));
-        cancelSocket.onmessage = () => { clearTimeout(closeTimer); cancelSocket.close(); };
-        cancelSocket.onerror = () => clearTimeout(closeTimer);
-      } catch { /* best-effort explicit cancellation */ }
-      const messages = useWorkbenchStore.getState().bySession[inflight.scratchSessionId] || [];
-      const existing = messages.find((message) => message.id === inflight.messageId);
-      useWorkbenchStore.getState().updateAssistant(inflight.messageId, {
-        status: "error",
-        text: existing?.text || "已停止生成。",
-        progressText: "",
-        error: "已由用户停止生成",
-      }, inflight.scratchSessionId);
-      clearInflightChatStream(inflight.streamId);
-    }
     if (abortRef.current) { abortRef.current.abort(); abortRef.current = null; }
     if (msgWsRef.current) {
       try { msgWsRef.current.close(); } catch { /* noop */ }
@@ -162,10 +124,9 @@ export function useChatStream(
     useWorkbenchStore.getState().setSending(false);
   };
 
-  // Refresh/navigation detaches the browser transport only. The backend turn
-  // remains alive and the next page instance resumes it from persisted cursor.
+  // A route change must not leave an in-flight socket or global sending state
+  // behind. Otherwise returning to the workbench can look permanently frozen.
   useEffect(() => () => {
-    detachedRef.current = true;
     abortRef.current?.abort();
     abortRef.current = null;
     try { msgWsRef.current?.close(); } catch { /* noop */ }
@@ -173,258 +134,12 @@ export function useChatStream(
     useWorkbenchStore.getState().setSending(false);
   }, []);
 
-  const reconcilePersistedTurn = useCallback(async (record: InflightChatStream): Promise<boolean> => {
-    if (!record.sessionId) return false;
-    try {
-      const response = await sessionsApi.messages(record.sessionId, record.workspaceId);
-      if (!response.messages?.length) return false;
-      useWorkbenchStore.getState().mergeFromBackend(record.sessionId, response.messages);
-
-      // A completed run is persisted as a final assistant message. Check the
-      // tail rather than an arbitrary older assistant so an in-progress turn
-      // (whose latest persisted message is the user request) still resumes WS.
-      const latest = response.messages[response.messages.length - 1];
-      const startedAt = Date.parse(record.startedAt);
-      const completedAt = Date.parse(latest.created_at || "");
-      const belongsToCurrentTurn = latest.role === "assistant"
-        && Number.isFinite(completedAt)
-        && (!Number.isFinite(startedAt) || completedAt >= startedAt - 10_000);
-      if (!belongsToCurrentTurn) return false;
-
-      clearInflightChatStream(record.streamId);
-      useWorkbenchStore.getState().setSending(false);
-      notifyRunCompleted();
-      return true;
-    } catch {
-      return false;
-    }
-  }, []);
-
-  const resumeInflightStream = useCallback(async (record: InflightChatStream): Promise<void> => {
-    if (detachedRef.current || manualStopRef.current) return;
-    const current = readInflightChatStream();
-    if (!current || current.streamId !== record.streamId) return;
-
-    // The backend may have finished between unload and remount. Durable
-    // session messages are cheaper and more authoritative than entering the
-    // reconnect loop, especially after a backend restart discarded WS memory.
-    if (await reconcilePersistedTurn(record)) return;
-
-    let existing = useWorkbenchStore.getState().bySession[record.scratchSessionId]
-      ?.find((message) => message.id === record.messageId);
-    if (!existing) {
-      const replacementId = useWorkbenchStore.getState().appendAssistantStreaming(record.scratchSessionId);
-      record = { ...record, messageId: replacementId };
-      writeInflightChatStream(record);
-      existing = useWorkbenchStore.getState().bySession[record.scratchSessionId]
-        ?.find((message) => message.id === replacementId);
-    }
-    if (existing?.status !== "streaming") {
-      clearInflightChatStream(record.streamId);
-      return;
-    }
-
-    useWorkbenchStore.getState().setSending(true);
-    useWorkbenchStore.getState().updateAssistant(record.messageId, {
-      progressText: "正在恢复运行连接…",
-      progressElapsedMs: Math.max(0, Date.now() - Date.parse(record.startedAt)),
-    }, record.scratchSessionId);
-
-    let terminalPayload: Record<string, unknown> | null = null;
-    let terminalError = "";
-    let lastSeq = record.lastSeq;
-    const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-    const wsUrl = `${protocol}//${window.location.host}/ws/agent`;
-
-    for (let attempt = 0; attempt < WS_RESUME_ATTEMPTS; attempt += 1) {
-      const currentRecord = readInflightChatStream();
-      if (
-        detachedRef.current
-        || manualStopRef.current
-        || !currentRecord
-        || currentRecord.streamId !== record.streamId
-      ) return;
-      const outcome = await new Promise<"terminal" | "retry" | "missing">((resolve) => {
-        let finished = false;
-        let socket: WebSocket;
-        try {
-          socket = new WebSocket(wsUrl);
-        } catch {
-          resolve("retry");
-          return;
-        }
-        msgWsRef.current = socket;
-        const finish = (value: "terminal" | "retry" | "missing") => {
-          if (finished) return;
-          finished = true;
-          clearTimeout(openTimer);
-          watchdog.stop();
-          resolve(value);
-        };
-        const watchdog = createStreamActivityWatchdog({
-          onTick: () => {
-            if (detachedRef.current) return;
-            useWorkbenchStore.getState().updateAssistant(record.messageId, {
-              progressElapsedMs: Math.max(0, Date.now() - Date.parse(record.startedAt)),
-            }, record.scratchSessionId);
-          },
-          onTimeout: () => {
-            try { socket.close(); } catch { /* noop */ }
-            finish("retry");
-          },
-        });
-        const openTimer = setTimeout(() => {
-          try { socket.close(); } catch { /* noop */ }
-          finish("retry");
-        }, WS_TIMEOUT_MS);
-
-        socket.onopen = () => {
-          clearTimeout(openTimer);
-          socket.send(JSON.stringify({
-            type: "resume",
-            stream_id: record.streamId,
-            after_seq: lastSeq,
-            session_id: record.sessionId,
-            workspace_id: record.workspaceId,
-            auth_token: getApiAccessToken(),
-          }));
-        };
-        socket.onmessage = (event) => {
-          watchdog.touch();
-          try {
-            const msg = JSON.parse(event.data) as Record<string, unknown> & {
-              type?: string; name?: string; message?: string; stream_seq?: number;
-              data?: Record<string, unknown>;
-            };
-            if (typeof msg.stream_seq === "number" && msg.stream_seq > lastSeq) {
-              lastSeq = msg.stream_seq;
-              updateInflightChatStream(record.streamId, { lastSeq });
-            }
-            if (msg.type === "accepted") {
-              useWorkbenchStore.getState().updateAssistant(record.messageId, {
-                progressText: "连接已恢复，仍在处理…",
-              }, record.scratchSessionId);
-              return;
-            }
-            if (msg.type === "event") {
-              const label = msg.name ? STAGE_LABELS[msg.name] : "";
-              const elapsed = Number(msg.data?.elapsed_ms || 0);
-              useWorkbenchStore.getState().updateAssistant(record.messageId, {
-                progressText: label || "仍在处理…",
-                progressElapsedMs: elapsed > 0
-                  ? elapsed
-                  : Math.max(0, Date.now() - Date.parse(record.startedAt)),
-              }, record.scratchSessionId);
-              return;
-            }
-            if (msg.type === "done") {
-              terminalPayload = msg;
-              finish("terminal");
-              return;
-            }
-            if (msg.type === "error") {
-              terminalError = String(msg.message || "实时运行失败");
-              finish(terminalError === "stream_not_found" ? "missing" : "terminal");
-            }
-          } catch { /* malformed frames do not advance the cursor */ }
-        };
-        socket.onclose = () => finish("retry");
-        socket.onerror = () => finish("retry");
-      });
-
-      try { msgWsRef.current?.close(); } catch { /* noop */ }
-      msgWsRef.current = null;
-      if (outcome === "terminal" || outcome === "missing") break;
-      await new Promise((resolve) => setTimeout(resolve, Math.min(1000 * (2 ** attempt), 8000)));
-    }
-
-    if (detachedRef.current || manualStopRef.current) return;
-    if (terminalPayload) {
-      const payload = terminalPayload as Parameters<typeof agentResultFromWsDone>[0];
-      const resolvedSid = String(payload.session_id || record.sessionId || "");
-      if (record.scratchSessionId === "_scratch" && resolvedSid) {
-        useWorkbenchStore.getState().moveSessionMessages("_scratch", resolvedSid);
-        useSessionStore.getState().setCurrentSession(resolvedSid);
-        useWorkbenchStore.getState().switchSession(resolvedSid);
-        callbacksRef.current.onSessionResolved(resolvedSid);
-      }
-      const targetSid = resolvedSid || record.scratchSessionId;
-      const result = agentResultFromWsDone(payload, String(payload.final_response || ""), resolvedSid);
-      const toolCalls: InlineToolCall[] = (result.tool_calls || []).map((toolCall) => ({
-        tool_id: toolCall.tool_id,
-        tool_name: toolLabel(toolCall.tool_id),
-        ok: toolCall.ok,
-        summary: toolCall.summary,
-        duration_ms: toolCall.duration_ms ?? undefined,
-        errors: toolCall.errors,
-        artifacts: toolCall.artifacts as InlineToolCall["artifacts"],
-        orchestration: (toolCall.metadata?.orchestration || undefined) as InlineToolCall["orchestration"],
-      }));
-      useWorkbenchStore.getState().updateAssistant(record.messageId, {
-        status: result.errors?.length ? "error" : "ready",
-        text: sanitizeAssistantText(result.final_response || result.errors?.[0] || ""),
-        result,
-        toolCalls: toolCalls.length ? toolCalls : undefined,
-        error: result.errors?.[0],
-        trace_id: result.trace_id,
-        run_id: result.turn_id,
-        progressText: "",
-      }, targetSid);
-      useWorkbenchStore.getState().setLatestResult(result, targetSid);
-      notifyRunCompleted();
-      callbacksRef.current.onResult?.(result, record.scratchSessionId);
-      if (resolvedSid) {
-        sessionsApi.messages(resolvedSid, record.workspaceId)
-          .then((response) => {
-            if (response.messages?.length) useWorkbenchStore.getState().mergeFromBackend(resolvedSid, response.messages);
-          })
-          .catch(() => {});
-      }
-      clearInflightChatStream(record.streamId);
-    } else {
-      if (terminalError === "stream_not_found" && record.sessionId) {
-        if (await reconcilePersistedTurn(record)) return;
-      }
-      const message = terminalError === "stream_not_found"
-        ? "原运行已不可恢复，可能是后端服务在执行期间重启。"
-        : terminalError || "实时连接多次恢复失败，本轮运行状态未知。请检查运行记录后再决定是否重试。";
-      useWorkbenchStore.getState().updateAssistant(record.messageId, {
-        status: "error", text: message, error: message, progressText: "",
-      }, record.scratchSessionId);
-      clearInflightChatStream(record.streamId);
-      callbacksRef.current.onInterruption?.(message);
-    }
-    useWorkbenchStore.getState().setSending(false);
-  }, [reconcilePersistedTurn]);
-
-  useEffect(() => {
-    detachedRef.current = false;
-    manualStopRef.current = false;
-    const record = readInflightChatStream();
-    const state = useWorkbenchStore.getState();
-    for (const [sessionId, messages] of Object.entries(state.bySession)) {
-      for (const message of messages) {
-        if (message.status !== "streaming" || message.id === record?.messageId) continue;
-        state.updateAssistant(message.id, {
-          status: "error",
-          text: message.text || "上次运行连接已中断。",
-          error: "没有可恢复的运行连接",
-          progressText: "",
-        }, sessionId);
-      }
-    }
-    if (!record || !workspaceId || record.workspaceId !== workspaceId) return;
-    void resumeInflightStream(record);
-  }, [workspaceId, resumeInflightStream]);
-
   const send = useCallback(async (args: {
     text: string;
     attachments: ChatStreamAttachment[];
     effectiveSessionId: string | null;
     turnMetadata?: Record<string, unknown>;
   }): Promise<void> => {
-    detachedRef.current = false;
-    manualStopRef.current = false;
     const { text, attachments, turnMetadata: metadataOverride = {} } = args;
     const ws = paramsRef.current;
     if (!ws.workspaceId) return;
@@ -443,17 +158,6 @@ export function useChatStream(
     const store = useWorkbenchStore.getState();
     store.appendUser(text, scratch, attachments.length ? attachments : undefined);
     const streamingMsgId = store.appendAssistantStreaming(scratch);
-    const streamId = newChatStreamId();
-    const inflightRecord: InflightChatStream = {
-      streamId,
-      workspaceId: ws.workspaceId,
-      sessionId: effectiveSessionId || activeSessionId || "",
-      scratchSessionId: scratch,
-      messageId: streamingMsgId,
-      startedAt: new Date().toISOString(),
-      lastSeq: 0,
-    };
-    writeInflightChatStream(inflightRecord);
     useWorkbenchStore.getState().setSending(true);
 
     const fullText = text;
@@ -485,7 +189,6 @@ export function useChatStream(
 
       socket.send(JSON.stringify({
         type: "message",
-        stream_id: streamId,
         user_input: fullText,
         session_id: effectiveSessionId,
         workspace_id: ws.workspaceId,
@@ -552,12 +255,7 @@ export function useChatStream(
           watchdog.touch();
           try {
             const msg = JSON.parse(event.data);
-            if (typeof msg.stream_seq === "number") {
-              updateInflightChatStream(streamId, { lastSeq: msg.stream_seq });
-            }
             switch (msg.type) {
-              case "accepted":
-                break;
               case "token": {
                 const raw = msg.content || "";
                 const visible = filterStreamingThink(raw, thinkFilter);
@@ -674,14 +372,11 @@ export function useChatStream(
         };
       });
 
-      if (detachedRef.current) return;
       if (!terminalFrameReceived) {
-        useWorkbenchStore.getState().updateAssistant(streamingMsgId, {
-          progressText: interruptionReason ? "连接超时，正在恢复…" : "连接中断，正在恢复…",
-        }, scratch);
-        const latestRecord = readInflightChatStream();
-        if (latestRecord?.streamId === streamId) await resumeInflightStream(latestRecord);
-        return;
+        const interruption = interruptionReason || "实时连接已中断，未收到本轮完成消息。请重试。";
+        streamingResult.errors = [interruption];
+        if (!streamedText.trim()) streamedText = interruption;
+        onInterruption?.(interruption);
       } else if (streamingResult.errors?.length && !streamedText.trim()) {
         streamedText = streamingResult.errors[0];
       }
@@ -719,7 +414,6 @@ export function useChatStream(
         trace_id: wsResult.trace_id,
         run_id: wsResult.turn_id,
       }, resolvedSid);
-      clearInflightChatStream(streamId);
 
       // Defer heavy post-processing.
       queueMicrotask(() => {
@@ -737,8 +431,6 @@ export function useChatStream(
     } catch {
       // WebSocket failed, fall back to HTTP.
       if (msgWsRef.current) { try { msgWsRef.current.close(); } catch { /* noop */ } }
-      if (detachedRef.current) return;
-      clearInflightChatStream(streamId);
       if (!workspaceId) return;
       try {
         const res = await agentApi.run({
@@ -798,7 +490,7 @@ export function useChatStream(
       msgWsRef.current = null;
       useWorkbenchStore.getState().setSending(false);
     }
-  }, [sending, workspaceId, onSessionResolved, onResult, onInterruption, resumeInflightStream]);
+  }, [sending, workspaceId, onSessionResolved, onResult, onInterruption]);
 
   return { sending, send, stop: stopStream };
 }

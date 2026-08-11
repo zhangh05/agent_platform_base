@@ -1,7 +1,4 @@
 import queue
-import uuid
-
-import pytest
 
 
 def test_ws_heartbeat_payload_reports_monotonic_elapsed_time():
@@ -14,54 +11,6 @@ def test_ws_heartbeat_payload_reports_monotonic_elapsed_time():
         "name": "heartbeat",
         "data": {"type": "heartbeat", "elapsed_ms": 2750},
     }
-
-
-def test_resumable_stream_replays_only_frames_after_cursor():
-    from backend.ws.agent_ws import _ResumableTurnStream
-
-    stream = _ResumableTurnStream(str(uuid.uuid4()), "Admin", "default", "s-1")
-    stream.put({"type": "event", "name": "planner_started", "data": {}})
-    stream.put({"type": "token", "content": "hello"})
-    stream.put({"type": "done", "final_response": "hello"})
-
-    replay, terminal, latest = stream.events_after(1, timeout=0)
-
-    assert [frame["type"] for frame in replay] == ["token", "done"]
-    assert [frame["stream_seq"] for frame in replay] == [2, 3]
-    assert terminal is True
-    assert latest == 3
-
-
-def test_transport_disconnect_does_not_cancel_resumable_turn():
-    from backend.ws.agent_ws import _ResumableTurnStream, _stream_turn_to_socket
-
-    class DisconnectedSocket:
-        def send(self, _payload):
-            raise ConnectionError("browser refreshed")
-
-    stream = _ResumableTurnStream(str(uuid.uuid4()), "Admin", "default", "s-1")
-    stream.put({"type": "event", "name": "planner_started", "data": {}})
-
-    with pytest.raises(ConnectionError):
-        _stream_turn_to_socket(DisconnectedSocket(), stream)
-
-    assert stream.cancel_event.is_set() is False
-
-
-def test_resumable_stream_lookup_is_scoped_to_owner_and_workspace():
-    from backend.ws import agent_ws
-
-    stream_id = str(uuid.uuid4())
-    stream = agent_ws._ResumableTurnStream(stream_id, "Admin", "default", "s-1")
-    assert agent_ws._register_resumable_turn(stream) is True
-    try:
-        assert agent_ws._lookup_resumable_turn(stream_id, "Admin", "default") is stream
-        assert agent_ws._lookup_resumable_turn(stream_id, "other", "default") is None
-        assert agent_ws._lookup_resumable_turn(stream_id, "Admin", "other") is None
-        assert agent_ws._register_resumable_turn(stream) is False
-    finally:
-        with agent_ws._resumable_turns_lock:
-            agent_ws._resumable_turns.pop(stream_id, None)
 
 
 def test_ws_done_payload_includes_full_inspector_fields(monkeypatch):
