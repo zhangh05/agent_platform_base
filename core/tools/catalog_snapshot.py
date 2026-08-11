@@ -22,7 +22,7 @@ def _permission_action(action_class: str) -> str:
 
 
 _WRITE_ACTIONS = {
-    "add", "create", "update", "confirm", "review", "profile_set",
+    "add", "create", "update", "confirm", "profile_set",
     "save", "tag", "edit", "patch", "write", "write_artifact", "import",
     "session_checkpoint", "review_update", "baseline_create", "reindex",
     "check", "topology_build", "impact", "incident_create",
@@ -31,8 +31,8 @@ _WRITE_ACTIONS = {
     "schedule_update", "schedule_run",
 }
 _READ_ACTIONS = {
-    "list", "get", "status", "search", "read", "chunk", "profile_get",
-    "load", "inspect", "diagnostics", "health", "selfcheck", "local_info",
+    "list", "get", "status", "search", "read", "chunk", "profile_get", "review",
+    "load", "find", "inspect", "mcp_list_tools", "diagnostics", "health", "selfcheck", "local_info",
     "tasks", "audit_log", "run_get", "session_get", "session_snapshot",
     "review_list", "overview", "baseline_list", "check_get", "check_list",
     "drift_list", "topology_get", "operation_get", "operation_list",

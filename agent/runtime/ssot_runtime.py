@@ -636,6 +636,7 @@ def _invoke_llm_for_ssot_runtime(**kwargs):
 
     system = str(kwargs.get("system") or "")
     user = str(kwargs.get("user") or "")
+    runtime_messages = kwargs.get("messages")
     caller_extra = kwargs.get("extra") or {}
     stream_scope = str(caller_extra.get("stream_scope") or "internal").lower()
     is_planner = stream_scope == "planner"
@@ -655,11 +656,25 @@ def _invoke_llm_for_ssot_runtime(**kwargs):
     if caller_extra:
         extra.update(caller_extra)
 
-    user_content: str | list[dict] = user
+    messages = [
+        LLMMessage(
+            role=str(message.role),
+            content=message.content,
+            tool_call_id=message.tool_call_id,
+            tool_calls=list(message.tool_calls or []) or None,
+        )
+        for message in runtime_messages
+    ] if isinstance(runtime_messages, list) and all(
+        isinstance(message, LLMMessage) for message in runtime_messages
+    ) else [
+        LLMMessage(role="system", content=system),
+        LLMMessage(role="user", content=user),
+    ]
+
     # The planner is the only stage that needs the original image.  Keep the
     # normal text transcript for continuation/synthesis turns and never place
     # encoded bytes in metadata, history, trace or persistence.
-    if stream_scope in {"planner", "continuation", "response"} and caller_extra.get("vision_attachments"):
+    if stream_scope == "planner" and caller_extra.get("vision_attachments"):
         try:
             from agent.llm.capabilities import supports_vision
             from agent.llm.config import resolve_provider_config
@@ -669,7 +684,19 @@ def _invoke_llm_for_ssot_runtime(**kwargs):
                     caller_extra.get("vision_attachments"), workspace_id,
                 )
                 if image_parts:
-                    user_content = [{"type": "text", "text": user}, *image_parts]
+                    for index in range(len(messages) - 1, -1, -1):
+                        if messages[index].role != "user":
+                            continue
+                        text_content = messages[index].content
+                        if not isinstance(text_content, str):
+                            text_content = user
+                        messages[index] = LLMMessage(
+                            role="user",
+                            content=[{"type": "text", "text": text_content}, *image_parts],
+                            tool_call_id=messages[index].tool_call_id,
+                            tool_calls=messages[index].tool_calls,
+                        )
+                        break
                 if vision_warnings:
                     extra["vision_warnings"] = vision_warnings
             else:
@@ -690,10 +717,7 @@ def _invoke_llm_for_ssot_runtime(**kwargs):
 
     resp = invoke_llm(
         task="assistant_chat",
-        messages=[
-            LLMMessage(role="system", content=system),
-            LLMMessage(role="user", content=user_content),
-        ],
+        messages=messages,
         tools=tools,
         user_input=user,
         extra=extra,
@@ -724,7 +748,7 @@ def _invoke_llm_for_ssot_runtime(**kwargs):
             return resp
         raise RuntimeError(resp.error)
     # Preserve finish_reason, usage, and truncation metadata. QueryLoop accepts
-    # both native function calls and textual {nodes: [...]} plans.
+    # only provider-native tool calls; plain JSON remains ordinary assistant text.
     return resp
 
 
@@ -900,7 +924,14 @@ def _project_events(runtime_result, trace_id: str, turn_id: str) -> list[dict[st
     for batch_index, batch in enumerate((runtime_result.metadata or {}).get("orchestration_batches") or []):
         if not isinstance(batch, dict):
             continue
+        parallel_steps_by_layer = list(batch.get("parallel_steps") or [])
         for layer_index, steps in enumerate(batch.get("layers") or [], start=1):
+            parallel_steps = (
+                parallel_steps_by_layer[layer_index - 1]
+                if layer_index <= len(parallel_steps_by_layer)
+                and isinstance(parallel_steps_by_layer[layer_index - 1], list)
+                else []
+            )
             events.append({
                 "event_id": f"orchestration-{turn_id}-{batch_index}-{layer_index}",
                 "event_type": "orchestration_layer_completed",
@@ -915,7 +946,8 @@ def _project_events(runtime_result, trace_id: str, turn_id: str) -> list[dict[st
                     "batch": batch_index + 1,
                     "layer": layer_index,
                     "steps": list(steps or []),
-                    "parallel": len(list(steps or [])) > 1,
+                    "parallel": len(parallel_steps) > 1,
+                    "parallel_steps": list(parallel_steps),
                 },
             })
     for node_id, tr in (runtime_result.node_results or {}).items():

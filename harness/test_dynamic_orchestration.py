@@ -137,10 +137,14 @@ def test_failed_dependency_is_not_executed():
     calls = [
         LLMToolCall(id="a", name="data.manage", arguments={"action": "parse", "text": "x"}, step_id="source"),
         LLMToolCall(id="b", name="data.manage", arguments={"action": "stats"}, step_id="analyse", depends_on=["source"], result_bindings={"rows": "steps.source.output.rows"}),
+        LLMToolCall(id="c", name="data.manage", arguments={"action": "stats"}, step_id="summarise", depends_on=["source"], result_bindings={"rows": "steps.source.output.rows"}),
     ]
-    results = asyncio.run(StreamingToolExecutor(Runtime(), SSOTRuntimeConfig()).execute(calls, ctx=_ctx()))
+    ctx = _ctx()
+    results = asyncio.run(StreamingToolExecutor(Runtime(), SSOTRuntimeConfig()).execute(calls, ctx=ctx))
     assert calls_seen == ["parse"]
     assert results[1].output["error_code"] == "DEPENDENCY_FAILED"
+    assert results[2].output["error_code"] == "DEPENDENCY_FAILED"
+    assert ctx.extras["orchestration_batches"][0]["parallel_steps"] == [[], []]
 
 
 def test_bound_arguments_are_revalidated_before_handler_execution():
@@ -427,8 +431,10 @@ def test_engine_executes_dependent_tool_group_then_synthesizes():
         LLMResponse(content="分析完成"),
     ]
     received = []
+    model_messages = []
 
-    def llm(**_kwargs):
+    def llm(**kwargs):
+        model_messages.append(list(kwargs["messages"]))
         return responses.pop(0)
 
     def handler(arguments):
@@ -455,6 +461,40 @@ def test_engine_executes_dependent_tool_group_then_synthesizes():
     assert result.final_response == "分析完成"
     assert received[1]["rows"] == [{"value": 7}]
     assert result.metadata["orchestration_batches"][0]["layers"] == [["extract"], ["analyse"]]
+    assert [message.role for message in model_messages[1]][-3:] == ["assistant", "tool", "tool"]
+    assert model_messages[1][-2].tool_call_id == "provider-a"
+    assert model_messages[1][-1].tool_call_id == "provider-b"
+
+
+def test_read_dedupe_key_changes_after_a_successful_mutation():
+    from core.runtime_engine.query_loop import QueryLoop
+
+    loop = QueryLoop(
+        SSOTRuntimeConfig(),
+        {"workspace.file": {"description": "file", "args_schema": {}}},
+        SimpleNamespace(),
+    )
+    read = LLMToolCall(
+        id="read", name="workspace.file",
+        arguments={"action": "read", "filepath": "result.txt"},
+    )
+    write = LLMToolCall(
+        id="write", name="workspace.file",
+        arguments={"action": "write", "filename": "result.txt", "content": "new"},
+    )
+    assert loop._completion_key(read, 0) != loop._completion_key(read, 1)
+    assert loop._completion_key(write, 0) == loop._completion_key(write, 1)
+
+
+def test_plain_json_plan_text_is_not_an_alternate_tool_call_path():
+    from agent.llm.schemas import LLMResponse
+    from core.runtime_engine.query_loop import QueryLoop
+
+    loop = QueryLoop(SSOTRuntimeConfig(), {}, SimpleNamespace())
+    raw = '{"nodes":[{"tool":"system.manage","args":{"action":"health"}}]}'
+    response = loop._coerce_llm_response(LLMResponse(content=raw))
+    assert response.content == raw
+    assert response.tool_calls == []
 
 
 def test_saved_workflow_runs_independent_reads_in_parallel(monkeypatch, tmp_path):

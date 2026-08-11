@@ -188,7 +188,6 @@ _PARAM_DESCRIPTIONS = {
     "tags": "List of tag strings.",
     "instruction": "Complete standalone instruction for a subagent.",
     "subtask_id": "Subagent task id returned by spawn.",
-    "child_session_id": "Compatibility alias for subtask id.",
     "parent_task_id": "Parent task id for merge.",
     "run_id": "Runtime run id.",
     "session_id": "Conversation/session id.",

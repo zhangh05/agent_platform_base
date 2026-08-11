@@ -111,6 +111,46 @@ def test_planner_receives_multimodal_message(monkeypatch):
     assert content[1]["type"] == "image_url"
 
 
+def test_continuation_preserves_native_tool_messages_without_resending_image(monkeypatch):
+    from agent.llm.schemas import LLMMessage, LLMResponse
+    from agent.runtime.ssot_runtime import _invoke_llm_for_ssot_runtime
+
+    captured = {}
+    monkeypatch.setattr(
+        "agent.runtime.vision_inputs.build_vision_content",
+        lambda *_: (_ for _ in ()).throw(AssertionError("image must not be rebuilt")),
+    )
+
+    def fake_invoke(**kwargs):
+        captured.update(kwargs)
+        return LLMResponse(content="ok")
+
+    monkeypatch.setattr("agent.llm.runtime.invoke_llm", fake_invoke)
+    runtime_messages = [
+        LLMMessage(role="system", content="system"),
+        LLMMessage(role="user", content="inspect"),
+        LLMMessage(role="assistant", content="", tool_calls=[{
+            "id": "call-1", "type": "function",
+            "function": {"name": "workspace__file", "arguments": "{}"},
+        }]),
+        LLMMessage(role="tool", content='{"ok": true}', tool_call_id="call-1"),
+    ]
+
+    _invoke_llm_for_ssot_runtime(
+        system="system", user="flattened fallback", messages=runtime_messages,
+        workspace_id="test_ws",
+        extra={
+            "stream_scope": "continuation",
+            "vision_attachments": [{"file_id": "file_x", "kind": "image"}],
+        },
+    )
+
+    messages = captured["messages"]
+    assert [message.role for message in messages] == ["system", "user", "assistant", "tool"]
+    assert messages[-1].tool_call_id == "call-1"
+    assert all(isinstance(message.content, str) for message in messages)
+
+
 def test_minimax_m3_is_treated_as_a_vision_model():
     from agent.llm.capabilities import supports_vision
 

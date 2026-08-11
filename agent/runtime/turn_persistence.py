@@ -277,7 +277,7 @@ def _merge_result_projection(run_id: str, ws_id: str, result, context) -> None:
         _log.warning("Cannot write result projection for run %s", run_id, exc_info=True)
 
 
-def _safe_tool_calls(tool_calls: list, *, limit: int = 20) -> list:
+def _safe_tool_calls(tool_calls: list, *, limit: int = 64) -> list:
     # Auto-tracking can emit dozens of status polls for one background task.
     # Keep the original model-requested call and only the latest poll for each
     # tracked call. Full poll history remains in trace/tracking_events; the run

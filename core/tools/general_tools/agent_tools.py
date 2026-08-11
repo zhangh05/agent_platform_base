@@ -82,7 +82,6 @@ def _run_durable_subagent(*, instruction: str, workspace_id: str, session_id: st
         status = str(started.get("status") or "running")
         return {
             "ok": True, "subtask_id": subtask_id,
-            "child_session_id": subtask_id,
             "status": status,
             "background": True,
             "tracking": _subtask_tracking(subtask_id, status),
@@ -93,13 +92,11 @@ def _run_durable_subagent(*, instruction: str, workspace_id: str, session_id: st
     result = run_subagent_task(subtask_id, workspace_id)
     if result.get("ok") and result.get("status") == "succeeded":
         merge_subagent_result(parent_task_id, subtask_id, workspace_id)
-    child_session_id = result.get("child_session_id") or subtask_id
     return {
         "ok": result.get("ok", False) and result.get("status") == "succeeded",
         "final_response": result.get("summary", ""),
         "summary": result.get("summary", ""),
         "subtask_id": subtask_id,
-        "child_session_id": child_session_id,
         "profile_id": profile_id,
         "agent_name": profile.name,
         "status": result.get("status", "unknown"),
@@ -192,10 +189,10 @@ def handle_agent_get_result(inv: ToolInvocation) -> dict:
     """Get a subagent result by its canonical subtask/session identifier."""
     args = inv.arguments or {}
     ws = _caller_workspace(inv)
-    subtask_id = str(args.get("subtask_id") or args.get("child_session_id") or "").strip()
+    subtask_id = str(args.get("subtask_id") or "").strip()
 
     if not subtask_id:
-        return _error_inv(inv, "subtask_id or child_session_id is required")
+        return _error_inv(inv, "subtask_id is required")
 
     try:
         validate_workspace_id(ws)
@@ -204,7 +201,6 @@ def handle_agent_get_result(inv: ToolInvocation) -> dict:
         if persisted is not None:
             status = str(persisted.get("status") or "unknown")
             return _ok(inv, str(persisted.get("summary") or f"Subagent status: {status}"), {
-                "child_session_id": subtask_id,
                 "workspace_id": ws,
                 **persisted,
                 "tracking": _subtask_tracking(subtask_id, status),
@@ -239,7 +235,7 @@ def handle_agent_cancel(inv: ToolInvocation) -> dict:
 def handle_agent_merge(inv: ToolInvocation) -> dict:
     """Merge a completed subagent result into the parent task record."""
     args = inv.arguments or {}
-    subtask_id = str(args.get("subtask_id") or args.get("child_session_id") or "").strip()
+    subtask_id = str(args.get("subtask_id") or "").strip()
     parent_task_id = str(args.get("parent_task_id") or getattr(inv, "task_id", "") or "").strip()
     if not subtask_id:
         return _error_inv(inv, "subtask_id is required")

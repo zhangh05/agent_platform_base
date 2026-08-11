@@ -90,7 +90,7 @@ def write_run_record(state: SimpleNamespace, workspace_id: str = "default") -> s
 def write_sub_agent_run(
     *,
     ws_id: str,
-    child_session_id: str,
+    subtask_id: str,
     parent_run_id: str,
     child_run_id: str,
     instruction: str,
@@ -105,8 +105,8 @@ def write_sub_agent_run(
     record = {
         "run_id": run_id,
         "workspace_id": ws_id,
-        "session_id": str(child_session_id or ""),
-        "child_session_id": str(child_session_id or ""),
+        "session_id": str(subtask_id or ""),
+        "subtask_id": str(subtask_id or ""),
         "parent_run_id": validate_run_id(parent_run_id),
         "child_run_id": run_id,
         "is_sub_agent": True,

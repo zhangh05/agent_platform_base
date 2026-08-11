@@ -47,17 +47,25 @@ def invoke_llm(
     """
     # ── Resolve config ──
     from agent.llm.config import resolve_provider_config
-    cfg = resolve_provider_config()
-    if config_override:
-        cfg = {**cfg, **config_override}
-    provider_candidates = [cfg]
+    active_cfg = resolve_provider_config()
+    tuning_override = dict(config_override or {})
+    provider_keys = {
+        "provider", "provider_type", "default_provider", "model", "base_url",
+        "api_key", "enabled",
+    }
+    explicit_provider_override = bool(provider_keys & set(tuning_override))
+    provider_candidates = [active_cfg]
     try:
-        if not config_override:
+        if not explicit_provider_override:
             from agent.llm.router import resolve_model_candidates
-            provider_candidates = resolve_model_candidates(task, cfg)
-            cfg = provider_candidates[0]
+            provider_candidates = resolve_model_candidates(task, active_cfg)
     except Exception:
         logger.warning("model route resolution failed; using active provider", exc_info=True)
+    provider_candidates = [
+        {**candidate, **tuning_override}
+        for candidate in provider_candidates
+    ]
+    cfg = provider_candidates[0]
 
     if not cfg.get("enabled") or cfg.get("provider_type") == "disabled":
         return LLMResponse(
@@ -316,7 +324,10 @@ def safe_generate(
         safe_context=safe_ctx,
         user_input=user_input,
         extra=extra,
-        config_override=cfg,
+        # Preserve task routing unless the caller explicitly selected a
+        # provider/model. Passing the fully resolved active config here would
+        # falsely look like an explicit provider override.
+        config_override=config_override,
     )
 
     if resp.error:

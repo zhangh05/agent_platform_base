@@ -35,6 +35,9 @@ def _run_path(workspace_id: str, run_id: str) -> Path:
 
 
 def validate_definition(payload: dict[str, Any]) -> dict[str, Any]:
+    from core.runtime_engine.models import SSOTRuntimeConfig
+
+    limits = SSOTRuntimeConfig()
     if not isinstance(payload, dict):
         raise WorkflowError("workflow definition must be an object")
     workflow_id = _id(str(payload.get("workflow_id") or f"workflow_{uuid.uuid4().hex[:8]}"))
@@ -42,8 +45,8 @@ def validate_definition(payload: dict[str, Any]) -> dict[str, Any]:
     if not name:
         raise WorkflowError("workflow name is required")
     nodes = payload.get("nodes")
-    if not isinstance(nodes, list) or not 1 <= len(nodes) <= 50:
-        raise WorkflowError("workflow must contain 1 to 50 nodes")
+    if not isinstance(nodes, list) or not 1 <= len(nodes) <= limits.max_nodes:
+        raise WorkflowError(f"workflow must contain 1 to {limits.max_nodes} nodes")
     available_tools = {item["tool_id"] for item in _tool_client().list_tools() if item.get("enabled", True)}
     normalized = []
     node_ids: set[str] = set()
@@ -76,7 +79,10 @@ def validate_definition(payload: dict[str, Any]) -> dict[str, Any]:
         missing = set(node["depends_on"]) - node_ids
         if missing or node["node_id"] in node["depends_on"]:
             raise WorkflowError(f"invalid dependencies for {node['node_id']}: {sorted(missing)}")
-    order = _topological_order(normalized)
+    layers = _execution_layers(normalized)
+    if len(layers) > limits.max_depth:
+        raise WorkflowError(f"workflow depth exceeds runtime limit: {limits.max_depth}")
+    order = [node_id for layer in layers for node_id in layer]
     failure_policy = str(payload.get("failure_policy") or "fail_fast")
     if failure_policy not in {"fail_fast", "continue"}:
         raise WorkflowError("failure_policy must be fail_fast or continue")
@@ -99,7 +105,7 @@ def validate_definition(payload: dict[str, Any]) -> dict[str, Any]:
         "failure_policy": failure_policy,
         "nodes": normalized,
         "execution_order": order,
-        "execution_layers": _execution_layers(normalized),
+        "execution_layers": layers,
     }
 
 
@@ -208,6 +214,22 @@ def execute_workflow(workspace_id: str, workflow_id: str, inputs: dict[str, Any]
     if len(json.dumps(inputs or {}, ensure_ascii=False, default=str).encode()) > 1_048_576:
         raise WorkflowError("workflow inputs are too large")
     run_id = _id(run_id or f"wfrun_{uuid.uuid4().hex[:12]}", "run_id")
+    from core.runtime_engine.budget_controller import BudgetController
+    from core.runtime_engine.models import SSOTRuntimeConfig
+
+    runtime_config = SSOTRuntimeConfig()
+    budget = BudgetController(runtime_config)
+    layers = definition.get("execution_layers") or _execution_layers(definition["nodes"])
+    reservation = budget.reserve_execution_batch(
+        node_count=len(definition["nodes"]),
+        depth=len(layers),
+        parallel_width=min(
+            runtime_config.max_layer_concurrency,
+            max((len(layer) for layer in layers), default=1),
+        ),
+    )
+    if not reservation.ok:
+        raise WorkflowError(f"workflow execution budget rejected: {reservation.exceeded}")
     from storage.redaction import redact_dict
     record = {
         "run_id": run_id,
@@ -222,6 +244,7 @@ def execute_workflow(workspace_id: str, workflow_id: str, inputs: dict[str, Any]
         "updated_at": now_iso(),
     }
     _save_run(record)
+    budget.begin_execution()
     outputs: dict[str, Any] = {}
     dependency_outcomes: dict[str, bool] = {}
     nodes_by_id = {node["node_id"]: node for node in definition["nodes"]}
@@ -269,7 +292,7 @@ def execute_workflow(workspace_id: str, workflow_id: str, inputs: dict[str, Any]
         return entry, (result.output if success else {}), success
 
     from core.runtime_engine.contracts import is_read_only_call
-    for layer_index, layer in enumerate(definition.get("execution_layers") or _execution_layers(definition["nodes"]), start=1):
+    for layer_index, layer in enumerate(layers, start=1):
         if _cancel_requested(workspace_id, run_id, job_id):
             record["status"] = "cancelled"
             break
@@ -326,6 +349,27 @@ def execute_workflow(workspace_id: str, workflow_id: str, inputs: dict[str, Any]
             groups.append((True, read_group))
 
         for parallel, node_ids in groups:
+            budget_status = budget.check_execution()
+            if not budget_status.ok:
+                for node_id in node_ids:
+                    record["nodes"].append({
+                        "node_id": node_id,
+                        "tool_id": nodes_by_id[node_id]["tool_id"],
+                        "status": "failed",
+                        "summary": "流程执行预算已耗尽，当前步骤未执行",
+                        "errors": [budget_status.exceeded],
+                        "started_at": now_iso(),
+                        "finished_at": now_iso(),
+                        "orchestration": {
+                            "layer": layer_index,
+                            "parallel": False,
+                            "depends_on": list(nodes_by_id[node_id].get("depends_on") or []),
+                        },
+                    })
+                    dependency_outcomes[node_id] = False
+                failed = True
+                _save_run(record)
+                break
             if parallel and len(node_ids) > 1:
                 with ThreadPoolExecutor(max_workers=min(5, len(node_ids)), thread_name_prefix="workflow-read") as pool:
                     futures = {node_id: pool.submit(execute_node, node_id) for node_id in node_ids}
@@ -350,6 +394,9 @@ def execute_workflow(workspace_id: str, workflow_id: str, inputs: dict[str, Any]
                 break
         if failed and definition["failure_policy"] == "fail_fast":
             break
+        if not budget.check_execution().ok:
+            break
+    budget.end_execution()
     if record["status"] == "running":
         record["status"] = "failed" if failed else "succeeded"
     record["finished_at"] = now_iso()

@@ -242,6 +242,33 @@ def test_run_projection_preserves_orchestration_json_types():
     }
 
 
+def test_run_projection_keeps_full_query_loop_node_budget():
+    from agent.runtime.turn_persistence import _safe_tool_calls
+
+    calls = [
+        {"call_id": f"call-{index}", "tool_id": "system.manage", "ok": True}
+        for index in range(30)
+    ]
+    assert len(_safe_tool_calls(calls)) == 30
+
+
+def test_trace_uses_recorded_parallel_steps_not_topological_layer_width():
+    from agent.runtime.ssot_runtime import _project_events
+
+    runtime_result = SimpleNamespace(
+        metadata={
+            "orchestration_batches": [{
+                "layers": [["read-before", "write", "read-after"]],
+                "parallel_steps": [[]],
+            }],
+        },
+        node_results={},
+    )
+    event = _project_events(runtime_result, "trace", "turn")[0]
+    assert event["metadata"]["parallel"] is False
+    assert event["metadata"]["parallel_steps"] == []
+
+
 def test_persist_run_record_uses_result_llm_metadata(monkeypatch, tmp_path):
     """Run-store llm_metadata must mirror AgentResult.metadata['llm']."""
     from agent.runtime.turn_persistence import persist_run_record

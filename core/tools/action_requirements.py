@@ -84,8 +84,8 @@ ACTION_REQUIRED_ANY: dict[tuple[str, str], tuple[tuple[str, ...], ...]] = {
     ("browser.manage", "hover"): (("selector", "ref"),),
     ("browser.manage", "select_option"): (("selector", "ref"),),
     ("knowledge.manage", "read"): (("chunk_id", "source_id"),),
-    ("agent.manage", "get"): (("subtask_id", "child_session_id"),),
-    ("agent.manage", "merge"): (("subtask_id", "child_session_id"),),
+    ("agent.manage", "get"): (("subtask_id",),),
+    ("agent.manage", "merge"): (("subtask_id",),),
 }
 
 

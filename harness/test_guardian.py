@@ -128,7 +128,7 @@ def test_sub_agent_run_record_written(tmp_path, monkeypatch):
 
     rid = run_store.write_sub_agent_run(
         ws_id="ws_sub",
-        child_session_id="sub_child_123",
+        subtask_id="sub_child_123",
         parent_run_id="run_parent_001",
         child_run_id="run_child_002",
         instruction="Summarize the file",
@@ -146,7 +146,8 @@ def test_sub_agent_run_record_written(tmp_path, monkeypatch):
     assert rec["is_sub_agent"] is True
     assert rec["parent_run_id"] == "run_parent_001"
     assert rec["child_run_id"] == "run_child_002"
-    assert rec["child_session_id"] == "sub_child_123"
+    assert rec["subtask_id"] == "sub_child_123"
+    assert "child_session_id" not in rec
     assert rec["tool_calls_count"] == 2
     assert rec["visible_tool_ids"] == ["web.manage", "text.analyze"]
 

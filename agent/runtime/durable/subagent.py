@@ -232,8 +232,8 @@ def run_subagent_task(subtask_id: str, ws_id: str) -> dict:
         # Create restricted session for profile-gated SSOT Runtime execution.
         from agent.core.session import AgentSession
 
-        child_session_id = subtask_id
-        sess = AgentSession(session_id=child_session_id, workspace_id=ws_id)
+        subagent_session_id = subtask_id
+        sess = AgentSession(session_id=subagent_session_id, workspace_id=ws_id)
         sess.mark_sub_agent()
         effective_steps = max(1, min(
             int((task.budget or {}).get("max_steps") or profile.max_steps),
@@ -250,7 +250,7 @@ def run_subagent_task(subtask_id: str, ws_id: str) -> dict:
         op = AgentOp(
             user_input=task.goal,
             workspace_id=ws_id,
-            session_id=child_session_id,
+            session_id=subagent_session_id,
             metadata={
                 "subagent_profile": {
                     "profile_id": profile.profile_id,
@@ -395,7 +395,6 @@ def run_subagent_task(subtask_id: str, ws_id: str) -> dict:
     payload = {
         "ok": result.status == "succeeded",
         "subtask_id": subtask_id,
-        "child_session_id": subtask_id,
         "status": result.status,
         "summary": result.summary,
         "findings": result.findings,
@@ -647,7 +646,6 @@ def _task_result_payload(task: SubagentTask, *, ok: bool) -> dict:
     return {
         "ok": ok,
         "subtask_id": task.subtask_id,
-        "child_session_id": task.subtask_id,
         "status": task.status,
         "summary": task.summary,
         "findings": [],

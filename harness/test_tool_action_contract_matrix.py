@@ -29,6 +29,21 @@ def _registered_action_requirements() -> tuple[dict, dict]:
 REGISTERED_REQUIRED_ALL, REGISTERED_REQUIRED_ANY = _registered_action_requirements()
 
 
+def test_catalog_and_runtime_agree_on_read_only_action_semantics():
+    from core.runtime_engine.contracts import is_read_only_call
+    from core.tools.catalog_snapshot import build_catalog_snapshot
+
+    mismatches = []
+    for tool in build_catalog_snapshot()["tools"]:
+        for profile in tool.get("action_profiles") or []:
+            runtime_value = is_read_only_call(
+                tool["tool_id"], {"action": profile["action"]}, tool,
+            )
+            if runtime_value != bool(profile.get("read_only")):
+                mismatches.append((tool["tool_id"], profile["action"]))
+    assert mismatches == []
+
+
 def _action_enums(*, include_extensions: bool = True) -> dict[str, set[str]]:
     result = {}
     for tool_id, entry in CANONICAL_REGISTRY.items():
@@ -124,7 +139,7 @@ def test_public_schemas_expose_handler_consumed_arguments():
         "knowledge.manage": {"query", "limit", "level", "chunk_id", "source_id", "artifact_id", "chunk_type", "scope", "include_disabled", "include_deleted"},
         "memory.manage": {"query", "limit", "title", "content", "memory_id", "memory_type", "scope", "field", "value", "merge", "session_id", "tags"},
         "skill.manage": {"query", "limit", "skill_name", "provider_id", "tool_name", "arguments", "confirm"},
-        "agent.manage": {"instruction", "profile_id", "max_turns", "background", "child_session_id", "subtask_id", "parent_task_id"},
+        "agent.manage": {"instruction", "profile_id", "max_turns", "background", "subtask_id", "parent_task_id"},
         "system.manage": {"run_id", "session_id", "snapshot_id", "operation", "reason", "format", "dry_run", "status", "limit", "log_level"},
         "text.analyze": {"text", "pattern"},
         "workspace.file": {"filepath", "file_id", "limit", "offset", "subdir", "pattern", "old_string", "new_string", "replace_all", "patch_text", "filename", "content", "dry_run"},

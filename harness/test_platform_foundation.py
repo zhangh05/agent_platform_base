@@ -178,6 +178,90 @@ def test_model_candidates_include_active_fallback(monkeypatch):
     assert [item["provider"] for item in candidates] == ["deepseek", "openai"]
 
 
+def test_tuning_override_preserves_task_model_routing(monkeypatch):
+    from agent.llm.runtime import invoke_llm
+    from agent.llm.schemas import LLMMessage, LLMResponse
+
+    seen = []
+    monkeypatch.setattr(
+        "agent.llm.config.resolve_provider_config",
+        lambda: {
+            "enabled": True,
+            "provider_type": "openai_compatible",
+            "provider": "active",
+            "model": "active-model",
+            "temperature": 0.8,
+        },
+    )
+    monkeypatch.setattr(
+        "agent.llm.router.resolve_model_candidates",
+        lambda _task, _active: [{
+            "enabled": True,
+            "provider_type": "openai_compatible",
+            "provider": "routed",
+            "model": "routed-model",
+        }],
+    )
+
+    def generate(request, config):
+        seen.append((request, dict(config)))
+        return LLMResponse(content="ok")
+
+    monkeypatch.setattr("agent.llm.provider.generate", generate)
+    response = invoke_llm(
+        "assistant_chat",
+        messages=[LLMMessage(role="user", content="hello")],
+        config_override={"temperature": 0.1, "timeout": 5},
+    )
+
+    assert response.content == "ok"
+    assert seen[0][1]["provider"] == "routed"
+    assert seen[0][1]["model"] == "routed-model"
+    assert seen[0][1]["temperature"] == 0.1
+    assert seen[0][1]["timeout"] == 5
+    assert seen[0][0].temperature == 0.1
+
+
+def test_safe_generate_does_not_turn_active_config_into_provider_override(monkeypatch):
+    from agent.llm.runtime import safe_generate
+    from agent.llm.schemas import LLMResponse
+
+    seen = []
+    monkeypatch.setattr(
+        "agent.llm.config.resolve_provider_config",
+        lambda: {
+            "enabled": True,
+            "provider_type": "openai_compatible",
+            "provider": "active",
+            "model": "active-model",
+        },
+    )
+    monkeypatch.setattr(
+        "agent.llm.router.resolve_model_candidates",
+        lambda _task, _active: [{
+            "enabled": True,
+            "provider_type": "openai_compatible",
+            "provider": "routed",
+            "model": "routed-model",
+        }],
+    )
+
+    def generate(request, config):
+        seen.append(dict(config))
+        return LLMResponse(content="routed answer")
+
+    monkeypatch.setattr("agent.llm.provider.generate", generate)
+    result = safe_generate(
+        "response_compose",
+        safe_context={"status": "ok", "evidence": "complete"},
+        user_input="summarize",
+    )
+
+    assert result.answer == "routed answer"
+    assert seen[0]["provider"] == "routed"
+    assert seen[0]["model"] == "routed-model"
+
+
 def test_mcp_runs_through_governed_skill_tool(monkeypatch, tmp_path):
     monkeypatch.setenv("NA_WORKSPACE_ROOT", str(tmp_path))
     from storage.workspace_store import ensure_workspace

@@ -815,6 +815,9 @@ class StreamingToolExecutor:
         evidence: dict[str, StepEvidence] = dict(prior)
         result_by_id: dict[str, StreamingToolResult] = {}
         stop_requested = False
+        executed_parallel_steps_by_layer: dict[int, set[str]] = {
+            index: set() for index in range(1, len(layers) + 1)
+        }
 
         for layer_index, layer in enumerate(layers, start=1):
             parallel_step_ids = parallel_steps_by_layer[layer_index]
@@ -928,6 +931,7 @@ class StreamingToolExecutor:
             actual_parallel_steps = self._parallel_step_ids(
                 [str(tc.step_id or tc.id) for tc in runnable], runnable_by_step,
             )
+            executed_parallel_steps_by_layer[layer_index] = actual_parallel_steps
             layer_results = await self._execute_independent_calls(
                 runnable, ctx=ctx, budget=budget,
             )
@@ -992,6 +996,10 @@ class StreamingToolExecutor:
                 ctx.extras["orchestration_stop_requested"] = True
             ctx.extras.setdefault("orchestration_batches", []).append({
                 "layers": [list(layer) for layer in layers],
+                "parallel_steps": [
+                    sorted(executed_parallel_steps_by_layer[index])
+                    for index in range(1, len(layers) + 1)
+                ],
                 "step_count": len(tool_calls),
             })
         return [result_by_id[tc.id] for tc in tool_calls]
@@ -1488,6 +1496,7 @@ class QueryLoop:
         failure_counts: Dict[str, int] = {}
         validation_correction_attempts = 0
         completed_call_keys: set[str] = set()
+        mutation_epoch = 0
         used_call_ids: set[str] = set()
         execution_duration_ms = 0.0
         output_truncated = False
@@ -1808,24 +1817,25 @@ class QueryLoop:
                 # preventing an identical successful or failed operation from
                 # running forever. The old pre-gate comparison missed aliases
                 # such as file_read -> read because their raw keys differed.
+                candidate_epoch = mutation_epoch
+                candidate_keys: dict[str, str] = {}
+                for tc in tool_calls:
+                    candidate_keys[tc.id] = self._completion_key(tc, candidate_epoch)
+                    if not self._executor._is_read_only_call(tc):
+                        candidate_epoch += 1
                 repeated_calls = [
                     tc for tc in tool_calls
-                    if self._tool_call_key(tc) in completed_call_keys
+                    if candidate_keys[tc.id] in completed_call_keys
                 ]
                 if repeated_calls and len(repeated_calls) == len(tool_calls):
                     return finish(
                         final_response=self._build_tool_result_fallback(ctx, all_results),
                         error="duplicate_tool_call",
                     )
-                tool_calls = [
-                    tc for tc in tool_calls
-                    if self._tool_call_key(tc) not in completed_call_keys
-                ]
-                if not tool_calls:
-                    return finish(
-                        final_response=self._build_tool_result_fallback(ctx, all_results),
-                        error="duplicate_tool_call",
-                    )
+                # Do not remove only part of a graph: a retained node may depend
+                # on the repeated node. Mixed batches remain bounded by the
+                # request budget and execute intact; the all-repeated guard above
+                # still stops a genuine no-progress loop.
 
                 # Execute tools (parallel read-only, serial writes)
                 execution_started = time.monotonic()
@@ -1833,8 +1843,12 @@ class QueryLoop:
                 try:
                     results = await self._executor.execute(tool_calls, ctx=ctx, budget=budget)
                     all_results.extend(results)
-                    for tc in tool_calls:
-                        completed_call_keys.add(self._tool_call_key(tc))
+                    for tc, result in zip(tool_calls, results):
+                        completed_call_keys.add(
+                            self._completion_key(tc, mutation_epoch)
+                        )
+                        if result.ok and not self._executor._is_read_only_call(tc):
+                            mutation_epoch += 1
 
                     # ── Tracking: auto-poll producer-declared long tasks ──
                     polled_results = await self._settle_tracking(ctx, results, budget=budget)
@@ -2133,6 +2147,7 @@ class QueryLoop:
                         self._llm_invoke,
                         system=system_prompt,
                         user=self._messages_to_user_text(messages),
+                        messages=list(messages),
                         temperature=0.2,
                         timeout=120,
                         tools=tools_for_call,
@@ -2259,17 +2274,6 @@ class QueryLoop:
             elif reason in {"length", "max_tokens", "content_length"} and raw.content:
                 raw.content = raw.content.rstrip() + self._LENGTH_TRUNCATION_MARKER
                 raw.metadata = {**(raw.metadata or {}), "output_truncated": True, "truncation_reason": "length"}
-            if not raw.tool_calls:
-                parsed = self._response_from_plan_text(raw.content)
-                if parsed is not None:
-                    parsed.provider = raw.provider
-                    parsed.model = raw.model
-                    parsed.usage = raw.usage
-                    parsed.finish_reason = raw.finish_reason
-                    parsed.raw = raw.raw
-                    parsed.error = raw.error
-                    parsed.metadata = dict(raw.metadata or {})
-                    return parsed
             return raw
         if raw is None:
             return LLMResponse(error="empty_llm_response")
@@ -2281,33 +2285,7 @@ class QueryLoop:
                 tool_calls=list(tool_calls or []),
             )
         text = self._strip_think_tags(str(raw))
-        parsed = self._response_from_plan_text(text)
-        if parsed is not None:
-            return parsed
         return LLMResponse(content=text)
-
-    def _response_from_plan_text(self, text: str) -> LLMResponse | None:
-        data = self._try_parse_json_object(text)
-        if data is not None:
-            nodes = data.get("nodes")
-            if isinstance(nodes, list):
-                calls: list[LLMToolCall] = []
-                for idx, node in enumerate(nodes):
-                    if not isinstance(node, dict):
-                        continue
-                    tool = str(node.get("tool") or "").strip()
-                    if not tool:
-                        continue
-                    calls.append(LLMToolCall(
-                        id=str(node.get("id") or f"call_{idx}"),
-                        name=tool,
-                        arguments=dict(node.get("args") or {}),
-                    ))
-                return LLMResponse(
-                    content=self._strip_think_tags(str(data.get("final_response") or "")),
-                    tool_calls=calls,
-                )
-        return None
     
     @staticmethod
     def _strip_think_tags(text: str) -> str:
@@ -2319,21 +2297,6 @@ class QueryLoop:
         import re
         return re.sub(r'<think>.*?</think>\s*', '', text, flags=re.DOTALL).strip()
 
-    @staticmethod
-    def _try_parse_json_object(text: str) -> dict[str, Any] | None:
-        cleaned = (text or "").strip()
-        if cleaned.startswith("```"):
-            lines = cleaned.splitlines()
-            if lines and lines[0].startswith("```"):
-                lines = lines[1:]
-            if lines and lines[-1].strip() == "```":
-                lines = lines[:-1]
-            cleaned = "\n".join(lines).strip()
-        try:
-            data = json.loads(cleaned)
-        except Exception:
-            return None
-        return data if isinstance(data, dict) else None
 
     def _parse_tool_calls(self, raw: List[LLMToolCall]) -> List[LLMToolCall]:
         """Normalise raw tool calls from LLM response (may be dict or LLMToolCall)."""
@@ -2398,6 +2361,13 @@ class QueryLoop:
             "result_bindings": dict(tc.result_bindings or {}),
         }
         return f"{tc.name}:{json.dumps(identity, sort_keys=True, ensure_ascii=False, default=str)}"
+
+    def _completion_key(self, tc: LLMToolCall, mutation_epoch: int) -> str:
+        """Deduplicate reads only within the same observed state generation."""
+        key = self._tool_call_key(tc)
+        if self._executor._is_read_only_call(tc):
+            return f"{key}:state_epoch={max(0, int(mutation_epoch))}"
+        return key
 
     def _prepare_tool_calls(
         self,

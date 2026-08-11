@@ -94,7 +94,7 @@ class TestSubagentTask:
 
         assert result["ok"] is True
         assert result["subtask_id"] == created["subtask_id"]
-        assert result["child_session_id"] == created["subtask_id"]
+        assert "child_session_id" not in result
         assert result["tracking"]["task_id"] == created["subtask_id"]
         assert result["tracking"]["poll_arguments"]["subtask_id"] == created["subtask_id"]
 
