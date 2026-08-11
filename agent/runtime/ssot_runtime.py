@@ -205,6 +205,9 @@ def run_ssot_turn(
             "tool_recovery_events": list(
                 (runtime_result.metadata or {}).get("tool_recovery_events") or []
             ),
+            "orchestration_batches": list(
+                (runtime_result.metadata or {}).get("orchestration_batches") or []
+            ),
             "tracking_summary": dict(
                 (runtime_result.metadata or {}).get("tracking_summary") or {}
             ),
