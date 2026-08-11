@@ -1,6 +1,18 @@
 import queue
 
 
+def test_ws_heartbeat_payload_reports_monotonic_elapsed_time():
+    from backend.ws.agent_ws import _heartbeat_payload
+
+    payload = _heartbeat_payload(10.0, 12.75)
+
+    assert payload == {
+        "type": "event",
+        "name": "heartbeat",
+        "data": {"type": "heartbeat", "elapsed_ms": 2750},
+    }
+
+
 def test_ws_done_payload_includes_full_inspector_fields(monkeypatch):
     from backend.ws import agent_ws
     import agent.app.service as service

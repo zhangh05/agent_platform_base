@@ -23,6 +23,7 @@ import { sanitizeAssistantText, toolLabel, filterStreamingThink, type ThinkFilte
 import { beginModelStep, discardToolCallDraft, finalizeStreamText } from "../utils/agentStream";
 import { agentResultFromWsDone } from "../utils/wsResult";
 import { notifyRunCompleted } from "../utils/appEvents";
+import { createStreamActivityWatchdog, STREAM_IDLE_TIMEOUT_MS } from "../utils/streamActivity";
 
 const WS_TIMEOUT_MS = 3000;
 const TOKEN_FLUSH_MS = 50;
@@ -123,8 +124,15 @@ export function useChatStream(
     useWorkbenchStore.getState().setSending(false);
   };
 
-  // Clean up abort controller on unmount.
-  useEffect(() => () => { abortRef.current?.abort(); }, []);
+  // A route change must not leave an in-flight socket or global sending state
+  // behind. Otherwise returning to the workbench can look permanently frozen.
+  useEffect(() => () => {
+    abortRef.current?.abort();
+    abortRef.current = null;
+    try { msgWsRef.current?.close(); } catch { /* noop */ }
+    msgWsRef.current = null;
+    useWorkbenchStore.getState().setSending(false);
+  }, []);
 
   const send = useCallback(async (args: {
     text: string;
@@ -202,6 +210,7 @@ export function useChatStream(
         no_tool_reason?: string;
       } = {};
       let terminalFrameReceived = false;
+      let interruptionReason = "";
 
       await new Promise<void>((resolve) => {
         const flushTokenBuffer = () => {
@@ -214,12 +223,36 @@ export function useChatStream(
           );
         };
         const flushTimer = setInterval(flushTokenBuffer, TOKEN_FLUSH_MS);
+        let finished = false;
+
+        const finish = () => {
+          if (finished) return;
+          finished = true;
+          watchdog.stop();
+          clearInterval(flushTimer);
+          flushTokenBuffer();
+          resolve();
+        };
+
+        const watchdog = createStreamActivityWatchdog({
+          onTick: (elapsedMs) => {
+            useWorkbenchStore.getState().updateAssistant(
+              streamingMsgId, { progressElapsedMs: elapsedMs }, scratch,
+            );
+          },
+          onTimeout: () => {
+            interruptionReason = `实时连接已超过 ${Math.round(STREAM_IDLE_TIMEOUT_MS / 1000)} 秒没有收到服务器消息，已结束等待。请重试本轮。`;
+            try { socket.close(); } catch { /* already closed */ }
+            finish();
+          },
+        });
 
         useWorkbenchStore.getState().updateAssistant(
           streamingMsgId, { progressText: "等待 SSOT Runtime 调度…" }, scratch,
         );
 
         socket.onmessage = (event) => {
+          watchdog.touch();
           try {
             const msg = JSON.parse(event.data);
             switch (msg.type) {
@@ -230,7 +263,9 @@ export function useChatStream(
                 break;
               }
               case "event": {
-                if (msg.data) {
+                // Heartbeats prove transport liveness but are not runtime
+                // evidence and must not pollute persisted/inspected events.
+                if (msg.data && msg.name !== "heartbeat") {
                   streamingResult.events = [...(streamingResult.events || []), msg.data];
                 }
                 const stageName = msg.name as string;
@@ -280,8 +315,6 @@ export function useChatStream(
                 break;
               }
               case "done": {
-                flushTokenBuffer();
-                clearInterval(flushTimer);
                 terminalFrameReceived = true;
                 resolvedSid = msg.session_id || activeSessionId || "";
                 streamedText = finalizeStreamText(streamState.draft, msg.final_response || "");
@@ -299,18 +332,16 @@ export function useChatStream(
                 useWorkbenchStore.getState().updateAssistant(
                   streamingMsgId, { progressText: "" }, scratch,
                 );
-                resolve();
+                finish();
                 break;
               }
               case "error": {
-                clearInterval(flushTimer);
                 terminalFrameReceived = true;
-                flushTokenBuffer();
                 streamingResult.errors = [msg.message || msg.error || "Unknown error"];
                 useWorkbenchStore.getState().updateAssistant(
                   streamingMsgId, { progressText: "" }, scratch,
                 );
-                resolve();
+                finish();
                 break;
               }
             }
@@ -318,8 +349,6 @@ export function useChatStream(
         };
 
         socket.onclose = () => {
-          clearInterval(flushTimer);
-          flushTokenBuffer();
           if (tokenBufferRef.pending || streamState.draft !== streamedText) {
             streamState.draft += tokenBufferRef.pending;
             streamedText = streamState.draft;
@@ -328,11 +357,9 @@ export function useChatStream(
               streamingMsgId, { text: streamedText }, scratch,
             );
           }
-          resolve();
+          finish();
         };
         socket.onerror = () => {
-          clearInterval(flushTimer);
-          flushTokenBuffer();
           if (tokenBufferRef.pending || streamState.draft !== streamedText) {
             streamState.draft += tokenBufferRef.pending;
             streamedText = streamState.draft;
@@ -341,12 +368,12 @@ export function useChatStream(
               streamingMsgId, { text: streamedText }, scratch,
             );
           }
-          resolve();
+          finish();
         };
       });
 
       if (!terminalFrameReceived) {
-        const interruption = "实时连接已中断，未收到本轮完成消息。请重试。";
+        const interruption = interruptionReason || "实时连接已中断，未收到本轮完成消息。请重试。";
         streamingResult.errors = [interruption];
         if (!streamedText.trim()) streamedText = interruption;
         onInterruption?.(interruption);

@@ -22,6 +22,7 @@ import json
 import logging
 import queue
 import threading
+import time
 import traceback
 from flask import request
 from flask_sock import Sock
@@ -31,6 +32,20 @@ sock = Sock()
 _log = logging.getLogger("ws.agent")
 _MAX_WS_INPUT_LENGTH = 262144  # 256KB — supports long user inputs
 _MAX_WS_METADATA_JSON = 16384
+_WS_HEARTBEAT_INTERVAL_SECONDS = 2.0
+
+
+def _heartbeat_payload(started_at: float, now: float | None = None) -> dict:
+    """Build a lightweight liveness event while an agent turn is quiet."""
+    current = time.monotonic() if now is None else now
+    return {
+        "type": "event",
+        "name": "heartbeat",
+        "data": {
+            "type": "heartbeat",
+            "elapsed_ms": max(0, int((current - started_at) * 1000)),
+        },
+    }
 
 
 def _normalize_ws_attachments(username: str, workspace_id: str, raw):
@@ -228,9 +243,11 @@ def register_ws_routes(app):
                 thread.start()
 
                 # Stream events from queue to WebSocket
+                turn_started_at = time.monotonic()
+                next_heartbeat_at = turn_started_at + _WS_HEARTBEAT_INTERVAL_SECONDS
                 while True:
                     try:
-                        event = event_queue.get(timeout=0.01)
+                        event = event_queue.get(timeout=0.25)
                     except queue.Empty:
                         if not thread.is_alive():
                             try:
@@ -238,6 +255,17 @@ def register_ws_routes(app):
                             except queue.Empty:
                                 break
                         else:
+                            now = time.monotonic()
+                            if now >= next_heartbeat_at:
+                                try:
+                                    ws.send(json.dumps(
+                                        _heartbeat_payload(turn_started_at, now),
+                                        ensure_ascii=True,
+                                    ))
+                                except Exception:
+                                    active_cancel_event.set()
+                                    return
+                                next_heartbeat_at = now + _WS_HEARTBEAT_INTERVAL_SECONDS
                             continue
 
                     if event is None:
@@ -245,6 +273,7 @@ def register_ws_routes(app):
 
                     try:
                         ws.send(json.dumps(event, ensure_ascii=True, default=str))
+                        next_heartbeat_at = time.monotonic() + _WS_HEARTBEAT_INTERVAL_SECONDS
                     except Exception:
                         active_cancel_event.set()
                         return
