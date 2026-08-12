@@ -291,14 +291,24 @@ def test_approval_handler_resumes_exact_call():
     # harness/test_alias_drift.py).
     import asyncio
     from unittest import mock as _mock
+    from agent.llm.schemas import LLMResponse, LLMToolCall
     from core.runtime_engine.engine import SSOTRuntimeEngine
     config = SSOTRuntimeConfig()
 
+    responses = [
+        LLMResponse(tool_calls=[LLMToolCall(
+            id="call-delete",
+            name="exec.run",
+            arguments={
+                "action": "shell",
+                "command": "rm -f /tmp/agent-platform-base-test-file",
+            },
+        )]),
+        LLMResponse(content="completed"),
+    ]
+
     def mock_llm(**kw):
-        return json.dumps({"nodes": [
-            {"id": "n1", "tool": "exec.run",
-             "args": {"action": "shell", "command": "rm -f /tmp/agent-platform-base-test-file"}},
-        ]})
+        return responses.pop(0)
 
     registry = {"exec.run": {"description": "", "args_schema": {
         "required": ["command"], "properties": {"command": {"type": "string"}},
@@ -330,14 +340,16 @@ def test_approval_handler_resumes_exact_call():
 def test_hard_block_denied_approval():
     import asyncio
     from unittest import mock as _mock
+    from agent.llm.schemas import LLMResponse, LLMToolCall
     from core.runtime_engine.engine import SSOTRuntimeEngine
     config = SSOTRuntimeConfig()
 
     def mock_llm(**kw):
-        return json.dumps({"nodes": [
-            {"id": "n1", "tool": "exec.run",
-             "args": {"action": "shell", "command": "rm -rf /"}},
-        ]})
+        return LLMResponse(tool_calls=[LLMToolCall(
+            id="call-root-delete",
+            name="exec.run",
+            arguments={"action": "shell", "command": "rm -rf /"},
+        )])
 
     registry = {"exec.run": {"description": "", "args_schema": {
         "required": ["command"], "properties": {"command": {"type": "string"}},

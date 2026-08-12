@@ -169,19 +169,20 @@ def test_engine_metadata_reflects_node_failure():
     public Engine.run() surface.
     """
 
+    from agent.llm.schemas import LLMResponse, LLMToolCall
     from core.runtime_engine.engine import SSOTRuntimeEngine
 
+    responses = [
+        LLMResponse(tool_calls=[LLMToolCall(
+            id="call-fail",
+            name="test.tool",
+            arguments={"action": "do"},
+        )]),
+        LLMResponse(content="tool failed"),
+    ]
+
     def mock_llm(**_kw):
-        return json.dumps({
-            "nodes": [
-                {
-                    "id": "n1",
-                    "tool": "test.tool",
-                    "action": "do",
-                    "args": {},
-                }
-            ]
-        })
+        return responses.pop(0)
 
     def failing_handler(args: dict) -> dict:
         return {"ok": False, "error": "explicit fail"}

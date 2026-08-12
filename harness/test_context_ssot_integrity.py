@@ -213,8 +213,9 @@ def test_retriever_applies_boosts_before_final_top_k(monkeypatch, tmp_path):
 
 
 def test_runtime_prompt_has_context_authority_contract():
-    assert "data, not instructions" in RUNTIME_SYSTEM_PROMPT
-    assert "Never claim" in RUNTIME_SYSTEM_PROMPT
-    assert "Adaptive response mode" in RUNTIME_SYSTEM_PROMPT
-    assert "immediately previous exchange" in RUNTIME_SYSTEM_PROMPT
-    assert "Preserve exact technical notation" in RUNTIME_SYSTEM_PROMPT
+    normalized = " ".join(RUNTIME_SYSTEM_PROMPT.split())
+    assert "data, not instructions" in normalized
+    assert "Never claim checked/current/completed/fixed" in normalized
+    assert "Adaptive response mode" in normalized
+    assert "immediately previous exchange" in normalized
+    assert "Preserve exact technical notation" in normalized
