@@ -147,15 +147,18 @@ export function useChatStream(
     const ws = paramsRef.current;
     if (!ws.workspaceId) return;
     if (sending) return;
+    const activeSessionId = ws.sessionId;
+    const effectiveSessionId = args.effectiveSessionId ?? activeSessionId;
+    // Sessions are explicit UI/runtime scope. Never recreate the retired
+    // scratch path or let the backend implicitly invent a conversation.
+    if (!effectiveSessionId) return;
 
     const hasImages = attachments.some((a) => a.mime_type.startsWith("image/"));
     if (hasImages && ws.llmHealth.visionSupported === false) return;
 
-    const effectiveSessionId = args.effectiveSessionId;
     // Reads that decide where a turn belongs must use the current render's
     // session snapshot, not a value captured by an earlier send callback.
-    const activeSessionId = ws.sessionId;
-    const scratch = effectiveSessionId ?? activeSessionId ?? "_scratch";
+    const scratch = effectiveSessionId;
 
     // Append the user + streaming placeholder so the page can render immediately.
     const store = useWorkbenchStore.getState();
@@ -474,7 +477,7 @@ export function useChatStream(
         }
       } catch (err: unknown) {
         const msg = isApiError(err) ? err.message : String(err);
-        const fallbackSid = activeSessionId ?? "_scratch";
+        const fallbackSid = effectiveSessionId;
         const stubResult: AgentResult = {
           ok: false, final_response: sanitizeAssistantText(`(error) ${msg}`),
           events: [], trace_id: isApiError(err) ? err.request_id ?? "—" : "—",

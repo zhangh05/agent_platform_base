@@ -1,7 +1,5 @@
 import { useCallback, type Dispatch, type MutableRefObject, type SetStateAction } from "react";
-import { sessionsApi } from "../api";
 import { apiRequest } from "../api/client";
-import { useSessionStore } from "../stores/session";
 import { useChatStream, type ChatStreamAttachment } from "./useChatStream";
 
 export type PendingAttachment = {
@@ -27,7 +25,6 @@ type UseWorkbenchSendParams = {
   clearDraft: () => void;
   prepareToSend: () => void;
   keepAtBottom: () => void;
-  switchSession: (sessionId: string | null) => void;
   toast: Toast;
   pendingAutoMetadataRef: MutableRefObject<Record<string, unknown> | null>;
 };
@@ -52,7 +49,6 @@ export function useWorkbenchSend({
   clearDraft,
   prepareToSend,
   keepAtBottom,
-  switchSession,
   toast,
   pendingAutoMetadataRef,
 }: UseWorkbenchSendParams) {
@@ -80,6 +76,10 @@ export function useWorkbenchSend({
       toast({ kind: "warning", title: "未选择工作区", body: "请在左侧选择一个工作区" });
       return;
     }
+    if (!sessionId) {
+      toast({ kind: "warning", title: "请先新建会话", body: "点击左侧会话标题旁的“+”后再发送消息。" });
+      return;
+    }
     if (hasImages && visionSupported === false) {
       toast({
         kind: "warning",
@@ -93,23 +93,11 @@ export function useWorkbenchSend({
     clearDraft();
     const turnMetadata = { ...(metadataOverride || pendingAutoMetadataRef.current || {}) };
     pendingAutoMetadataRef.current = null;
-    let effectiveSessionId = sessionId;
+    const effectiveSessionId = sessionId;
     let fullText = text;
     let displayAttachments: ChatStreamAttachment[] = [];
 
     if (hasAttachments) {
-      if (!effectiveSessionId) {
-        try {
-          const created = await sessionsApi.create(workspaceId, text.slice(0, 60));
-          effectiveSessionId = created.session.session_id;
-          useSessionStore.getState().setCurrentSession(effectiveSessionId);
-          switchSession(effectiveSessionId);
-        } catch {
-          toast({ kind: "error", title: "无法创建会话", body: "图片未发送，请稍后重试。" });
-          return;
-        }
-      }
-
       setAttachments((previous) => previous.map((attachment) => ({ ...attachment, uploading: true })));
       const uploaded: ChatStreamAttachment[] = [];
       const failedNames: string[] = [];
@@ -159,7 +147,7 @@ export function useWorkbenchSend({
     prepareToSend();
     requestAnimationFrame(keepAtBottom);
     await sendStream({ text: fullText, attachments: displayAttachments, effectiveSessionId, turnMetadata });
-  }, [attachments, clearDraft, input, keepAtBottom, pendingAutoMetadataRef, prepareToSend, sendStream, sending, sessionId, setAttachments, setInput, switchSession, toast, visionSupported, workspaceId]);
+  }, [attachments, clearDraft, input, keepAtBottom, pendingAutoMetadataRef, prepareToSend, sendStream, sending, sessionId, setAttachments, setInput, toast, visionSupported, workspaceId]);
 
   return { send, stop };
 }

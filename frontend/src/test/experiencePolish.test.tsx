@@ -88,6 +88,17 @@ describe("Experience polish", () => {
     expect(await screen.findByTestId("workbench-empty")).toBeInTheDocument();
   });
 
+  it("requires an explicit active session before accepting input", async () => {
+    render(<TaskWorkbench />);
+
+    expect(await screen.findByRole("heading", { name: "请先新建会话" })).toBeInTheDocument();
+    expect(screen.getByTestId("chat-input")).toBeDisabled();
+    expect(screen.getByTestId("chat-input")).toHaveAttribute("placeholder", "请先点击左侧 + 新建会话");
+    expect(screen.getByTestId("btn-send")).toBeDisabled();
+    expect(screen.getAllByTitle("请先新建会话").every((element) => element.hasAttribute("disabled"))).toBe(true);
+    expect(screen.getByRole("button", { name: "OSPF 邻居不起来" })).toBeDisabled();
+  });
+
   it("renders the active session directly from restored bySession messages", async () => {
     useSessionStore.setState({ currentWorkspaceId: "default", currentSessionId: "sess-restored" });
     enqueue("/sessions/sess-restored/messages", {
@@ -119,6 +130,7 @@ describe("Experience polish", () => {
     useSessionStore.setState({ currentWorkspaceId: "default", currentSessionId: "sess-chip" });
     render(<TaskWorkbench />);
 
+    expect(screen.getByTestId("chat-input")).toBeEnabled();
     fireEvent.click((await screen.findAllByText("出口策略放通检查"))[0]);
 
     await waitFor(() => {

@@ -238,7 +238,6 @@ export function TaskWorkbench() {
     clearDraft,
     prepareToSend: () => { userScrolledUpRef.current = false; },
     keepAtBottom,
-    switchSession,
     toast,
     pendingAutoMetadataRef,
   });
@@ -254,7 +253,7 @@ export function TaskWorkbench() {
   // Pick up cross-page auto prompts.
   useEffect(() => {
     const autoRaw = safeGetSession("workbench_auto_prompt");
-    if (autoRaw && currentWorkspaceId) {
+    if (autoRaw && currentWorkspaceId && currentSessionId) {
       let timer: ReturnType<typeof setTimeout> | undefined;
       let payload: WorkbenchAutoPrompt;
       try {
@@ -278,7 +277,7 @@ export function TaskWorkbench() {
         if (timer) clearTimeout(timer);
       };
     }
-  }, [currentWorkspaceId]); // do NOT include onSend — use ref to avoid re-render killing timeout
+  }, [currentSessionId, currentWorkspaceId]); // do NOT include onSend — use ref to avoid re-render killing timeout
 
   // Session switch + sync
   useEffect(() => {
@@ -323,6 +322,7 @@ export function TaskWorkbench() {
   }, [onSend]);
 
   function pickChip(prompt: string) {
+    if (!currentSessionId) return;
     setInput(prompt);
     requestAnimationFrame(() => inputRef.current?.focus());
   }
@@ -330,6 +330,7 @@ export function TaskWorkbench() {
   // ── File upload ──
 
   function addFiles(files: FileList | File[]) {
+    if (!currentSessionId) return;
     const maxFileBytes = 100 * 1024 * 1024;
     const maxImageBytes = 5 * 1024 * 1024;
     const available = Math.max(0, 8 - attachments.length);
@@ -366,6 +367,7 @@ export function TaskWorkbench() {
   }
 
   function pickFile() {
+    if (!currentSessionId) return;
     fileInputRef.current?.click();
   }
 
@@ -373,12 +375,14 @@ export function TaskWorkbench() {
   const handleDragOver = useCallback((e: React.DragEvent) => { e.preventDefault(); }, []);
   const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault();
+    if (!currentSessionId) return;
     if (e.dataTransfer.files?.length) addFiles(e.dataTransfer.files);
-  }, []);
+  }, [currentSessionId]);
 
   // Paste handler — capture images from clipboard
   useEffect(() => {
     const handler = (e: ClipboardEvent) => {
+      if (!currentSessionId) return;
       const items = e.clipboardData?.items;
       if (!items) return;
       const files: File[] = [];
@@ -390,7 +394,7 @@ export function TaskWorkbench() {
     };
     window.addEventListener("paste", handler);
     return () => window.removeEventListener("paste", handler);
-  }, []);
+  }, [currentSessionId]);
 
   const llmStatusLabel = llmHealth.connected
     ? llmHealth.recentFailure ? "模型可用 · 最近一次请求超时，可重试" : `模型可用 · ${llmHealth.model || llmHealth.provider || "在线"}`
@@ -456,11 +460,11 @@ export function TaskWorkbench() {
           <RuntimeEventTimeline messages={visibleHistory ?? []} />
         ) : (visibleHistory?.length ?? 0) === 0 && !sending ? (
           <div className="wb-empty" data-testid="workbench-empty">
-            <h2>任务工作台</h2>
-            <p>输入故障现象、配置片段或排查目标，智能体会按时间顺序展示处理过程。</p>
+            <h2>{currentSessionId ? "任务工作台" : "请先新建会话"}</h2>
+            <p>{currentSessionId ? "输入故障现象、配置片段或排查目标，智能体会按时间顺序展示处理过程。" : "点击左侧“会话”旁的 +，创建会话后即可开始。"}</p>
             <div className="wb-empty-chips">
               {QUICK_CHIPS.map((c) => (
-                <button key={c.label} className="wb-input-chip" type="button" onClick={() => pickChip(c.prompt)} title={c.prompt}>
+                <button key={c.label} className="wb-input-chip" type="button" onClick={() => pickChip(c.prompt)} title={currentSessionId ? c.prompt : "请先新建会话"} disabled={!currentSessionId}>
                   {c.label}
                 </button>
               ))}
@@ -497,7 +501,7 @@ export function TaskWorkbench() {
 
       {/* ── Retry bar (derive from last assistant message's result) ── */}
       {(() => {
-        if (sending || !lastUserInput) return null;
+        if (!currentSessionId || sending || !lastUserInput) return null;
         const lastAssistant = [...(visibleHistory ?? [])].reverse().find((m) => m.role === "assistant");
         const lastResult = lastAssistant?.result;
         if (!lastResult) return null;
@@ -529,18 +533,18 @@ export function TaskWorkbench() {
           </div>
         )}
         <div className="wb-input-row">
-            <input ref={fileInputRef} type="file" multiple accept=".txt,.md,.json,.csv,.tsv,.log,.conf,.cfg,.yaml,.yml,.xml,.html,.htm,.pdf,.docx,.xlsx,.pptx,.png,.jpg,.jpeg,.gif,.webp" onChange={(e) => { if (e.target.files) { addFiles(e.target.files); e.target.value = ""; } }} className="wb-file-input" />
-            <button className="wb-attach-btn" onClick={pickFile} disabled={sending} title="上传常见文档、表格、演示文稿、配置或图片（单文件 100 MB，图片 5 MB）" type="button">
+            <input ref={fileInputRef} type="file" multiple disabled={!currentSessionId || sending} accept=".txt,.md,.json,.csv,.tsv,.log,.conf,.cfg,.yaml,.yml,.xml,.html,.htm,.pdf,.docx,.xlsx,.pptx,.png,.jpg,.jpeg,.gif,.webp" onChange={(e) => { if (e.target.files) { addFiles(e.target.files); e.target.value = ""; } }} className="wb-file-input" />
+            <button className="wb-attach-btn" onClick={pickFile} disabled={!currentSessionId || sending} title={currentSessionId ? "上传常见文档、表格、演示文稿、配置或图片（单文件 100 MB，图片 5 MB）" : "请先新建会话"} type="button">
               <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M8.5 1.5v9M5 5l3.5-3.5L12 5M2.5 10v2.5a1 1 0 001 1h9a1 1 0 001-1V10" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
             </button>
             <textarea
               ref={inputRef}
               className="wb-input wb-input-content"
-              placeholder="输入主机名、IP 或排查目标… (Enter 发送, Shift+Enter 换行)"
+              placeholder={currentSessionId ? "输入主机名、IP 或排查目标… (Enter 发送, Shift+Enter 换行)" : "请先点击左侧 + 新建会话"}
               value={input}
               onChange={(e) => handleInputChange(e.target.value)}
               onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); onSend(); } }}
-              disabled={sending}
+              disabled={!currentSessionId || sending}
               rows={1}
               data-testid="chat-input"
               spellCheck={false}
@@ -553,7 +557,7 @@ export function TaskWorkbench() {
               <button
                 className="wb-send"
                 onClick={() => onSend()}
-                disabled={!input.trim() && attachments.length === 0}
+                disabled={!currentSessionId || (!input.trim() && attachments.length === 0)}
                 data-testid="btn-send"
                 type="button"
                 aria-label="发送"
