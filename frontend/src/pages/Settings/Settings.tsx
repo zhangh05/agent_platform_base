@@ -28,7 +28,7 @@ interface ProviderPreset {
 }
 
 const PROVIDER_PRESETS: ProviderPreset[] = [
-  { id: "minimax", label: "MiniMax", base_url: "https://api.minimaxi.com/v1", model: "MiniMax-M3", hint: "api.minimaxi.com" },
+  { id: "minimax", label: "MiniMax", base_url: "https://api.minimaxi.com/anthropic/v1", model: "MiniMax-M3", hint: "api.minimaxi.com" },
   { id: "deepseek", label: "DeepSeek", base_url: "https://api.deepseek.com/v1", model: "deepseek-chat", hint: "api.deepseek.com" },
   { id: "ark", label: "方舟 (豆包)", base_url: "https://ark.cn-beijing.volces.com/api/coding/v3", model: "ark-code-latest", hint: "ark.volces.com" },
   { id: "openai", label: "OpenAI", base_url: "https://api.openai.com/v1", model: "gpt-4o-mini", hint: "api.openai.com" },

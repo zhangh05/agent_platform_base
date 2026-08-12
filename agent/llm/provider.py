@@ -39,6 +39,8 @@ def generate(req: LLMRequest, cfg: dict = None) -> LLMResponse:
         return LLMResponse(error="LLM disabled", metadata={"error_type": ERROR_TYPE_DISABLED_BY_USER})
     if cfg.get("provider_type") == "mock":
         return _mock_generate(req, cfg)
+    if cfg.get("provider_type") == "anthropic_messages":
+        return _anthropic_messages_generate(req, cfg)
     return _api_generate(req, cfg)
 
 
@@ -201,11 +203,6 @@ def _api_generate(req: LLMRequest, cfg: dict) -> LLMResponse:
             metadata={"error_type": ERROR_TYPE_MISSING_API_KEY},
         )
     try:
-        # MiniMax-M3 accepts image/video content through its Anthropic
-        # compatibility endpoint, not its OpenAI chat-completions endpoint.
-        # Keep the established OpenAI route for ordinary text/tool turns.
-        if _uses_minimax_m3_vision(req, cfg):
-            return _minimax_m3_vision_generate(req, cfg)
         url = cfg.get("base_url", "https://api.minimaxi.com/v1").rstrip("/") + "/chat/completions"
         body_dict = {
             "model": cfg.get("model", req.model),
@@ -607,44 +604,51 @@ def _format_message(m) -> dict:
     return msg
 
 
-def _uses_minimax_m3_vision(req: LLMRequest, cfg: dict) -> bool:
-    if str(cfg.get("provider") or "").lower() != "minimax":
-        return False
-    if str(cfg.get("model") or "").lower() != "minimax-m3":
-        return False
-    return any(
-        isinstance(message.content, list)
-        and any(isinstance(part, dict) and part.get("type") == "image_url" for part in message.content)
-        for message in req.messages
-    )
+def _anthropic_messages_generate(req: LLMRequest, cfg: dict) -> LLMResponse:
+    """Call an Anthropic Messages-compatible provider.
 
-
-def _minimax_m3_vision_generate(req: LLMRequest, cfg: dict) -> LLMResponse:
-    """Call MiniMax-M3's documented Anthropic-compatible vision endpoint."""
+    Provider identity and wire protocol are intentionally separate. Native
+    Anthropic and MiniMax-M3 share this serializer/parser while retaining
+    provider-specific base URLs, model names, and credentials.
+    """
     try:
         import requests as _requests
-        from urllib.parse import urlsplit, urlunsplit
 
-        base = str(cfg.get("base_url") or "https://api.minimaxi.com/v1")
-        parsed = urlsplit(base)
-        vision_url = urlunsplit((parsed.scheme, parsed.netloc, "/anthropic/v1/messages", "", ""))
-        body = _to_minimax_anthropic_request(req, cfg)
+        url = _anthropic_messages_url(cfg)
+        body = _to_anthropic_messages_request(req, cfg)
         headers = {
             "Content-Type": "application/json",
             "x-api-key": cfg.get("api_key", ""),
             "anthropic-version": "2023-06-01",
         }
         if not req.stream:
-            response = _requests.post(vision_url, json=body, headers=headers, timeout=cfg.get("timeout", 120))
+            response = _requests.post(url, json=body, headers=headers, timeout=cfg.get("timeout", 120))
             if response.status_code != 200:
                 return LLMResponse(error=f"provider_http_{response.status_code}: {response.text[:300]}", metadata={"http_status": response.status_code})
-            return _parse_minimax_anthropic_response(response.json(), cfg)
-        return _minimax_m3_vision_stream(vision_url, body, headers, cfg, req)
+            return _parse_anthropic_messages_response(response.json(), cfg)
+        return _anthropic_messages_stream(url, body, headers, cfg, req)
     except Exception as exc:
-        return LLMResponse(error=f"provider_vision_error: {str(exc)[:300]}")
+        return LLMResponse(error=f"provider_anthropic_error: {str(exc)[:300]}")
 
 
-def _to_minimax_anthropic_request(req: LLMRequest, cfg: dict) -> dict:
+def _anthropic_messages_url(cfg: dict) -> str:
+    """Resolve one exact Messages endpoint from a provider base URL."""
+    from urllib.parse import urlsplit, urlunsplit
+
+    provider = str(cfg.get("provider") or cfg.get("default_provider") or "").lower()
+    default = "https://api.minimaxi.com/anthropic/v1" if provider == "minimax" else "https://api.anthropic.com/v1"
+    parsed = urlsplit(str(cfg.get("base_url") or default).rstrip("/"))
+    path = parsed.path.rstrip("/")
+    if path.endswith("/messages"):
+        messages_path = path
+    elif provider == "minimax" and not path.endswith("/anthropic/v1"):
+        messages_path = "/anthropic/v1/messages"
+    else:
+        messages_path = f"{path}/messages"
+    return urlunsplit((parsed.scheme, parsed.netloc, messages_path, "", ""))
+
+
+def _to_anthropic_messages_request(req: LLMRequest, cfg: dict) -> dict:
     system = "\n\n".join(str(m.content) for m in req.messages if m.role == "system" and isinstance(m.content, str))
     messages: list[dict] = []
 
@@ -679,7 +683,12 @@ def _to_minimax_anthropic_request(req: LLMRequest, cfg: dict) -> dict:
             blocks.extend(_to_anthropic_tool_use(call) for call in message.tool_calls)
         if message.role in {"user", "assistant"}:
             append_message(message.role, blocks)
-    body = {"model": cfg.get("model", req.model), "max_tokens": cfg.get("max_tokens", req.max_tokens), "messages": messages}
+    body = {
+        "model": cfg.get("model", req.model),
+        "max_tokens": cfg.get("max_tokens", req.max_tokens),
+        "temperature": cfg.get("temperature", req.temperature),
+        "messages": messages,
+    }
     if system:
         body["system"] = system
     if req.tools:
@@ -688,6 +697,7 @@ def _to_minimax_anthropic_request(req: LLMRequest, cfg: dict) -> dict:
             "description": item.get("function", {}).get("description", ""),
             "input_schema": item.get("function", {}).get("parameters", {"type": "object", "properties": {}}),
         } for item in req.tools if item.get("function", {}).get("name")]
+        body["tool_choice"] = {"type": "auto"}
     if req.stream:
         body["stream"] = True
     return body
@@ -718,12 +728,12 @@ def _to_anthropic_content_part(part: dict) -> dict:
     url = str((part.get("image_url") or {}).get("url") or "")
     prefix, separator, data = url.partition(",")
     if not separator or not prefix.startswith("data:") or ";base64" not in prefix:
-        raise ValueError("MiniMax-M3 vision requires a base64 data URL")
+        raise ValueError("Anthropic Messages image input requires a base64 data URL")
     media_type = prefix[5:].split(";", 1)[0]
     return {"type": "image", "source": {"type": "base64", "media_type": media_type, "data": data}}
 
 
-def _parse_minimax_anthropic_response(data: dict, cfg: dict) -> LLMResponse:
+def _parse_anthropic_messages_response(data: dict, cfg: dict) -> LLMResponse:
     content = []
     calls = []
     for block in data.get("content") or []:
@@ -731,10 +741,10 @@ def _parse_minimax_anthropic_response(data: dict, cfg: dict) -> LLMResponse:
             content.append(str(block.get("text") or ""))
         elif block.get("type") == "tool_use":
             calls.append(LLMToolCall(id=str(block.get("id") or ""), name=str(block.get("name") or ""), arguments=dict(block.get("input") or {})))
-    return LLMResponse(content="".join(content), provider=cfg.get("provider", "minimax"), model=data.get("model", cfg.get("model", "")), usage=data.get("usage"), finish_reason=data.get("stop_reason", ""), raw=data, tool_calls=calls)
+    return LLMResponse(content="".join(content), provider=cfg.get("provider", ""), model=data.get("model", cfg.get("model", "")), usage=data.get("usage"), finish_reason=data.get("stop_reason", ""), raw=data, tool_calls=calls)
 
 
-def _minimax_m3_vision_stream(url, body, headers, cfg, req) -> LLMResponse:
+def _anthropic_messages_stream(url, body, headers, cfg, req) -> LLMResponse:
     import requests as _requests
     content_parts, blocks, usage, model, stop_reason = [], {}, None, cfg.get("model", ""), ""
     try:
@@ -763,7 +773,7 @@ def _minimax_m3_vision_stream(url, body, headers, cfg, req) -> LLMResponse:
             elif kind == "message_delta":
                 delta = event.get("delta") or {}; stop_reason = str(delta.get("stop_reason") or stop_reason); usage = event.get("usage") or usage
     except Exception as exc:
-        return LLMResponse(error=f"provider_vision_error: {str(exc)[:300]}")
+        return LLMResponse(error=f"provider_anthropic_error: {str(exc)[:300]}")
     calls = []
     for block in blocks.values():
         if block.get("type") == "tool_use":

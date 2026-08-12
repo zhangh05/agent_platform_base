@@ -20,7 +20,7 @@ class TestLLMProviderSettings:
         (providers / "minimax.json").write_text(json.dumps({
             "enabled": True,
             "provider": "minimax",
-            "base_url": "https://api.minimaxi.com/v1",
+            "base_url": "https://api.minimaxi.com/anthropic/v1",
             "model": "MiniMax-M3",
             "api_key": "sk-test12345678",
         }))
@@ -33,6 +33,7 @@ class TestLLMProviderSettings:
         assert cfg["provider"] == "minimax"
         assert cfg["config_source"] == "ui_settings"
         assert cfg["model"] == "MiniMax-M3"
+        assert cfg["provider_type"] == "anthropic_messages"
 
     def test_env_fallback_when_no_active_provider(self, monkeypatch, tmp_path):
         _isolate_provider_store(monkeypatch, tmp_path)
@@ -74,6 +75,23 @@ class TestLLMProviderSettings:
 
         cfg = resolve_effective_llm_config()
         assert cfg["key_source"] == "ui_settings"
+
+    def test_legacy_minimax_base_is_migrated_without_changing_key(self, monkeypatch, tmp_path):
+        providers = _isolate_provider_store(monkeypatch, tmp_path)
+        providers.mkdir(parents=True)
+        (providers / "minimax.json").write_text(json.dumps({
+            "enabled": True,
+            "provider": "minimax",
+            "base_url": "https://api.minimaxi.com/v1",
+            "model": "MiniMax-M3",
+            "api_key": "sk-existing-key",
+        }))
+
+        from agent.llm.provider_store import load_provider_config
+        cfg = load_provider_config("minimax")
+
+        assert cfg["base_url"] == "https://api.minimaxi.com/anthropic/v1"
+        assert cfg["api_key"] == "sk-existing-key"
 
 
 class TestKeyResolverMask:

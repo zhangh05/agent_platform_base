@@ -36,7 +36,7 @@ def save_llm_settings(data: dict) -> dict:
     if requested == "minimax" and not data.get("model"):
         data["model"] = "MiniMax-M3"
     if requested == "minimax" and not data.get("base_url"):
-        data["base_url"] = "https://api.minimaxi.com/v1"
+        data["base_url"] = "https://api.minimaxi.com/anthropic/v1"
 
     cfg = save_provider_config(provider_id, data)
     set_active_provider(provider_id)
@@ -173,6 +173,10 @@ def _provider_type(provider_id: str, cfg: dict) -> str:
         return cfg["provider_type"]
     if provider_id == "ollama":
         return "ollama_compatible"
+    if provider_id == "anthropic":
+        return "anthropic_messages"
+    if provider_id == "minimax" and str(cfg.get("model") or "").lower() == "minimax-m3":
+        return "anthropic_messages"
     if provider_id in ("disabled", "mock"):
         return provider_id
     return "openai_compatible"

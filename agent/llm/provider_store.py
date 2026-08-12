@@ -32,7 +32,7 @@ PROVIDER_PRESETS: dict = {
     "minimax": {
         "id": "minimax",
         "label": "MiniMax",
-        "base_url": "https://api.minimaxi.com/v1",
+        "base_url": "https://api.minimaxi.com/anthropic/v1",
         "model": "MiniMax-M3",
         "hint": "api.minimaxi.com",
     },
@@ -111,6 +111,15 @@ def _build_provider_config(provider_id: str, data: Optional[dict] = None) -> dic
             cfg["api_key"] = get_secret(cfg["secret_ref"])
         if data.get("updated_at"):
             cfg["updated_at"] = data["updated_at"]
+    # Migrate the former OpenAI-compatible MiniMax base in memory. The key and
+    # persisted secret reference remain untouched; the next explicit save will
+    # store the canonical Anthropic Messages base URL.
+    if (
+        provider_id == "minimax"
+        and str(cfg.get("model") or "").lower() == "minimax-m3"
+        and str(cfg.get("base_url") or "").rstrip("/") == "https://api.minimaxi.com/v1"
+    ):
+        cfg["base_url"] = "https://api.minimaxi.com/anthropic/v1"
     return cfg
 
 

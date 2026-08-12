@@ -236,8 +236,8 @@ def _image_evidence(evidence_id: str, file_id: str) -> dict:
     }
 
 
-def test_minimax_vision_translates_query_loop_tool_messages_to_anthropic_blocks():
-    from agent.llm.provider import _to_minimax_anthropic_request
+def test_anthropic_transport_translates_query_loop_tool_messages_to_native_blocks():
+    from agent.llm.provider import _to_anthropic_messages_request
     from agent.llm.schemas import LLMMessage, LLMRequest
 
     request = LLMRequest(
@@ -260,7 +260,7 @@ def test_minimax_vision_translates_query_loop_tool_messages_to_anthropic_blocks(
             ]),
         ],
     )
-    body = _to_minimax_anthropic_request(request, {"model": "MiniMax-M3", "max_tokens": 1000})
+    body = _to_anthropic_messages_request(request, {"model": "MiniMax-M3", "max_tokens": 1000})
 
     assert [message["role"] for message in body["messages"]] == [
         "user", "assistant", "user",
@@ -278,3 +278,67 @@ def test_minimax_vision_translates_query_loop_tool_messages_to_anthropic_blocks(
         "content": '{"ok":true}',
     }
     assert final_blocks[-1]["type"] == "image"
+
+
+def test_minimax_m3_text_turn_uses_anthropic_messages_transport(monkeypatch):
+    from agent.llm.provider import generate
+    from agent.llm.schemas import LLMMessage, LLMRequest
+
+    captured = {}
+
+    class Response:
+        status_code = 200
+
+        @staticmethod
+        def json():
+            return {
+                "content": [{"type": "text", "text": "ok"}],
+                "model": "MiniMax-M3",
+                "stop_reason": "end_turn",
+            }
+
+    def fake_post(url, **kwargs):
+        captured["url"] = url
+        captured.update(kwargs)
+        return Response()
+
+    monkeypatch.setattr("requests.post", fake_post)
+    response = generate(
+        LLMRequest(
+            task="assistant_chat",
+            messages=[LLMMessage(role="user", content="hello")],
+        ),
+        {
+            "enabled": True,
+            "provider": "minimax",
+            "provider_type": "anthropic_messages",
+            "base_url": "https://api.minimaxi.com/anthropic/v1",
+            "model": "MiniMax-M3",
+            "api_key": "sk-test",
+        },
+    )
+
+    assert response.content == "ok"
+    assert captured["url"] == "https://api.minimaxi.com/anthropic/v1/messages"
+    assert captured["headers"]["x-api-key"] == "sk-test"
+    assert captured["json"]["messages"] == [{
+        "role": "user",
+        "content": [{"type": "text", "text": "hello"}],
+    }]
+
+
+def test_anthropic_messages_url_accepts_base_or_full_endpoint():
+    from agent.llm.provider import _anthropic_messages_url
+
+    assert _anthropic_messages_url({
+        "provider": "minimax",
+        "base_url": "https://api.minimaxi.com/v1",
+    }) == "https://api.minimaxi.com/anthropic/v1/messages"
+    assert _anthropic_messages_url({
+        "provider": "minimax",
+        "base_url": "https://api.minimaxi.com/anthropic/v1/messages",
+    }) == "https://api.minimaxi.com/anthropic/v1/messages"
+    assert _anthropic_messages_url({
+        "provider": "anthropic",
+        "base_url": "https://api.anthropic.com/v1",
+    }) == "https://api.anthropic.com/v1/messages"
