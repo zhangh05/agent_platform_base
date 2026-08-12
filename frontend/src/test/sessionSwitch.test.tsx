@@ -3,7 +3,7 @@
  */
 
 import { describe, it, expect, beforeEach } from "vitest";
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { act, render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { Sidebar } from "../layouts/Sidebar";
 import { enqueue, getRequests, installMockApi, resetMocks } from "./mockServer";
 import { useSessionStore } from "../stores/session";
@@ -58,5 +58,18 @@ describe("Session switch", () => {
       workspace_id: "default",
       session_id: "sess-B",
     });
+  });
+
+  it("clears a stale session restored after an empty list has loaded", async () => {
+    enqueue("/workspaces", { status: 200, data: { workspaces: [{ workspace_id: "default", name: "Default", created_at: "", is_default: true, stats: { session_count: 0, artifact_count: 0, knowledge_source_count: 0 } }] } });
+    enqueue("/sessions", { status: 200, data: { sessions: [] } });
+    enqueue("/runs/recent", { status: 200, data: { runs: [] } });
+
+    render(<Sidebar />);
+    expect(await screen.findByText("暂无活跃会话")).toBeInTheDocument();
+
+    act(() => useSessionStore.getState().setCurrentSession("deleted-session"));
+
+    await waitFor(() => expect(useSessionStore.getState().currentSessionId).toBeNull());
   });
 });

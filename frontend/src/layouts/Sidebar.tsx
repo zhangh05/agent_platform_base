@@ -199,14 +199,16 @@ export function Sidebar() {
   }, []);
 
   useEffect(() => {
+    if (sessList.state.kind === "empty") {
+      if (currentSessionId) setCurrentSession(null);
+      return;
+    }
     if (sessList.state.kind !== "success") return;
     const sessions = sessList.state.data.sessions ?? [];
-    const cur = useSessionStore.getState().currentSessionId;
-    if (!cur || !sessions.some((s) => s.session_id === cur)) {
+    if (!currentSessionId || !sessions.some((s) => s.session_id === currentSessionId)) {
       setCurrentSession(sessions[0]?.session_id ?? null);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sessList.state, currentWorkspaceId]);
+  }, [currentSessionId, currentWorkspaceId, sessList.state, setCurrentSession]);
 
   async function onNewSession() {
     if (!currentWorkspaceId) {
