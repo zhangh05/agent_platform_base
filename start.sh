@@ -174,9 +174,9 @@ check_version() {
 
     "$PYTHON_BIN" -c 'import pip' >/dev/null 2>&1 || fail "Python pip is required (ensure pip is installed)."
 
-    [ -x "$NODE_BIN" ] || fail "Node.js 20.19+ or 22.12+ is required."
-    "$NODE_BIN" -e 'const [a,b]=process.versions.node.split(".").map(Number); process.exit(a>22 || (a===22&&b>=12) || (a===20&&b>=19) ? 0 : 1)' \
-        || fail "Node.js 20.19+ or 22.12+ is required; found $("$NODE_BIN" --version 2>&1)."
+    [ -x "$NODE_BIN" ] || fail "Node.js 24 LTS is required."
+    "$NODE_BIN" -e 'const major=Number(process.versions.node.split(".")[0]); process.exit(major===24 ? 0 : 1)' \
+        || fail "Node.js 24 LTS is required; found $("$NODE_BIN" --version 2>&1)."
     [ -x "$NPM_BIN" ] || fail "npm is required."
     command -v curl >/dev/null 2>&1 || fail "curl is required."
     command -v lsof >/dev/null 2>&1 || fail "lsof is required."

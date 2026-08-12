@@ -224,10 +224,10 @@ function Ensure-Frontend {
     # must not accidentally depend on npm from the host machine.
     $npm = if ($usingBundledNode) { $null } else { Get-Command npm.cmd -ErrorAction SilentlyContinue }
     if (-not $node) {
-        Fail "Node.js 20.19+ or 22.12+ was not found. Official Windows releases include Node.js; re-download the release archive."
+        Fail "Node.js 24 LTS was not found. Official Windows releases include Node.js; re-download the release archive."
     }
-    $nodeCheck = Invoke-Native $node.Source @("-e", "const [a,b]=process.versions.node.split('.').map(Number); process.exit(a>22||(a===22&&b>=12)||(a===20&&b>=19)?0:1)") -Quiet
-    if ($nodeCheck.ExitCode -ne 0) { Fail-Native "Node.js 20.19+ or 22.12+ is required" $nodeCheck }
+    $nodeCheck = Invoke-Native $node.Source @("-e", "const major=Number(process.versions.node.split('.')[0]); process.exit(major===24?0:1)") -Quiet
+    if ($nodeCheck.ExitCode -ne 0) { Fail-Native "Node.js 24 LTS is required" $nodeCheck }
 
     $lockFile = Join-Path $FrontendDir "package-lock.json"
     $lockHash = (Get-FileHash -Algorithm SHA256 $lockFile).Hash

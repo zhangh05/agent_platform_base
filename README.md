@@ -13,7 +13,7 @@ bash start.sh
 - Frontend: `http://localhost:5273`
 - Backend API: `http://127.0.0.1:8011/api/health`
 
-源码运行需要 Python 3.12+、Node.js 20.19+ 或 22.12+。
+源码运行需要 Python 3.12+、Node.js 24 LTS。
 
 停止服务：
 
