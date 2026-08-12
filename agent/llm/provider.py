@@ -646,14 +646,39 @@ def _minimax_m3_vision_generate(req: LLMRequest, cfg: dict) -> LLMResponse:
 
 def _to_minimax_anthropic_request(req: LLMRequest, cfg: dict) -> dict:
     system = "\n\n".join(str(m.content) for m in req.messages if m.role == "system" and isinstance(m.content, str))
-    messages = []
+    messages: list[dict] = []
+
+    def append_message(role: str, content: list[dict]) -> None:
+        if not content:
+            return
+        # Anthropic requires alternating user/assistant turns. QueryLoop may
+        # append a user nudge immediately after one or more tool results, so
+        # merge adjacent blocks with the same projected role.
+        if messages and messages[-1]["role"] == role:
+            messages[-1]["content"].extend(content)
+        else:
+            messages.append({"role": role, "content": content})
+
     for message in req.messages:
         if message.role == "system":
             continue
-        content = message.content
-        if isinstance(content, list):
-            content = [_to_anthropic_content_part(part) for part in content]
-        messages.append({"role": message.role, "content": content})
+        if message.role == "tool":
+            append_message("user", [{
+                "type": "tool_result",
+                "tool_use_id": str(message.tool_call_id or ""),
+                "content": str(message.content or ""),
+            }])
+            continue
+
+        blocks: list[dict] = []
+        if isinstance(message.content, list):
+            blocks.extend(_to_anthropic_content_part(part) for part in message.content)
+        elif str(message.content or ""):
+            blocks.append({"type": "text", "text": str(message.content)})
+        if message.role == "assistant" and message.tool_calls:
+            blocks.extend(_to_anthropic_tool_use(call) for call in message.tool_calls)
+        if message.role in {"user", "assistant"}:
+            append_message(message.role, blocks)
     body = {"model": cfg.get("model", req.model), "max_tokens": cfg.get("max_tokens", req.max_tokens), "messages": messages}
     if system:
         body["system"] = system
@@ -666,6 +691,25 @@ def _to_minimax_anthropic_request(req: LLMRequest, cfg: dict) -> dict:
     if req.stream:
         body["stream"] = True
     return body
+
+
+def _to_anthropic_tool_use(call: dict) -> dict:
+    function = call.get("function") or {}
+    name = str(function.get("name") or call.get("name") or "")
+    arguments = function.get("arguments", call.get("arguments", {}))
+    if isinstance(arguments, str):
+        try:
+            arguments = json.loads(arguments)
+        except json.JSONDecodeError:
+            arguments = {}
+    if not isinstance(arguments, dict):
+        arguments = {}
+    return {
+        "type": "tool_use",
+        "id": str(call.get("id") or ""),
+        "name": name,
+        "input": arguments,
+    }
 
 
 def _to_anthropic_content_part(part: dict) -> dict:

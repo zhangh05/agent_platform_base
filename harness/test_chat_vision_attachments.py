@@ -234,3 +234,47 @@ def _image_evidence(evidence_id: str, file_id: str) -> dict:
         "consumer": "llm",
         "delivery_status": "pending",
     }
+
+
+def test_minimax_vision_translates_query_loop_tool_messages_to_anthropic_blocks():
+    from agent.llm.provider import _to_minimax_anthropic_request
+    from agent.llm.schemas import LLMMessage, LLMRequest
+
+    request = LLMRequest(
+        task="assistant_chat",
+        messages=[
+            LLMMessage(role="system", content="system"),
+            LLMMessage(role="user", content="分析文档"),
+            LLMMessage(role="assistant", content="", tool_calls=[{
+                "id": "call_extract",
+                "type": "function",
+                "function": {
+                    "name": "workspace__file",
+                    "arguments": '{"action":"extract_document_images","file_id":"file_doc"}',
+                },
+            }]),
+            LLMMessage(role="tool", content='{"ok":true}', tool_call_id="call_extract"),
+            LLMMessage(role="user", content=[
+                {"type": "text", "text": "请基于图片回答"},
+                {"type": "image_url", "image_url": {"url": "data:image/png;base64,AA=="}},
+            ]),
+        ],
+    )
+    body = _to_minimax_anthropic_request(request, {"model": "MiniMax-M3", "max_tokens": 1000})
+
+    assert [message["role"] for message in body["messages"]] == [
+        "user", "assistant", "user",
+    ]
+    assert body["messages"][1]["content"][0] == {
+        "type": "tool_use",
+        "id": "call_extract",
+        "name": "workspace__file",
+        "input": {"action": "extract_document_images", "file_id": "file_doc"},
+    }
+    final_blocks = body["messages"][2]["content"]
+    assert final_blocks[0] == {
+        "type": "tool_result",
+        "tool_use_id": "call_extract",
+        "content": '{"ok":true}',
+    }
+    assert final_blocks[-1]["type"] == "image"
