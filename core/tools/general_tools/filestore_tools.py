@@ -224,9 +224,16 @@ def handle_file_extract_document_image(inv, *, file_id: str = "", image_index: i
         logical_type="tmp", file_kind=kind, binary=True, source="document_image_extract",
         session_id=str(getattr(inv, "session_id", "") or ""), run_id=str(getattr(inv, "run_id", "") or ""),
     )
+    from core.runtime_engine.evidence import managed_image_evidence
+
     return _ok(
         "workspace.file", file_id=file_id, image_index=image_index, image_count=len(names),
-        vision_attachment={"file_id": image_record.file_id, "kind": "image"},
+        evidence_parts=[managed_image_evidence(
+            image_record.file_id,
+            image_index=image_index,
+            source_file_id=file_id,
+            mime_type=f"image/{kind}",
+        )],
         summary="embedded document image extracted for visual analysis",
     )
 
@@ -277,19 +284,26 @@ def handle_file_extract_document_images(
             return _fail("workspace.file", "unsupported_embedded_image_format", file_id=file_id, image_index=index)
         prepared.append((index, name, raw, suffix, kind))
 
-    attachments: list[dict[str, Any]] = []
+    from core.runtime_engine.evidence import managed_image_evidence
+
+    evidence_parts: list[dict[str, Any]] = []
     for index, name, raw, suffix, kind in prepared:
         image_record = import_user_upload(
             ws, BytesIO(raw), f"{Path(str(record.get('original_name') or 'document')).stem}_image_{index}.{suffix}",
             logical_type="tmp", file_kind=kind, binary=True, source="document_image_extract",
             session_id=str(getattr(inv, "session_id", "") or ""), run_id=str(getattr(inv, "run_id", "") or ""),
         )
-        attachments.append({"file_id": image_record.file_id, "kind": "image", "image_index": index})
-    last_index = attachments[-1]["image_index"]
+        evidence_parts.append(managed_image_evidence(
+            image_record.file_id,
+            image_index=index,
+            source_file_id=file_id,
+            mime_type=f"image/{kind}",
+        ))
+    last_index = evidence_parts[-1]["coverage"]["image_index"]
     return _ok(
         "workspace.file", file_id=file_id, image_count=image_count,
         start_index=start_index, end_index=last_index, has_more=last_index < image_count,
-        vision_attachments=attachments,
+        evidence_parts=evidence_parts,
         summary=f"extracted embedded document images {start_index}-{last_index} of {image_count} for visual analysis",
     )
 

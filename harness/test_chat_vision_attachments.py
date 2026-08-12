@@ -102,7 +102,7 @@ def test_planner_receives_multimodal_message(monkeypatch):
     monkeypatch.setattr("agent.llm.runtime.invoke_llm", fake_invoke)
     result = _invoke_llm_for_ssot_runtime(
         system="system", user="look at this", workspace_id="test_ws",
-        extra={"stream_scope": "planner", "vision_attachments": [{"file_id": "file_x", "kind": "image"}]},
+        extra={"stream_scope": "planner", "evidence_parts": [_image_evidence("ev_x", "file_x")]},
     )
     content = captured["messages"][1].content
     assert result.content == "ok"
@@ -111,14 +111,14 @@ def test_planner_receives_multimodal_message(monkeypatch):
     assert content[1]["type"] == "image_url"
 
 
-def test_continuation_preserves_native_tool_messages_without_resending_image(monkeypatch):
+def test_continuation_preserves_native_tool_messages_and_receives_derived_image(monkeypatch):
     from agent.llm.schemas import LLMMessage, LLMResponse
     from agent.runtime.ssot_runtime import _invoke_llm_for_ssot_runtime
 
     captured = {}
     monkeypatch.setattr(
         "agent.runtime.vision_inputs.build_vision_content",
-        lambda *_: (_ for _ in ()).throw(AssertionError("image must not be rebuilt")),
+        lambda *_: ([{"type": "image_url", "image_url": {"url": "data:image/png;base64,AA=="}}], []),
     )
 
     def fake_invoke(**kwargs):
@@ -141,14 +141,15 @@ def test_continuation_preserves_native_tool_messages_without_resending_image(mon
         workspace_id="test_ws",
         extra={
             "stream_scope": "continuation",
-            "vision_attachments": [{"file_id": "file_x", "kind": "image"}],
+            "evidence_parts": [_image_evidence("ev_derived", "file_x")],
         },
     )
 
     messages = captured["messages"]
     assert [message.role for message in messages] == ["system", "user", "assistant", "tool"]
     assert messages[-1].tool_call_id == "call-1"
-    assert all(isinstance(message.content, str) for message in messages)
+    assert isinstance(messages[1].content, list)
+    assert messages[1].content[1]["type"] == "image_url"
 
 
 def test_minimax_m3_is_treated_as_a_vision_model():
@@ -185,7 +186,7 @@ def test_planner_vision_capability_follows_routed_model(monkeypatch):
     monkeypatch.setattr("agent.llm.runtime.invoke_llm", fake_invoke)
     _invoke_llm_for_ssot_runtime(
         system="system", user="inspect", workspace_id="test_ws",
-        extra={"stream_scope": "planner", "vision_attachments": [{"file_id": "file_x", "kind": "image"}]},
+        extra={"stream_scope": "planner", "evidence_parts": [_image_evidence("ev_x", "file_x")]},
     )
 
     assert isinstance(captured["messages"][-1].content, list)
@@ -218,8 +219,18 @@ def test_planner_does_not_send_image_to_routed_text_model(monkeypatch):
     monkeypatch.setattr("agent.llm.runtime.invoke_llm", fake_invoke)
     _invoke_llm_for_ssot_runtime(
         system="system", user="inspect", workspace_id="test_ws",
-        extra={"stream_scope": "planner", "vision_attachments": [{"file_id": "file_x", "kind": "image"}]},
+        extra={"stream_scope": "planner", "evidence_parts": [_image_evidence("ev_x", "file_x")]},
     )
 
     assert isinstance(captured["messages"][-1].content, str)
     assert captured["extra"]["vision_warnings"]
+
+
+def _image_evidence(evidence_id: str, file_id: str) -> dict:
+    return {
+        "evidence_id": evidence_id,
+        "kind": "image",
+        "reference": {"kind": "managed_file", "file_id": file_id},
+        "consumer": "llm",
+        "delivery_status": "pending",
+    }

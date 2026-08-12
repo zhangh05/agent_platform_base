@@ -8,7 +8,7 @@ HTTP / WebSocket / SSE / Job entry
   -> AgentThread + SessionManager
   -> run_ssot_turn
   -> QueryLoop
-  -> LLM function calling + bounded tool loop
+  -> typed evidence ledger + LLM function calling + bounded tool loop
   -> ToolRuntimeClient.invoke / ToolRuntime.invoke_raw
   -> canonical handlers
   -> AgentResult + RuntimeEvent timeline
@@ -44,3 +44,5 @@ HTTP / WebSocket / SSE / Job entry
 ## Prompt Boundary
 
 `core/runtime_engine/prompt_contract.py` 是生产 QueryLoop 的系统提示词源。历史、记忆、知识和制品摘要都放入明确边界的 data-only 区块；当前用户请求单独隔离。
+
+`core/runtime_engine/evidence.py` 定义请求级证据协议与消费账本。canonical 工具只输出 `evidence_parts` 引用，QueryLoop 负责登记和交付，模型适配器仅在单次调用边界解析图片字节。`core/runtime_engine/batch_compiler.py` 根据工具声明的批处理契约优化独立标量调用，不包含具体工具分支，也不改变依赖图语义。

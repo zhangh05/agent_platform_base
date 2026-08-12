@@ -128,8 +128,8 @@ NS_DATA = [
     ),
     (
         "workspace.file", "workspace", "file", "multi", "工作区文件", "workspace.file",
-        "Use proactively for real workspace file evidence. List/glob discovers paths and read/read_image verifies path content. For every non-image uploaded attachment shown as file_id, call extract_document first. Its DOCX embedded_image_count is authoritative. To answer about one internal image, call extract_document_image with that file_id and its 1-based image_index. To cover all document images, call extract_document_images with file_id, start_index=1 and a batch limit up to 8; if has_more is true, continue from end_index+1 before answering. Its returned images are sent to vision for the next answer. Writes must be followed by reread or relevant validation.",
-        "Do not guess attachment paths, treat image metadata as visual understanding, import an existing attachment through workspace.filestore, or use exec to parse an attachment or unpack document images.",
+        "Use proactively for real workspace file evidence. List/glob discovers paths and read/read_image verifies path content. For every non-image uploaded attachment shown as file_id, call extract_document first. Its DOCX embedded_image_count is authoritative. To answer about one internal image, call extract_document_image with that file_id and its 1-based image_index. To cover all document images, call extract_document_images with file_id, start_index=1 and a batch limit up to 8; if has_more is true, continue from end_index+1 before answering. Extracted image evidence is automatically delivered to the next model turn. Writes must be followed by reread or relevant validation.",
+        "Do not pass a managed file_id to read/read_image (those require a workspace filepath), guess attachment paths, treat image metadata as visual understanding, import an existing attachment through workspace.filestore, or use exec to parse an attachment or unpack document images.",
         "workspace.file",
     ),
     (

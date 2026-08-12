@@ -124,6 +124,7 @@ class SemanticValidator:
         if node.args.get("__invalid_tool_arguments_json__"):
             return
         self._validate_action_specific_required_args(node, result)
+        self._validate_reference_kinds(node, result)
 
         # C. Path safety
         self._validate_path_safety(node, result)
@@ -320,6 +321,45 @@ class SemanticValidator:
                     node_id=node.id,
                     code="DANGEROUS_PATH",
                     message=f"Node '{node.id}' accesses system path '{path}'",
+                ))
+
+    def _validate_reference_kinds(
+        self,
+        node: ExecutionNode,
+        result: SemanticValidationResult,
+    ) -> None:
+        """Reject resource-reference confusion before a handler is invoked."""
+        registry_item = self._registry.get(node.tool) or {}
+        metadata = registry_item.get("metadata") or {}
+        contracts = metadata.get("reference_kinds") or {}
+        action = str(node.args.get("action") or "").strip().lower()
+        field_contracts = contracts.get(action) if isinstance(contracts, dict) else None
+        if not isinstance(field_contracts, dict):
+            return
+        managed_file_pattern = re.compile(r"^file_[0-9a-f]{16}$", re.IGNORECASE)
+        for field_name, expected_kind in field_contracts.items():
+            value = node.args.get(field_name)
+            if not isinstance(value, str) or not value.strip():
+                continue
+            is_managed_file = bool(managed_file_pattern.fullmatch(value.strip()))
+            mismatch = (
+                expected_kind == "managed_file" and not is_managed_file
+            ) or (
+                expected_kind == "workspace_path" and is_managed_file
+            )
+            if mismatch:
+                result.errors.append(SemanticError(
+                    node_id=node.id,
+                    code="ARG_REFERENCE_KIND_MISMATCH",
+                    message=(
+                        f"Node '{node.id}' arg '{field_name}' expects {expected_kind}, "
+                        f"but received {'managed_file' if is_managed_file else 'workspace_path'} reference."
+                    ),
+                    details={
+                        "field": field_name,
+                        "expected_kind": expected_kind,
+                        "received_kind": "managed_file" if is_managed_file else "workspace_path",
+                    },
                 ))
 
     def _validate_command_safety(

@@ -56,6 +56,13 @@ def test_safe_status_ok_when_all_clear():
     assert _safe_status(s, {}) == "ok"
 
 
+def test_safe_status_projects_partial_execution_outcome():
+    from storage.run_record_store import _safe_status
+
+    s = _state(result_ok=True, result_errors=[], execution_outcome="partial")
+    assert _safe_status(s, {}) == "partial"
+
+
 def test_safe_status_ignores_dict_ok_without_state_projection():
     from storage.run_record_store import _safe_status
     s = _state()  # no result_ok / result_errors
@@ -164,6 +171,52 @@ def test_merge_result_projection_reconciles_status_on_success(monkeypatch, tmp_p
     rec = json.loads((tmp_path / "default" / "runs" / f"{rid}.json").read_text())
     assert rec["ok"] is True
     assert rec["status"] == "ok"
+
+
+def test_merge_result_projection_preserves_partial_status(monkeypatch, tmp_path):
+    from agent.runtime import turn_persistence as tp
+    import storage.run_record_store as rs
+
+    monkeypatch.setenv("NA_WORKSPACE_ROOT", str(tmp_path))
+    (tmp_path / "default" / "runs").mkdir(parents=True, exist_ok=True)
+
+    class _FakeResult:
+        ok = True
+        errors = []
+        warnings = ["partial_tool_failure: one failed"]
+        tool_calls = []
+        tool_decision = {}
+        no_tool_reason = ""
+        trace_id = "tr-partial"
+        final_response = "usable partial result"
+
+        def to_dict(self):
+            return {
+                "ok": True,
+                "errors": [],
+                "warnings": self.warnings,
+                "turn_id": "r-partial",
+                "trace_id": self.trace_id,
+                "tool_calls": [],
+                "tool_decision": {},
+                "no_tool_reason": "",
+                "metadata": {"execution_outcome": "partial"},
+            }
+
+    state = _state(
+        result_ok=True,
+        result_errors=[],
+        execution_outcome="partial",
+        warnings=_FakeResult.warnings,
+    )
+    state.request_id = "r-partial"
+    rid = rs.write_run_record(state, "default")
+    tp._merge_result_projection(rid, "default", _FakeResult(), context=None)
+
+    rec = json.loads((tmp_path / "default" / "runs" / f"{rid}.json").read_text())
+    assert rec["ok"] is True
+    assert rec["status"] == "partial"
+    assert rec["execution_outcome"] == "partial"
 
 
 def test_run_record_warning_count_uses_agent_result_warnings(monkeypatch, tmp_path):

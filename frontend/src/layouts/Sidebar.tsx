@@ -26,7 +26,7 @@ function intentLabel(intent?: string): string {
 }
 
 function runStatusLabel(status?: string): string {
-  return ({ ok: "成功", failed: "失败", running: "执行中", pending: "等待中", cancelled: "已取消" } as Record<string, string>)[status || ""] || status || "未知";
+  return ({ ok: "成功", partial: "部分完成", failed: "失败", error: "失败", running: "执行中", pending: "等待中", cancelled: "已取消" } as Record<string, string>)[status || ""] || status || "未知";
 }
 
 interface AgentRunDetail {
@@ -471,7 +471,7 @@ export function Sidebar() {
                       <span
                         className={
                           "status-dot " +
-                          (r.status === "ok" ? "ok" : r.status === "failed" ? "err" : "idle")
+                          (r.status === "ok" ? "ok" : r.status === "partial" ? "warn" : ["failed", "error"].includes(r.status || "") ? "err" : "idle")
                         }
                       />
                       <span className="title text-sm">{label}</span>

@@ -93,6 +93,10 @@ def persist_run_record(session, turn, result, context) -> None:
             # because it read the skill_results dict instead).
             result_ok=(bool(result.ok) if result else None),
             result_errors=(list(result.errors) if result and result.errors else []),
+            execution_outcome=(
+                str((result.metadata or {}).get("execution_outcome") or "")
+                if result else ""
+            ),
             skill_results=skill_results,
             tool_results=skill_results,
         )
@@ -258,6 +262,7 @@ def _merge_result_projection(run_id: str, ws_id: str, result, context) -> None:
         "timeline_summary": result_dict.get("timeline_summary") or metadata.get("timeline_summary") or {},
         "warnings": [redact_text(str(w))[:300] for w in list(result_dict.get("warnings") or [])[:20]],
         "warning_count": len(list(result_dict.get("warnings") or [])),
+        "execution_outcome": str(metadata.get("execution_outcome") or "complete"),
     })
     if isinstance(record.get("result_counts"), dict):
         record["result_counts"]["warnings"] = record["warning_count"]
@@ -266,8 +271,11 @@ def _merge_result_projection(run_id: str, ws_id: str, result, context) -> None:
     # instead of the real AgentResult, correct it now that we have the truth.
     is_ok = bool(result_dict.get("ok", True))
     has_errors = bool(result_dict.get("errors"))
+    execution_outcome = str(metadata.get("execution_outcome") or "")
     if not is_ok or has_errors:
         record["status"] = "error"
+    elif execution_outcome == "partial":
+        record["status"] = "partial"
     elif record.get("status") not in ("planned",):
         # Only flip to "ok" if the record wasn't explicitly marked planned.
         record["status"] = "ok"

@@ -48,6 +48,13 @@ from .prompt_contract import (
     build_runtime_system_prompt,
     build_turn_message,
 )
+from .evidence import (
+    evidence_summary,
+    initialize_evidence_ledger,
+    mark_evidence_delivered,
+    pending_llm_evidence,
+    register_tool_evidence,
+)
 
 
 # ── Prompt Cache ────────────────────────────────────────────────────────────
@@ -1504,6 +1511,8 @@ class QueryLoop:
         output_truncated = False
         output_truncation_reason = ""
 
+        initialize_evidence_ledger(ctx.extras)
+
         # Build initial messages (cacheable prefix)
         messages = self._build_initial(ctx)
 
@@ -1525,10 +1534,19 @@ class QueryLoop:
                 "execution_duration_ms": execution_duration_ms,
                 "max_parallel_width": self._executor.max_parallel_width,
                 "orchestration_batches": list(ctx.extras.get("orchestration_batches") or []),
+                "batch_compile_events": list(ctx.extras.get("batch_compile_events") or []),
                 "validation_corrections": validation_correction_attempts,
                 "output_truncated": output_truncated,
                 "output_truncation_reason": output_truncation_reason,
+                "evidence": evidence_summary(ctx.extras),
             }
+            successful_tools = sum(1 for result in all_results if result.ok)
+            failed_tools = len(all_results) - successful_tools
+            projected_metrics["execution_outcome"] = (
+                "partial" if successful_tools and failed_tools
+                else "failed" if failed_tools
+                else "complete"
+            )
             projected_metrics.update(dict(values.pop("metrics", {}) or {}))
             values.setdefault("tool_results", all_results)
             values.setdefault("iterations", iterations)
@@ -1569,6 +1587,7 @@ class QueryLoop:
                 budget.end_execution()
                 execution_duration_ms += (time.monotonic() - execution_started) * 1000
             all_results.extend(prefetch_results)
+            register_tool_evidence(ctx.extras, prefetch_results)
             messages = self._append_tool_round(
                 messages,
                 prefetch_calls,
@@ -1698,6 +1717,13 @@ class QueryLoop:
                 # Convert to LLMToolCall objects
                 tool_calls = self._parse_tool_calls(response.tool_calls)
                 tool_calls = self._unique_call_ids(tool_calls, iterations, used_call_ids)
+                from .batch_compiler import compile_batchable_calls
+                tool_calls, batch_compile_events = compile_batchable_calls(
+                    tool_calls,
+                    self._tool_registry,
+                )
+                if batch_compile_events:
+                    ctx.extras.setdefault("batch_compile_events", []).extend(batch_compile_events)
 
                 gate = self._prepare_tool_calls(ctx, tool_calls)
                 if (
@@ -1869,24 +1895,12 @@ class QueryLoop:
                     all_results.extend(polled_results)
                     results = results + polled_results
 
-                document_images: list[dict[str, Any]] = []
-                for result in results:
-                    if not result.ok or not isinstance(result.output, dict):
-                        continue
-                    single = result.output.get("vision_attachment")
-                    if isinstance(single, dict):
-                        document_images.append(single)
-                    batch = result.output.get("vision_attachments")
-                    if isinstance(batch, list):
-                        document_images.extend(item for item in batch if isinstance(item, dict))
-                if document_images:
-                    pending_images = list(ctx.extras.get("derived_vision_attachments") or [])
-                    known_image_ids = {str(item.get("file_id") or "") for item in pending_images if isinstance(item, dict)}
-                    pending_images.extend(
-                        item for item in document_images
-                        if str(item.get("file_id") or "") and str(item.get("file_id") or "") not in known_image_ids
-                    )
-                    ctx.extras["derived_vision_attachments"] = pending_images
+                registered_evidence_ids = register_tool_evidence(ctx.extras, results)
+                document_images = [
+                    item for item in pending_llm_evidence(ctx.extras)
+                    if item.get("evidence_id") in registered_evidence_ids
+                    and item.get("kind") == "image"
+                ]
 
                 # Append assistant message (with tool_calls) + tool results
                 messages = self._append_tool_round(messages, tool_calls, results)
@@ -2042,6 +2056,7 @@ class QueryLoop:
                 final_text,
                 user_input=ctx.user_input,
                 tool_results=all_results,
+                evidence=evidence_summary(ctx.extras),
             )
             if (
                 quality_issues
@@ -2201,6 +2216,7 @@ class QueryLoop:
             # the same visible tool surface; the model may still choose a
             # necessary safe verification action.
             tools_for_call = self._cached_tools
+            evidence_for_call = pending_llm_evidence(ctx.extras)
             if self._llm_invoke is not None:
                 raw = await asyncio.wait_for(
                     asyncio.to_thread(
@@ -2219,13 +2235,10 @@ class QueryLoop:
                             "stream_to_user": stream_to_user,
                             "workspace_id": ctx.workspace_id,
                             "session_id": ctx.session_id,
-                            # File references, never image bytes.  The adapter
-                            # resolves these only for the first model-planning
-                            # request so subsequent tool iterations stay lean.
-                            "vision_attachments": (
-                                list(ctx.extras.get("attachments") or [])
-                                + list(ctx.extras.get("derived_vision_attachments") or [])
-                            ),
+                            # Typed references only, never image bytes. The
+                            # adapter resolves pending image evidence for this
+                            # call; QueryLoop acknowledges it after success.
+                            "evidence_parts": evidence_for_call,
                         },
                     ),
                     timeout=300,
@@ -2233,6 +2246,11 @@ class QueryLoop:
                 response = self._coerce_llm_response(raw)
                 if response.error:
                     response.error = _normalize_llm_error(response.error)
+                else:
+                    mark_evidence_delivered(
+                        ctx.extras,
+                        list((response.metadata or {}).get("delivered_evidence_ids") or []),
+                    )
                 return response
         except asyncio.TimeoutError:
             self._llm_call_count += 1

@@ -228,6 +228,10 @@ def run_ssot_turn(
             "output_truncation_reason": str(
                 (runtime_result.metadata or {}).get("output_truncation_reason") or ""
             ),
+            "execution_outcome": str(
+                (runtime_result.metadata or {}).get("execution_outcome") or "complete"
+            ),
+            "evidence": dict((runtime_result.metadata or {}).get("evidence") or {}),
         }
         runtime_errors = list(runtime_result.errors or [])
         failed_tool_count = sum(1 for call in tool_calls if not call.get("ok"))
@@ -687,10 +691,11 @@ def _invoke_llm_for_ssot_runtime(**kwargs):
         LLMMessage(role="user", content=user),
     ]
 
-    # The planner is the only stage that needs the original image.  Keep the
-    # normal text transcript for continuation/synthesis turns and never place
-    # encoded bytes in metadata, history, trace or persistence.
-    if stream_scope == "planner" and caller_extra.get("vision_attachments"):
+    # QueryLoop supplies only pending typed evidence. Original user images are
+    # delivered once on the planner call; images produced by tools are delivered
+    # once on the next continuation/synthesis call. Encoded bytes stay ephemeral
+    # inside this provider request and never enter metadata, history, or traces.
+    if caller_extra.get("evidence_parts"):
         try:
             from agent.llm.capabilities import supports_vision
             effective_config = resolve_invocation_candidates(
@@ -698,9 +703,19 @@ def _invoke_llm_for_ssot_runtime(**kwargs):
             )[0]
             if supports_vision(effective_config):
                 from agent.runtime.vision_inputs import build_vision_content
-                image_parts, vision_warnings = build_vision_content(
-                    caller_extra.get("vision_attachments"), workspace_id,
-                )
+                from core.runtime_engine.evidence import evidence_to_vision_references
+                image_parts: list[dict[str, Any]] = []
+                vision_warnings: list[str] = []
+                delivered_evidence_ids: list[str] = []
+                for evidence_part in caller_extra.get("evidence_parts") or []:
+                    references = evidence_to_vision_references([evidence_part])
+                    if not references:
+                        continue
+                    resolved_parts, resolved_warnings = build_vision_content(references, workspace_id)
+                    image_parts.extend(resolved_parts)
+                    vision_warnings.extend(resolved_warnings)
+                    if resolved_parts:
+                        delivered_evidence_ids.append(str(evidence_part.get("evidence_id") or ""))
                 if image_parts:
                     for index in range(len(messages) - 1, -1, -1):
                         if messages[index].role != "user":
@@ -715,6 +730,7 @@ def _invoke_llm_for_ssot_runtime(**kwargs):
                             tool_calls=messages[index].tool_calls,
                         )
                         break
+                    extra["delivered_evidence_ids"] = delivered_evidence_ids
                 if vision_warnings:
                     extra["vision_warnings"] = vision_warnings
             else:
@@ -730,6 +746,11 @@ def _invoke_llm_for_ssot_runtime(**kwargs):
         extra=extra,
         config_override=config_override,
     )
+    if extra.get("delivered_evidence_ids"):
+        resp.metadata = {
+            **(resp.metadata or {}),
+            "delivered_evidence_ids": list(extra["delivered_evidence_ids"]),
+        }
 
     # Track token usage
     if workspace_id:

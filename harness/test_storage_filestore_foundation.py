@@ -406,9 +406,10 @@ def test_workspace_file_extracts_docx_image_for_vision(tmp_workspace):
     ))
 
     assert result["ok"] is True
-    vision = result["vision_attachment"]
-    assert vision["kind"] == "image"
-    assert get_file_record("test_ws", vision["file_id"])["file_kind"] == "png"
+    evidence = result["evidence_parts"][0]
+    assert evidence["kind"] == "image"
+    assert evidence["reference"]["kind"] == "managed_file"
+    assert get_file_record("test_ws", evidence["reference"]["file_id"])["file_kind"] == "png"
 
     batch = CANONICAL_REGISTRY["workspace.file"].handler(ToolInvocation(
         tool_id="workspace.file", workspace_id="test_ws",
@@ -417,7 +418,7 @@ def test_workspace_file_extracts_docx_image_for_vision(tmp_workspace):
     assert batch["ok"] is True
     assert batch["image_count"] == 1
     assert batch["has_more"] is False
-    assert len(batch["vision_attachments"]) == 1
+    assert len(batch["evidence_parts"]) == 1
 
 
 def test_workspace_file_extracts_text_attachment_by_file_id(tmp_workspace):

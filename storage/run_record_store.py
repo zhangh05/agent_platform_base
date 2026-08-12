@@ -42,6 +42,7 @@ def write_run_record(state: SimpleNamespace, workspace_id: str = "default") -> s
         "started_at": created_at,
         "finished_at": _now_iso(),
         "status": _safe_status(state, result),
+        "execution_outcome": str(getattr(state, "execution_outcome", "") or "complete"),
         "result_counts": {
             "output_lines": output_lines,
             "warnings": len(state_warnings),
@@ -194,6 +195,8 @@ def _safe_status(state: SimpleNamespace, result: dict) -> str:
         return "error"
     if getattr(state, "result_errors", None):
         return "error"
+    if str(getattr(state, "execution_outcome", "") or "") == "partial":
+        return "partial"
     return "ok"
 
 

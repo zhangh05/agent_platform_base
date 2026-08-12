@@ -35,6 +35,7 @@ def validate_response_quality(
     *,
     user_input: str = "",
     tool_results: Iterable[object] = (),
+    evidence: dict | None = None,
 ) -> list[ResponseQualityIssue]:
     """Return deterministic user-visible quality violations."""
     value = str(text or "")
@@ -79,6 +80,22 @@ def validate_response_quality(
             message=(
                 "The weather answer contains corrupt or literal provider wording. Use natural Chinese weather "
                 "terms and 防护/出行提示; preserve forecast uncertainty instead of overstating hail."
+            ),
+        ))
+
+    delivered_images = int(((evidence or {}).get("delivered_by_kind") or {}).get("image", 0) or 0)
+    if delivered_images and re.search(
+        r"(?:无法|不能|未能|没法).{0,18}(?:查看|读取|识别|分析).{0,12}(?:图片|图像|视觉内容)|"
+        r"(?:图片|图像).{0,12}(?:未发送|不可见|无法访问)",
+        value,
+        re.IGNORECASE,
+    ):
+        issues.append(ResponseQualityIssue(
+            code="DELIVERED_EVIDENCE_DENIED",
+            message=(
+                f"The runtime delivered {delivered_images} image evidence part(s), but the draft claims the "
+                "images were unavailable. Analyze the delivered visual evidence and answer from it; do not deny "
+                "evidence that the runtime confirms was supplied."
             ),
         ))
 

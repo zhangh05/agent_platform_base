@@ -36,6 +36,7 @@ class CanonicalToolEntry:
     description: str = ""
     permission_action: str = ""
     handler_id: str = ""
+    execution_contract: dict[str, Any] | None = None
 
 
 def _schema(properties: dict[str, Any] | None = None, required: list[str] | None = None) -> dict[str, Any]:
@@ -519,6 +520,7 @@ def _entry(
     description: str = "",
     reads_artifact: bool = False,
     writes_artifact: bool = False,
+    execution_contract: dict[str, Any] | None = None,
 ) -> CanonicalToolEntry:
     return CanonicalToolEntry(
         canonical_tool_id=tool_id,
@@ -528,6 +530,7 @@ def _entry(
         permission_action=permission,
         description=description,
         handler_id=tool_id,
+        execution_contract=execution_contract,
     )
 
 
@@ -636,7 +639,7 @@ _WORKSPACE_FILE_ARGS = {
     "new_string": {"type": "string"}, "replace_all": {"type": "boolean"},
     "patch_text": {"type": "string"}, "filename": {"type": "string"},
     "dry_run": {"type": "boolean"},
-    "file_id": {"type": "string", "description": "Managed attachment id for extract_document."},
+    "file_id": {"type": "string", "description": "Managed attachment id for extract_document and embedded-image extraction actions; never use it as filepath."},
     "image_index": {"type": "integer", "minimum": 1, "description": "1-based embedded DOCX image index."},
     "start_index": {"type": "integer", "minimum": 1, "description": "First 1-based DOCX image index for a batch."},
 }
@@ -667,7 +670,27 @@ _RAW_REGISTRY: list[CanonicalToolEntry] = [
     }, required=["action"], description="Subagent task management. action=spawn requires instruction; get/cancel/merge use the subtask_id returned by spawn."),
     _entry("system.manage", _handle_system, {**_COMMON, **_SYSTEM_ARGS, "limit": {"type": "integer", "minimum": 1}, "action": {"type": "string", "enum": ["diagnostics", "health", "selfcheck", "local_info", "tasks", "audit_log", "run_get", "session_get", "session_checkpoint", "session_rewind", "session_export", "session_snapshot"]}}, required=["action"], risk="medium", description="Runtime health, current local date/time and host facts, durable tasks, audit logs, run details, and session operations. local_info returns timezone-aware current time plus host/IP/OS facts; run_get requires run_id; session actions require session_id; rewind additionally requires snapshot_id."),
     _entry("text.analyze", _handle_text, {**_COMMON, "action": {"type": "string", "enum": ["redact", "extract_entities", "match"]}, "text": {"type": "string"}, "pattern": {"type": "string"}}, required=["action"], description="Text redact, extract and match."),
-    _entry("workspace.file", _handle_workspace_file, {**_COMMON, **_WORKSPACE_FILE_ARGS, "action": {"type": "string", "enum": ["list", "read", "read_image", "extract_document", "extract_document_image", "extract_document_images", "write", "write_artifact", "edit", "patch", "glob", "delete"]}}, required=["action"], risk="medium", description="Workspace files. extract_document reads a managed text, DOCX, PDF, XLSX, or PPTX attachment by file_id and reports embedded_image_count for DOCX. extract_document_image extracts one DOCX image by file_id and 1-based image_index. extract_document_images extracts an ordered DOCX image batch (up to 8) for visual analysis; use it for every image the user asks to cover. read/read_image/edit/patch/delete require filepath; write/write_artifact require filename and content."),
+    _entry("workspace.file", _handle_workspace_file, {**_COMMON, **_WORKSPACE_FILE_ARGS, "action": {"type": "string", "enum": ["list", "read", "read_image", "extract_document", "extract_document_image", "extract_document_images", "write", "write_artifact", "edit", "patch", "glob", "delete"]}}, required=["action"], risk="medium", description="Workspace files. extract_document reads a managed text, DOCX, PDF, XLSX, or PPTX attachment by file_id and reports embedded_image_count for DOCX. extract_document_image extracts one DOCX image by file_id and 1-based image_index. extract_document_images extracts an ordered DOCX image batch (up to 8) for visual analysis; its image evidence is automatically delivered to the next model turn. Never pass a returned file_id to read/read_image because those actions require a workspace filepath. write/write_artifact require filename and content.", execution_contract={
+        "batching": [{
+            "source_action": "extract_document_image",
+            "target_action": "extract_document_images",
+            "group_by": ["file_id"],
+            "index_arg": "image_index",
+            "start_arg": "start_index",
+            "limit_arg": "limit",
+            "max_batch_size": 8,
+        }],
+        "reference_kinds": {
+            "extract_document": {"file_id": "managed_file"},
+            "extract_document_image": {"file_id": "managed_file"},
+            "extract_document_images": {"file_id": "managed_file"},
+            "read": {"filepath": "workspace_path"},
+            "read_image": {"filepath": "workspace_path"},
+            "edit": {"filepath": "workspace_path"},
+            "patch": {"filepath": "workspace_path"},
+            "delete": {"filepath": "workspace_path"},
+        },
+    }),
     _entry("workspace.artifact", _handle_workspace_artifact, {**_COMMON, "action": {"type": "string", "enum": ["list", "read", "save", "tag", "delete"]}, "query": {"type": "string"}, "limit": {"type": "integer", "minimum": 1}, "artifact_id": {"type": "string"}, "content": {"type": "string"}, "title": {"type": "string"}, "status": {"type": "string"}, "tags": {"type": "array", "items": {"type": "string"}}, "artifact_type": {"type": "string"}}, required=["action"], description="Workspace artifact operations."),
     _entry("workspace.filestore", _handle_workspace_filestore, {**_COMMON, "action": {"type": "string", "enum": ["references", "import"]}, "file_id": {"type": "string"}, "filepath": {"type": "string"}}, required=["action"], description="FileStore references and import."),
     _entry("workspace.metadata.get", _handle_workspace_metadata, {"workspace_id": {"type": "string"}}, description="Workspace metadata."),
@@ -708,7 +731,7 @@ def to_tool_specs() -> list[tuple[ToolSpec, Callable[[ToolInvocation], dict]]]:
             requires_approval=entry.requires_approval,
             callable_by_llm=entry.callable_by_llm,
             permission_action=entry.permission_action,
-            metadata=ns_entry.metadata(),
+            metadata={**ns_entry.metadata(), **(entry.execution_contract or {})},
         )
         out.append((spec, entry.handler))
     from extensions.runtime import get_extension_tool_specs
@@ -743,7 +766,7 @@ def to_openai_tools() -> list[dict[str, Any]]:
                 category=ns_entry.category,
                 base_permission=entry.permission_action or "read",
             ),
-            "metadata": ns_entry.metadata(),
+            "metadata": {**ns_entry.metadata(), **(entry.execution_contract or {})},
         }))
     for spec, _handler in get_extension_tool_specs():
         if not spec.callable_by_llm:
