@@ -79,4 +79,17 @@ describe("assistant markdown rendering", () => {
     expect(html).toContain("&lt;img src=x onerror=alert(1)&gt;");
     expect(html).not.toContain("<img");
   });
+
+  it("always advances on compact or malformed heading-like model output", () => {
+    const html = renderAssistantHtml([
+      "##趋势速览",
+      "###无空格三级标题",
+      "#",
+      "正文仍然可见",
+    ].join("\n"));
+
+    expect(html).toContain("<h2>趋势速览</h2>");
+    expect(html).toContain("<h3>无空格三级标题</h3>");
+    expect(html).toContain("正文仍然可见");
+  });
 });

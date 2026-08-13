@@ -337,7 +337,10 @@ export function renderMarkdown(text: string): string {
 
     // ── Headers (trim leading whitespace, # or ## or ###) ──
     const trimmed = line.trimStart();
-    const headerMatch = trimmed.match(/^(#{1,6})\s+(.+)$/);
+    // Models occasionally omit the space (`##标题`). Accept both forms so a
+    // malformed heading can never fall between the heading and paragraph
+    // branches and stall the parser.
+    const headerMatch = trimmed.match(/^(#{1,6})[ \t]*(\S.*)$/);
     if (headerMatch) {
       const level = Math.min(headerMatch[1].length, 6);
       out.push(`<h${level}>${renderInline(escapeInlineHtml(headerMatch[2].trim()))}</h${level}>`);
@@ -455,7 +458,16 @@ export function renderMarkdown(text: string): string {
     }
     if (paraLines.length) {
       out.push(renderInsightList(paraLines) || `<p>${renderSoftBreakLines(paraLines)}</p>`);
+      continue;
     }
+
+
+    // Total-progress invariant: every input line must either be consumed by a
+    // structured branch or advance here. This is deliberately defensive
+    // against future syntax exclusions; untrusted model output must never be
+    // able to trap the browser in a synchronous parser loop.
+    out.push(`<p>${renderInline(escapeInlineHtml(line.trim()))}</p>`);
+    i++;
   }
 
   return out.join('\n');
