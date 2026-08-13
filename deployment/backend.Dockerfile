@@ -1,3 +1,5 @@
+FROM docker:29-cli AS docker-cli
+
 FROM python:3.12-slim AS runtime
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
@@ -6,10 +8,9 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     AGENT_PLATFORM_RUNTIME_BIND_HOST=0.0.0.0 \
     NA_WORKSPACE_ROOT=/var/lib/agent-platform/workspaces
 
-RUN apt-get update \
-    && apt-get install --yes --no-install-recommends docker-cli \
-    && rm -rf /var/lib/apt/lists/* \
-    && groupadd --system --gid 10001 agent-platform \
+COPY --from=docker-cli /usr/local/bin/docker /usr/local/bin/docker
+
+RUN groupadd --system --gid 10001 agent-platform \
     && useradd --system --uid 10001 --gid agent-platform --home-dir /app agent-platform \
     && mkdir -p /app /var/lib/agent-platform/workspaces \
     && chown -R agent-platform:agent-platform /app /var/lib/agent-platform
