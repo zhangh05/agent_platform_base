@@ -1,14 +1,14 @@
 # agent/llm/runtime.py
-"""LLM Runtime — unified invocation entry point (invoke_llm) + safe_generate wrapper.
+"""LLM Runtime — unified invocation entry point plus SafeLLMOutput adapter.
 
 Design:
 - invoke_llm() is the SINGLE entry point that calls provider.generate().
-- safe_generate() is the public API that wraps invoke_llm() and returns SafeLLMOutput.
+- safe_generate() reuses invoke_llm policy metadata and returns SafeLLMOutput.
 - composer / LLMClient / orchestrator ALL go through invoke_llm(), never call generate() directly.
-- Policy checks are NON-BLOCKING: results recorded in metadata/warnings only.
+- Injection and claim checks are observable metadata; deterministic secret/path
+  leakage and hidden reasoning are sanitized before any caller receives content.
 """
 
-import re
 from typing import List
 from agent.state import AgentState
 from agent.llm.schemas import LLMRequest, LLMMessage, SafeLLMOutput, PolicyDecision, LLMResponse
@@ -127,6 +127,14 @@ def invoke_llm(
         metadata=req_metadata,
     )
 
+    # One guard for every invocation path, including the SSOT QueryLoop.
+    from agent.llm.prompt_guard import inspect_request
+    policy_metadata = inspect_request(
+        req,
+        state=state_or_context,
+        user_input=user_input,
+    )
+
     # ── Call provider candidates with retry and real fallback ──
     attempts: list[str] = []
     skipped_incompatible: list[str] = []
@@ -161,9 +169,26 @@ def invoke_llm(
         "provider_attempts": attempts,
         "provider_skipped_incompatible": skipped_incompatible,
         "fallback_used": len(attempts) > 1 and not resp.error,
+        "prompt_policy": dict(policy_metadata),
+        **policy_metadata,
     }
     if resp.error:
         return resp
+
+    from agent.llm.prompt_guard import inspect_response
+    response_policy_metadata = inspect_response(
+        resp,
+        state=state_or_context,
+        citations=(safe_context or {}).get("citations", [])
+        if isinstance(safe_context, dict)
+        else (),
+    )
+    policy_metadata.update(response_policy_metadata)
+    resp.metadata = {
+        **(resp.metadata or {}),
+        "prompt_policy": dict(policy_metadata),
+        **policy_metadata,
+    }
 
     finish_reason = str(resp.finish_reason or "").lower()
     if finish_reason in {"length", "max_tokens", "content_length"}:
@@ -233,11 +258,6 @@ def safe_generate(
 
     safe_ctx = safe_context or {}
 
-    from agent.llm.config import resolve_provider_config
-    cfg = resolve_provider_config()
-    if config_override:
-        cfg = {**cfg, **config_override}
-
     # ── Prompt Runtime (primary path) ──
     prompt_runtime_used = True
     prompt_id = ""
@@ -260,16 +280,7 @@ def safe_generate(
     try:
         from prompts.loader import get_prompt_by_task
         from prompts.renderer import render_prompt
-        from prompts.policy import check_prompt_input, check_prompt_text, check_prompt_output, detect_prompt_injection
-
-        # ── Injection detection (non-blocking, record only) ──
-        try:
-            inj_result = detect_prompt_injection(user_input)
-            injection_detected = inj_result.injection_detected
-            if inj_result.injection_detected:
-                prompt_input_issues.append({"rule": "injection_detected", "warnings": inj_result.warnings})
-        except Exception:
-            logger.debug("safe_generate: <pass>", exc_info=True)
+        from prompts.policy import check_prompt_input, check_prompt_text
 
         spec = get_prompt_by_task(task)
         prompt_id = spec.prompt_id
@@ -324,24 +335,6 @@ def safe_generate(
             },
         )
 
-    # ── Request policy (NON-BLOCKING) ──
-    try:
-        from agent.llm.policy import check_request
-        policy_req = check_request(LLMRequest(
-            task=task,
-            messages=messages,
-            safe_context=safe_ctx,
-            model=cfg.get("model", ""),
-            temperature=cfg.get("temperature", 0.2),
-            max_tokens=cfg.get("max_tokens", 4096),
-            tools=tools,
-        ), state)
-        if not policy_req.allowed:
-            request_policy_ok = False
-            request_policy_violations = policy_req.violations
-    except Exception:
-        logger.debug("safe_generate: <pass>", exc_info=True)
-
     # ── ALWAYS call provider via unified entry point ──
     resp = invoke_llm(
         task=task,
@@ -356,6 +349,23 @@ def safe_generate(
         # falsely look like an explicit provider override.
         config_override=config_override,
     )
+
+    # invoke_llm is the policy SSOT.  safe_generate retains prompt-template
+    # rendering checks, then projects the unified guard metadata into its
+    # historical SafeLLMOutput contract.
+    guard_meta = dict((resp.metadata or {}).get("prompt_policy") or {})
+    injection_detected = bool(guard_meta.get("prompt_injection_detected"))
+    if injection_detected:
+        prompt_input_issues.append({
+            "rule": "injection_detected",
+            "warnings": list(guard_meta.get("prompt_injection_warnings") or []),
+        })
+    request_policy_ok = bool(guard_meta.get("request_policy_ok", True))
+    request_policy_violations = list(guard_meta.get("request_policy_violations") or [])
+    output_policy_ok = bool(guard_meta.get("output_policy_ok", True))
+    output_policy_issues = list(guard_meta.get("output_policy_issues") or [])
+    response_policy_ok = bool(guard_meta.get("response_policy_ok", True))
+    response_policy_violations = list(guard_meta.get("response_policy_violations") or [])
 
     if resp.error:
         provider_meta = resp.metadata or {}
@@ -382,30 +392,9 @@ def safe_generate(
             metadata=base_meta,
         )
 
-    cleaned_content, reasoning_stripped = _sanitize_provider_output(resp.content)
-    resp.content = cleaned_content
-
-    # ── Output policy (NON-BLOCKING) ──
-    try:
-        from prompts.policy import check_prompt_output
-        out_result = check_prompt_output(None, resp.content,
-                                           safe_ctx.get("citations", []) if isinstance(safe_ctx, dict) else [])
-        if not out_result.ok:
-            output_policy_ok = False
-            output_policy_issues = out_result.issues
-            prompt_policy_pass = False
-    except Exception:
-        logger.debug("safe_generate: <pass>", exc_info=True)
-
-    # ── Response policy (NON-BLOCKING) ──
-    try:
-        from agent.llm.policy import check_response
-        policy_resp = check_response(resp, state)
-        if not policy_resp.allowed:
-            response_policy_ok = False
-            response_policy_violations = policy_resp.violations
-    except Exception:
-        logger.debug("safe_generate: <pass>", exc_info=True)
+    reasoning_stripped = bool(guard_meta.get("reasoning_stripped"))
+    if not output_policy_ok:
+        prompt_policy_pass = False
 
     # ── Build warnings from all policy failures ──
     warnings = []
@@ -512,15 +501,7 @@ def _redact(msg: str) -> str:
     return msg[:200]
 
 
-def sanitize_provider_output(content: str) -> tuple[str, bool]:
-    """Remove provider reasoning markup. Public API."""
-    text = content or ""
-    original = text
-    text = re.sub(r"<think\b[^>]*>.*?</think>", "", text, flags=re.IGNORECASE | re.DOTALL)
-    text = re.sub(r"<reasoning\b[^>]*>.*?</reasoning>", "", text, flags=re.IGNORECASE | re.DOTALL)
-    text = re.sub(r"(?ism)^\s*(reasoning|思考过程)\s*[:：].*?(?=\n\s*(answer|回答|结论)\s*[:：]|\Z)", "", text)
-    text = re.sub(r"(?i)</?(think|reasoning)\b[^>]*>", "", text)
-    return text.strip(), text != original
+from agent.llm.prompt_guard import sanitize_provider_output
 
 
 _sanitize_provider_output = sanitize_provider_output

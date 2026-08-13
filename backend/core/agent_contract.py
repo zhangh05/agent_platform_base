@@ -47,17 +47,31 @@ _STREAM_CONTRACTS = {
 }
 
 
+# Metadata arriving over HTTP/WebSocket is untrusted.  Keep this allowlist
+# deliberately small: runtime-only fields such as runtime_guidance,
+# subagent_profile, history/retrieval blocks, cancellation callbacks and
+# iteration budgets must only be created by server-side code.
+_EXTERNAL_METADATA_KEYS = frozenset({"attachments"})
+
+
 def normalize_metadata(metadata: dict | None, *, transport: str, stream_mode: str) -> dict:
-    """Ensure transport/stream metadata fields are set consistently."""
-    if metadata is None or not isinstance(metadata, dict):
-        metadata = {}
-    metadata = dict(metadata)
-    metadata.setdefault("transport", transport)
-    metadata.setdefault("stream_mode", stream_mode)
+    """Build trusted runtime metadata from an untrusted transport payload.
+
+    The caller may supply only explicitly public fields.  Transport identity
+    and stream contracts are server-owned and always overwrite client input.
+    """
+    source = metadata if isinstance(metadata, dict) else {}
+    normalized = {
+        key: source[key]
+        for key in _EXTERNAL_METADATA_KEYS
+        if key in source
+    }
+    normalized["transport"] = transport
+    normalized["stream_mode"] = stream_mode
     contract = _STREAM_CONTRACTS.get((transport, stream_mode))
     if contract:
-        metadata.setdefault("stream_contract", contract)
-    return metadata
+        normalized["stream_contract"] = contract
+    return normalized
 
 
 def normalize_agent_result(result: dict, workspace_id: str) -> dict:

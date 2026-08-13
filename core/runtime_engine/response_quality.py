@@ -28,6 +28,18 @@ _EXPLICIT_LIMIT_RE = re.compile(
     r"(?:本次|当前|以下|这里)(?:查询|展示|覆盖|统计)?(?:范围|口径)|"
     r"仅(?:查询|展示|覆盖)|并非全部|未覆盖全部|无法一次覆盖|按.{0,20}(?:范围|口径)"
 )
+_ACTION_COMPLETION_CLAIM_RE = re.compile(
+    r"(?:我)?(?:已经|已)(?:成功)?(?:执行|部署|修改|删除|创建|上传|保存|写入|重启|关闭|连接|配置|发布)"
+    r"|(?:executed|deployed|modified|deleted|created|uploaded|saved|restarted|connected)\s+successfully",
+    re.IGNORECASE,
+)
+_SECRET_ASSIGNMENT_RE = re.compile(
+    r"(?:password|passwd|api[_-]?key|access[_-]?token|authorization|community)"
+    r"\s*(?:=|:)\s*(?!\[REDACTED_SECRET\])\S+"
+    r"|\bsk-[A-Za-z0-9]{20,}\b",
+    re.IGNORECASE,
+)
+_REFERENCE_RE = re.compile(r"\b(?:art|job|run|report|trace)[A-Za-z0-9_-]{8,64}\b")
 
 
 def validate_response_quality(
@@ -36,9 +48,11 @@ def validate_response_quality(
     user_input: str = "",
     tool_results: Iterable[object] = (),
     evidence: dict | None = None,
+    known_reference_ids: Iterable[str] = (),
 ) -> list[ResponseQualityIssue]:
     """Return deterministic user-visible quality violations."""
     value = str(text or "")
+    tool_results = tuple(tool_results)
     issues: list[ResponseQualityIssue] = []
 
     if "\ufffd" in value:
@@ -99,6 +113,39 @@ def validate_response_quality(
             ),
         ))
 
+    if _ACTION_COMPLETION_CLAIM_RE.search(value) and not _has_successful_tool_result(tool_results):
+        issues.append(ResponseQualityIssue(
+            code="UNVERIFIED_ACTION_COMPLETION",
+            message=(
+                "The draft claims a real action completed, but this turn has no successful tool result. "
+                "Describe it as a proposal or unverified state, or call the appropriate tool and verify the outcome."
+            ),
+        ))
+
+    if _SECRET_ASSIGNMENT_RE.search(value):
+        issues.append(ResponseQualityIssue(
+            code="SENSITIVE_OUTPUT",
+            message=(
+                "The draft contains a credential-like value. Remove or mask the value while preserving only "
+                "the minimum user-visible explanation."
+            ),
+        ))
+
+    referenced_ids = set(_REFERENCE_RE.findall(value))
+    if referenced_ids:
+        known_ids = {str(item) for item in known_reference_ids if str(item)}
+        known_ids.update(_tool_result_reference_ids(tool_results))
+        unknown_ids = sorted(referenced_ids - known_ids)
+        if unknown_ids:
+            issues.append(ResponseQualityIssue(
+                code="UNVERIFIED_REFERENCE",
+                message=(
+                    "The draft contains identifiers not present in runtime or tool evidence: "
+                    + ", ".join(unknown_ids[:5])
+                    + ". Remove them or use only identifiers returned by the runtime."
+                ),
+            ))
+
     return issues
 
 
@@ -145,3 +192,27 @@ def _has_weather_evidence(tool_results: Iterable[object]) -> bool:
         if source_type == "structured_weather" or ".weather." in tool_id:
             return True
     return False
+
+
+def _has_successful_tool_result(tool_results: Iterable[object]) -> bool:
+    return any(bool(getattr(result, "ok", False)) for result in tool_results)
+
+
+def _tool_result_reference_ids(tool_results: Iterable[object]) -> set[str]:
+    found: set[str] = set()
+
+    def visit(value: object, *, key: str = "") -> None:
+        if isinstance(value, dict):
+            for child_key, child in value.items():
+                visit(child, key=str(child_key))
+            return
+        if isinstance(value, (list, tuple)):
+            for child in value:
+                visit(child, key=key)
+            return
+        if isinstance(value, str) and (key.endswith("_id") or _REFERENCE_RE.fullmatch(value)):
+            found.add(value)
+
+    for result in tool_results:
+        visit(getattr(result, "output", None))
+    return found

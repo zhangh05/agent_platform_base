@@ -9,10 +9,10 @@ from __future__ import annotations
 import re
 
 _KEYWORD_PATTERNS = [
-    r"(password)\s+\S+",
-    r"(secret)\s+\S+",
-    r"(community)\s+\S+",
-    r"(key)\s+\S+",
+    r"(?<![-\w])(password)\b\s*(?:=|:|\s)\s*\S+",
+    r"(?<![-\w])(secret)\b\s*(?:=|:|\s)\s*\S+",
+    r"(?<![-\w])(community)\b\s*(?:=|:|\s)\s*\S+",
+    r"(?<![-\w])(key)\b\s*(?:=|:|\s)\s*\S+",
     r"(pre-shared-key)\s+\S+",
     r"(tacacs.*key)\s+\S+",
     r"(radius.*key)\s+\S+",

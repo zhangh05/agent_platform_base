@@ -120,17 +120,25 @@ LLM 失败时不能泄露异常文本，降级原因必须结构化。
 
 ## Prompt 与上下文
 
-生产提示词只有一个事实来源：`core/runtime_engine/prompt_contract.py`。它定义
-QueryLoop 的执行契约、最终答复契约、子 Agent system 约束，以及每轮上下文的
-分隔格式。生产主链不再经过第二套 PromptCompiler 或 block assembly。
+生产提示词只有一个事实来源：`core/runtime_engine/prompt_contract.py`。它将每轮必需的
+Kernel invariants 与按明确上下文追加的 capability playbook 分开；playbook 只提供选择与
+验收建议，不隐藏工具、不扩权，也不预先决定工作流。QueryLoop 的执行契约、最终答复
+契约、子 Agent system 约束和上下文分隔格式仍属于同一主链。
 
 每轮输入明确分为 runtime identity、`data_only` conversation history、
-`data_only` governed context 和 current user request。历史、记忆、知识、制品和
-工具输出只能作为证据，不能覆盖 system 规则。子 Agent 的角色、工具范围和预算
-进入 system prompt，委派目标仍保持为纯用户任务。
+`data_only` governed context、类型化 trusted runtime item 和 current user request。
+外部 HTTP/WS metadata 只允许托管附件引用；不能注入 runtime guidance、历史块、
+subagent profile、迭代预算或回调。只有服务端白名单构造器可以生成
+`TrustedPromptItem`。历史、记忆、知识、制品和工具输出只能作为证据，不能覆盖
+system 规则。子 Agent 的角色、工具范围和预算进入 system prompt，委派目标仍保持为纯用户任务。
 
 工具 schema 通过模型 tools 字段提供；system prompt 只提供策略和工具选择原则，不内联长工具清单。
 所有 canonical 工具仍对主管线 LLM 可见，不使用关键词规则裁剪模型能力。
+
+所有 provider 调用统一经过 `agent/llm/prompt_guard.py`：输入注入信号和 request policy
+进入 response metadata/trace，隐藏 reasoning 被清理，确定性的密钥与本机路径在展示前
+脱敏。QueryLoop 的最终答复质量门再结合真实工具结果检查无证据的动作完成声明，避免
+把 planner/continuation 的中间文本误当最终结论拦截。
 
 ## Frontend
 

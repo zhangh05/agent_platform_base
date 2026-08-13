@@ -1539,6 +1539,13 @@ class QueryLoop:
                 "output_truncated": output_truncated,
                 "output_truncation_reason": output_truncation_reason,
                 "evidence": evidence_summary(ctx.extras),
+                "prompt_policy_events": list(ctx.extras.get("prompt_policy_events") or []),
+                "active_capability_playbooks": list(
+                    ctx.extras.get("active_capability_playbooks") or []
+                ),
+                "response_quality_events": list(
+                    ctx.extras.get("response_quality_events") or []
+                ),
             }
             successful_tools = sum(1 for result in all_results if result.ok)
             failed_tools = len(all_results) - successful_tools
@@ -2057,6 +2064,7 @@ class QueryLoop:
                 user_input=ctx.user_input,
                 tool_results=all_results,
                 evidence=evidence_summary(ctx.extras),
+                known_reference_ids=(ctx.request_id, ctx.session_id, ctx.workspace_id),
             )
             if (
                 quality_issues
@@ -2149,13 +2157,31 @@ class QueryLoop:
 
     def _build_initial(self, ctx: StatelessContext) -> List[LLMMessage]:
         """Build initial messages with cacheable prefix."""
+        from .prompt_contract import (
+            TrustedPromptItem,
+            resolve_capability_playbooks,
+            trusted_prompt_item,
+        )
+
         conversation_block = ctx.extras.get("conversation_history_block") or ""
         retrieved_block = ctx.extras.get("retrieved_context_block") or ""
         operational_hint = ctx.extras.get("operational_clarification") or {}
-        guidance_parts = [str(ctx.extras.get("runtime_guidance") or "").strip()]
+        trusted_items = [
+            item for item in (ctx.extras.get("trusted_prompt_items") or [])
+            if isinstance(item, TrustedPromptItem)
+        ]
         if isinstance(operational_hint, dict):
-            guidance_parts.append(str(operational_hint.get("guidance") or "").strip())
-        runtime_guidance = "\n".join(part for part in guidance_parts if part)
+            guidance = str(operational_hint.get("guidance") or "").strip()
+            if guidance:
+                trusted_items.append(trusted_prompt_item("operational_guard", guidance))
+        trusted_items.extend(resolve_capability_playbooks(
+            ctx.user_input,
+            attachments=ctx.extras.get("attachments") or (),
+        ))
+        ctx.extras["active_capability_playbooks"] = [
+            item.label for item in trusted_items
+            if item.source_kind == "capability_playbook"
+        ]
 
         return [
             LLMMessage(
@@ -2168,7 +2194,7 @@ class QueryLoop:
                 user_input=ctx.user_input,
                 conversation_history=str(conversation_block),
                 governed_context=str(retrieved_block),
-                runtime_guidance=runtime_guidance,
+                trusted_context_items=trusted_items,
             )),
         ]
 
@@ -2244,6 +2270,16 @@ class QueryLoop:
                     timeout=300,
                 )
                 response = self._coerce_llm_response(raw)
+                policy = (response.metadata or {}).get("prompt_policy")
+                if isinstance(policy, dict):
+                    ctx.extras.setdefault("prompt_policy_events", []).append({
+                        "stream_scope": stream_scope,
+                        "prompt_injection_detected": bool(policy.get("prompt_injection_detected")),
+                        "request_policy_ok": bool(policy.get("request_policy_ok", True)),
+                        "output_policy_ok": bool(policy.get("output_policy_ok", True)),
+                        "response_policy_ok": bool(policy.get("response_policy_ok", True)),
+                        "sensitive_output_redacted": bool(policy.get("sensitive_output_redacted")),
+                    })
                 if response.error:
                     response.error = _normalize_llm_error(response.error)
                 else:

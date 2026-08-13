@@ -1,5 +1,5 @@
 # prompts/policy.py
-"""Prompt input/output policy — blocks unsafe content, detects injection, fake refs."""
+"""Prompt policy detectors for injection, sensitive content and fake refs."""
 
 import re
 from dataclasses import dataclass, field
@@ -101,6 +101,11 @@ def _is_negation_context(text: str, match_start: int) -> bool:
         if idx >= 0 and len(before) - idx - len(word) <= 8:
             return True
     return False
+
+
+# Shared public helper for agent.llm.policy.  Keep one negation implementation
+# so output checks cannot drift between the prompt and response policy layers.
+is_negation_context = _is_negation_context
 
 
 def check_prompt_output(prompt_spec, llm_output: str, citations: list = None) -> PolicyResult:

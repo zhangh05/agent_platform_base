@@ -78,7 +78,10 @@ def run_ssot_turn(
             metadata_in["attachments"] = known_attachments
         attachment_guidance = build_attachment_runtime_guidance(known_attachments)
         if attachment_guidance:
-            metadata_in["runtime_guidance"] = attachment_guidance
+            from core.runtime_engine.prompt_contract import trusted_prompt_item
+            metadata_in.setdefault("trusted_prompt_items", []).append(
+                trusted_prompt_item("managed_attachment", attachment_guidance)
+            )
     except Exception:
         _LOG.warning("attachment runtime guidance preparation failed", exc_info=True)
 

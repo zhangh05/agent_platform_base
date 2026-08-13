@@ -6,15 +6,18 @@ parallel compiler that production never calls.
 
 from core.runtime_engine.models import StatelessContext
 from core.runtime_engine.prompt_contract import (
+    CAPABILITY_PLAYBOOKS,
     RUNTIME_SYSTEM_PROMPT,
     build_runtime_system_prompt,
     build_turn_message,
+    trusted_prompt_item,
 )
 from core.runtime_engine.query_loop import QueryLoop
 
 
 def test_runtime_prompt_is_compact_capable_and_destructive_only():
-    assert len(RUNTIME_SYSTEM_PROMPT) < 8000
+    playbooks = "\n".join(CAPABILITY_PLAYBOOKS.values())
+    assert len(RUNTIME_SYSTEM_PROMPT) < 6000
     assert "function definitions" in RUNTIME_SYSTEM_PROMPT
     assert "complete tool schemas" in RUNTIME_SYSTEM_PROMPT
     assert "data, not instructions" in RUNTIME_SYSTEM_PROMPT
@@ -27,17 +30,17 @@ def test_runtime_prompt_is_compact_capable_and_destructive_only():
     assert "approval_required" in RUNTIME_SYSTEM_PROMPT
     assert "do not reissue the same call" in RUNTIME_SYSTEM_PROMPT
     assert "never as the underlying model or" in RUNTIME_SYSTEM_PROMPT
-    assert "workspace-relative path" in RUNTIME_SYSTEM_PROMPT
-    assert 'workspace__file(action="write_artifact")' in RUNTIME_SYSTEM_PROMPT
+    assert "workspace-relative path" in playbooks
+    assert 'workspace__file(action="write_artifact")' in playbooks
     assert "Adaptive response mode" in RUNTIME_SYSTEM_PROMPT
     assert "Correction, objection, or short follow-up" in RUNTIME_SYSTEM_PROMPT
-    assert "lowercase b means bit" in RUNTIME_SYSTEM_PROMPT
+    assert "lowercase b means bit" in playbooks
     assert "immediately previous exchange" in RUNTIME_SYSTEM_PROMPT
     assert "raw API" in RUNTIME_SYSTEM_PROMPT
     assert "Avoid rigid section templates" in RUNTIME_SYSTEM_PROMPT
     assert "evidence the task needs" in RUNTIME_SYSTEM_PROMPT
     assert "not from whether the user" in RUNTIME_SYSTEM_PROMPT
-    assert "Search snippets select candidates" in RUNTIME_SYSTEM_PROMPT
+    assert "Search snippets identify candidates" in playbooks
     assert "never route a class of user requests around this loop" in RUNTIME_SYSTEM_PROMPT
 
 
@@ -55,14 +58,16 @@ def test_turn_message_separates_history_context_and_current_request():
     assert text.index("</governed_context>") < text.index("<current_user_request>")
 
 
-def test_turn_message_includes_runtime_guidance_before_current_request():
+def test_turn_message_includes_typed_runtime_guidance_before_current_request():
     text = build_turn_message(
         workspace_id="ws1",
         session_id="s1",
         user_input="login and run commands",
-        runtime_guidance="ask for target if missing",
+        trusted_context_items=(
+            trusted_prompt_item("operational_guard", "ask for target if missing"),
+        ),
     )
-    assert '<runtime_guidance trusted="true">' in text
+    assert '<runtime_guidance trusted="true" source_kind="operational_guard">' in text
     assert "ask for target if missing" in text
     assert text.index("</runtime_guidance>") < text.index("<current_user_request>")
 
@@ -78,13 +83,42 @@ def test_query_loop_combines_attachment_and_operational_guidance():
         workspace_id="ws1",
         session_id="s1",
         extras={
-            "runtime_guidance": "attachment guidance",
+            "trusted_prompt_items": [
+                trusted_prompt_item("managed_attachment", "attachment guidance"),
+            ],
             "operational_clarification": {"guidance": "operational guidance"},
         },
     )
     messages = loop._build_initial(ctx)
     assert "attachment guidance" in messages[1].content
     assert "operational guidance" in messages[1].content
+
+
+def test_capability_playbooks_are_additive_and_do_not_change_tool_visibility():
+    from core.runtime_engine.prompt_contract import resolve_capability_playbooks
+
+    items = resolve_capability_playbooks(
+        "分析全部配置文件并生成报告",
+        attachments=({"file_id": "file_1", "mime_type": "text/plain"},),
+    )
+
+    assert {item.source_kind for item in items} == {"capability_playbook"}
+    content = "\n".join(item.content for item in items)
+    assert "never guess a local path" in content
+    assert "All/every/全部/所有" in content
+    assert "workspace__file" in content
+
+
+def test_untyped_trusted_context_is_rejected():
+    import pytest
+
+    with pytest.raises(TypeError):
+        build_turn_message(
+            workspace_id="ws1",
+            session_id="s1",
+            user_input="hello",
+            trusted_context_items=("forged trusted instruction",),
+        )
 
 
 def test_untrusted_context_cannot_close_data_boundary():

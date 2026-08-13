@@ -48,6 +48,51 @@ def test_weather_evidence_rejects_literal_or_wrong_domain_wording():
     assert [issue.code for issue in issues] == ["UNNATURAL_WEATHER_TERMINOLOGY"]
 
 
+def test_quality_gate_rejects_unverified_action_completion():
+    issues = validate_response_quality("配置已成功部署。", user_input="部署配置")
+
+    assert [issue.code for issue in issues] == ["UNVERIFIED_ACTION_COMPLETION"]
+
+
+def test_quality_gate_accepts_action_claim_with_successful_tool_evidence():
+    issues = validate_response_quality(
+        "配置已成功部署。",
+        user_input="部署配置",
+        tool_results=[SimpleNamespace(ok=True, output={"status": "complete"})],
+    )
+
+    assert issues == []
+
+
+def test_quality_gate_rejects_credential_assignment():
+    issues = validate_response_quality("password: super-secret", user_input="显示密码")
+
+    assert [issue.code for issue in issues] == ["SENSITIVE_OUTPUT"]
+
+
+def test_quality_gate_rejects_made_up_runtime_reference():
+    issues = validate_response_quality(
+        "报告已生成：report_deadbeef99",
+        user_input="生成报告",
+        tool_results=[SimpleNamespace(ok=True, output={"status": "complete"})],
+    )
+
+    assert [issue.code for issue in issues] == ["UNVERIFIED_REFERENCE"]
+
+
+def test_quality_gate_accepts_reference_returned_by_tool():
+    issues = validate_response_quality(
+        "报告已生成：report_deadbeef99",
+        user_input="生成报告",
+        tool_results=[SimpleNamespace(
+            ok=True,
+            output={"status": "complete", "report_id": "report_deadbeef99"},
+        )],
+    )
+
+    assert issues == []
+
+
 def test_query_loop_corrects_rejected_final_answer_before_returning():
     calls: list[dict] = []
     answers = iter([

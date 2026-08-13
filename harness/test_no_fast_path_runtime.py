@@ -181,7 +181,7 @@ def test_ambiguous_operational_request_still_reaches_query_loop():
     assert "skip_reason" not in result.metadata
     assert calls
     assert calls[0].get("tools") is not None
-    assert "<runtime_guidance trusted=\"true\">" in calls[0].get("user", "")
+    assert "<runtime_guidance trusted=\"true\" source_kind=\"operational_guard\">" in calls[0].get("user", "")
     assert "Potentially missing fields" in calls[0].get("user", "")
 
 
