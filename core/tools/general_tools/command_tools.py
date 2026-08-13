@@ -228,11 +228,11 @@ def handle_slash_run(inv: ToolInvocation) -> dict:
         return _error_inv(inv, str(e)[:200])
 
 def handle_python_exec(inv: ToolInvocation) -> dict:
-    """Execute Python code in an AST-checked sandbox.
+    """Execute Python data processing through the policy-selected runner.
 
-    High risk tool. Code is parsed with AST to reject forbidden imports,
+    Medium-risk execution. Destructive operations still require approval; ordinary Python processing does not. Code is parsed with AST to reject forbidden imports,
     builtins, and dunder access before execution. Runs in a subprocess with
-    timeout. Requires explicit user approval.
+    timeout. Best-effort local execution is explicitly labeled and is not a sandbox.
     """
     workspace_id = _caller_workspace(inv)
     run_id = inv.arguments.get("run_id", "")

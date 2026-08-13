@@ -411,6 +411,10 @@ def main():
     args = parser.parse_args()
 
     port = args.port
+    from backend.core.auth import validate_network_listener
+    validate_network_listener(args.host)
+    # Python execution policy must see the actual listener even when backend.main is started directly.
+    os.environ["AGENT_PLATFORM_RUNTIME_BIND_HOST"] = args.host
     app.config["PORT"] = port
 
     print(f"联智中枢 running on http://{args.host}:{port}")

@@ -52,7 +52,7 @@ import re
 import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import List, Optional, Union
+from typing import Any, List, Optional, Union
 
 from agent.modules.knowledge import parsers as _parsers
 from agent.modules.knowledge import chunking as _chunking

@@ -17,6 +17,7 @@ from typing import Any, Dict, List, Optional
 from storage.ids import validate_session_id, validate_workspace_id
 from storage.workspace_store import ensure_workspace
 from storage.atomic_io import atomic_write_json
+from storage.locking import FileLock
 
 from storage.paths import workspace_root
 
@@ -37,6 +38,69 @@ def _session_path(session_id: str, ws_id: str) -> Path:
     safe_id = validate_session_id(session_id)
     return _session_dir(ws_id) / f"{safe_id}.json"
 
+
+
+def _session_lock_path(session_id: str, ws_id: str) -> Path:
+    """Return a stable lock path that is never atomically replaced."""
+    session_path = _session_path(session_id, ws_id)
+    return session_path.with_name(f".{session_path.stem}.lock")
+
+
+def _session_lock(session_id: str, ws_id: str) -> FileLock:
+    return FileLock(_session_lock_path(session_id, ws_id))
+
+
+def _read_session_unlocked(session_id: str, ws_id: str) -> Optional[Dict[str, Any]]:
+    path = _session_path(session_id, ws_id)
+    if not path.is_file():
+        return None
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, UnicodeDecodeError) as exc:
+        _LOG.warning(
+            "session_read_failed action=read session_id=%s workspace_id=%s error_type=%s",
+            session_id,
+            ws_id,
+            type(exc).__name__,
+        )
+        return None
+    return value if isinstance(value, dict) else None
+
+
+def _write_session_unlocked(session: Dict[str, Any], ws_id: str) -> None:
+    atomic_write_json(_session_path(session["session_id"], ws_id), session)
+
+
+def _session_tombstone_path(session_id: str, ws_id: str) -> Path:
+    session_path = _session_path(session_id, ws_id)
+    return session_path.with_name(f".{session_path.stem}.deleted")
+
+
+def _session_is_tombstoned_unlocked(session_id: str, ws_id: str) -> bool:
+    return _session_tombstone_path(session_id, ws_id).is_file()
+
+
+def _mark_session_deleted_unlocked(session_id: str, ws_id: str) -> None:
+    atomic_write_json(
+        _session_tombstone_path(session_id, ws_id),
+        {"session_id": session_id, "workspace_id": ws_id, "deleted_at": _now_iso()},
+    )
+
+
+def _mutate_session(session_id: str, ws_id: str, mutator) -> Optional[Dict[str, Any]]:
+    """Run one complete session read/validate/mutate/write transaction."""
+    safe_id = validate_session_id(session_id)
+    ws_id = validate_workspace_id(ws_id)
+    with _session_lock(safe_id, ws_id):
+        if _session_is_tombstoned_unlocked(safe_id, ws_id):
+            return None
+        session = _read_session_unlocked(safe_id, ws_id)
+        if not session:
+            return None
+        if mutator(session):
+            session["updated_at"] = _now_iso()
+            _write_session_unlocked(session, ws_id)
+        return session
 
 def _now_iso() -> str:
     """Return current UTC time in ISO format."""
@@ -79,43 +143,38 @@ def ensure_session(
     title: str = "新会话",
     created_at: str = "",
 ) -> Dict[str, Any]:
-    """Return an existing session or create metadata for a caller-owned id.
-
-    Browser transports allocate the session id before the first turn. Persisting
-    that id before run/message writes prevents orphan directories and incomplete
-    ``run_ids`` projections.
-    """
+    """Return an existing session or create one inside the session lock."""
     ws_id = ensure_workspace(ws_id)
     safe_id = validate_session_id(session_id)
-    existing = get_session(safe_id, ws_id)
-    if existing:
-        return existing
-    now = created_at or _now_iso()
-    session = {
-        "session_id": safe_id,
-        "workspace_id": ws_id,
-        "title": title or "新会话",
-        "status": "active",
-        "created_at": now,
-        "updated_at": now,
-        "run_ids": [],
-        "metadata": {},
-    }
-    _write_session(session, ws_id)
-    return session
+    with _session_lock(safe_id, ws_id):
+        if _session_is_tombstoned_unlocked(safe_id, ws_id):
+            raise ValueError("session permanently deleted")
+        existing = _read_session_unlocked(safe_id, ws_id)
+        if existing:
+            return existing
+        now = created_at or _now_iso()
+        session = {
+            "session_id": safe_id,
+            "workspace_id": ws_id,
+            "title": title or "新会话",
+            "status": "active",
+            "created_at": now,
+            "updated_at": now,
+            "run_ids": [],
+            "metadata": {},
+        }
+        _write_session_unlocked(session, ws_id)
+        return session
 
 
 def get_session(session_id: str, ws_id: str = "default") -> Optional[Dict[str, Any]]:
-    """Get a single session by ID."""
+    """Read one complete session record under its stable lock."""
     ws_id = validate_workspace_id(ws_id)
-    path = _session_path(session_id, ws_id)
-    if path.is_file():
-        try:
-            return json.loads(path.read_text(encoding="utf-8"))
-        except Exception:
-            _LOG.warning("session_store: silent exception", exc_info=True)
-    return None
-
+    safe_id = validate_session_id(session_id)
+    with _session_lock(safe_id, ws_id):
+        if _session_is_tombstoned_unlocked(safe_id, ws_id):
+            return None
+        return _read_session_unlocked(safe_id, ws_id)
 
 def list_sessions(
     ws_id: str = "default",
@@ -233,24 +292,28 @@ def _session_from_messages(
         if role == "user" and str(data.get("content") or "").strip():
             title = str(data["content"]).strip().replace("\n", " ")[:60]
             break
-    session = dict(base or {})
-    session.update({
-        "session_id": session_id,
-        "workspace_id": ws_id,
-        "title": title or session.get("title") or "新会话",
-        "status": session.get("status") or "active",
-        "created_at": min(timestamps) if timestamps else session.get("created_at") or _now_iso(),
-        "updated_at": max(timestamps) if timestamps else session.get("updated_at") or _now_iso(),
-        "run_ids": run_ids or list(session.get("run_ids") or []),
-        "metadata": {
-            **dict(session.get("metadata") or {}),
-            "auto_repaired": True,
-            "repair_complete": True,
-        },
-    })
-    _write_session(session, ws_id)
-    return session
-
+    safe_id = validate_session_id(session_id)
+    with _session_lock(safe_id, ws_id):
+        if _session_is_tombstoned_unlocked(safe_id, ws_id):
+            return None
+        current = _read_session_unlocked(safe_id, ws_id)
+        session = dict(current or base or {})
+        merged_run_ids = list(session.get("run_ids") or [])
+        for run_id in run_ids:
+            if run_id not in merged_run_ids:
+                merged_run_ids.append(run_id)
+        session.update({
+            "session_id": safe_id,
+            "workspace_id": ws_id,
+            "title": title or session.get("title") or "新会话",
+            "status": session.get("status") or "active",
+            "created_at": session.get("created_at") or (min(timestamps) if timestamps else _now_iso()),
+            "updated_at": max(str(session.get("updated_at") or ""), max(timestamps, default="")) or _now_iso(),
+            "run_ids": merged_run_ids,
+            "metadata": {**dict(session.get("metadata") or {}), "auto_repaired": True, "repair_complete": True},
+        })
+        _write_session_unlocked(session, ws_id)
+        return session
 
 def update_session(
     session_id: str,
@@ -259,25 +322,25 @@ def update_session(
     status: Optional[str] = None,
     metadata: Optional[Dict[str, Any]] = None,
 ) -> Optional[Dict[str, Any]]:
-    """Update session fields. Returns updated session or None if not found."""
+    """Update fields in one locked read-modify-write transaction."""
     ws_id = validate_workspace_id(ws_id)
-    session = get_session(session_id, ws_id)
-    if not session:
-        return None
 
-    if title is not None:
-        session["title"] = title
-    if status is not None:
-        if status in ("active", "archived", "deleted"):
+    def _apply(session: Dict[str, Any]) -> bool:
+        changed = False
+        if title is not None and session.get("title") != title:
+            session["title"] = title
+            changed = True
+        if status in ("active", "archived", "deleted") and session.get("status") != status:
             session["status"] = status
-    if metadata is not None:
-        session["metadata"] = metadata
+            changed = True
+        if metadata is not None:
+            merged = {**dict(session.get("metadata") or {}), **dict(metadata)}
+            if session.get("metadata") != merged:
+                session["metadata"] = merged
+                changed = True
+        return changed
 
-    session["updated_at"] = _now_iso()
-    _write_session(session, ws_id)
-    return session
-
-
+    return _mutate_session(session_id, ws_id, _apply)
 def archive_session(session_id: str, ws_id: str = "default") -> Optional[Dict[str, Any]]:
     """Soft-archive a session (status → 'archived')."""
     return update_session(session_id, ws_id, status="archived")
@@ -291,89 +354,85 @@ def soft_delete_session(session_id: str, ws_id: str = "default") -> Optional[Dic
 def delete_session_permanently(
     session_id: str, ws_id: str = "default", confirm: bool = False
 ) -> bool:
-    """Physically delete the session and its messages.
-
-    Removes both the JSON metadata file and the messages/ directory
-    so that list_sessions' auto-repair does not resurrect the session.
-
-    Also cascades to clean up associated run records and trace files
-    to prevent orphan data. Artifacts are left intact for audit purposes
-    (they are workspace-scoped, not session-scoped).
-
-    Requires confirm=True as a safety guard.
-    """
+    """Delete session state under one lock and leave a tombstone against revival."""
     if not confirm:
         return False
     import shutil
-    import logging
-    _log = logging.getLogger("session_store.delete")
+
     ws_id = validate_workspace_id(ws_id)
-
-    # ── Collect run_ids before deletion ──
-    session = get_session(session_id, ws_id)
-    run_ids = list((session or {}).get("run_ids", []))
-
-    # Also scan runs dir for any runs with this session_id (recovery)
-    try:
-        from storage.run_record_store import list_runs
-        for run in list_runs(ws_id, limit=5000):
-            if run.get("session_id") == session_id:
-                rid = run.get("run_id") or run.get("turn_id") or ""
-                if rid and rid not in run_ids:
-                    run_ids.append(rid)
-    except Exception:
-        _log.debug("run scan failed for session=%s ws=%s", session_id, ws_id)
-
-    # ── Delete run records and trace files ──
-    runs_dir = _ws_root(ws_id) / "runs"
-    for rid in run_ids:
-        # Delete run record
-        run_file = runs_dir / f"{rid}.json"
-        if run_file.is_file():
-            try:
-                run_file.unlink()
-            except Exception:
-                _log.debug("failed to delete run file: %s", run_file)
-
-        # Delete trace sidecar
-        trace_file = runs_dir / f"{rid}.trace.json"
-        if trace_file.is_file():
-            try:
-                trace_file.unlink()
-            except Exception:
-                _log.debug("failed to delete trace file: %s", trace_file)
-
-        # Delete decision sidecar
-        decision_file = runs_dir / f"{rid}.decision.json"
-        if decision_file.is_file():
-            try:
-                decision_file.unlink()
-            except Exception:
-                _log.debug("failed to delete decision file: %s", decision_file)
-
-    _log.info("cascaded delete: session=%s ws=%s runs_deleted=%d", session_id, ws_id, len(run_ids))
-
-    # ── Delete session metadata and messages ──
-    path = _session_path(session_id, ws_id)
-    msg_dir = _session_dir(ws_id) / str(session_id)
-
-    deleted = False
-    if path.is_file():
+    safe_id = validate_session_id(session_id)
+    with _session_lock(safe_id, ws_id):
+        session = _read_session_unlocked(safe_id, ws_id)
+        path = _session_path(safe_id, ws_id)
+        msg_dir = _session_dir(ws_id) / safe_id
+        had_data = bool(session or path.is_file() or msg_dir.is_dir())
+        if not _session_is_tombstoned_unlocked(safe_id, ws_id):
+            _mark_session_deleted_unlocked(safe_id, ws_id)
+        failures: list[str] = []
+        run_ids = list((session or {}).get("run_ids", []))
         try:
-            path.unlink()
-            deleted = True
-        except Exception:
-            _LOG.warning("session_store: silent exception", exc_info=True)
-
-    # Also remove the messages directory to prevent auto-repair resurrection
-    if msg_dir.is_dir():
-        try:
-            shutil.rmtree(msg_dir)
-            deleted = True
-        except Exception:
-            _LOG.warning("session_store: silent exception", exc_info=True)
-
-    return deleted
+            from storage.run_record_store import list_runs
+            for run in list_runs(ws_id, limit=5000):
+                if run.get("session_id") == safe_id:
+                    run_id = str(run.get("run_id") or run.get("turn_id") or "")
+                    if run_id and run_id not in run_ids:
+                        run_ids.append(run_id)
+        except (OSError, TypeError, ValueError) as exc:
+            failures.append("run_scan_failed")
+            _LOG.warning(
+                "session_delete_scan_failed action=delete session_id=%s workspace_id=%s error_type=%s",
+                safe_id,
+                ws_id,
+                type(exc).__name__,
+            )
+        runs_dir = _ws_root(ws_id) / "runs"
+        for run_id in run_ids:
+            for suffix in (".json", ".trace.json", ".decision.json"):
+                record_path = runs_dir / f"{run_id}{suffix}"
+                if record_path.is_file():
+                    try:
+                        record_path.unlink()
+                    except OSError as exc:
+                        failures.append(f"run_delete_failed:{record_path.name}")
+                        _LOG.warning(
+                            "session_delete_run_failed action=delete session_id=%s workspace_id=%s object_id=%s error_type=%s",
+                            safe_id,
+                            ws_id,
+                            record_path.name,
+                            type(exc).__name__,
+                        )
+        if path.is_file():
+            try:
+                path.unlink()
+            except OSError as exc:
+                failures.append("metadata_delete_failed")
+                _LOG.warning(
+                    "session_delete_metadata_failed action=delete session_id=%s workspace_id=%s error_type=%s",
+                    safe_id,
+                    ws_id,
+                    type(exc).__name__,
+                )
+        if msg_dir.is_dir():
+            try:
+                shutil.rmtree(msg_dir)
+            except OSError as exc:
+                failures.append("messages_delete_failed")
+                _LOG.warning(
+                    "session_delete_messages_failed action=delete session_id=%s workspace_id=%s error_type=%s",
+                    safe_id,
+                    ws_id,
+                    type(exc).__name__,
+                )
+        complete = not path.exists() and not msg_dir.exists()
+        if failures or not complete:
+            _LOG.error(
+                "session_hard_delete_incomplete session_id=%s workspace_id=%s failures=%s",
+                safe_id,
+                ws_id,
+                failures or ["residual_paths"],
+            )
+            return False
+        return had_data
 
 
 # ─── Run association ───
@@ -382,24 +441,22 @@ def delete_session_permanently(
 def add_run_to_session(
     session_id: str, run_id: str, ws_id: str = "default"
 ) -> Optional[Dict[str, Any]]:
-    """Append a run_id to a session's run_ids list."""
+    """Append one run id in the same transaction used by other session updates."""
     ws_id = validate_workspace_id(ws_id)
-    session = get_session(session_id, ws_id)
-    if not session:
-        return None
 
-    run_ids = session.get("run_ids", [])
-    if run_id not in run_ids:
+    def _apply(session: Dict[str, Any]) -> bool:
+        run_ids = list(session.get("run_ids") or [])
+        if run_id in run_ids:
+            return False
         run_ids.append(run_id)
         session["run_ids"] = run_ids
-        session["updated_at"] = _now_iso()
-        # Auto-title: use first user input as session name
         if not session.get("title"):
             title = _auto_title_from_run(run_id, ws_id)
             if title:
                 session["title"] = title
-        _write_session(session, ws_id)
-    return session
+        return True
+
+    return _mutate_session(session_id, ws_id, _apply)
 
 
 def _auto_title_from_run(run_id: str, ws_id: str) -> str:
@@ -584,9 +641,13 @@ def auto_title_from_input(session_id: str, user_input: str, ws_id: str = "defaul
 
 
 def _write_session(session: Dict[str, Any], ws_id: str):
-    """Persist session to disk atomically to prevent corruption on concurrent writes."""
-    path = _session_path(session["session_id"], ws_id)
-    atomic_write_json(path, session)
+    """Persist a session under its stable lock; transactions use the unlocked helper."""
+    safe_id = validate_session_id(session["session_id"])
+    ws_id = validate_workspace_id(ws_id)
+    with _session_lock(safe_id, ws_id):
+        if _session_is_tombstoned_unlocked(safe_id, ws_id):
+            raise ValueError("session permanently deleted")
+        _write_session_unlocked(session, ws_id)
 
 
 # ─── Cleanup helpers ───
@@ -603,16 +664,18 @@ def list_sessions_by_status(ws_id: str = "default") -> Dict[str, List[Dict[str, 
                 session = json.loads(f.read_text(encoding="utf-8"))
                 if not _is_internal_session(session):
                     all_sessions.append(session)
-            except Exception:
-                _LOG.warning("session_store: silent exception", exc_info=True)
-
+            except (OSError, ValueError, UnicodeDecodeError) as exc:
+                _LOG.warning(
+                    "session_list_failed action=list workspace_id=%s object_id=%s error_type=%s",
+                    ws_id,
+                    f.name,
+                    type(exc).__name__,
+                )
     return {
         "active": [s for s in all_sessions if s.get("status") == "active"],
         "archived": [s for s in all_sessions if s.get("status") == "archived"],
         "deleted": [s for s in all_sessions if s.get("status") == "deleted"],
     }
-
-
 def get_session_count(ws_id: str = "default") -> Dict[str, int]:
     """Return counts of sessions by status."""
     grouped = list_sessions_by_status(ws_id)

@@ -9,9 +9,9 @@
  *
  * 这样既能验证前端对 timeout 的渲染, 又不需要 e2e 跑 30s+.
  */
-import { test, expect } from "./fixtures";
+import { test, expect, selectWorkspace } from "./fixtures";
 
-test("9. provider timeout surfaces error state", async ({ page, api }) => {
+test("9. provider timeout surfaces error state", async ({ page, api, workspaceId }) => {
   // 直接返回 408: toApiError 看到 status 408 → code 置为 "timeout",
   // 并把 body.message 透传出去 (此处塞 "请求超时" 满足断言).
   await page.route("**/api/knowledge/search**", async (route) => {
@@ -23,9 +23,7 @@ test("9. provider timeout surfaces error state", async ({ page, api }) => {
   });
 
   await page.goto("/knowledge");
-  const wsFirst = page.locator('[data-testid^="ws-"]').first();
-  await wsFirst.waitFor({ state: "visible", timeout: 8_000 });
-  await wsFirst.click();
+  await selectWorkspace(page, workspaceId);
 
   // Trigger the search.
   await page.getByTestId("knowledge-search-input").fill("OSPF");

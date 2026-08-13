@@ -370,6 +370,14 @@ class ApprovalStore:
                 return None
             return req.allowed
 
+    def get_pending_request(self, approval_id: str, workspace_id: str) -> Optional[ApprovalRequest]:
+        """Return a pending request only when it belongs to the workspace."""
+        with self._lock:
+            req = self._pending.get(approval_id)
+            if req is None or req.resolved or req.workspace_id != workspace_id:
+                return None
+            return req
+
     def get_pending(self, session_id: str = "", workspace_id: str = "") -> list[dict]:
         """Get pending approvals, optionally filtered by workspace/session.
 
@@ -450,7 +458,62 @@ class ApprovalStore:
                            self._persist_path, exc_info=True)
             return []
         records.sort(key=lambda r: r.get("resolved_at") or "", reverse=True)
-        return records[:limit] \
+        return records[:limit]
+
+    def validate_resolved_approval(
+        self,
+        approval_id: str,
+        *,
+        workspace_id: str,
+        tool_id: str,
+        arguments: dict,
+        run_id: str = "",
+        metadata: dict | None = None,
+    ) -> bool:
+        """Validate an allowed approval against the exact action binding.
+
+        Approval ids are user-visible references, not bearer capabilities.  A
+        caller may only resume an action when the durable resolved record is
+        allowed and still matches workspace, run, tool, arguments and the
+        caller-supplied binding metadata.
+        """
+        if not approval_id or not workspace_id or not tool_id:
+            return False
+        try:
+            from core.tools.redaction import redact_tool_output
+            from storage.approval_record_store import read_approval_records
+
+            expected_arguments = redact_tool_output(arguments or {})
+            expected_metadata = redact_tool_output(metadata or {})
+            records = read_approval_records(path=self._persist_path)
+        except (OSError, TypeError, ValueError):
+            logger.warning(
+                "approval validation failed approval_id=%s workspace_id=%s",
+                approval_id,
+                workspace_id,
+                exc_info=True,
+            )
+            return False
+
+        for record in reversed(records):
+            if record.get("approval_id") != approval_id:
+                continue
+            if not record.get("resolved") or not record.get("allowed"):
+                return False
+            if record.get("workspace_id") != workspace_id:
+                return False
+            if record.get("tool_id") != tool_id:
+                return False
+            if str(record.get("run_id") or "") != str(run_id or ""):
+                return False
+            stored_arguments = record.get("arguments") or {}
+            if not isinstance(stored_arguments, dict) or not all(
+                stored_arguments.get(key) == value for key, value in expected_arguments.items()
+            ):
+                return False
+            stored_metadata = record.get("metadata") or {}
+            return all(stored_metadata.get(key) == value for key, value in expected_metadata.items())
+        return False
 
 
     def wait(self, approval_id: str, timeout: int = 60,

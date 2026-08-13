@@ -1,18 +1,16 @@
 /**
  * E2E 10 — Page refresh restores workspace + session state.
  */
-import { test, expect } from "./fixtures";
+import { test, expect, selectWorkspace } from "./fixtures";
 
-test("10. refresh restores workspace + session", async ({ page }) => {
+test("10. refresh restores workspace + session", async ({ page, workspaceId }) => {
   await page.goto("/workbench");
 
   // Wait for the sidebar to populate.
-  const wsFirst = page.locator('[data-testid^="ws-"]').first();
-  await wsFirst.waitFor({ state: "visible", timeout: 8_000 });
-  await wsFirst.click();
+  await selectWorkspace(page, workspaceId);
 
   // Verify workspace is selected (active class).
-  const active = page.locator('[data-testid^="ws-"].active').first();
+  const active = page.locator(`[data-testid="ws-${workspaceId}"]`);
   await expect(active).toBeVisible({ timeout: 4_000 });
 
   // Capture the active workspace id.

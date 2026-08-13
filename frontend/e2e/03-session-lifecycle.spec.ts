@@ -1,14 +1,11 @@
 /**
  * E2E 3 — Session create + switch.
  */
-import { test, expect } from "./fixtures";
+import { test, expect, selectWorkspace } from "./fixtures";
 
-test("3. session create + switch", async ({ page }) => {
+test("3. session create + switch", async ({ page, workspaceId }) => {
   await page.goto("/workbench");
-
-  const wsFirst = page.locator('[data-testid^="ws-"]').first();
-  await wsFirst.waitFor({ state: "visible", timeout: 8_000 });
-  await wsFirst.click();
+  await selectWorkspace(page, workspaceId);
 
   // Create a session via the sidebar.
   const newBtn = page.getByTestId("btn-new-session");
@@ -23,8 +20,7 @@ test("3. session create + switch", async ({ page }) => {
 
   // Click the first session — currentSessionId should be set in localStorage.
   await sessionButtons.first().click();
-  // Refresh and confirm the workspace is restored.
   await page.reload();
-  // The workspace should still be selected after refresh.
-  await expect(page.locator('[data-testid^="ws-"].active').first()).toBeVisible({ timeout: 6_000 });
+  // The same isolated workspace remains selectable after a full client reload.
+  await expect(page.locator(`[data-testid="ws-${workspaceId}"]`)).toHaveClass(/active/, { timeout: 6_000 });
 });

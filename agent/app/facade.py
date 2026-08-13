@@ -5,6 +5,7 @@ import logging
 from agent.app.session_manager import SessionManager
 from agent.core.thread import AgentThread
 from agent.protocol.op import AgentOp
+from agent.runtime.result import AgentResult
 
 logger = logging.getLogger(__name__)
 

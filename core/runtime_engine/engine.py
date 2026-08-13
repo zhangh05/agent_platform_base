@@ -519,7 +519,6 @@ class SSOTRuntimeEngine:
     @staticmethod
     def _resolve_loop_error_code(error_key: str, first_error: str, hard_block: bool) -> str:
         """Map QueryLoop error keys to canonical SSOTRuntimeErrorCode values."""
-        from .errors import SSOTRuntimeErrorCode
 
         # Semantic validation: code is embedded in the error text
         if error_key == "semantic_validation_failed" and isinstance(first_error, str):

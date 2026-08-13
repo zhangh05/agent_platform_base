@@ -5,16 +5,14 @@
  * + trace_id + turn_id are displayed in the Inspector, and confirms
  * tool_calls array is rendered if present.
  */
-import { test, expect } from "./fixtures";
+import { test, expect, selectWorkspace } from "./fixtures";
 
-test("2. agent message closed loop", async ({ page }) => {
+test("2. agent message closed loop", async ({ page, workspaceId }) => {
   await page.goto("/workbench");
 
   // Pick a workspace if Sidebar hasn't auto-selected one.
   // Wait for sidebar workspace list to load.
-  const wsFirst = page.locator('[data-testid^="ws-"]').first();
-  await wsFirst.waitFor({ state: "visible", timeout: 8_000 });
-  await wsFirst.click();
+  await selectWorkspace(page, workspaceId);
 
   // Send a deterministic message.
   const input = page.getByTestId("chat-input");

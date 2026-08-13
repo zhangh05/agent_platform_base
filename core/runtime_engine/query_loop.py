@@ -2372,7 +2372,6 @@ class QueryLoop:
         Some models (MiniMax-M3) emit chain-of-thought reasoning inside XML
         tags. We strip the tags and their content before passing the text on.
         """
-        import re
         return re.sub(r'<think>.*?</think>\s*', '', text, flags=re.DOTALL).strip()
 
 

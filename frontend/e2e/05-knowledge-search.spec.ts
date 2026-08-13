@@ -1,16 +1,11 @@
 /**
  * E2E 5 — Knowledge search + chunk read.
  */
-import { test, expect } from "./fixtures";
+import { test, expect, selectWorkspace } from "./fixtures";
 
-test("5. knowledge search returns results", async ({ page, api }) => {
-  // Discover the first workspace the UI will see.
-  const wsList = await api.get("/api/workspaces");
-  const wsBody = await wsList.json().catch(() => ({}));
-  const wsList0 = (wsBody.workspaces ?? [])[0]?.workspace_id ?? "default";
-
+test("5. knowledge search returns results", async ({ page, api, workspaceId }) => {
   // Seed: ensure at least one artifact exists for searching.
-  await api.post(`/api/workspaces/${wsList0}/artifacts`, {
+  await api.post(`/api/workspaces/${workspaceId}/artifacts`, {
     data: {
       title: "e2e-knowledge-search-seed",
       artifact_type: "test_seed",
@@ -22,9 +17,7 @@ test("5. knowledge search returns results", async ({ page, api }) => {
   });
 
   await page.goto("/knowledge");
-  const wsFirst = page.locator('[data-testid^="ws-"]').first();
-  await wsFirst.waitFor({ state: "visible", timeout: 8_000 });
-  await wsFirst.click();
+  await selectWorkspace(page, workspaceId);
 
   // Run a search.
   const input = page.getByTestId("knowledge-search-input");

@@ -53,6 +53,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
 
       - name: Set up Python
         uses: actions/setup-python@v6
@@ -68,7 +70,9 @@ jobs:
 
       - name: Lint with ruff
         run: |
-          ruff check . --select=E9 --exclude=__pycache__,.git,venv,node_modules
+          ruff check . --select=E9,F821,F811 --exclude=__pycache__,.git,venv,node_modules
+          QUALITY_BASE="${{ github.event.pull_request.base.sha || github.event.before }}" \
+            python scripts/check_ruff_new_violations.py
       - name: Check CSS tokens
         run: |
           python scripts/check_css_tokens.py

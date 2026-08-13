@@ -2,6 +2,7 @@
 """AgentThread — thin submit wrapper; delegates to session."""
 
 from dataclasses import dataclass
+from agent.runtime.result import AgentResult
 
 
 @dataclass

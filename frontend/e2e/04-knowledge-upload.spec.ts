@@ -5,16 +5,11 @@
  * Library page lists it, lets the user import it, and the source
  * appears in the table.
  */
-import { test, expect } from "./fixtures";
+import { test, expect, selectWorkspace } from "./fixtures";
 
-test("4. knowledge import from artifact (UI happy-path)", async ({ page, api }) => {
-  // Discover the first workspace the UI will see.
-  const wsList = await api.get("/api/workspaces");
-  const wsBody = await wsList.json().catch(() => ({}));
-  const wsList0 = (wsBody.workspaces ?? [])[0]?.workspace_id ?? "default";
-
+test("4. knowledge import from artifact (UI happy-path)", async ({ page, api, workspaceId }) => {
   // Pre-seed an artifact in the same workspace.
-  const seed = await api.post(`/api/workspaces/${wsList0}/artifacts`, {
+  const seed = await api.post(`/api/workspaces/${workspaceId}/artifacts`, {
     data: {
       title: "e2e-knowledge-seed",
       artifact_type: "test_seed",
@@ -32,6 +27,7 @@ test("4. knowledge import from artifact (UI happy-path)", async ({ page, api }) 
   // Open the Knowledge Library page and reload to force a fresh
   // artifacts fetch after the seed.
   await page.goto("/knowledge");
+  await selectWorkspace(page, workspaceId);
   await page.reload();
 
   // Wait for the import-from-artifact card.
@@ -58,7 +54,7 @@ test("4. knowledge import from artifact (UI happy-path)", async ({ page, api }) 
     // The seeded workspace is what we created the artifact in. Force-
     // select it via the sidebar by clicking on the corresponding
     // workspace button.
-    const wsBtn = page.locator(`[data-testid="ws-${wsList0}"]`);
+    const wsBtn = page.locator(`[data-testid="ws-${workspaceId}"]`);
     if (await wsBtn.count() > 0) {
       await wsBtn.first().click().catch(() => {});
     }

@@ -310,6 +310,7 @@ export function Sidebar() {
                   className={`list-item${workspace.workspace_id === currentWorkspaceId ? " active" : ""}`}
                   onClick={() => setCurrentWorkspace(workspace.workspace_id)}
                   aria-label={`工作区：${workspace.name || workspace.workspace_id}`}
+                  data-testid={`ws-${workspace.workspace_id}`}
                 >
                   <span className="status-dot ok" />
                   <span className="title">{workspace.name || workspace.workspace_id}</span>

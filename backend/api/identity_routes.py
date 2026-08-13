@@ -72,6 +72,13 @@ def _validated_user_fields(
 
 
 def register_identity_routes(app) -> None:
+    if identity_enabled():
+        # Identity and organization membership are global control-plane state.
+        # Bootstrap the default organization before any authenticated request
+        # tries to create or assign a workspace.
+        from storage.workspace_store import list_workspace_ids
+        ensure_organization("default", "默认组织", list_workspace_ids())
+
     @app.route("/api/identity/users", methods=["GET", "POST"])
     def identity_users():
         context, denied = _context()

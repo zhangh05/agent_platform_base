@@ -90,6 +90,15 @@ def register_approval_routes(app) -> None:
             return err
         store = get_approval_store(ws_id)
 
+        pending_req = store.get_pending_request(approval_id, ws_id)
+        pending_meta = getattr(pending_req, "metadata", None) or {}
+        if pending_meta.get("workflow_id") and decision == "edit_args":
+            return jsonify({
+                "ok": False,
+                "error": "workflow_edit_args_not_supported",
+                "message": "Workflow approvals must be approved or rejected as the exact bound action.",
+            }), 400
+
         req = store.resolve(approval_id, allowed, workspace_id=ws_id, resolver=resolver, reason=reason)
         if req is None:
             return jsonify({"ok": False, "error": "approval not found or already resolved"}), 404
@@ -110,9 +119,23 @@ def register_approval_routes(app) -> None:
                     feedback=data.get("feedback", ""),
                     reason=reason,
                 )
-        except Exception:
+            elif meta.get("workflow_id") and meta.get("workflow_node_id") and req.run_id:
+                if decision == "approve":
+                    from workflows.service import resume_workflow_run
+                    resumed = resume_workflow_run(ws_id, req.run_id, approval_id)
+                    runtime_result = {"ok": resumed.get("status") == "succeeded", "workflow_run": resumed}
+                else:
+                    from workflows.service import reject_workflow_run
+                    rejected = reject_workflow_run(ws_id, req.run_id, approval_id)
+                    runtime_result = {"ok": rejected is not None, "workflow_run": rejected}
+        except Exception as exc:  # noqa: BLE001 - final HTTP boundary must return a structured failure
             _LOG.warning("resume_after_approval failed approval=%s task=%s ws=%s (non-fatal)",
                          approval_id, task_id or "?", ws_id or "?", exc_info=True)
+            runtime_result = {
+                "ok": False,
+                "error": "approval_resume_failed",
+                "message": str(exc)[:500],
+            }
 
         return jsonify({
             "ok": True,

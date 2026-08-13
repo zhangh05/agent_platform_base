@@ -289,7 +289,6 @@ def test_approval_handler_resumes_exact_call():
     # dependency. We dispatch through asyncio.run() here so the
     # test still works without the plugin (matches the pattern in
     # harness/test_alias_drift.py).
-    import asyncio
     from unittest import mock as _mock
     from agent.llm.schemas import LLMResponse, LLMToolCall
     from core.runtime_engine.engine import SSOTRuntimeEngine
@@ -338,7 +337,6 @@ def test_approval_handler_resumes_exact_call():
 
 
 def test_hard_block_denied_approval():
-    import asyncio
     from unittest import mock as _mock
     from agent.llm.schemas import LLMResponse, LLMToolCall
     from core.runtime_engine.engine import SSOTRuntimeEngine

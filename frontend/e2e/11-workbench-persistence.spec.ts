@@ -11,9 +11,9 @@
  * 但 plan-C 的 localStorage 持久化不依赖 backend — 这是
  * 核心要验证的不变量.
  */
-import { test, expect } from "./fixtures";
+import { test, expect, selectWorkspace } from "./fixtures";
 
-test("10. workbench history persists across browser refresh", async ({ page, api }) => {
+test("10. workbench history persists across browser refresh", async ({ page, api, workspaceId }) => {
   // 确保 /messages 不影响测试 (返回空, localStorage 兜底)
   await page.route("**/api/sessions/**/messages**", async (route) => {
     await route.fulfill({
@@ -53,10 +53,7 @@ test("10. workbench history persists across browser refresh", async ({ page, api
   });
 
   await page.goto("/workbench");
-  // 选第一个 workspace
-  const wsFirst = page.locator('[data-testid^="ws-"]').first();
-  await wsFirst.waitFor({ state: "visible", timeout: 8_000 });
-  await wsFirst.click();
+  await selectWorkspace(page, workspaceId);
 
   // 选第一个 session (或新建一个)
   const sessFirst = page.locator('[data-testid^="sess-"]:not([data-testid="sess-list"])').first();

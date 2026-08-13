@@ -28,6 +28,8 @@ from __future__ import annotations
 
 import logging
 from typing import List, Optional, Union
+from pathlib import Path
+from agent.protocol import ModuleResult
 
 logger = logging.getLogger("knowledge.service")
 

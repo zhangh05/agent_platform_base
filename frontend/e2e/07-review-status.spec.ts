@@ -1,13 +1,11 @@
 /**
  * E2E 7 — Review status update.
  */
-import { test, expect } from "./fixtures";
+import { test, expect, selectWorkspace } from "./fixtures";
 
-test("7. review status list + filter", async ({ page }) => {
+test("7. review status list + filter", async ({ page, workspaceId }) => {
   await page.goto("/reviews");
-  const wsFirst = page.locator('[data-testid^="ws-"]').first();
-  await wsFirst.waitFor({ state: "visible", timeout: 8_000 });
-  await wsFirst.click();
+  await selectWorkspace(page, workspaceId);
 
   // Page should render the review table or empty state.
   await expect(page.getByTestId("page-reviews")).toBeVisible({ timeout: 6_000 });

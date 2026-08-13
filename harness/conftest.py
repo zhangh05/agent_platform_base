@@ -74,7 +74,8 @@ def temp_dirs(monkeypatch):
     except Exception:
         pass
     try:
-        _active_tool_catalog_cache.clear()
+        from core.tools.catalog_snapshot import reset_catalog_snapshot_cache
+        reset_catalog_snapshot_cache()
     except Exception:
         pass
     try:

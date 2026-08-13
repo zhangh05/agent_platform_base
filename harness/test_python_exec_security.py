@@ -177,14 +177,17 @@ class TestPythonExecRedaction:
 class TestPythonExecSubprocess:
     """End-to-end subprocess execution tests."""
 
-    def test_execute_safe_code(self, tmp_path):
+    def test_execute_safe_code(self, tmp_path, monkeypatch):
         """Execute safe Python code in sandbox."""
         from core.tools.python_exec import execute_python_code
+        monkeypatch.setenv("NA_WORKSPACE_ROOT", str(tmp_path))
+        monkeypatch.setenv("AGENT_PLATFORM_TRUSTED_LOCAL_PYTHON_EXECUTION", "true")
         result = execute_python_code(
             run_id="test_run", code="print('hello sandbox')",
             workspace_id="default",
             timeout=5,
         )
+        assert result.get("isolation_level") == "best_effort"
         assert result.get("ok") is True
         assert "hello sandbox" in result.get("stdout", "")
 

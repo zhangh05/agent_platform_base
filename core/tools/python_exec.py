@@ -1,10 +1,9 @@
 # core/tools/python_exec.py
-"""Python Execution Sandbox — AST-checked, sandboxed Python code execution.
+"""AST validation and trusted-local best-effort Python execution.
 
-Security model:
-1. AST parse + walk to reject forbidden imports/functions before execution
-2. Subprocess isolation with timeout
-3. No file-system access outside the temp workspace directory
+This module is not a sandbox. ``execute_python_code`` selects one runner from
+``core.tools.python_runner``; the legacy subprocess implementation is retained
+only as the explicitly opted-in trusted-local runner.
 """
 
 import ast
@@ -181,20 +180,17 @@ def _validate_ast(code: str) -> None:
                 )
 
 
-def execute_python_code(code: str, workspace_id: str, run_id: str,
-                        timeout: int = 10, input_data=None) -> dict:
-    """Execute Python code in a sandboxed subprocess.
+def execute_best_effort_python_code(
+    code: str,
+    workspace_id: str,
+    run_id: str,
+    timeout: int = 10,
+    input_data=None,
+) -> dict:
+    """Run AST-checked Python in an explicitly trusted local subprocess.
 
-    Args:
-        code: Python source code to execute.
-        workspace_id: Workspace identifier for file isolation.
-        run_id: Run identifier for output directory naming.
-        timeout: Maximum execution time in seconds (default 10).
-
-    Returns:
-        dict with keys: ok, exit_code, stdout, stderr, timeout_seconds, error
+    This implementation is best effort only; it is not a sandbox.
     """
-    # ── 1. Validate workspace_id ──
     import re
     if not re.fullmatch(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$", workspace_id):
         return {
@@ -321,3 +317,21 @@ def execute_python_code(code: str, workspace_id: str, run_id: str,
         }
     finally:
         shutil.rmtree(temp_dir, ignore_errors=True)
+
+
+def execute_python_code(code: str, workspace_id: str, run_id: str, timeout: int = 10, input_data=None) -> dict:
+    """Run Python through the single policy-selected execution runner.
+
+    Best-effort local subprocess execution is available only after an explicit
+    trusted-local opt-in. Network-exposed or multi-user deployments select the
+    Docker strong-isolation runner and fail closed if it is unavailable.
+    """
+    from core.tools.python_runner import select_python_runner
+
+    return select_python_runner().execute(
+        code=code,
+        workspace_id=workspace_id,
+        run_id=run_id,
+        timeout=timeout,
+        input_data=input_data,
+    )

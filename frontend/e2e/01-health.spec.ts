@@ -8,10 +8,9 @@ import { test, expect } from "./fixtures";
 
 test("1. backend health + frontend nav reachable", async ({ page }) => {
   await page.goto("/workbench");
-  // The topbar nav should be visible.
-  await expect(page.getByTestId("nav-workbench")).toBeVisible();
-  await expect(page.getByTestId("nav-knowledge")).toBeVisible();
-  await expect(page.getByTestId("nav-capabilities")).toBeVisible();
+  // Assert the rendered top navigation by accessible name, not stale test ids.
+  await expect(page.getByRole("link", { name: "工作台", exact: true })).toBeVisible();
+  await expect(page.getByRole("link", { name: "能力中心", exact: true })).toBeVisible();
 
   // The backend health endpoint must return 2xx via the proxy.
   const resp = await page.request.get("/api/health");

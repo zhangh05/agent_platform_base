@@ -14,8 +14,8 @@ if [ -f "$ROOT/.env.local" ]; then
 fi
 BACKEND_PORT="${BACKEND_PORT:-8011}"
 FRONTEND_PORT="${FRONTEND_PORT:-5273}"
-BACKEND_HOST="${BACKEND_HOST:-0.0.0.0}"
-FRONTEND_HOST="${FRONTEND_HOST:-0.0.0.0}"
+BACKEND_HOST="${BACKEND_HOST:-127.0.0.1}"
+FRONTEND_HOST="${FRONTEND_HOST:-127.0.0.1}"
 FRONTEND_MODE="${FRONTEND_MODE:-preview}"
 INSTALL_DEPS="${INSTALL_DEPS:-auto}"
 LOG_DIR="${LOG_DIR:-$ROOT/logs}"
@@ -44,6 +44,10 @@ PYTHON_BIN="${PYTHON_BIN:-$(find_cmd python3 "$HOME/.local/bin/python3" /opt/hom
 NODE_BIN="${NODE_BIN:-$(find_cmd node "$HOME/.local/node/bin/node" /opt/homebrew/bin/node /usr/local/bin/node /usr/bin/node)}"
 NPM_BIN="${NPM_BIN:-$(find_cmd npm "$HOME/.local/node/bin/npm" /opt/homebrew/bin/npm /usr/local/bin/npm /usr/bin/npm)}"
 VITE_BIN="${VITE_BIN:-$ROOT/frontend/node_modules/.bin/vite}"
+# This policy is intentionally kept outside the launcher so tests can exercise
+# it without starting services or binding ports.
+# shellcheck source=scripts/startup_security.sh
+. "$ROOT/scripts/startup_security.sh"
 
 process_cwd() {
     lsof -a -p "$1" -d cwd -Fn 2>/dev/null | sed -n 's/^n//p' | head -n 1
@@ -244,6 +248,7 @@ start_backend() {
         allowed_origins="$allowed_origins,$CONFIG_ALLOWED_ORIGINS"
     fi
     export AGENT_PLATFORM_ALLOWED_ORIGINS="$allowed_origins"
+    export AGENT_PLATFORM_RUNTIME_BIND_HOST="$BACKEND_HOST"
 
     log "[backend] Starting on $BACKEND_HOST:$BACKEND_PORT..."
     : > "$LOG_DIR/backend-$BACKEND_PORT.log"
@@ -311,6 +316,7 @@ print_summary() {
 
 main() {
     log "Agent Platform Base"
+    startup_security_validate_network_exposure "$BACKEND_HOST" "$FRONTEND_HOST" || fail "Unsafe network startup configuration."
     mkdir -p "$LOG_DIR"
     detect_venv || true
     check_version

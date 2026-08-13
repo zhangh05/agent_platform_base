@@ -17,6 +17,7 @@ from __future__ import annotations
 import difflib
 from datetime import datetime, timezone
 from typing import Any, Optional
+from agent.protocol import ModuleResult
 
 
 def list_artifacts_for_session(

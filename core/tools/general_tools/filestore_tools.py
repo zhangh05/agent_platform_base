@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-from core.tools.general_tools.shared import _caller_workspace, _contract, _error, _error_inv, _ok, _result, _unavailable, _workspace_path
+from core.tools.general_tools.shared import _caller_workspace, _contract, _error, _error_inv, _result, _unavailable, _workspace_path
 
 from typing import Any
 from io import BytesIO

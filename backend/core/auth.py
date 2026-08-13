@@ -68,6 +68,27 @@ def _is_identity_enabled() -> bool:
         return False
 
 
+def validate_network_listener(host: str) -> None:
+    """Reject an explicitly exposed backend unless authentication is effective."""
+    normalized = str(host or "").strip().strip("[]").lower()
+    is_loopback = normalized == "localhost" or normalized == "::1" or normalized.startswith("127.")
+    if is_loopback:
+        return
+    effective_api_auth = _is_auth_enabled() and bool(_get_api_token())
+    effective_login = _is_login_enabled() and bool(_get_login_username() and _get_login_password())
+    if effective_api_auth or effective_login or _is_identity_enabled():
+        return
+    if os.environ.get("AGENT_PLATFORM_ALLOW_UNAUTHENTICATED_NETWORK", "").strip().lower() in {
+        "1", "true", "yes", "on",
+    }:
+        logger.critical("DANGER: unauthenticated network listener explicitly allowed on %s", host)
+        return
+    raise RuntimeError(
+        "Refusing non-loopback backend listener without effective authentication. "
+        "Configure API token, login or identity authentication."
+    )
+
+
 # ── Module-level defaults (used for logging) ──
 _AUTH_ENABLED = _is_auth_enabled()
 _API_TOKEN = _get_api_token()

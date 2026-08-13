@@ -213,7 +213,8 @@ def execute_workflow(workspace_id: str, workflow_id: str, inputs: dict[str, Any]
         raise WorkflowError("workflow inputs must be an object")
     if len(json.dumps(inputs or {}, ensure_ascii=False, default=str).encode()) > 1_048_576:
         raise WorkflowError("workflow inputs are too large")
-    run_id = _id(run_id or f"wfrun_{uuid.uuid4().hex[:12]}", "run_id")
+    requested_run_id = str(run_id or "")
+    run_id = _id(requested_run_id or f"wfrun_{uuid.uuid4().hex[:12]}", "run_id")
     from core.runtime_engine.budget_controller import BudgetController
     from core.runtime_engine.models import SSOTRuntimeConfig
 
@@ -231,24 +232,45 @@ def execute_workflow(workspace_id: str, workflow_id: str, inputs: dict[str, Any]
     if not reservation.ok:
         raise WorkflowError(f"workflow execution budget rejected: {reservation.exceeded}")
     from storage.redaction import redact_dict
-    record = {
-        "run_id": run_id,
-        "workflow_id": workflow_id,
-        "workflow_version": definition["version"],
-        "workspace_id": workspace_id,
-        "job_id": job_id,
-        "status": "running",
-        "inputs": redact_dict(dict(inputs or {})),
-        "nodes": [],
-        "started_at": now_iso(),
-        "updated_at": now_iso(),
-    }
-    _save_run(record)
-    budget.begin_execution()
+    existing_run = get_run(workspace_id, run_id) if requested_run_id else None
     outputs: dict[str, Any] = {}
     dependency_outcomes: dict[str, bool] = {}
+    prior_failed = False
+    if existing_run is not None:
+        if existing_run.get("workflow_id") != workflow_id or existing_run.get("status") != "awaiting_approval":
+            raise WorkflowError("workflow run is not resumable")
+        record = dict(existing_run)
+        retained_nodes = []
+        for entry in list(record.get("nodes") or []):
+            node_id = str(entry.get("node_id") or "")
+            if entry.get("status") == "awaiting_approval":
+                continue
+            retained_nodes.append(entry)
+            outputs[node_id] = dict(entry.get("output") or {})
+            dependency_outcomes[node_id] = entry.get("status") in {"succeeded", "dry_run", "skipped"}
+            prior_failed = prior_failed or entry.get("status") in {"failed", "cancelled", "rejected"}
+        record["nodes"] = retained_nodes
+        record["status"] = "running"
+        record["updated_at"] = now_iso()
+        record.pop("finished_at", None)
+    else:
+        record = {
+            "run_id": run_id,
+            "workflow_id": workflow_id,
+            "workflow_version": definition["version"],
+            "workspace_id": workspace_id,
+            "job_id": job_id,
+            "status": "running",
+            "inputs": redact_dict(dict(inputs or {})),
+            "nodes": [],
+            "started_at": now_iso(),
+            "updated_at": now_iso(),
+        }
+    _save_run(record)
+    budget.begin_execution()
     nodes_by_id = {node["node_id"]: node for node in definition["nodes"]}
-    failed = False
+    failed = prior_failed
+    approval_pending = False
     def execute_node(node_id: str) -> tuple[dict[str, Any], dict[str, Any], bool]:
         node = nodes_by_id[node_id]
         try:
@@ -263,12 +285,31 @@ def execute_workflow(workspace_id: str, workflow_id: str, inputs: dict[str, Any]
             entry = {"node_id": node_id, "tool_id": node["tool_id"], "status": "failed", "summary": "步骤输入解析失败", "errors": [str(exc)[:500]], "started_at": now_iso(), "finished_at": now_iso()}
             return entry, {}, False
         started_at = now_iso()
+        approval_id = str((approvals or {}).get(node_id) or "")
+        if approval_id and not _workflow_approval_is_valid(
+            approval_id=approval_id,
+            workspace_id=workspace_id,
+            workflow_id=workflow_id,
+            run_id=run_id,
+            node=node,
+            arguments=arguments,
+        ):
+            entry = {
+                "node_id": node_id,
+                "tool_id": node["tool_id"],
+                "status": "failed",
+                "summary": "审批凭证无效或与当前流程动作不匹配",
+                "errors": ["invalid_approval_id"],
+                "started_at": started_at,
+                "finished_at": now_iso(),
+            }
+            return entry, {}, False
         from core.tools.context import ToolRuntimeContext
         try:
             result = _tool_client().invoke(
                 node["tool_id"],
                 arguments,
-                context=ToolRuntimeContext(workspace_id=workspace_id, run_id=run_id, job_id=job_id or None, module="workflow", requested_by="job_runner", approval_id=(approvals or {}).get(node_id)),
+                context=ToolRuntimeContext(workspace_id=workspace_id, run_id=run_id, job_id=job_id or None, module="workflow", requested_by="job_runner", approval_id=approval_id or None),
             )
         except Exception as exc:
             entry = {
@@ -277,6 +318,28 @@ def execute_workflow(workspace_id: str, workflow_id: str, inputs: dict[str, Any]
                 "started_at": started_at, "finished_at": now_iso(),
             }
             return entry, {}, False
+        decision = getattr(result, "policy_decision", None)
+        if bool(getattr(decision, "requires_approval", False)) and not (approvals or {}).get(node_id):
+            approval_id = _create_workflow_approval(
+                workspace_id=workspace_id,
+                workflow_id=workflow_id,
+                run_id=run_id,
+                job_id=job_id,
+                node=node,
+                arguments=arguments,
+                risk_level=str(getattr(decision, "risk_level", "high") or "high"),
+                description=str(result.summary or "Workflow action requires approval"),
+            )
+            return {
+                "node_id": node_id,
+                "tool_id": node["tool_id"],
+                "status": "awaiting_approval",
+                "summary": str(result.summary or "Approval required")[:1000],
+                "approval_id": approval_id,
+                "errors": ["approval_required"],
+                "started_at": started_at,
+                "finished_at": now_iso(),
+            }, {}, False
         success = result.status in {"succeeded", "dry_run"}
         entry = {
             "node_id": node_id,
@@ -301,6 +364,8 @@ def execute_workflow(workspace_id: str, workflow_id: str, inputs: dict[str, Any]
         # whose declared dependency failed or was skipped.
         runnable_layer: list[str] = []
         for node_id in layer:
+            if node_id in dependency_outcomes:
+                continue
             failed_dependencies = [
                 dependency
                 for dependency in nodes_by_id[node_id].get("depends_on") or []
@@ -387,11 +452,17 @@ def execute_workflow(workspace_id: str, workflow_id: str, inputs: dict[str, Any]
                 dependency_outcomes[node_id] = bool(
                     success and entry.get("status") not in {"skipped", "cancelled"}
                 )
-                if not success:
+                if entry.get("status") == "awaiting_approval":
+                    record["status"] = "awaiting_approval"
+                    record.setdefault("approval_ids", []).append(entry["approval_id"])
+                    approval_pending = True
+                elif not success:
                     failed = True
             _save_run(record)
-            if failed and definition["failure_policy"] == "fail_fast":
+            if approval_pending:
                 break
+        if approval_pending:
+            break
         if failed and definition["failure_policy"] == "fail_fast":
             break
         if not budget.check_execution().ok:
@@ -399,10 +470,96 @@ def execute_workflow(workspace_id: str, workflow_id: str, inputs: dict[str, Any]
     budget.end_execution()
     if record["status"] == "running":
         record["status"] = "failed" if failed else "succeeded"
-    record["finished_at"] = now_iso()
+    if record["status"] != "awaiting_approval":
+        record["finished_at"] = now_iso()
+    else:
+        record.pop("finished_at", None)
     _save_run(record)
     return record
 
+
+
+def _create_workflow_approval(*, workspace_id: str, workflow_id: str, run_id: str, job_id: str, node: dict[str, Any], arguments: dict[str, Any], risk_level: str, description: str) -> str:
+    """Create a durable Guardian approval from a canonical policy decision."""
+    from agent.approval import get_approval_store
+    request = get_approval_store(workspace_id).create(
+        session_id=f"wf-{run_id}",
+        tool_id=str(node["tool_id"]),
+        arguments=dict(arguments),
+        description=description,
+        risk_level=risk_level,
+        workspace_id=workspace_id,
+        run_id=run_id,
+        job_id=job_id,
+        metadata={"workflow_id": workflow_id, "workflow_node_id": node["node_id"]},
+    )
+    return request.approval_id
+
+
+def _workflow_approval_is_valid(
+    *,
+    approval_id: str,
+    workspace_id: str,
+    workflow_id: str,
+    run_id: str,
+    node: dict[str, Any],
+    arguments: dict[str, Any],
+) -> bool:
+    from agent.approval import get_approval_store
+
+    return get_approval_store(workspace_id).validate_resolved_approval(
+        approval_id,
+        workspace_id=workspace_id,
+        tool_id=str(node["tool_id"]),
+        arguments=arguments,
+        run_id=run_id,
+        metadata={"workflow_id": workflow_id, "workflow_node_id": node["node_id"]},
+    )
+
+
+def resume_workflow_run(workspace_id: str, run_id: str, approval_id: str) -> dict[str, Any]:
+    """Resume the exact awaiting workflow run after a bound approval."""
+    record = get_run(workspace_id, run_id)
+    if not record or record.get("status") != "awaiting_approval":
+        raise WorkflowError("workflow run is not awaiting approval")
+    pending = next(
+        (
+            entry
+            for entry in list(record.get("nodes") or [])
+            if entry.get("status") == "awaiting_approval" and entry.get("approval_id") == approval_id
+        ),
+        None,
+    )
+    if pending is None:
+        raise WorkflowError("approval is not bound to this workflow run")
+    return execute_workflow(
+        workspace_id,
+        str(record.get("workflow_id") or ""),
+        dict(record.get("inputs") or {}),
+        approvals={str(pending["node_id"]): approval_id},
+        job_id=str(record.get("job_id") or ""),
+        run_id=run_id,
+    )
+
+
+def reject_workflow_run(workspace_id: str, run_id: str, approval_id: str) -> dict[str, Any] | None:
+    """Close an awaiting workflow run when its bound approval is denied."""
+    record = get_run(workspace_id, run_id)
+    if not record or record.get("status") != "awaiting_approval":
+        return None
+    matched = False
+    for entry in list(record.get("nodes") or []):
+        if entry.get("status") == "awaiting_approval" and entry.get("approval_id") == approval_id:
+            entry["status"] = "rejected"
+            entry["errors"] = ["approval_rejected"]
+            entry["finished_at"] = now_iso()
+            matched = True
+    if not matched:
+        return None
+    record["status"] = "rejected"
+    record["finished_at"] = now_iso()
+    _save_run(record)
+    return record
 
 def _tool_client():
     from core.tools.integration import get_default_tool_runtime_client

@@ -13,6 +13,24 @@ bash start.sh
 - Frontend: `http://localhost:5273`
 - Backend API: `http://127.0.0.1:8011/api/health`
 
+### 监听与认证模式
+
+默认情况下，`start.sh` 只将前后端监听在 `127.0.0.1`，适用于本机可信开发。
+
+如需供 LAN 访问，请显式设置 `BACKEND_HOST` 与 `FRONTEND_HOST`，并至少启用一种有效认证方式：
+
+- API token：`AGENT_PLATFORM_AUTH_ENABLED=true` 且配置非空 `AGENT_PLATFORM_API_TOKEN`；
+- 登录：同时配置 `AGENT_PLATFORM_LOGIN_USERNAME` 和 `AGENT_PLATFORM_LOGIN_PASSWORD`；
+- Identity：`AGENT_PLATFORM_IDENTITY_ENABLED=true`。
+
+启动脚本会拒绝无有效认证的网络监听。仅在受信任的临时开发环境中，才可显式设置 `AGENT_PLATFORM_ALLOW_UNAUTHENTICATED_NETWORK=true` 放行；脚本会输出危险警告。CORS 仅是浏览器跨域策略，不能替代服务端认证。
+
+
+### Python 执行隔离
+
+`exec.run(action=python)` 始终经 canonical ToolRuntime 和 policy-selected runner 执行。普通数据处理保持 medium 风险；只有破坏性动作才进入审批流程。默认本地子进程仅是 **best effort**，不是 sandbox，必须显式设置 `AGENT_PLATFORM_TRUSTED_LOCAL_PYTHON_EXECUTION=true` 才能在 loopback 单用户开发模式使用。非 loopback、identity 或登录模式下，Python 执行只允许使用 Docker 强隔离 runner；其不可用时返回结构化拒绝，不会回退为本地子进程。
+
+Docker runner 使用单次容器、只读 workspace 临时脚本挂载、无网络、非 root、capability drop、CPU/内存/PID/文件大小限制，并在所有退出路径清理临时脚本，在超时后强制移除具名容器。强隔离模式要求通过 `AGENT_PLATFORM_PYTHON_CONTAINER_IMAGE` 配置带 `@sha256:` digest 的固定镜像；默认不使用可变 tag。生产部署仍应审查 Docker daemon 权限、镜像供应链与宿主机隔离配置。
 源码运行需要 Python 3.12+、Node.js 24 LTS。
 
 停止服务：
@@ -74,3 +92,13 @@ PY
 ```
 
 日常修复和阶段发布均优先跑受影响路径测试；只有出现跨域基础设施变更且聚焦测试不足以覆盖风险时才运行全量回归。
+
+### 本地整改质量门禁
+
+对涉及运行时、安全策略、存储或工具契约的改动，提交前执行：
+
+```bash
+bash scripts/check_static_quality.sh
+```
+
+该门禁会阻止 `F821`（未定义名称）和 `F811`（重复定义），并运行启动安全、Python runner 选择及 session 跨进程事务的关键回归用例。浏览器链路另行通过 `cd frontend && npx playwright test` 在独立临时 storage root 中验证。
