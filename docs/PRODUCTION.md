@@ -37,6 +37,31 @@ that has not moved into PostgreSQL/S3 is shared through `platform-data`; do not
 scale Web or worker replicas until the distributed integration suite and the
 target volume's locking semantics have been validated.
 
+## Single-server Compose profile
+
+An existing single host that intentionally keeps filesystem records, workspace
+data and provider configuration on that host can use
+`deployment/compose.server.yml`. It manages the backend, worker and static
+frontend without requiring the PostgreSQL/Redis/MinIO/TLS stack. The public
+HTTP entry defaults to port `5273`; the backend binds only to loopback port
+`8011` and is reached by the frontend proxy.
+
+Keep the existing root-only `.env.local`, create `deployment/.env` with the
+Docker socket group id, and make the bind-mounted runtime directories writable
+by container uid/gid `10001`:
+
+```bash
+printf 'AGENT_PLATFORM_DOCKER_SOCKET_GID=%s\n' \
+  "$(stat -c '%g' /var/run/docker.sock)" > deployment/.env
+chown -R 10001:10001 workspaces config/providers
+docker compose -f deployment/compose.server.yml config
+docker compose -f deployment/compose.server.yml up -d --build --remove-orphans
+docker compose -f deployment/compose.server.yml ps
+```
+
+Do not run `start.sh` or retain screen-managed backend/frontend processes on
+the same ports while this Compose project is active.
+
 ## Enterprise login
 
 Optional OpenID Connect login is enabled with
