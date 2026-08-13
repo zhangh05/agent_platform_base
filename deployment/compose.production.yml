@@ -99,8 +99,7 @@ services:
         condition: service_healthy
     read_only: true
     tmpfs:
-      - /var/cache/nginx:size=32m
-      - /var/run:size=1m
+      - /tmp:size=32m,mode=1777
     security_opt:
       - no-new-privileges:true
 
