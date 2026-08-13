@@ -65,18 +65,34 @@ def test_create_and_resolve_persists_to_jsonl(tmp_path):
         unsubscribe()
 
 
-def test_timeout_auto_denies_and_writes_audit(tmp_path):
+def test_waiter_timeout_does_not_reject_durable_approval(tmp_path):
     from agent.approval import ApprovalStore
 
     store = ApprovalStore(persist_path=tmp_path / "approvals.jsonl")
     req = store.create("sess-2", "exec.run", {"cmd": "x"}, workspace_id="ws_timeout")
 
-    # Short timeout → wait() should auto-deny
-    allowed = store.wait(req.approval_id, timeout=1.0)
-    assert allowed is False
+    decision = store.wait(req.approval_id, timeout=0.01)
+    assert decision is None
+    assert store.get_pending_request(req.approval_id, "ws_timeout") is not None
+    assert store.get_history(session_id="sess-2") == []
 
-    history = store.get_history(session_id="sess-2")
-    assert any(h["approval_id"] == req.approval_id and h["allowed"] is False and h["resolver"] == "system_timeout" for h in history)
+
+def test_durable_expiry_rejects_and_writes_audit(tmp_path):
+    from agent.approval import ApprovalStore
+
+    store = ApprovalStore(persist_path=tmp_path / "approvals.jsonl")
+    req = store.create("sess-expire", "exec.run", {"cmd": "x"}, workspace_id="ws_expire")
+    req.expires_at = "2000-01-01T00:00:00+00:00"
+
+    assert store.get_pending(workspace_id="ws_expire") == []
+    history = store.get_history(session_id="sess-expire")
+    assert any(
+        row["approval_id"] == req.approval_id
+        and row["allowed"] is False
+        and row["resolver"] == "system_expired"
+        and row["reason"] == "approval_ttl_expired"
+        for row in history
+    )
 
 
 def test_history_filters_by_tool_and_session(tmp_path):
@@ -156,27 +172,14 @@ def test_sub_agent_run_record_written(tmp_path, monkeypatch):
 
 
 def test_approval_timeout_helper_reads_env(monkeypatch):
-    # Approval timeout helpers do not exist outside ApprovalStore.
-    # and the ``APPROVAL_TIMEOUT_*_S`` env constants lived on the
-    # TurnRunner path that the SSOT Runtime hard cut (ff38bab) removed.
-    # Approval-timeout knobs are now declared in
-    # ``core.runtime_engine.models.SSOTRuntimeConfig`` (single / layer / total
-    # timeouts). We sanity-check the SSOT Runtime equivalents here.
-    monkeypatch.delenv("SSOT_RUNTIME_MAX_TOTAL_SECONDS", raising=False)
-    from core.runtime_engine.models import SSOTRuntimeConfig
-    cfg = SSOTRuntimeConfig()
-    # Inverted guard: legacy default was 90s; the SSOT Runtime replacement
-    # is the larger ``max_total_seconds`` knob (default 60s today
-    # but tunable). We assert it is a positive integer and the
-    # other timeout knobs are also positive (they are independent
-    # budget ceilings — the SSOT Runtime design does not require the
-    # per-layer cap to nest under the total cap since each layer
-    # can be short-circuited when the total budget is hit).
-    assert isinstance(cfg.max_total_seconds, int)
-    assert cfg.max_total_seconds >= 1
-    assert cfg.single_node_timeout_ms > 0
-    assert cfg.parallel_layer_timeout_ms > 0
-    assert cfg.planner_timeout_ms > 0
+    from agent.approval import approval_ttl_seconds
+
+    monkeypatch.delenv("AGENT_PLATFORM_APPROVAL_TTL_SECONDS", raising=False)
+    assert approval_ttl_seconds() == 1800
+    monkeypatch.setenv("AGENT_PLATFORM_APPROVAL_TTL_SECONDS", "3600")
+    assert approval_ttl_seconds() == 3600
+    monkeypatch.setenv("AGENT_PLATFORM_APPROVAL_TTL_SECONDS", "1")
+    assert approval_ttl_seconds() == 60
 
 
 # ─────────────────────────────── 6. SSE endpoint registration ───────────────────────────────

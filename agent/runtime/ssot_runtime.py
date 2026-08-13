@@ -26,7 +26,6 @@ from agent.approval import get_approval_store
 from core.runtime_engine.runtime_contracts import ExecutionContract
 
 _LOG = logging.getLogger(__name__)
-_APPROVAL_WAIT_SECONDS = 65
 _MEMORY_WRITE_EXECUTOR = concurrent.futures.ThreadPoolExecutor(
     max_workers=1,
     thread_name_prefix="ssot-memory-write",
@@ -501,7 +500,7 @@ def _build_approval_handler(
                 store.wait,
                 approval_id,
                 blocking=True,
-                timeout=_APPROVAL_WAIT_SECONDS,
+                timeout=store.remaining_seconds(approval_id) + 1.0,
             )
             for approval_id in approval_ids
         ))

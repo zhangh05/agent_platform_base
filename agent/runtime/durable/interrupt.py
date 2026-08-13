@@ -109,6 +109,7 @@ def interrupt_before_tool(
             workspace_id=ws_id,
             run_id=run_id,
             job_id=getattr(task, 'job_id', '') or '',
+            approval_kind="durable_task",
             metadata={
                 "task_id": task_id,
                 "step_id": step_id,

@@ -115,6 +115,7 @@ export interface AuthStatus {
   workspace_ids?: string[];
   home_workspace_id?: string;
   identity_enabled?: boolean;
+  oidc_enabled?: boolean;
   platform_admin?: boolean;
 }
 
@@ -966,8 +967,11 @@ export const approvalApi = {
       tool_id: string;
       risk_level: string;
       arguments_preview: Record<string, unknown>;
-      created_at: number;
+      created_at: string;
       created_at_iso: string;
+      expires_at: string;
+      approval_kind: string;
+      requester: string;
     }>;
     count: number;
   }> =>
@@ -979,13 +983,11 @@ export const approvalApi = {
   resolve: (
     approvalId: string,
     body: { decision: string; workspace_id: string; edited_args?: Record<string, unknown>; feedback?: string; reason?: string },
-    adminToken?: string,
   ): Promise<{ ok: boolean; approval_id: string; decision: string }> =>
     apiRequest({
       method: "POST",
       url: `/agent/approvals/${approvalId}/resolve`,
       data: body,
-      headers: adminToken ? { "X-Admin-Token": adminToken } : {},
     }),
 
   history: (params: { workspaceId: string; sessionId?: string; toolId?: string; limit?: number }): Promise<{

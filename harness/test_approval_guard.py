@@ -1,16 +1,9 @@
 # harness/test_approval_guard.py
 """Unified approval API tests — single ApprovalStore, no legacy fallback.
 
-Tests:
-1. Non-localhost + no X-Admin-Token: 403
-2. Correct token: resolve succeeds
-3. Wrong token: 403
-4. Pending -> approved -> can verify via history
-   Pending -> rejected -> can verify via history
-5. Cross-workspace approval boundary
+Tests identity-bound resolution, workspace boundaries and lifecycle auditing.
 """
 
-import os
 import pytest
 
 
@@ -44,36 +37,41 @@ def reset_approvals(tmp_path, monkeypatch):
     reset_approval_store_for_tests(remove_persisted=True)
 
 
-class TestAdminTokenAuth:
-    """Test X-Admin-Token authentication on resolve endpoint."""
+class TestApprovalIdentityAuthorization:
+    """Resolution follows identity and role, never proxy/source address."""
 
-    def test_correct_token_resolve_succeeds(self, client, reset_approvals, monkeypatch):
-        """With correct X-Admin-Token, resolve should succeed."""
-        monkeypatch.setenv("AGENT_PLATFORM_ADMIN_TOKEN", "secret-admin-token")
+    @staticmethod
+    def _actor(monkeypatch, *, username="alice", actor_id="user-alice", role="viewer"):
+        monkeypatch.setattr(
+            "backend.core.auth.current_request_actor",
+            lambda: {"username": username, "actor_id": actor_id, "role": role},
+        )
 
-        # Create approval via store directly
+    def test_requester_can_resolve_own_approval(self, client, reset_approvals, monkeypatch):
+        self._actor(monkeypatch)
         from agent.approval import get_approval_store
         store = get_approval_store()
         req = store.create(
             session_id="sess-1", tool_id="test.tool",
             arguments={"cmd": "ls"}, description="test",
             risk_level="high", workspace_id="ws_a",
+            requester="alice", requester_id="user-alice",
         )
 
         resp = client.post(
             f"/api/agent/approvals/{req.approval_id}/resolve",
-            json={"decision": "approve", "workspace_id": "ws_a", "resolver": "admin"},
-            headers={"X-Admin-Token": "secret-admin-token"},
+            json={"decision": "approve", "workspace_id": "ws_a", "resolver": "forged"},
+            environ_base={"REMOTE_ADDR": "203.0.113.10"},
         )
         assert resp.status_code == 200
         data = resp.get_json()
         assert data["ok"] is True
         assert data["decision"] == "approve"
+        history = store.get_history(workspace_id="ws_a")
+        assert history[0]["resolver"] == "alice"
 
     def test_resolve_requires_workspace_id(self, client, reset_approvals, monkeypatch):
-        """Resolve must be scoped to the approval workspace."""
-        monkeypatch.setenv("AGENT_PLATFORM_ADMIN_TOKEN", "secret-admin-token")
-
+        self._actor(monkeypatch, role="admin")
         from agent.approval import get_approval_store
         store = get_approval_store()
         req = store.create(
@@ -85,15 +83,12 @@ class TestAdminTokenAuth:
         resp = client.post(
             f"/api/agent/approvals/{req.approval_id}/resolve",
             json={"decision": "approve"},
-            headers={"X-Admin-Token": "secret-admin-token"},
         )
         assert resp.status_code == 400
         assert resp.get_json()["error"] == "workspace_id is required"
 
     def test_resolve_rejects_wrong_workspace(self, client, reset_approvals, monkeypatch):
-        """Approval ids cannot be resolved from another workspace."""
-        monkeypatch.setenv("AGENT_PLATFORM_ADMIN_TOKEN", "secret-admin-token")
-
+        self._actor(monkeypatch, role="admin")
         from agent.approval import get_approval_store
         store = get_approval_store()
         req = store.create(
@@ -105,13 +100,12 @@ class TestAdminTokenAuth:
         resp = client.post(
             f"/api/agent/approvals/{req.approval_id}/resolve",
             json={"decision": "approve", "workspace_id": "ws_other"},
-            headers={"X-Admin-Token": "secret-admin-token"},
         )
         assert resp.status_code == 404
         assert store.get_pending(workspace_id="ws_scope")[0]["approval_id"] == req.approval_id
 
     def test_feedback_decision_resolves_pending_approval(self, client, reset_approvals, monkeypatch):
-        monkeypatch.setenv("AGENT_PLATFORM_ADMIN_TOKEN", "secret-admin-token")
+        self._actor(monkeypatch, role="admin")
         from agent.approval import get_approval_store
 
         store = get_approval_store()
@@ -127,48 +121,67 @@ class TestAdminTokenAuth:
                 "feedback": "改用非破坏性方案",
                 "workspace_id": "ws_feedback",
             },
-            headers={"X-Admin-Token": "secret-admin-token"},
         )
         assert resp.status_code == 200
         assert resp.get_json()["feedback_recorded"] is True
         assert store.get_pending(workspace_id="ws_feedback") == []
 
-    def test_wrong_token_returns_403(self, client, reset_approvals, monkeypatch):
-        """Wrong token should return 403."""
-        monkeypatch.setenv("AGENT_PLATFORM_ADMIN_TOKEN", "secret-admin-token")
+    def test_interactive_approval_cannot_claim_edited_arguments(self, client, reset_approvals, monkeypatch):
+        self._actor(monkeypatch, role="admin")
+        from agent.approval import get_approval_store
 
+        store = get_approval_store()
+        req = store.create(
+            session_id="sess-edit", tool_id="exec.run",
+            arguments={"cmd": "rm -f old.log"}, description="edit",
+            risk_level="high", workspace_id="ws_edit",
+        )
+        resp = client.post(
+            f"/api/agent/approvals/{req.approval_id}/resolve",
+            json={
+                "decision": "edit_args",
+                "edited_args": {"cmd": "ls"},
+                "workspace_id": "ws_edit",
+            },
+        )
+        assert resp.status_code == 400
+        assert resp.get_json()["error"] == "approval_edit_args_not_supported"
+        assert store.get_pending(workspace_id="ws_edit")[0]["approval_id"] == req.approval_id
+
+    def test_other_non_admin_user_is_forbidden(self, client, reset_approvals, monkeypatch):
+        self._actor(monkeypatch, username="bob", actor_id="user-bob", role="viewer")
         from agent.approval import get_approval_store
         store = get_approval_store()
         req = store.create(
             session_id="sess-2", tool_id="test.tool",
             arguments={"cmd": "ls"}, description="test",
             risk_level="high", workspace_id="ws_a",
+            requester="alice", requester_id="user-alice",
         )
 
         resp = client.post(
             f"/api/agent/approvals/{req.approval_id}/resolve",
             json={"decision": "approve", "workspace_id": "ws_a"},
-            headers={"X-Admin-Token": "wrong-token"},
         )
         assert resp.status_code == 403
+        assert resp.get_json()["error"] == "approval_resolver_forbidden"
 
-    def test_no_token_when_configured_returns_403(self, client, reset_approvals, monkeypatch):
-        """No token when required should return 403."""
-        monkeypatch.setenv("AGENT_PLATFORM_ADMIN_TOKEN", "required-token")
-
+    def test_admin_can_resolve_workspace_approval(self, client, reset_approvals, monkeypatch):
+        self._actor(monkeypatch, username="Admin", actor_id="admin", role="admin")
         from agent.approval import get_approval_store
         store = get_approval_store()
         req = store.create(
             session_id="sess-3", tool_id="test.tool",
             arguments={"cmd": "ls"}, description="test",
             risk_level="high", workspace_id="ws_a",
+            requester="alice", requester_id="user-alice",
         )
 
         resp = client.post(
             f"/api/agent/approvals/{req.approval_id}/resolve",
             json={"decision": "approve", "workspace_id": "ws_a"},
         )
-        assert resp.status_code == 403
+        assert resp.status_code == 200
 
 
 class TestApprovalLifecycle:

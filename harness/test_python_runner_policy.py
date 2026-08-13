@@ -48,6 +48,20 @@ def test_container_runner_requires_operator_pinned_image(monkeypatch):
     assert DockerStrongIsolationRunner.available() is None
 
 
+def test_container_runner_requires_pinned_image_to_exist_locally(monkeypatch):
+    image = "python@example.invalid@sha256:" + "a" * 64
+    monkeypatch.setenv("AGENT_PLATFORM_PYTHON_CONTAINER_IMAGE", image)
+    monkeypatch.setattr("core.tools.python_runner.shutil.which", lambda _name: "/usr/bin/docker")
+
+    def fake_run(command, **_kwargs):
+        if command[1] == "version":
+            return subprocess.CompletedProcess(command, 0, stdout="26.1.0\n", stderr="")
+        return subprocess.CompletedProcess(command, 1, stdout="", stderr="No such image")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    assert DockerStrongIsolationRunner.available() is None
+
+
 def test_container_runner_cleans_host_script_after_execution(monkeypatch, tmp_path):
     monkeypatch.setenv("NA_WORKSPACE_ROOT", str(tmp_path))
     runner = DockerStrongIsolationRunner(

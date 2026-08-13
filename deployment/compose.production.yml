@@ -1,0 +1,228 @@
+name: agent-platform
+
+x-backend-environment: &backend-environment
+  NA_WORKSPACE_ROOT: /var/lib/agent-platform/workspaces
+  AGENT_PLATFORM_RUNTIME_BIND_HOST: 0.0.0.0
+  AGENT_PLATFORM_IDENTITY_ENABLED: "true"
+  AGENT_PLATFORM_AUTH_ENABLED: "true"
+  AGENT_PLATFORM_SESSION_SECURE: "true"
+  AGENT_PLATFORM_SESSION_SECRET_FILE: /run/secrets/session_secret
+  AGENT_PLATFORM_API_TOKEN_FILE: /run/secrets/api_token
+  AGENT_PLATFORM_LOGIN_USERNAME: ${AGENT_PLATFORM_LOGIN_USERNAME:-Admin}
+  AGENT_PLATFORM_LOGIN_PASSWORD_FILE: /run/secrets/login_password
+  AGENT_PLATFORM_RECORD_STORE_MODE: postgres
+  AGENT_PLATFORM_DATABASE_URL: postgresql://agent_platform:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/agent_platform
+  AGENT_PLATFORM_OBJECT_STORE_MODE: s3
+  AGENT_PLATFORM_OBJECT_STORE_BUCKET: agent-platform
+  AGENT_PLATFORM_OBJECT_STORE_PREFIX: production
+  AGENT_PLATFORM_S3_ENDPOINT_URL: http://minio:9000
+  AGENT_PLATFORM_S3_ADDRESSING_STYLE: path
+  AGENT_PLATFORM_QUEUE_MODE: redis
+  AGENT_PLATFORM_QUEUE_URL: redis://redis:6379/0
+  AGENT_PLATFORM_APPROVAL_TTL_SECONDS: ${AGENT_PLATFORM_APPROVAL_TTL_SECONDS:-1800}
+  AGENT_PLATFORM_PYTHON_REQUIRE_STRONG_ISOLATION: "true"
+  AGENT_PLATFORM_PYTHON_CONTAINER_IMAGE: ${AGENT_PLATFORM_PYTHON_CONTAINER_IMAGE:?set an immutable image digest}
+  DOCKER_HOST: unix:///run/docker.sock
+  AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER:?set MINIO_ROOT_USER}
+  AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:?set MINIO_ROOT_PASSWORD}
+  AWS_DEFAULT_REGION: us-east-1
+
+services:
+  backend:
+    build:
+      context: ..
+      dockerfile: deployment/backend.Dockerfile
+    restart: unless-stopped
+    environment: *backend-environment
+    volumes:
+      - platform-data:/var/lib/agent-platform
+      - ${AGENT_PLATFORM_DOCKER_SOCKET:-/var/run/docker.sock}:/run/docker.sock
+    group_add:
+      - ${AGENT_PLATFORM_DOCKER_SOCKET_GID:?set socket group id}
+    secrets:
+      - session_secret
+      - login_password
+      - api_token
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8011/api/ready', timeout=5)"]
+      interval: 15s
+      timeout: 6s
+      retries: 10
+      start_period: 20s
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
+  worker:
+    build:
+      context: ..
+      dockerfile: deployment/backend.Dockerfile
+    restart: unless-stopped
+    command: ["python", "-c", "from jobs.worker import start_worker; start_worker()"]
+    environment:
+      <<: *backend-environment
+      AGENT_PLATFORM_WORKER_ID: production-worker-1
+    volumes:
+      - platform-data:/var/lib/agent-platform
+      - ${AGENT_PLATFORM_DOCKER_SOCKET:-/var/run/docker.sock}:/run/docker.sock
+    group_add:
+      - ${AGENT_PLATFORM_DOCKER_SOCKET_GID:?set socket group id}
+    secrets:
+      - session_secret
+      - login_password
+      - api_token
+    depends_on:
+      backend:
+        condition: service_healthy
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
+  frontend:
+    build:
+      context: ..
+      dockerfile: deployment/frontend.Dockerfile
+    restart: unless-stopped
+    expose:
+      - "8080"
+    depends_on:
+      backend:
+        condition: service_healthy
+    read_only: true
+    tmpfs:
+      - /var/cache/nginx:size=32m
+      - /var/run:size=1m
+    security_opt:
+      - no-new-privileges:true
+
+  gateway:
+    image: caddy:2.10-alpine
+    restart: unless-stopped
+    ports:
+      - "${AGENT_PLATFORM_HTTPS_PORT:-443}:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ${AGENT_PLATFORM_TLS_CERT_FILE:?set AGENT_PLATFORM_TLS_CERT_FILE}:/run/tls/tls.crt:ro
+      - ${AGENT_PLATFORM_TLS_KEY_FILE:?set AGENT_PLATFORM_TLS_KEY_FILE}:/run/tls/tls.key:ro
+    depends_on:
+      - frontend
+    read_only: true
+    tmpfs:
+      - /data:size=16m
+      - /config:size=16m
+    security_opt:
+      - no-new-privileges:true
+
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: agent_platform
+      POSTGRES_USER: agent_platform
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U agent_platform -d agent_platform"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes", "--save", "60", "1000"]
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  minio:
+    image: quay.io/minio/minio:RELEASE.2025-04-22T22-12-26Z
+    restart: unless-stopped
+    command: ["server", "/data", "--console-address", ":9001"]
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?set MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?set MINIO_ROOT_PASSWORD}
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:9000/minio/health/live"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  minio-init:
+    image: quay.io/minio/mc:RELEASE.2025-04-16T18-13-26Z
+    depends_on:
+      minio:
+        condition: service_healthy
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?set MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?set MINIO_ROOT_PASSWORD}
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >-
+        mc alias set local http://minio:9000 "$${MINIO_ROOT_USER}" "$${MINIO_ROOT_PASSWORD}" &&
+        mc mb --ignore-existing local/agent-platform
+
+  prometheus:
+    image: prom/prometheus:v3.5.0
+    restart: unless-stopped
+    command: ["--config.file=/etc/prometheus/prometheus.yml", "--storage.tsdb.path=/prometheus"]
+    volumes:
+      - ./observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./observability/alerts.yml:/etc/prometheus/alerts.yml:ro
+      - prometheus-data:/prometheus
+    secrets:
+      - api_token
+    depends_on:
+      backend:
+        condition: service_healthy
+
+  alertmanager:
+    image: prom/alertmanager:v0.28.1
+    restart: unless-stopped
+    command: ["--config.file=/etc/alertmanager/alertmanager.yml"]
+    volumes:
+      - ./observability/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+
+  grafana:
+    image: grafana/grafana:12.1.0
+    restart: unless-stopped
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?set GRAFANA_ADMIN_PASSWORD}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./observability/grafana-provisioning:/etc/grafana/provisioning:ro
+    depends_on:
+      - prometheus
+
+volumes:
+  platform-data:
+  postgres-data:
+  redis-data:
+  minio-data:
+  prometheus-data:
+  grafana-data:
+
+secrets:
+  session_secret:
+    file: ${AGENT_PLATFORM_SESSION_SECRET_FILE:?set AGENT_PLATFORM_SESSION_SECRET_FILE}
+  login_password:
+    file: ${AGENT_PLATFORM_LOGIN_PASSWORD_FILE:?set AGENT_PLATFORM_LOGIN_PASSWORD_FILE}
+  api_token:
+    file: ${AGENT_PLATFORM_API_TOKEN_FILE:?set AGENT_PLATFORM_API_TOKEN_FILE}

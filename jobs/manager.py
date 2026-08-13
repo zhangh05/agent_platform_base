@@ -1,10 +1,14 @@
 # jobs/manager.py
 """Job manager — strict state machine, lifecycle operations."""
 
+import logging
+
 from agent.runtime.utils import now_iso
 from jobs.schemas import JobRecord, JobEvent, JobProgress, ENABLED_JOB_TYPES
 from jobs.store import create_job as _create, get_job, update_job, append_event, append_log
 from jobs.redaction import sanitize_job_record_for_api, sanitize_job_record_for_storage
+
+_LOG = logging.getLogger(__name__)
 
 # Strict transition table
 ALLOWED_TRANSITIONS = {
@@ -22,6 +26,14 @@ ALLOWED_TRANSITIONS = {
 
 # Planned jobs can transition directly (no actual work)
 PLANNED_TRANSITIONS = {"created": {"running"}}
+
+
+def _record_job_status(status: str) -> None:
+    try:
+        from observability.metrics import record_operation
+        record_operation("job", status)
+    except Exception:
+        _LOG.debug("job metric update failed", exc_info=True)
 
 
 def _check_transition(current: str, target: str) -> bool:
@@ -94,6 +106,7 @@ def retry_job(ws_id, job_id, force=False) -> JobRecord:
     get_job_queue().enqueue(ws_id, job_id)
     append_event(ws_id, job_id, JobEvent(job_id=job_id, workspace_id=ws_id,
                  event_type="job_retried", message=f"Retry #{rec.retry_count + 1}"))
+    _record_job_status("queued")
     return result
 
 
@@ -124,6 +137,7 @@ def mark_succeeded(ws_id, job_id, result_summary=None) -> JobRecord:
     if result:
         append_event(ws_id, job_id, JobEvent(job_id=job_id, workspace_id=ws_id,
                      event_type="job_succeeded", message="Job succeeded"))
+        _record_job_status("succeeded")
     return result
 
 
@@ -140,6 +154,7 @@ def mark_failed(ws_id, job_id, error="", result_summary=None) -> JobRecord:
     if result:
         append_event(ws_id, job_id, JobEvent(job_id=job_id, workspace_id=ws_id,
                      event_type="job_failed", message=f"Job failed: {error[:100]}"))
+        _record_job_status("failed")
     return result
 
 
@@ -160,6 +175,7 @@ def mark_cancelled(ws_id, job_id, message="Job cancelled") -> JobRecord:
             event_type="job_cancelled",
             message=message,
         ))
+        _record_job_status("cancelled")
     return result
 
 
@@ -185,4 +201,5 @@ def _transition(ws_id, job_id, target, evt_type, msg=""):
     if rec:
         append_event(ws_id, job_id, JobEvent(job_id=job_id, workspace_id=ws_id,
                      event_type=evt_type, message=msg))
+        _record_job_status(target)
     return rec

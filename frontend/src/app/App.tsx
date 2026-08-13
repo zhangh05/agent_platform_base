@@ -205,6 +205,15 @@ function LoginScreen({ onLogin }: { onLogin: (status: Awaited<ReturnType<typeof 
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [oidcEnabled, setOidcEnabled] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    authApi.status()
+      .then((status) => { if (active) setOidcEnabled(Boolean(status.oidc_enabled)); })
+      .catch(() => { /* password login remains available */ });
+    return () => { active = false; };
+  }, []);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -259,6 +268,16 @@ function LoginScreen({ onLogin }: { onLogin: (status: Awaited<ReturnType<typeof 
           <button type="submit" className="login-submit" disabled={submitting || !username.trim() || !password}>
             {submitting ? "正在登录…" : "登录"}
           </button>
+          {oidcEnabled ? (
+            <button
+              type="button"
+              className="login-submit secondary"
+              disabled={submitting}
+              onClick={() => window.location.assign("/api/auth/oidc/start")}
+            >
+              企业单点登录
+            </button>
+          ) : null}
         </form>
       </section>
     </main>

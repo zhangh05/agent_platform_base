@@ -67,8 +67,10 @@ def test_identity_viewer_is_workspace_scoped(monkeypatch, tmp_path):
     monkeypatch.delenv("AGENT_PLATFORM_LOGIN_USERNAME", raising=False)
     monkeypatch.delenv("AGENT_PLATFORM_LOGIN_PASSWORD", raising=False)
     from storage.workspace_store import ensure_workspace
+    from backend.core.identity import ensure_organization
     ensure_workspace("tenant_a")
     ensure_workspace("tenant_b")
+    ensure_organization("tenant_b", "Tenant B", ["tenant_b"])
     upsert_user("scoped", "password", "viewer", "tenant_a", ["tenant_a"])
     from backend.main import create_app
     client = create_app().test_client()

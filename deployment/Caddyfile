@@ -1,0 +1,5 @@
+:443 {
+    tls /run/tls/tls.crt /run/tls/tls.key
+    encode zstd gzip
+    reverse_proxy frontend:8080
+}

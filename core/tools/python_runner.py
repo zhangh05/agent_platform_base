@@ -25,6 +25,11 @@ _MAX_OUTPUT_BYTES = 1_048_576
 _CONTAINER_IMAGE_ENV = "AGENT_PLATFORM_PYTHON_CONTAINER_IMAGE"
 
 
+def _docker_client_env() -> dict[str, str]:
+    allowed = ("PATH", "DOCKER_HOST", "DOCKER_TLS_VERIFY", "DOCKER_CERT_PATH")
+    return {key: os.environ[key] for key in allowed if os.environ.get(key)}
+
+
 def _truthy(value: str | None) -> bool:
     return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
 
@@ -137,9 +142,19 @@ class DockerStrongIsolationRunner:
             text=True,
             timeout=5,
             check=False,
-            env={"PATH": os.environ.get("PATH", "")},
+            env=_docker_client_env(),
         )
         if probe.returncode != 0 or not probe.stdout.strip():
+            return None
+        image_probe = subprocess.run(
+            [docker_bin, "image", "inspect", image, "--format", "{{.Id}}"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+            env=_docker_client_env(),
+        )
+        if image_probe.returncode != 0 or not image_probe.stdout.strip():
             return None
         return cls(docker_bin=docker_bin, image=image)
 
@@ -203,9 +218,16 @@ class DockerStrongIsolationRunner:
                     text=True,
                     timeout=10,
                     check=False,
-                    env={"PATH": os.environ.get("PATH", "")},
+                    env=_docker_client_env(),
                 )
-                return _empty_result(timeout, f"Execution timed out after {timeout}s; container removed", self.isolation_level, runner=self.runner_name)
+                result = _empty_result(
+                    timeout,
+                    f"Execution timed out after {timeout}s; container removed",
+                    self.isolation_level,
+                    runner=self.runner_name,
+                )
+                result["timed_out"] = True
+                return result
             stdout = (completed.stdout or "")[:_MAX_OUTPUT_BYTES]
             stderr = (completed.stderr or "")[:_MAX_OUTPUT_BYTES]
             output_truncated = len(completed.stdout or "") > _MAX_OUTPUT_BYTES or len(completed.stderr or "") > _MAX_OUTPUT_BYTES

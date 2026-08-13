@@ -47,8 +47,11 @@ describe("approval transport lifecycle", () => {
         tool_id: "exec.run",
         risk_level: "high",
         arguments_preview: {},
-        created_at: Date.now(),
+        created_at: new Date().toISOString(),
         created_at_iso: new Date().toISOString(),
+        expires_at: new Date(Date.now() + 30 * 60_000).toISOString(),
+        approval_kind: "interactive",
+        requester: "test-user",
       }],
       count: 1,
     });

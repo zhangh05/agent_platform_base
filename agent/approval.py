@@ -5,7 +5,7 @@ alternative, no dual-store pattern, no bypass.
 
 Key guarantees:
 - Every approval is bound to workspace_id + session_id (+ run_id/job_id if present)
-- resolve() enforces admin token boundary when AGENT_PLATFORM_ADMIN_TOKEN is set
+- Every approval has a durable expiry and immutable requester identity
 - Arguments are redacted by default in persisted records and API responses
 - SSE events are published on create/resolve for real-time frontend updates
 """
@@ -13,6 +13,7 @@ Key guarantees:
 from __future__ import annotations
 
 import logging
+import os
 import threading
 import time
 import uuid
@@ -24,6 +25,15 @@ from typing import Any, Callable, Dict, List, Optional
 from agent.runtime.utils import now_iso, from_iso
 
 logger = logging.getLogger(__name__)
+
+
+def _record_approval_metric(status: str, pending_count: int) -> None:
+    try:
+        from observability.metrics import record_operation, set_operational_gauge
+        record_operation("approval", status)
+        set_operational_gauge("approval_pending", pending_count)
+    except Exception:
+        logger.debug("approval metric update failed", exc_info=True)
 
 
 def _now_iso() -> str:
@@ -47,6 +57,25 @@ def _now_iso_offset(delta_seconds: float) -> str:
 _APPROVALS_FILE: Optional[Path] = None
 _RETENTION_DAYS = 90
 _GC_INTERVAL_SECONDS = 600  # 10 minutes
+_DEFAULT_APPROVAL_TTL_SECONDS = 1800
+_MIN_APPROVAL_TTL_SECONDS = 60
+_MAX_APPROVAL_TTL_SECONDS = 7 * 24 * 60 * 60
+
+
+def approval_ttl_seconds() -> int:
+    """Return the single server-authoritative approval lifetime."""
+    raw = os.environ.get("AGENT_PLATFORM_APPROVAL_TTL_SECONDS", "").strip()
+    try:
+        value = int(raw) if raw else _DEFAULT_APPROVAL_TTL_SECONDS
+    except ValueError:
+        value = _DEFAULT_APPROVAL_TTL_SECONDS
+    return max(_MIN_APPROVAL_TTL_SECONDS, min(value, _MAX_APPROVAL_TTL_SECONDS))
+
+
+def _expires_at_from_created(created_at: str, ttl_seconds: int | None = None) -> str:
+    ttl = approval_ttl_seconds() if ttl_seconds is None else ttl_seconds
+    created = datetime.fromtimestamp(from_iso(created_at), tz=timezone.utc)
+    return (created + timedelta(seconds=ttl)).isoformat()
 
 # ════════════════════════════════════════════════════
 # Event subscription (SSE bridge)
@@ -128,11 +157,15 @@ class ApprovalRequest:
     run_id: str = ""
     job_id: str = ""
     metadata: dict = field(default_factory=dict)
+    approval_kind: str = "interactive"
+    requester: str = ""
+    requester_id: str = ""
     # v3.9.8: created_at / resolved_at are now ISO-8601 strings (UTC),
     # matching every other dataclass in the durable / state / event
     # namespace. Earlier float/epoch split made the API surface
     # inconsistent between /api/approvals and /api/agent/state.
     created_at: str = field(default_factory=_now_iso)
+    expires_at: str = ""
     resolved: bool = False
     allowed: bool = False
     resolved_at: Optional[str] = None
@@ -200,9 +233,15 @@ class ApprovalStore:
                     run_id=rec.get("run_id", ""),
                     job_id=rec.get("job_id", ""),
                     metadata=rec.get("metadata", {}),
+                    approval_kind=str(rec.get("approval_kind") or "interactive"),
+                    requester=str(rec.get("requester") or ""),
+                    requester_id=str(rec.get("requester_id") or ""),
                     created_at=created_iso,
+                    expires_at=str(rec.get("expires_at") or ""),
                     resolved=False,
                 )
+                if not req.expires_at:
+                    req.expires_at = _expires_at_from_created(req.created_at)
                 self._pending[req.approval_id] = req
         except (OSError, ValueError):
             # v3.9.9: file IO / JSON corruption are not unexpected —
@@ -228,7 +267,11 @@ class ApprovalStore:
                 "run_id": req.run_id,
                 "job_id": req.job_id,
                 "metadata": redact_tool_output(req.metadata or {}),
+                "approval_kind": req.approval_kind,
+                "requester": req.requester,
+                "requester_id": req.requester_id,
                 "created_at": req.created_at,
+                "expires_at": req.expires_at,
                 "resolved": req.resolved,
                 "allowed": req.allowed if req.resolved else None,
                 "resolved_at": req.resolved_at,
@@ -285,7 +328,11 @@ class ApprovalStore:
                workspace_id: str = "",
                run_id: str = "",
                job_id: str = "",
-               metadata: dict = None) -> ApprovalRequest:
+               metadata: dict = None,
+               approval_kind: str = "interactive",
+               requester: str = "",
+               requester_id: str = "",
+               ttl_seconds: int | None = None) -> ApprovalRequest:
         """Create a pending approval, persist it, and notify subscribers.
 
         All approval records MUST be bound to workspace_id + session_id.
@@ -300,6 +347,23 @@ class ApprovalStore:
         except Exception as exc:
             raise ValueError("invalid_workspace_id") from exc
         approval_id = f"apr_{uuid.uuid4().hex[:12]}"
+        if not requester:
+            try:
+                from storage.principal import current_storage_principal
+                requester = current_storage_principal()
+            except Exception:
+                requester = ""
+        if requester and not requester_id:
+            try:
+                from storage.principal import principal_storage_key
+                requester_id = principal_storage_key(requester)
+            except Exception:
+                requester_id = ""
+        ttl = approval_ttl_seconds() if ttl_seconds is None else max(
+            _MIN_APPROVAL_TTL_SECONDS,
+            min(int(ttl_seconds), _MAX_APPROVAL_TTL_SECONDS),
+        )
+        created_at = now_iso()
         req = ApprovalRequest(
             approval_id=approval_id,
             session_id=session_id,
@@ -311,6 +375,11 @@ class ApprovalStore:
             run_id=run_id,
             job_id=job_id,
             metadata=metadata or {},
+            approval_kind=str(approval_kind or "interactive"),
+            requester=str(requester or ""),
+            requester_id=str(requester_id or ""),
+            created_at=created_at,
+            expires_at=_expires_at_from_created(created_at, ttl),
         )
         with self._lock:
             self._pending[approval_id] = req
@@ -319,8 +388,14 @@ class ApprovalStore:
             kind="created", approval_id=approval_id,
             session_id=session_id, tool_id=tool_id,
             workspace_id=workspace_id,
-            payload={"risk_level": risk_level, "description": description},
+            payload={
+                "risk_level": risk_level,
+                "description": description,
+                "approval_kind": req.approval_kind,
+                "expires_at": req.expires_at,
+            },
         ))
+        _record_approval_metric("created", len(self._pending))
         return req
 
     def resolve(self, approval_id: str, allowed: bool, workspace_id: str,
@@ -338,6 +413,14 @@ class ApprovalStore:
             if req and req.workspace_id != workspace_id:
                 return None
             if req and not req.resolved:
+                try:
+                    expired = bool(req.expires_at and time.time() >= from_iso(req.expires_at))
+                except (TypeError, ValueError):
+                    expired = False
+                if expired:
+                    allowed = False
+                    resolver = "system_expired"
+                    reason = "approval_ttl_expired"
                 req.resolved = True
                 req.allowed = allowed
                 # v3.9.8: resolved_at is ISO-8601 string; was float.
@@ -358,6 +441,11 @@ class ApprovalStore:
         # Pending entries can be freed once resolved — they live on in JSONL.
         with self._lock:
             self._pending.pop(approval_id, None)
+            pending_count = len(self._pending)
+        metric_status = "approved" if allowed else (
+            "expired" if resolver == "system_expired" else "rejected"
+        )
+        _record_approval_metric(metric_status, pending_count)
         return req
 
     def check(self, approval_id: str) -> Optional[bool]:
@@ -378,11 +466,22 @@ class ApprovalStore:
                 return None
             return req
 
+    def remaining_seconds(self, approval_id: str) -> float:
+        """Return the durable time remaining for a pending approval."""
+        with self._lock:
+            req = self._pending.get(approval_id)
+        if req is None:
+            return 0.0
+        try:
+            return max(0.0, from_iso(req.expires_at) - time.time())
+        except (TypeError, ValueError):
+            return float(approval_ttl_seconds())
+
     def get_pending(self, session_id: str = "", workspace_id: str = "") -> list[dict]:
         """Get pending approvals, optionally filtered by workspace/session.
 
-        Stale approvals (older than 120s) are auto-cleaned up during this call
-        to prevent orphaned approvals from flashing the frontend bubble.
+        Expiry is based solely on each record's durable ``expires_at`` value.
+        Polling cannot shorten or invent an approval lifetime.
         """
         with self._lock:
             now = datetime.now(timezone.utc)
@@ -391,16 +490,9 @@ class ApprovalStore:
                 if req.resolved:
                     stale_ids.append(aid)
                     continue
-                # Auto-expire approvals older than 120 seconds that never
-                # reached the wait/resolve path (orphaned by turn failure).
-                # v3.9.8: created_at is an ISO-8601 string now; compare
-                # via datetime parsing instead of float math.
                 try:
-                    created = datetime.fromtimestamp(from_iso(req.created_at), tz=timezone.utc)
-                    if req.created_at and (now - created).total_seconds() > 120:
-                        _expire = True
-                    else:
-                        _expire = False
+                    expires = datetime.fromtimestamp(from_iso(req.expires_at), tz=timezone.utc)
+                    _expire = bool(req.expires_at and now >= expires)
                 except Exception:
                     _expire = False
                 if _expire:
@@ -408,13 +500,17 @@ class ApprovalStore:
                     req.allowed = False
                     req.resolved_at = now_iso()
                     req.resolver = "system_expired"
+                    req.reason = "approval_ttl_expired"
                     req._event.set()
                     self._append_record(req)
                     _event_bus.publish(ApprovalEvent(
                         kind="resolved", approval_id=aid,
                         session_id=req.session_id, tool_id=req.tool_id,
                         workspace_id=req.workspace_id,
-                        allowed=False, payload={"resolver": "system_expired"},
+                        allowed=False, payload={
+                            "resolver": "system_expired",
+                            "reason": "approval_ttl_expired",
+                        },
                     ))
                     stale_ids.append(aid)
             for aid in stale_ids:
@@ -427,7 +523,17 @@ class ApprovalStore:
                 if session_id and req.session_id != session_id:
                     continue
                 result.append(self._to_dict(req))
-            return result
+            pending_count = len(self._pending)
+        if stale_ids:
+            for _ in stale_ids:
+                _record_approval_metric("expired", pending_count)
+        else:
+            try:
+                from observability.metrics import set_operational_gauge
+                set_operational_gauge("approval_pending", pending_count)
+            except Exception:
+                logger.debug("approval pending gauge update failed", exc_info=True)
+        return result
 
     def get_history(self, session_id: str = "", tool_id: str = "",
                     workspace_id: str = "",
@@ -516,18 +622,19 @@ class ApprovalStore:
         return False
 
 
-    def wait(self, approval_id: str, timeout: int = 60,
+    def wait(self, approval_id: str, timeout: float | None = None,
              blocking: bool = True) -> Optional[bool]:
         """Wait for approval to be resolved.
 
         Args:
             approval_id: The approval to wait for.
-            timeout: Maximum wait time in seconds (only for blocking mode).
+            timeout: Optional caller wait ceiling. It never resolves or rejects
+                     the durable approval by itself.
             blocking: If True, blocks until resolved or timeout. If False,
                       returns immediately: True=allowed, False=denied, None=pending.
 
         Returns:
-            - blocking=True: True if allowed, False if denied/timed out.
+            - blocking=True: True/False if resolved, None if the waiter elapsed.
             - blocking=False: True/False if resolved, None if pending.
         """
         with self._lock:
@@ -541,31 +648,34 @@ class ApprovalStore:
                 return req.allowed
             return None
 
-        # Blocking mode: poll in 500ms intervals
+        if timeout is None:
+            try:
+                timeout = max(0.0, from_iso(req.expires_at) - time.time())
+            except (TypeError, ValueError):
+                timeout = float(approval_ttl_seconds())
+
+        # Blocking mode: poll in 500ms intervals. The caller may stop waiting,
+        # but only explicit resolution or durable expiry changes the decision.
         elapsed = 0.0
         while elapsed < timeout:
             if req._event.wait(timeout=0.5):
                 return req.allowed
             elapsed += 0.5
 
-        # Timeout — auto-deny
-        with self._lock:
-            if not req.resolved:
-                req.resolved = True
-                req.allowed = False
-                # v3.9.8: resolved_at is ISO-8601 string; was float.
-                req.resolved_at = now_iso()
-                req.resolver = "system_timeout"
-                req._event.set()
-                self._append_record(req)
-                _event_bus.publish(ApprovalEvent(
-                    kind="resolved", approval_id=approval_id,
-                    session_id=req.session_id, tool_id=req.tool_id,
-                    workspace_id=req.workspace_id,
-                    allowed=False, payload={"resolver": "system_timeout"},
-                ))
-                self._pending.pop(approval_id, None)
-        return False
+        try:
+            expired = bool(req.expires_at and time.time() >= from_iso(req.expires_at))
+        except (TypeError, ValueError):
+            expired = False
+        if expired:
+            resolved = self.resolve(
+                approval_id,
+                False,
+                workspace_id=req.workspace_id,
+                resolver="system_expired",
+                reason="approval_ttl_expired",
+            )
+            return False if resolved is not None else None
+        return None
 
     def cleanup(self, approval_id: str):
         with self._lock:
@@ -598,6 +708,9 @@ class ApprovalStore:
             "arguments_preview": safe_arguments,
             "created_at": created_at,
             "created_at_iso": created_at,
+            "expires_at": req.expires_at,
+            "approval_kind": req.approval_kind,
+            "requester": req.requester,
         }
 
 

@@ -4,6 +4,57 @@ Agent Platform Base separates record storage, object storage, and the job queue.
 They can be enabled independently; this allows the common production combination
 of PostgreSQL records, S3 artifacts, and Redis workers.
 
+## Supported production profile
+
+The repository includes a fail-closed single-node production profile at
+`deployment/compose.production.yml`. It runs a Gunicorn backend, job worker,
+static Nginx frontend, TLS gateway, PostgreSQL, Redis, S3-compatible object
+storage, Prometheus, Alertmanager and Grafana. Copy
+`deployment/.env.production.example`, create the referenced secret and TLS
+files, then validate before starting:
+
+```bash
+docker compose --env-file /etc/agent-platform/production.env \
+  -f deployment/compose.production.yml config
+docker compose --env-file /etc/agent-platform/production.env \
+  -f deployment/compose.production.yml up -d --build
+docker compose --env-file /etc/agent-platform/production.env \
+  -f deployment/compose.production.yml exec backend \
+  python scripts/production_preflight.py --live
+```
+
+The public listener is TLS-only. Frontend and backend ports remain internal to
+the Compose network. API, login and session secrets are mounted as files rather
+than committed or baked into images.
+
+Python execution requires a verified image digest and a Docker daemon. Use a
+dedicated rootless daemon/socket where possible; never expose an unauthenticated
+Docker TCP endpoint. The backend fails closed when the daemon or pinned image is
+unavailable.
+
+This profile intentionally runs one Web process and one worker. Filesystem data
+that has not moved into PostgreSQL/S3 is shared through `platform-data`; do not
+scale Web or worker replicas until the distributed integration suite and the
+target volume's locking semantics have been validated.
+
+## Enterprise login
+
+Optional OpenID Connect login is enabled with
+`AGENT_PLATFORM_OIDC_ENABLED=true`, an HTTPS issuer, client ID, client-secret
+file and `AGENT_PLATFORM_PUBLIC_URL`. OIDC users are never auto-provisioned:
+the administrator must create the matching username and workspace grants first,
+so an identity-provider account cannot invent local privileges. Password login
+can remain as the bootstrap recovery path. OIDC complements rather than replaces
+the route/role/workspace authorization matrix.
+
+Start the profile with the OIDC override after adding the optional values shown
+in `.env.production.example`:
+
+```bash
+docker compose --env-file /etc/agent-platform/production.env \
+  -f deployment/compose.production.yml -f deployment/compose.oidc.yml up -d
+```
+
 ## Adapter configuration
 
 ```bash
@@ -14,6 +65,7 @@ export AGENT_PLATFORM_OBJECT_STORE_BUCKET='agent-platform-artifacts'
 export AGENT_PLATFORM_OBJECT_STORE_PREFIX='production'
 export AGENT_PLATFORM_QUEUE_MODE=redis
 export AGENT_PLATFORM_QUEUE_URL='redis://...'
+export AGENT_PLATFORM_APPROVAL_TTL_SECONDS=1800
 ```
 
 `GET /api/health` is the lightweight liveness check. `GET /api/ready` performs
@@ -25,6 +77,10 @@ Prometheus metrics are served at `/metrics`, and a JSON projection is available
 at `/api/metrics`. Metrics use route templates rather than raw URLs, preventing
 workspace/job IDs from creating unbounded labels. When API authentication is
 enabled, both metric endpoints require the configured bearer token or session.
+The supplied Prometheus configuration reads that token from the same Docker
+secret. Alert rules and the initial Grafana dashboard live under
+`deployment/observability`; replace the placeholder Alertmanager receiver before
+go-live and follow `docs/OPERATIONS_RUNBOOK.md` during incidents.
 
 ## Worker leases
 

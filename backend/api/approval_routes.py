@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import queue
 import threading
 import time
@@ -22,22 +21,18 @@ from flask import Response, jsonify, request, stream_with_context
 _LOG = logging.getLogger(__name__)
 
 
-def _admin_token_allowed() -> bool:
-    """Check admin permission for approval resolution.
+def _approval_actor_allowed(pending_req) -> tuple[bool, dict]:
+    """Authorize an approval by identity, never by source/proxy address."""
+    from backend.core.auth import current_request_actor
+    from backend.core.identity import has_role
 
-    - If AGENT_PLATFORM_ADMIN_TOKEN is configured, MUST provide X-Admin-Token.
-    - Otherwise, only localhost (127.0.0.1 / ::1) is allowed.
-    """
-    expected = os.environ.get("AGENT_PLATFORM_ADMIN_TOKEN", "")
-    if expected:
-        supplied = request.headers.get("X-Admin-Token", "")
-        if not supplied:
-            return False
-        import hmac
-        return hmac.compare_digest(supplied, expected)
-    else:
-        client_ip = request.remote_addr
-        return client_ip in ("127.0.0.1", "::1")
+    actor = current_request_actor() or {}
+    role = str(actor.get("role") or "")
+    if has_role(role, "admin"):
+        return True, actor
+    requester_id = str(getattr(pending_req, "requester_id", "") or "")
+    actor_id = str(actor.get("actor_id") or "")
+    return bool(requester_id and actor_id and requester_id == actor_id), actor
 
 
 def register_approval_routes(app) -> None:
@@ -71,8 +66,6 @@ def register_approval_routes(app) -> None:
     @app.route("/api/agent/approvals/<approval_id>/resolve", methods=["POST"])
     def api_approval_resolve(approval_id):
         """POST resolve an approval — body: {decision: approve|reject|edit_args|respond}."""
-        if not _admin_token_allowed():
-            return jsonify({"ok": False, "error": "admin_access_required"}), 403
         from agent.approval import get_approval_store
         data = request.get_json(silent=True) or {}
 
@@ -81,17 +74,27 @@ def register_approval_routes(app) -> None:
         if decision not in ("approve", "reject", "edit_args", "respond", "respond_with_feedback"):
             return jsonify({"ok": False, "error": "decision required: approve|reject|edit_args|respond"}), 400
 
-        resolver = str(data.get("resolver") or "user")
         feedback = str(data.get("feedback", data.get("reason", "")) or "")[:500]
         reason = feedback if decision in ("respond", "respond_with_feedback") else str(data.get("reason") or "")
-        allowed = decision == "approve" or decision == "edit_args"
         ws_id, err = _validated_ws_id(str(data.get("workspace_id", "")))
         if err:
             return err
         store = get_approval_store(ws_id)
 
         pending_req = store.get_pending_request(approval_id, ws_id)
+        if pending_req is None:
+            return jsonify({"ok": False, "error": "approval not found or already resolved"}), 404
+        allowed_actor, actor = _approval_actor_allowed(pending_req)
+        if not allowed_actor:
+            return jsonify({"ok": False, "error": "approval_resolver_forbidden"}), 403
+        resolver = str(actor.get("username") or "authenticated_user")
         pending_meta = getattr(pending_req, "metadata", None) or {}
+        if decision == "edit_args" and not pending_meta.get("task_id"):
+            return jsonify({
+                "ok": False,
+                "error": "approval_edit_args_not_supported",
+                "message": "Argument editing is only available for durable tasks bound to an exact pending action.",
+            }), 400
         if pending_meta.get("workflow_id") and decision == "edit_args":
             return jsonify({
                 "ok": False,
@@ -99,9 +102,17 @@ def register_approval_routes(app) -> None:
                 "message": "Workflow approvals must be approved or rejected as the exact bound action.",
             }), 400
 
+        allowed = decision in ("approve", "edit_args")
+
         req = store.resolve(approval_id, allowed, workspace_id=ws_id, resolver=resolver, reason=reason)
         if req is None:
             return jsonify({"ok": False, "error": "approval not found or already resolved"}), 404
+        if req.resolver == "system_expired":
+            return jsonify({
+                "ok": False,
+                "error": "approval_expired",
+                "approval_id": approval_id,
+            }), 409
 
         # v3.10 Phase 4: wire into durable runtime interrupt/resume
         runtime_result = None

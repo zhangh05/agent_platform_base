@@ -1,0 +1,18 @@
+{
+  "annotations": {"list": []},
+  "editable": false,
+  "panels": [
+    {"type": "stat", "title": "服务可用", "targets": [{"expr": "up{job=\"agent-platform\"}"}], "gridPos": {"h": 6, "w": 6, "x": 0, "y": 0}},
+    {"type": "stat", "title": "待处理审批", "targets": [{"expr": "agent_platform_operational_gauge{name=\"approval_pending\"}"}], "gridPos": {"h": 6, "w": 6, "x": 6, "y": 0}},
+    {"type": "timeseries", "title": "HTTP 请求速率", "targets": [{"expr": "sum by (status) (rate(agent_platform_http_requests_total[5m]))"}], "gridPos": {"h": 8, "w": 12, "x": 0, "y": 6}},
+    {"type": "timeseries", "title": "工具执行结果", "targets": [{"expr": "sum by (status) (rate(agent_platform_operations_total{operation=\"tool\"}[5m]))"}], "gridPos": {"h": 8, "w": 12, "x": 12, "y": 6}},
+    {"type": "timeseries", "title": "作业状态", "targets": [{"expr": "sum by (status) (increase(agent_platform_operations_total{operation=\"job\"}[15m]))"}], "gridPos": {"h": 8, "w": 12, "x": 0, "y": 14}}
+  ],
+  "schemaVersion": 41,
+  "tags": ["agent-platform", "production"],
+  "templating": {"list": []},
+  "time": {"from": "now-6h", "to": "now"},
+  "title": "联智中枢运行总览",
+  "uid": "agent-platform-overview",
+  "version": 1
+}

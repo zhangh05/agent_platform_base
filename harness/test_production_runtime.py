@@ -118,6 +118,13 @@ def test_readiness_and_bounded_http_metrics(monkeypatch, tmp_path: Path):
     prometheus = client.get("/metrics").get_data(as_text=True)
     assert "agent_platform_http_requests_total" in prometheus
 
+    from observability.metrics import record_operation, set_operational_gauge, render_prometheus
+    record_operation("tool", "failed")
+    set_operational_gauge("approval_pending", 2)
+    rendered = render_prometheus()
+    assert 'agent_platform_operations_total{operation="tool",status="failed"}' in rendered
+    assert 'agent_platform_operational_gauge{name="approval_pending"} 2.0' in rendered
+
 
 def test_metrics_require_auth_when_api_auth_is_enabled(monkeypatch, tmp_path: Path):
     monkeypatch.setenv("NA_WORKSPACE_ROOT", str(tmp_path / "workspaces"))

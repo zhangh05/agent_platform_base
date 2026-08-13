@@ -59,11 +59,23 @@ class LocalObjectStore:
 
 class S3ObjectStore:
     def __init__(self, bucket: str, prefix: str = ""):
+        import os
         import boto3
         from botocore.config import Config
         self.bucket = bucket
         self.prefix = prefix.strip("/")
-        self.client = boto3.client("s3", config=Config(connect_timeout=3, read_timeout=3, retries={"max_attempts": 1}))
+        endpoint_url = os.environ.get("AGENT_PLATFORM_S3_ENDPOINT_URL", "").strip() or None
+        addressing_style = os.environ.get("AGENT_PLATFORM_S3_ADDRESSING_STYLE", "auto").strip() or "auto"
+        self.client = boto3.client(
+            "s3",
+            endpoint_url=endpoint_url,
+            config=Config(
+                connect_timeout=3,
+                read_timeout=3,
+                retries={"max_attempts": 1},
+                s3={"addressing_style": addressing_style},
+            ),
+        )
 
     def _key(self, key: str) -> str:
         LocalObjectStore(Path("/tmp"))._path(key)

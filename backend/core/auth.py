@@ -40,9 +40,24 @@ def _is_auth_enabled() -> bool:
     )
 
 
+def _secret_value(name: str) -> str:
+    direct = os.environ.get(name, "")
+    if direct:
+        return direct.strip()
+    path = os.environ.get(f"{name}_FILE", "").strip()
+    if not path:
+        return ""
+    try:
+        from pathlib import Path
+        return Path(path).read_text(encoding="utf-8").strip()
+    except OSError:
+        logger.error("Unable to read secret file for %s", name)
+        return ""
+
+
 def _get_api_token() -> str:
-    """Read AGENT_PLATFORM_API_TOKEN from env (re-evaluated each call for testability)."""
-    return os.environ.get("AGENT_PLATFORM_API_TOKEN", "").strip()
+    """Read the API token from env or a mounted secret file."""
+    return _secret_value("AGENT_PLATFORM_API_TOKEN")
 
 
 def _get_login_username() -> str:
@@ -50,7 +65,7 @@ def _get_login_username() -> str:
 
 
 def _get_login_password() -> str:
-    return os.environ.get("AGENT_PLATFORM_LOGIN_PASSWORD", "")
+    return _secret_value("AGENT_PLATFORM_LOGIN_PASSWORD")
 
 
 def _is_login_enabled() -> bool:
@@ -99,6 +114,8 @@ _PUBLIC_PREFIXES = frozenset([
     "/api/ready",
     "/api/auth/login",
     "/api/auth/status",
+    "/api/auth/oidc/start",
+    "/api/auth/oidc/callback",
     "/health",
 ])
 
@@ -202,6 +219,39 @@ def is_current_session_authenticated() -> bool:
     return bool(username and session_user and hmac.compare_digest(str(session_user), username))
 
 
+def current_request_actor() -> dict | None:
+    """Return the authenticated actor used by privileged business actions.
+
+    API-token callers are explicit system owners. Browser callers use the
+    server-side identity session and an immutable storage principal ID. No
+    authorization decision is inferred from the proxy/source IP.
+    """
+    if _request_has_valid_api_token():
+        return {
+            "username": "api-token",
+            "actor_id": "system:api-token",
+            "role": "owner",
+            "auth_type": "api_token",
+        }
+    if not is_current_session_authenticated():
+        return None
+    username = str(flask.session.get("agent_platform_user") or "").strip()
+    if not username:
+        return None
+    role = str(flask.session.get("agent_platform_role") or "admin")
+    try:
+        from storage.principal import principal_storage_key
+        actor_id = principal_storage_key(username)
+    except Exception:
+        actor_id = ""
+    return {
+        "username": username,
+        "actor_id": actor_id,
+        "role": role,
+        "auth_type": "session",
+    }
+
+
 def handle_auth_status():
     authenticated = is_current_session_authenticated()
     platform_admin = False
@@ -222,8 +272,21 @@ def handle_auth_status():
         "workspace_ids": list(flask.session.get("agent_platform_workspaces") or []) if authenticated else [],
         "home_workspace_id": flask.session.get("agent_platform_home_workspace", "") if authenticated else "",
         "identity_enabled": _is_identity_enabled(),
+        "oidc_enabled": os.environ.get("AGENT_PLATFORM_OIDC_ENABLED", "false").strip().lower() in {"1", "true", "yes", "on"},
         "platform_admin": platform_admin,
     })
+
+
+def establish_identity_session(identity_user: dict) -> None:
+    """Create the canonical browser session for a verified identity."""
+    flask.session.clear()
+    flask.session["agent_platform_user"] = identity_user["username"]
+    flask.session["agent_platform_role"] = identity_user.get("role", "viewer")
+    flask.session["agent_platform_org"] = identity_user.get("organization_id", "default")
+    flask.session["agent_platform_workspaces"] = list(
+        identity_user.get("workspace_ids") or [identity_user.get("organization_id", "default")]
+    )
+    flask.session["agent_platform_home_workspace"] = identity_user.get("home_workspace_id", "")
 
 
 def handle_auth_login():
@@ -239,12 +302,7 @@ def handle_auth_login():
         from backend.core.identity import verify_user
         identity_user = verify_user(username, password)
         if identity_user:
-            flask.session.clear()
-            flask.session["agent_platform_user"] = identity_user["username"]
-            flask.session["agent_platform_role"] = identity_user.get("role", "viewer")
-            flask.session["agent_platform_org"] = identity_user.get("organization_id", "default")
-            flask.session["agent_platform_workspaces"] = list(identity_user.get("workspace_ids") or [identity_user.get("organization_id", "default")])
-            flask.session["agent_platform_home_workspace"] = identity_user.get("home_workspace_id", "")
+            establish_identity_session(identity_user)
             return flask.jsonify({"ok": True, "username": identity_user["username"], "role": identity_user.get("role", "viewer")})
     if (
         configured_username
@@ -359,7 +417,7 @@ def register_auth_middleware(app: flask.Flask) -> None:
     Call after all routes are defined but before first request.
     """
     if _is_login_enabled() or _is_identity_enabled():
-        app.secret_key = os.environ.get("AGENT_PLATFORM_SESSION_SECRET", "").strip() or _get_api_token() or secrets.token_urlsafe(32)
+        app.secret_key = _secret_value("AGENT_PLATFORM_SESSION_SECRET") or _get_api_token() or secrets.token_urlsafe(32)
         app.config.update(
             SESSION_COOKIE_HTTPONLY=True,
             SESSION_COOKIE_SAMESITE=os.environ.get("AGENT_PLATFORM_SESSION_SAMESITE", "Lax"),

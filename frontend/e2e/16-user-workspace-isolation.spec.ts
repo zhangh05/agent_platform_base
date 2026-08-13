@@ -34,18 +34,53 @@ test("16. users are isolated across sessions, files, runs and memory", async ({ 
       data: { workspace_id: workspaceId, title: "user A private session" },
     });
     expect(session.ok()).toBeTruthy();
+    const sessionBody = await session.json();
+    const sessionId = String(sessionBody.session_id ?? sessionBody.session?.session_id ?? "");
+    expect(sessionId).toBeTruthy();
     const artifact = await contextA.post(`/api/workspaces/${workspaceId}/artifacts`, {
       data: { title: "user-a-private", artifact_type: "test_seed", content: "private", sensitivity: "internal" },
     });
     expect(artifact.ok()).toBeTruthy();
+    const artifactBody = await artifact.json();
+    const artifactId = String(artifactBody.artifact_id ?? artifactBody.artifact?.artifact_id ?? "");
+    expect(artifactId).toBeTruthy();
 
     for (const path of [
       `/api/sessions?workspace_id=${workspaceId}`,
+      `/api/sessions/${sessionId}?workspace_id=${workspaceId}`,
+      `/api/sessions/${sessionId}/messages?workspace_id=${workspaceId}`,
       `/api/runs/recent?workspace_id=${workspaceId}`,
       `/api/memory/status?workspace_id=${workspaceId}`,
+      `/api/memory/list?workspace_id=${workspaceId}`,
+      `/api/knowledge/sources?workspace_id=${workspaceId}`,
+      `/api/jobs?workspace_id=${workspaceId}`,
+      `/api/storage/files?workspace_id=${workspaceId}`,
+      `/api/storage/overview?workspace_id=${workspaceId}`,
+      `/api/workflows?workspace_id=${workspaceId}`,
+      `/api/runtime/tasks?workspace_id=${workspaceId}`,
+      `/api/tools/history?workspace_id=${workspaceId}`,
+      `/api/agent/approvals/pending?workspace_id=${workspaceId}`,
+      `/api/agent/approvals/history?workspace_id=${workspaceId}`,
+      `/api/agent/approvals/sse?workspace_id=${workspaceId}`,
+      `/api/agent/sse/stream/${sessionId}?workspace_id=${workspaceId}`,
       `/api/workspaces/${workspaceId}/artifacts`,
+      `/api/workspaces/${workspaceId}/artifacts/${artifactId}`,
+      `/api/workspaces/${workspaceId}/artifacts/${artifactId}/content`,
+      `/api/workspaces/${workspaceId}/runs`,
+      `/api/workspaces/${workspaceId}/traces`,
+      `/api/workspaces/${workspaceId}/review-items`,
     ]) {
       const denied = await contextB.get(path);
+      expect([401, 403]).toContain(denied.status());
+    }
+    for (const [path, data] of [
+      ["/api/agent/message", { workspace_id: workspaceId, session_id: sessionId, message: "denied" }],
+      ["/api/jobs", { workspace_id: workspaceId, job_type: "agent_run", title: "denied" }],
+      ["/api/memory/search", { workspace_id: workspaceId, query: "private" }],
+      ["/api/context/build", { workspace_id: workspaceId, query: "private" }],
+      ["/api/tools/dry-run", { workspace_id: workspaceId, tool_id: "workspace.metadata.get", arguments: {} }],
+    ] as const) {
+      const denied = await contextB.post(path, { data });
       expect([401, 403]).toContain(denied.status());
     }
     expect((await contextB.get(`/api/sessions?workspace_id=${otherWorkspace}`)).ok()).toBeTruthy();

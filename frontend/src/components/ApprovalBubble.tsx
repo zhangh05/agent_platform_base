@@ -13,6 +13,8 @@ interface PendingApproval {
   arguments_summary?: string;
   created_at: string;
   created_at_iso?: string;
+  expires_at: string;
+  approval_kind?: string;
   /** v2.3.1-p1: risk source information */
   argument_source?: string;
   argument_risk?: string;
@@ -24,13 +26,13 @@ interface PendingApproval {
  * ApprovalBubble — small popup above the input bar for high-risk tool approval.
  *
  * SSE triggers immediate refreshes; a 5s poll remains as a disconnect-safe
- * fallback. refs hold mutable approval state across re-renders.
- * Auto-denies after 60s.
+ * fallback. The backend-provided expires_at value is authoritative; the
+ * browser never turns a display timer into an approval decision.
  */
 export function ApprovalBubble({ onResolved }: { onResolved?: (decision: "approve" | "reject") => void }) {
   const { currentSessionId, currentWorkspaceId } = useSessionStore();
   const [pending, setPending] = useState<PendingApproval | null>(null);
-  const [secondsLeft, setSecondsLeft] = useState(60);
+  const [secondsLeft, setSecondsLeft] = useState(0);
   const [resolving, setResolving] = useState(false);
   const onResolvedRef = useRef(onResolved);
   onResolvedRef.current = onResolved;
@@ -80,25 +82,18 @@ export function ApprovalBubble({ onResolved }: { onResolved?: (decision: "approv
           if (!p) {
             if (!resolvingRef.current) {
               setPending(null);
-              setSecondsLeft(60);
+              setSecondsLeft(0);
             }
             return;
           }
-          // created_at is ISO-8601 string (v3.9.8+). Date.parse handles both.
-          const created = p.created_at ? Date.parse(p.created_at) : Date.now();
-          const elapsed = (Date.now() - created) / 1000;
-          const secs = Math.max(0, Math.ceil(60 - elapsed));
-          if (secs <= 0 || elapsed > 120) {
-            try { await approvalApi.resolve(p.approval_id, { decision: "reject", workspace_id: currentWorkspaceId }); } catch { /* ignore */ }
-            if (!resolvingRef.current) { setPending(null); setSecondsLeft(60); }
-            return;
-          }
+          const expiresAt = p.expires_at ? Date.parse(p.expires_at) : Date.now();
+          const secs = Math.max(0, Math.ceil((expiresAt - Date.now()) / 1000));
           setPending(p);
           setSecondsLeft(secs);
           startPoll();
         } else if (!resolvingRef.current) {
           setPending(null);
-          setSecondsLeft(60);
+          setSecondsLeft(0);
         }
       } catch (error) {
         const status = typeof error === "object" && error !== null && "status" in error
@@ -129,24 +124,21 @@ export function ApprovalBubble({ onResolved }: { onResolved?: (decision: "approv
     };
   }, [currentSessionId, currentWorkspaceId]);
 
-  // Countdown timer — uses state for re-renders
+  // Display-only countdown. Expiry and audit are server-owned.
   useEffect(() => {
     if (!pending) return;
 
     const tick = () => {
-      setSecondsLeft((prev) => {
-        const next = prev - 1;
-        if (next <= 0) {
-          if (!resolvingRef.current) resolveApprovalRef.current("reject");
-          return 0;
-        }
-        return next;
-      });
+      const expiresAt = Date.parse(pending.expires_at || "");
+      setSecondsLeft(Number.isFinite(expiresAt)
+        ? Math.max(0, Math.ceil((expiresAt - Date.now()) / 1000))
+        : 0);
     };
 
+    tick();
     const timer = setInterval(tick, 1000);
     return () => clearInterval(timer);
-  }, [pending?.approval_id]);
+  }, [pending?.approval_id, pending?.expires_at]);
 
   const resolveApproval = useCallback(async (decision: "approve" | "reject") => {
     const p = pending;
@@ -164,7 +156,7 @@ export function ApprovalBubble({ onResolved }: { onResolved?: (decision: "approv
       }
       resolvedIdsRef.current.set(p.approval_id, Date.now());
       setPending(null);
-      setSecondsLeft(60);
+      setSecondsLeft(0);
       onResolvedRef.current?.(decision);
     } catch (err) {
       console.error("[Approval] resolve failed:", err);
@@ -175,12 +167,12 @@ export function ApprovalBubble({ onResolved }: { onResolved?: (decision: "approv
     }
   }, [pending, currentWorkspaceId]);
 
-  const resolveApprovalRef = useRef(resolveApproval);
-  resolveApprovalRef.current = resolveApproval;
-
   if (!pending) return null;
 
-  const isUrgent = secondsLeft <= 10;
+  const isUrgent = secondsLeft <= 60;
+  const countdown = secondsLeft >= 60
+    ? `${Math.floor(secondsLeft / 60)}:${String(secondsLeft % 60).padStart(2, "0")}`
+    : `${secondsLeft}s`;
 
   return (
     <div className="approval-bubble-popup" data-testid="approval-bubble">
@@ -190,7 +182,7 @@ export function ApprovalBubble({ onResolved }: { onResolved?: (decision: "approv
           <span>高危操作</span>
           <span className={`abp-countdown ${isUrgent ? "urgent" : ""}`}>
             <IconClock size={11} />
-            {secondsLeft}s
+            {countdown}
           </span>
         </div>
 

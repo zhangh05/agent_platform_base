@@ -11,6 +11,19 @@ _LOCK = threading.Lock()
 _STARTED_AT = time.time()
 _REQUESTS: dict[tuple[str, str, int], int] = defaultdict(int)
 _DURATION: dict[tuple[str, str], tuple[int, float]] = {}
+_OPERATIONS: dict[tuple[str, str], int] = defaultdict(int)
+_GAUGES: dict[str, float] = {}
+
+
+def record_operation(operation: str, status: str) -> None:
+    """Record a bounded operational event without user/resource labels."""
+    with _LOCK:
+        _OPERATIONS[(str(operation), str(status))] += 1
+
+
+def set_operational_gauge(name: str, value: float) -> None:
+    with _LOCK:
+        _GAUGES[str(name)] = float(value)
 
 
 def install_http_metrics(app) -> None:
@@ -45,7 +58,9 @@ def metrics_snapshot() -> dict:
     with _LOCK:
         requests = [{"method": method, "route": route, "status": status, "count": count} for (method, route, status), count in sorted(_REQUESTS.items())]
         durations = [{"method": method, "route": route, "count": count, "sum_seconds": round(total, 6)} for (method, route), (count, total) in sorted(_DURATION.items())]
-    return {"ok": True, "uptime_seconds": round(time.time() - _STARTED_AT, 3), "requests": requests, "durations": durations}
+        operations = [{"operation": operation, "status": status, "count": count} for (operation, status), count in sorted(_OPERATIONS.items())]
+        gauges = [{"name": name, "value": value} for name, value in sorted(_GAUGES.items())]
+    return {"ok": True, "uptime_seconds": round(time.time() - _STARTED_AT, 3), "requests": requests, "durations": durations, "operations": operations, "gauges": gauges}
 
 
 def _label(value: str) -> str:
@@ -63,4 +78,11 @@ def render_prometheus() -> str:
         labels = f'method="{_label(item["method"])}",route="{_label(item["route"])}"'
         lines.append(f"agent_platform_http_request_duration_seconds_count{{{labels}}} {item['count']}")
         lines.append(f"agent_platform_http_request_duration_seconds_sum{{{labels}}} {item['sum_seconds']}")
+    lines.extend(["# HELP agent_platform_operations_total Bounded platform operation outcomes.", "# TYPE agent_platform_operations_total counter"])
+    for item in snapshot["operations"]:
+        labels = f'operation="{_label(item["operation"])}",status="{_label(item["status"])}"'
+        lines.append(f"agent_platform_operations_total{{{labels}}} {item['count']}")
+    lines.extend(["# HELP agent_platform_operational_gauge Current bounded platform operational state.", "# TYPE agent_platform_operational_gauge gauge"])
+    for item in snapshot["gauges"]:
+        lines.append(f'agent_platform_operational_gauge{{name="{_label(item["name"])}"}} {item["value"]}')
     return "\n".join(lines) + "\n"

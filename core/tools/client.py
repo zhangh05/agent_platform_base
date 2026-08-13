@@ -93,15 +93,15 @@ class ToolRuntimeClient:
         manifest = get_manifest(tool_id) if get_manifest else None
 
         if not manifest:
-            return ToolResult(
+            return self._record_result(ToolResult(
                 tool_id=tool_id, status="blocked",
                 summary=f"Tool {tool_id} has no manifest — execution denied",
                 redacted=True,
-            )
+            ))
 
         caller = invocation.requested_by or ""
         if not caller:
-            return ToolResult(
+            return self._record_result(ToolResult(
                 tool_id=tool_id, status="blocked",
                 summary=(
                     "Caller identity (requested_by) is required. "
@@ -110,17 +110,27 @@ class ToolRuntimeClient:
                 ),
                 errors=["caller_missing"],
                 redacted=True,
-            )
+            ))
         if caller not in manifest.allowed_callers:
-            return ToolResult(
+            return self._record_result(ToolResult(
                 tool_id=tool_id, status="blocked",
                 summary=f"Caller '{caller}' not allowed for {tool_id}",
                 redacted=True,
-            )
+            ))
 
         # ── Execute through full pipeline ──
         result = self._executor.execute(invocation)
         self._append_trace_event(result, context)
+        return self._record_result(result)
+
+    @staticmethod
+    def _record_result(result: ToolResult) -> ToolResult:
+        try:
+            from observability.metrics import record_operation
+            status = "succeeded" if result.status in ("succeeded", "dry_run") else str(result.status or "failed")
+            record_operation("tool", status)
+        except Exception:
+            _LOG.debug("tool metric update failed", exc_info=True)
         return result
 
     def list_tools(self) -> list:

@@ -30,8 +30,13 @@ workspaces; a memory record still retains its source workspace for provenance.
 Frontend session selection, conversation cache, drafts, and diagnostics use the
 same user/workspace scope. Accounts can be disabled without changing their data;
 deleting an account removes its isolated data root, and access changes do not
-require a password reset. API
-tokens remain platform-level service credentials and should be restricted and rotated.
+require a password reset. API tokens remain platform-level service credentials
+and should be restricted and rotated.
+
+Enterprise deployments may use the optional OIDC login adapter. OIDC identities
+must match pre-provisioned enabled users; token claims never auto-create roles,
+organizations or workspace grants. Resolution and all business authorization
+still use the local immutable user ID plus workspace boundary.
 
 Useful endpoints:
 

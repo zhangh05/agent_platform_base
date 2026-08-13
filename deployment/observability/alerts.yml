@@ -1,0 +1,46 @@
+groups:
+  - name: agent-platform
+    rules:
+      - alert: AgentPlatformTargetDown
+        expr: up{job="agent-platform"} == 0
+        for: 2m
+        labels: {severity: critical}
+        annotations:
+          summary: 联智中枢指标端点不可达
+          runbook: docs/OPERATIONS_RUNBOOK.md#服务不可达
+
+      - alert: AgentPlatformHighHttp5xxRate
+        expr: >-
+          sum(rate(agent_platform_http_requests_total{status=~"5.."}[5m]))
+          /
+          clamp_min(sum(rate(agent_platform_http_requests_total[5m])), 0.001)
+          > 0.05
+        for: 10m
+        labels: {severity: critical}
+        annotations:
+          summary: HTTP 5xx 比例持续超过 5%
+          runbook: docs/OPERATIONS_RUNBOOK.md#接口错误率升高
+
+      - alert: AgentPlatformApprovalWaitingTooLong
+        expr: agent_platform_operational_gauge{name="approval_pending"} > 0
+        for: 20m
+        labels: {severity: warning}
+        annotations:
+          summary: 存在长时间未处理的高风险审批
+          runbook: docs/OPERATIONS_RUNBOOK.md#审批积压
+
+      - alert: AgentPlatformToolFailures
+        expr: sum(increase(agent_platform_operations_total{operation="tool",status!="succeeded",status!="dry_run"}[10m])) > 5
+        for: 5m
+        labels: {severity: warning}
+        annotations:
+          summary: 工具失败数量异常
+          runbook: docs/OPERATIONS_RUNBOOK.md#工具失败
+
+      - alert: AgentPlatformJobFailures
+        expr: sum(increase(agent_platform_operations_total{operation="job",status="failed"}[15m])) > 3
+        for: 5m
+        labels: {severity: warning}
+        annotations:
+          summary: 后台作业连续失败
+          runbook: docs/OPERATIONS_RUNBOOK.md#作业失败

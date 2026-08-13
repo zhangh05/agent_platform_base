@@ -152,6 +152,9 @@ def create_app():
         from backend.core.auth import handle_auth_logout
         return handle_auth_logout()
 
+    from backend.core.oidc import register_oidc_routes
+    register_oidc_routes(app)
+
     # ── Version ──
     @app.route("/api/version")
     def api_version():

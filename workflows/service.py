@@ -491,6 +491,7 @@ def _create_workflow_approval(*, workspace_id: str, workflow_id: str, run_id: st
         workspace_id=workspace_id,
         run_id=run_id,
         job_id=job_id,
+        approval_kind="workflow",
         metadata={"workflow_id": workflow_id, "workflow_node_id": node["node_id"]},
     )
     return request.approval_id
