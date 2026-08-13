@@ -5,7 +5,9 @@ import pytest
 from agent.runtime.ssot_runtime import (
     _format_recent_history,
     _history_overlap,
+    _summarize_older_messages,
 )
+from core.runtime_engine.context_compaction import history_importance_score
 from core.context.context_store import ContextStore
 from core.context.unified_retriever import UnifiedRetriever, get_retriever
 from core.runtime_engine.prompt_contract import RUNTIME_SYSTEM_PROMPT
@@ -40,6 +42,25 @@ def test_recent_history_budget_keeps_newest_messages():
     assert "old-0-" not in text
     from core.runtime_engine.context_budget import estimate_text_tokens
     assert estimate_text_tokens(text) <= 450
+
+
+def test_history_retention_prioritizes_constraints_corrections_and_entities():
+    assert history_importance_score("必须保留 VLAN 20，VLAN 10 不允许认证") > history_importance_score("看看数据")
+    assert history_importance_score("更正：以 router01.log 为准") >= 7
+    assert history_importance_score("今天天气不错") == 0
+
+
+def test_older_history_summary_is_structured_and_redacted():
+    messages = [
+        {"role": "user", "content": "随便聊聊"},
+        {"role": "user", "content": "必须使用 router01.log，password=hunter2"},
+        {"role": "assistant", "content": "已完成 task-123"},
+    ]
+    summary = _summarize_older_messages(messages, max_tokens=500)
+    assert "signals=constraint,artifact,entity" in summary
+    assert "task-123" in summary
+    assert "hunter2" not in summary
+    assert "[REDACTED_SECRET]" in summary
 
 
 def test_context_store_uses_workspace_storage_root(monkeypatch, tmp_path):

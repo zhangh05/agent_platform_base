@@ -105,14 +105,21 @@ def persist_run_record(session, turn, result, context) -> None:
 
         # v1.0.3.1: also persist full messages independently
         if session.session_id and not is_internal_session:
+            from core.runtime_engine.context_compaction import build_history_state_record
+
             store = SessionMessageStore(session_id=session.session_id, ws_id=ws_id)
             if user_input:
+                user_attachments = list((getattr(turn.op, "metadata", {}) or {}).get("attachments") or [])
                 store.write_message(run_id, "user", user_input, metadata={
                     "created_at": state.created_at,
                     "intent": state.intent,
-                    "attachments": list((getattr(turn.op, "metadata", {}) or {}).get("attachments") or []),
+                    "attachments": user_attachments,
+                    "history_state": build_history_state_record(
+                        "user", user_input, references=user_attachments,
+                    ),
                 })
             if final_response:
+                history_tools = _history_tool_context(result)
                 store.write_message(run_id, "assistant", final_response, metadata={
                     "created_at": state.created_at,
                     "intent": state.intent,
@@ -120,7 +127,13 @@ def persist_run_record(session, turn, result, context) -> None:
                     # The full audit remains in the run record and trace.
                     # Conversation recovery receives only bounded, redacted
                     # evidence breadcrumbs for a later follow-up turn.
-                    "tool_context": _history_tool_context(result),
+                    "tool_context": history_tools,
+                    "history_state": build_history_state_record(
+                        "assistant",
+                        final_response,
+                        tool_context=history_tools,
+                        references=artifact_refs,
+                    ),
                 })
 
         # v1.0.3.2: persist trace events to disk. Some provider paths do not

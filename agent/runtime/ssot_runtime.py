@@ -1479,7 +1479,7 @@ def _format_recent_history(
     return "\n".join(reversed(selected))
 
 
-def _append_context_message(messages: list[dict[str, str]], seen: set[str], raw: Any) -> None:
+def _append_context_message(messages: list[dict[str, Any]], seen: set[str], raw: Any) -> None:
     if not isinstance(raw, dict):
         return
     role = str(raw.get("role") or "")
@@ -1493,7 +1493,8 @@ def _append_context_message(messages: list[dict[str, str]], seen: set[str], raw:
     # Persisted assistant messages can carry a compact, redacted execution
     # breadcrumb. Keep it with the assistant turn; do not recreate protocol
     # tool messages or inject raw tool output into later model context.
-    tool_context = ((raw.get("metadata") or {}).get("tool_context") or [])
+    metadata = raw.get("metadata") or {}
+    tool_context = (metadata.get("tool_context") or [])
     if role == "assistant" and isinstance(tool_context, list):
         facts = []
         for item in tool_context[:8]:
@@ -1507,7 +1508,13 @@ def _append_context_message(messages: list[dict[str, str]], seen: set[str], raw:
             facts.append(f"- {tool_id}: {status}" + (f" — {detail}" if detail else ""))
         if facts:
             content += "\n\n[Tool execution summary]\n" + "\n".join(facts)
-    messages.append({"role": role, "content": content})
+    message: dict[str, Any] = {"role": role, "content": content}
+    history_state = metadata.get("history_state")
+    if isinstance(history_state, dict) and history_state.get("schema") == "runtime.history_state.v1":
+        from storage.redaction import redact_value
+
+        message["history_state"] = redact_value(history_state)
+    messages.append(message)
 
 
 def _summarize_older_messages(
@@ -1516,20 +1523,41 @@ def _summarize_older_messages(
     max_tokens: int,
 ) -> str:
     from core.runtime_engine.context_budget import estimate_text_tokens, truncate_text_to_tokens
+    from core.runtime_engine.context_compaction import history_state_signals
+    from storage.redaction import redact_text
+
+    # Select on explicit state signals rather than one flat keyword gate.
+    # Stable ordering is restored after scoring so cause/effect remains legible.
+    ranked = sorted(
+        enumerate(messages),
+        key=lambda item: (-_history_record_score(item[1]), -item[0]),
+    )
+    selected = sorted(
+        [item for item in ranked if _history_record_score(item[1]) > 0][:12],
+        key=lambda item: item[0],
+    )
+    if not selected and messages:
+        indexes = sorted(set(range(min(2, len(messages)))) | set(range(max(0, len(messages) - 3), len(messages))))
+        selected = [(index, messages[index]) for index in indexes]
 
     lines: list[str] = []
-    for m in messages:
-        content = m["content"]
-        if _looks_context_important(content):
-            compacted, _ = truncate_text_to_tokens(content, min(180, max_tokens))
-            lines.append(f"  [{m['role']}] {compacted}")
+    for _, message in selected:
+        content = redact_text(message["content"])
+        compacted, _ = truncate_text_to_tokens(content, min(220, max_tokens))
+        state = message.get("history_state") if isinstance(message.get("history_state"), dict) else {}
+        signals = ",".join(str(value) for value in state.get("signals", []) if value) or ",".join(history_state_signals(content)) or "context"
+        state_projection = {
+            key: state[key]
+            for key in ("entities", "constraints", "tool_facts", "unresolved", "references")
+            if state.get(key)
+        }
+        state_text = (
+            " state=" + json.dumps(state_projection, ensure_ascii=False, separators=(",", ":"), default=str)
+            if state_projection else ""
+        )
+        lines.append(f"  [history_state role={message['role']} signals={signals}]{state_text} excerpt={compacted}")
         if estimate_text_tokens("\n".join(lines)) >= max_tokens:
             break
-    if not lines and messages:
-        sample = messages[:3] + messages[-3:]
-        for m in sample:
-            compacted, _ = truncate_text_to_tokens(m["content"], min(120, max_tokens))
-            lines.append(f"  [{m['role']}] {compacted}")
     if not lines:
         return ""
     compacted, _ = truncate_text_to_tokens("\n".join(lines), max_tokens)
@@ -1548,17 +1576,24 @@ def _retrieve_history_references(messages: list[dict[str, str]], user_input: str
     important: list[dict[str, str]] = []
     for m in messages[:-_HISTORY_RECENT_MESSAGES]:
         content = m["content"]
-        if (terms and any(t in content for t in terms)) or _looks_context_important(content):
+        if (terms and any(t in content for t in terms)) or _history_record_score(m) > 0:
             important.append(m)
     return important[-8:]
 
 
-def _looks_context_important(text: str) -> bool:
-    markers = (
-        "报告", "文件", "数据", "任务", "异常", "记住", "总结", "结论",
-        "错误", "失败", "制品", "知识库", "上下文",
+def _history_record_score(message: dict[str, Any]) -> int:
+    from core.runtime_engine.context_compaction import history_importance_score
+
+    state = message.get("history_state") if isinstance(message.get("history_state"), dict) else {}
+    state_weights = {
+        "constraint": 5, "correction": 5, "decision": 4,
+        "status": 3, "entity": 2, "artifact": 1,
+    }
+    persisted_score = sum(
+        state_weights.get(str(signal), 0)
+        for signal in state.get("signals", [])
     )
-    return any(m in text for m in markers)
+    return max(persisted_score, history_importance_score(str(message.get("content") or "")))
 
 
 # ── Session history sync ──────────────────────────────────────

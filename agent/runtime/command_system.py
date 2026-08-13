@@ -260,68 +260,6 @@ def _cmd_sessions(args: str, session_id: Optional[str], context: Optional[dict])
     return "\n".join(lines)
 
 
-def _cmd_compact(args: str, session_id: Optional[str], context: Optional[dict]) -> str:
-    """Trigger manual context compact. Sets flag for next turn."""
-    from agent.core.session import AgentSession
-    # Handle both string session_id and object session_id
-    sid = ""
-    ws = ""
-    if isinstance(session_id, str):
-        sid = session_id or ""
-    elif hasattr(session_id, 'session_id'):
-        sid = getattr(session_id, 'session_id', '') or ""
-        ws = getattr(session_id, 'workspace_id', '') or ''
-    
-    if context:
-        ws = context.get("workspace_id", ws) or ""
-    
-    # Set flag on session object if mutable
-    if hasattr(session_id, 'metadata'):
-        try:
-            session_id.metadata['manual_compact_requested'] = True
-        except Exception:
-            logger.debug("_cmd_compact: <pass>", exc_info=True)
-    
-    # Also persist to disk metadata so the runtime's session can pick it up on next turn
-    if sid:
-        try:
-            from storage.session_meta_store import read_session_meta, save_session_meta
-            meta = read_session_meta(ws, sid)
-            meta['manual_compact_requested'] = True
-            save_session_meta(ws, sid, meta)
-        except Exception:
-            logger.debug("_cmd_compact: <pass>", exc_info=True)
-
-    # Also try to compact immediately if messages available
-    try:
-        from storage.message_store import get_message_store
-        store = get_message_store()
-        messages = store.get_recent(sid, limit=50)
-        if messages:
-            from agent.runtime.context_compactor import compact_messages
-            compacted, meta = compact_messages(messages, keep_recent=6)
-            return _format_command_result({
-                "ok": True, "status": "ok", "command": "compact",
-                "result": f"Compact requested for next turn. Current: {meta.get('original_estimated_tokens','?')}→{meta.get('compacted_estimated_tokens','?')} tokens",
-                "errors": [], "warnings": [],
-                "metadata": {
-                    "compacted": meta.get("compacted", False),
-                    "compacted_message_count": meta.get("compacted_message_count", 0),
-                    "original_estimated_tokens": meta.get("original_estimated_tokens", 0),
-                    "compacted_estimated_tokens": meta.get("compacted_estimated_tokens", 0),
-                    "manual_compact_requested": True,
-                },
-            })
-    except Exception:
-        logger.debug("_cmd_compact: <pass>", exc_info=True)
-    return _format_command_result({
-        "ok": True, "status": "ok", "command": "compact",
-        "result": "Manual compact requested for next turn",
-        "errors": [], "warnings": [],
-        "metadata": {"manual_compact_requested": True},
-    })
-
-
 def _cmd_usage(args: str, session_id: Optional[str], context: Optional[dict]) -> str:
     """Show token usage stats."""
     try:
@@ -547,7 +485,6 @@ def register_default_commands() -> None:
     register_command("memory", _cmd_memory, "List memories in current workspace", "agent")
     register_command("context", _cmd_context, "Show context stats", "session")
     register_command("sessions", _cmd_sessions, "List sessions in current workspace", "session")
-    register_command("compact", _cmd_compact, "Trigger manual context compaction", "session")
     register_command("usage", _cmd_usage, "Show token usage information", "system")
     register_command("agent", _cmd_agent, "Show agent runtime info", "system")
     register_command("reset", _cmd_reset, "Reset conversation (clear history)", "session")
