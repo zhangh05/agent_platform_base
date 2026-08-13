@@ -178,11 +178,11 @@ function renderReportCards(headers: string[], rows: string[][]): string {
   return `<div class="report-grid">${cards}</div>`;
 }
 
-function renderTable(lines: string[]): RenderedTable | null {
-  if (lines.length < 2) return null;
+function renderTable(lines: string[], start: number): RenderedTable | null {
+  if (lines.length - start < 2) return null;
 
-  const headerLine = lines[0];
-  const separatorLine = lines[1];
+  const headerLine = lines[start];
+  const separatorLine = lines[start + 1];
 
   // Check if it's a table (header with |, separator with |---|---|)
   if (!isTableBodyLine(headerLine) || !isTableSeparator(separatorLine)) {
@@ -194,20 +194,20 @@ function renderTable(lines: string[]): RenderedTable | null {
   const reportTable = isReportTable(headers);
 
   const bodyRows: string[][] = [];
-  let consumed = 2;
-  while (consumed < lines.length) {
-    const current = lines[consumed];
+  let cursor = start + 2;
+  while (cursor < lines.length) {
+    const current = lines[cursor];
     const trimmed = current.trim();
 
     if (reportTable && bodyRows.length > 0 && isBulletLike(trimmed)) {
       appendToReportRow(bodyRows[bodyRows.length - 1], trimmed);
-      consumed++;
+      cursor++;
       continue;
     }
 
     if (!isTableBodyLine(current)) break;
 
-    const cells = splitTableRow(lines[consumed]);
+    const cells = splitTableRow(lines[cursor]);
     const normalized = cells.length >= headers.length
       ? cells.slice(0, headers.length)
       : [...cells, ...Array(headers.length - cells.length).fill('')];
@@ -225,8 +225,10 @@ function renderTable(lines: string[]): RenderedTable | null {
     } else {
       bodyRows.push(normalized);
     }
-    consumed++;
+    cursor++;
   }
+
+  const consumed = cursor - start;
 
   const alignments: string[] = splitTableRow(separatorLine).map(a =>
     a.startsWith(':') && a.endsWith(':') ? 'center' :
@@ -368,8 +370,7 @@ export function renderMarkdown(text: string): string {
     }
 
     // ── Table detection (multi-line) ──
-    const remaining = lines.slice(i);
-    const tableResult = renderTable(remaining);
+    const tableResult = renderTable(lines, i);
     if (tableResult) {
       out.push(tableResult.scrollable
         ? `<div class="markdown-table-scroll">${tableResult.html}</div>`

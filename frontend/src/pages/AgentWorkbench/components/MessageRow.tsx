@@ -129,7 +129,7 @@ export const MessageRow = memo(function MessageRow({ m, idx: _idx, total: _total
           </div>
         )}
         {m.status === "streaming" ? (
-          <div className="chat-bubble assistant sending-line">
+          <div className={`chat-bubble assistant sending-line${m.text ? " has-content" : ""}`}>
             {m.progressText && (
               <div className="ssot-runtime-progress-row" data-testid="ssot-runtime-progress">
                 <span className="typing-indicator">

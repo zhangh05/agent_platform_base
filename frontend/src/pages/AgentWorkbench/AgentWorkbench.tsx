@@ -78,6 +78,7 @@ export function TaskWorkbench() {
   const userScrolledUpRef = useRef(false);    // true = user intentionally scrolled up
   const atBottomRef = useRef(true);
   const sendingRef = useRef(false);
+  const scrollFrameRef = useRef<number | null>(null);
 
   const chatRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -97,15 +98,19 @@ export function TaskWorkbench() {
   }, []);
 
   const keepAtBottom = useCallback(() => {
-    if (!userScrolledUpRef.current) {
-      requestAnimationFrame(() => {
-        const el = chatRef.current;
-        if (!el) return;
-        el.scrollTop = el.scrollHeight;
-        atBottomRef.current = true;
-        setShowScrollBtn(false);
-      });
-    }
+    if (userScrolledUpRef.current || scrollFrameRef.current !== null) return;
+    scrollFrameRef.current = requestAnimationFrame(() => {
+      scrollFrameRef.current = null;
+      const el = chatRef.current;
+      if (!el || userScrolledUpRef.current) return;
+      el.scrollTop = el.scrollHeight;
+      atBottomRef.current = true;
+      setShowScrollBtn(false);
+    });
+  }, []);
+
+  useEffect(() => () => {
+    if (scrollFrameRef.current !== null) cancelAnimationFrame(scrollFrameRef.current);
   }, []);
 
   const handleScrollBtnClick = useCallback(() => {

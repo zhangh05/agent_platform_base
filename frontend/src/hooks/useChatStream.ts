@@ -27,9 +27,9 @@ import { createStreamActivityWatchdog, STREAM_IDLE_TIMEOUT_MS } from "../utils/s
 
 const WS_TIMEOUT_MS = 3000;
 // Rendering Markdown is substantially more expensive than receiving tokens.
-// Ten updates per second still looks fluid while avoiding UI starvation on
-// long, table-heavy answers.
-const TOKEN_FLUSH_MS = 100;
+// Five text-node updates per second looks fluid and leaves enough main-thread
+// time for input, navigation and scrolling during long responses.
+const TOKEN_FLUSH_MS = 200;
 
 // Stage label table mirrors core.runtime_engine/stage_events.py
 const STAGE_LABELS: Record<string, string> = {

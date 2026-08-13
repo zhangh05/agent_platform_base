@@ -17,17 +17,16 @@ describe("assistant markdown rendering", () => {
     expect(html).not.toContain("\\n");
   });
 
-  it("renders escaped network tables while streaming", () => {
+  it("keeps streaming output on a cheap plain-text render path", () => {
     render(
       React.createElement(StreamingContent, {
         text: "其他网络接口和地址如下： | 接口 | 状态 | IP 地址 | 用途 |\\n|---|---|---|---|\\n| `eth0` | UP | **10.0.8.4/22** | 主网卡、内网 IPv4 |",
       }),
     );
 
-    expect(screen.getByRole("table")).toBeInTheDocument();
-    expect(screen.getByText("接口")).toBeInTheDocument();
-    expect(screen.getByText("10.0.8.4/22")).toBeInTheDocument();
-    expect(document.body.textContent).not.toContain("\\n");
+    expect(screen.queryByRole("table")).not.toBeInTheDocument();
+    expect(document.querySelector(".streaming-plain-text")).toHaveTextContent("接口");
+    expect(document.querySelector(".streaming-plain-text")).toHaveTextContent("10.0.8.4/22");
   });
 
   it("keeps br-separated weather details inside their original table cells", () => {

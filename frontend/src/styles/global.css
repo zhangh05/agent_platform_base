@@ -3372,6 +3372,17 @@ details.collapse[open] summary::before {
   margin-bottom: 8px;
 }
 
+.streaming-plain-text {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--text-2);
+  font-size: var(--fs-14);
+  line-height: 1.72;
+}
+
 .markdown-body p {
   margin: 0 0 10px;
   color: var(--text-2);
@@ -3975,7 +3986,12 @@ details.collapse[open] summary::before {
   animation: subtle-pop var(--dur-3) var(--ease-snap) both;
 }
 
-.sending-line::after {
+.sending-line.has-content {
+  align-items: stretch;
+  flex-direction: column;
+}
+
+.sending-line:not(.has-content)::after {
   position: absolute;
   inset: 0;
   pointer-events: none;
