@@ -10,6 +10,15 @@ import yaml
 ROOT = Path(__file__).resolve().parent.parent
 
 
+def test_docker_context_excludes_local_runtimes_and_generated_data():
+    ignored = {
+        line.strip()
+        for line in (ROOT / ".dockerignore").read_text(encoding="utf-8").splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    }
+    assert {".venv*", "/venv", "/runtime", "frontend/node_modules", "workspaces"} <= ignored
+
+
 def test_compose_profile_has_required_runtime_boundaries():
     profile = yaml.safe_load((ROOT / "deployment" / "compose.production.yml").read_text(encoding="utf-8"))
     services = profile["services"]

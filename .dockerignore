@@ -3,6 +3,11 @@
 .env
 .env.*
 .venv*
+/venv
+/runtime
+/wheelhouse
+/release
+/node_modules
 .pytest_cache
 .ruff_cache
 .playwright-cli
