@@ -175,12 +175,6 @@ def _extract_token_from_request() -> str | None:
     if api_key:
         return api_key
 
-    # EventSource cannot set custom headers, so SSE clients may pass a token
-    # in the query string. The value is never logged.
-    query_token = flask.request.args.get("access_token", "").strip()
-    if query_token:
-        return query_token
-
     return None
 
 

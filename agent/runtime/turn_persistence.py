@@ -108,7 +108,13 @@ def persist_run_record(session, turn, result, context) -> None:
             from core.runtime_engine.context_compaction import build_history_state_record
 
             store = SessionMessageStore(session_id=session.session_id, ws_id=ws_id)
-            if user_input:
+            is_approval_resume = bool(
+                (getattr(turn.op, "metadata", {}) or {}).get("__approval_continuation_resume")
+            )
+            is_approval_pending = bool(
+                (result_metadata.get("ssot_runtime") or {}).get("approval_required")
+            )
+            if user_input and not is_approval_resume:
                 user_attachments = list((getattr(turn.op, "metadata", {}) or {}).get("attachments") or [])
                 store.write_message(run_id, "user", user_input, metadata={
                     "created_at": state.created_at,
@@ -118,7 +124,7 @@ def persist_run_record(session, turn, result, context) -> None:
                         "user", user_input, references=user_attachments,
                     ),
                 })
-            if final_response:
+            if final_response and not is_approval_pending:
                 history_tools = _history_tool_context(result)
                 store.write_message(run_id, "assistant", final_response, metadata={
                     "created_at": state.created_at,

@@ -96,6 +96,10 @@ def run_ssot_turn(
         session,
         user_input=user_input,
         max_tokens=runtime_context_budget.history_tokens,
+        exclude_run_id=(
+            str(metadata_in.get("approval_parent_run_id") or "")
+            if metadata_in.get("__approval_continuation_resume") else ""
+        ),
     )
     if history_block:
         metadata_in["conversation_history_block"] = history_block
@@ -290,7 +294,17 @@ def run_ssot_turn(
 
     # ── Section 2: unified exit — sync session.history for both success
     #    and exception paths so the next turn always has context.
-    _sync_session_history(session, user_input, result.final_response)
+    is_approval_resume = bool(metadata_in.get("__approval_continuation_resume"))
+    is_approval_pending = bool(
+        (result.metadata or {}).get("ssot_runtime", {}).get("approval_required")
+    )
+    _sync_session_history(
+        session,
+        "" if is_approval_resume else user_input,
+        result.final_response,
+        include_user=not is_approval_resume,
+        include_assistant=not is_approval_pending,
+    )
 
     persist_run_record(session, turn, result, context)
 
@@ -298,15 +312,16 @@ def run_ssot_turn(
     # Every completed turn is durable experience. Explicit user memory
     # commands are applied immediately; ordinary turns are consolidated only
     # at an operational task boundary or after a small accumulated batch.
-    _record_experience_and_maybe_reflect(
-        workspace_id=workspace_id,
-        session_id=session_id,
-        task_id=turn.turn_id,
-        user_input=user_input,
-        assistant_response=result.final_response or "",
-        tool_calls=list(result.tool_calls or []),
-        task_ok=bool(result.ok),
-    )
+    if not bool((result.metadata or {}).get("ssot_runtime", {}).get("approval_required")):
+        _record_experience_and_maybe_reflect(
+            workspace_id=workspace_id,
+            session_id=session_id,
+            task_id=turn.turn_id,
+            user_input=user_input,
+            assistant_response=result.final_response or "",
+            tool_calls=list(result.tool_calls or []),
+            task_ok=bool(result.ok),
+        )
 
     return result
 
@@ -452,11 +467,28 @@ def _build_approval_handler(
     run_id: str,
     emitter: Any | None = None,
 ):
-    """Create the production approval pause/resume callback for QueryLoop."""
+    """Persist an ordinary Agent approval continuation without blocking a worker."""
 
-    async def _handle(ctx, gate: dict[str, Any]) -> bool:
+    async def _handle(ctx, gate: dict[str, Any]) -> dict[str, Any]:
+        from agent.runtime.approval_continuation import create_continuation
+
         store = get_approval_store(workspace_id)
         approval_ids: list[str] = []
+        tool_calls = [dict(item) for item in list(gate.get("tool_calls") or []) if isinstance(item, dict)]
+        if not tool_calls:
+            raise RuntimeError("approval continuation requires exact tool calls")
+        # The record is first created with temporary ids, then rebound after
+        # ApprovalStore has generated the durable public approval ids.
+        placeholder_ids = [f"pending_{index}" for index in range(max(1, len(gate.get("approval_details") or [])))]
+        continuation_id = create_continuation(
+            workspace_id=workspace_id,
+            session_id=session_id,
+            parent_run_id=run_id,
+            user_input=str(ctx.user_input or ""),
+            tool_calls=tool_calls,
+            approval_ids=placeholder_ids,
+            approved_node_ids=list(gate.get("approval_nodes") or []),
+        )
         details = list(gate.get("approval_details") or [])
         for detail in details:
             tool_id = str(detail.get("tool") or "unknown")
@@ -473,6 +505,7 @@ def _build_approval_handler(
                 risk_level=str(gate.get("risk_level") or "high"),
                 workspace_id=workspace_id,
                 run_id=run_id,
+                metadata={"continuation_id": continuation_id},
             )
             approval_ids.append(req.approval_id)
 
@@ -486,11 +519,15 @@ def _build_approval_handler(
                 risk_level=str(gate.get("risk_level") or "high"),
                 workspace_id=workspace_id,
                 run_id=run_id,
+                metadata={"continuation_id": continuation_id},
             )
             approval_ids.append(req.approval_id)
 
+        from agent.runtime.approval_continuation import bind_approvals
+        bind_approvals(workspace_id, continuation_id, approval_ids)
         event = {
             "approval_ids": approval_ids,
+            "continuation_id": continuation_id,
             "risk_level": str(gate.get("risk_level") or "high"),
             "status": "pending",
         }
@@ -498,21 +535,11 @@ def _build_approval_handler(
         if emitter is not None:
             emitter.emit("approval_waiting", event)
 
-        decisions = await asyncio.gather(*(
-            asyncio.to_thread(
-                store.wait,
-                approval_id,
-                blocking=True,
-                timeout=store.remaining_seconds(approval_id) + 1.0,
-            )
-            for approval_id in approval_ids
-        ))
-        approved = bool(approval_ids) and all(bool(value) for value in decisions)
-        resolved_event = {**event, "status": "approved" if approved else "rejected"}
-        ctx.extras.setdefault("approval_events", []).append(resolved_event)
-        if emitter is not None:
-            emitter.emit("approval_resolved", resolved_event)
-        return approved
+        return {
+            "status": "pending",
+            "approval_ids": approval_ids,
+            "continuation_id": continuation_id,
+        }
 
     return _handle
 
@@ -1163,6 +1190,7 @@ def _build_history_block(
     *,
     user_input: str = "",
     max_tokens: int = 8000,
+    exclude_run_id: str = "",
 ) -> str:
     """Build prompt-ready conversation context from the session message SSOT.
 
@@ -1176,7 +1204,7 @@ def _build_history_block(
     a second runtime path.
     """
     try:
-        messages = _load_context_messages(session)
+        messages = _load_context_messages(session, exclude_run_id=exclude_run_id)
         if not messages:
             return ""
 
@@ -1409,7 +1437,9 @@ def _active_attachment_references(
         return []
 
 
-def _load_context_messages(session) -> list[dict[str, str]]:
+def _load_context_messages(
+    session, *, exclude_run_id: str = "",
+) -> list[dict[str, str]]:
     persisted: list[dict[str, str]] = []
     persisted_seen: set[str] = set()
     ws_id = str(getattr(session, "workspace_id", "") or "")
@@ -1434,7 +1464,14 @@ def _load_context_messages(session) -> list[dict[str, str]]:
             "content": content,
         })
     overlap = _history_overlap(persisted, memory)
-    return persisted + memory[overlap:]
+    merged = persisted + memory[overlap:]
+    excluded = str(exclude_run_id or "").strip()
+    if excluded:
+        merged = [
+            message for message in merged
+            if not str(message.get("message_id") or "").startswith(f"{excluded}:")
+        ]
+    return merged
 
 
 def _history_overlap(
@@ -1508,7 +1545,11 @@ def _append_context_message(messages: list[dict[str, Any]], seen: set[str], raw:
             facts.append(f"- {tool_id}: {status}" + (f" — {detail}" if detail else ""))
         if facts:
             content += "\n\n[Tool execution summary]\n" + "\n".join(facts)
-    message: dict[str, Any] = {"role": role, "content": content}
+    message: dict[str, Any] = {
+        "message_id": key,
+        "role": role,
+        "content": content,
+    }
     history_state = metadata.get("history_state")
     if isinstance(history_state, dict) and history_state.get("schema") == "runtime.history_state.v1":
         from storage.redaction import redact_value
@@ -1598,7 +1639,14 @@ def _history_record_score(message: dict[str, Any]) -> int:
 
 # ── Session history sync ──────────────────────────────────────
 
-def _sync_session_history(session, user_input: str, final_response: str) -> None:
+def _sync_session_history(
+    session,
+    user_input: str,
+    final_response: str,
+    *,
+    include_user: bool = True,
+    include_assistant: bool = True,
+) -> None:
     """Append current turn to session.history for context in next turns."""
     try:
         from agent.protocol.message import UserMessage, AssistantMessage
@@ -1609,6 +1657,14 @@ def _sync_session_history(session, user_input: str, final_response: str) -> None
             session.history = history
 
         # Dedup check: skip if last entries already match
+        if include_user and not include_assistant and history:
+            last = history[-1]
+            if getattr(last, "role", "") == "user" and getattr(last, "content", "") == user_input:
+                return
+        if include_assistant and not include_user and history:
+            last = history[-1]
+            if getattr(last, "role", "") == "assistant" and getattr(last, "content", "") == final_response:
+                return
         if len(history) >= 2:
             last_user = history[-2]
             last_asst = history[-1]
@@ -1618,10 +1674,12 @@ def _sync_session_history(session, user_input: str, final_response: str) -> None
                 and getattr(last_asst, "content", "") == final_response):
                 return
 
-        if not final_response:
+        if not final_response and not (include_user and user_input):
             return
 
-        history.append(UserMessage(content=user_input))
-        history.append(AssistantMessage(content=final_response))
+        if include_user and user_input:
+            history.append(UserMessage(content=user_input))
+        if include_assistant and final_response:
+            history.append(AssistantMessage(content=final_response))
     except Exception:
         logging.getLogger(__name__).warning("Failed to sync session history", exc_info=True)

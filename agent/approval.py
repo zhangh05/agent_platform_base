@@ -36,6 +36,29 @@ def _record_approval_metric(status: str, pending_count: int) -> None:
         logger.debug("approval metric update failed", exc_info=True)
 
 
+def _expire_bound_continuation(req: "ApprovalRequest") -> None:
+    """Fail closed and release encrypted payloads for expired Agent approvals."""
+    continuation_id = str((req.metadata or {}).get("continuation_id") or "")
+    if not continuation_id:
+        return
+    try:
+        from agent.runtime.approval_continuation import record_decision_and_claim
+
+        record_decision_and_claim(
+            workspace_id=req.workspace_id,
+            continuation_id=continuation_id,
+            approval_id=req.approval_id,
+            allowed=False,
+        )
+    except (FileNotFoundError, RuntimeError, TypeError, ValueError):
+        logger.warning(
+            "approval: unable to expire continuation approval=%s continuation=%s",
+            req.approval_id,
+            continuation_id,
+            exc_info=True,
+        )
+
+
 def _now_iso() -> str:
     """v3.9.8: wrapper for ApprovalRequest default_factory."""
     return now_iso()
@@ -442,6 +465,8 @@ class ApprovalStore:
         metric_status = "approved" if allowed else (
             "expired" if resolver == "system_expired" else "rejected"
         )
+        if resolver == "system_expired":
+            _expire_bound_continuation(req)
         _record_approval_metric(metric_status, pending_count)
         return req
 
@@ -483,6 +508,7 @@ class ApprovalStore:
         with self._lock:
             now = datetime.now(timezone.utc)
             stale_ids = []
+            expired_requests: list[ApprovalRequest] = []
             for aid, req in list(self._pending.items()):
                 if req.resolved:
                     stale_ids.append(aid)
@@ -510,6 +536,7 @@ class ApprovalStore:
                         },
                     ))
                     stale_ids.append(aid)
+                    expired_requests.append(req)
             for aid in stale_ids:
                 self._pending.pop(aid, None)
 
@@ -521,6 +548,8 @@ class ApprovalStore:
                     continue
                 result.append(self._to_dict(req))
             pending_count = len(self._pending)
+        for expired_req in expired_requests:
+            _expire_bound_continuation(expired_req)
         if stale_ids:
             for _ in stale_ids:
                 _record_approval_metric("expired", pending_count)

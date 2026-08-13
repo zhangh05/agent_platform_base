@@ -7,7 +7,6 @@ from pathlib import Path
 import pytest
 import yaml
 
-
 ROOT = Path(__file__).resolve().parent.parent
 
 
@@ -21,7 +20,8 @@ def test_compose_profile_has_required_runtime_boundaries():
     assert services["backend"]["healthcheck"]
     assert services["backend"]["cap_drop"] == ["ALL"]
     assert services["frontend"]["read_only"] is True
-    assert {"session_secret", "login_password", "api_token"} <= set(profile["secrets"])
+    assert {"master_key", "session_secret", "login_password", "api_token"} <= set(profile["secrets"])
+    assert profile["x-backend-environment"]["AGENT_PLATFORM_MASTER_KEY_FILE"] == "/run/secrets/master_key"
 
 
 def test_observability_profile_has_alerts_dashboard_and_runbook():

@@ -7,6 +7,7 @@ x-backend-environment: &backend-environment
   AGENT_PLATFORM_AUTH_ENABLED: "true"
   AGENT_PLATFORM_SESSION_SECURE: "true"
   AGENT_PLATFORM_SESSION_SECRET_FILE: /run/secrets/session_secret
+  AGENT_PLATFORM_MASTER_KEY_FILE: /run/secrets/master_key
   AGENT_PLATFORM_API_TOKEN_FILE: /run/secrets/api_token
   AGENT_PLATFORM_LOGIN_USERNAME: ${AGENT_PLATFORM_LOGIN_USERNAME:-Admin}
   AGENT_PLATFORM_LOGIN_PASSWORD_FILE: /run/secrets/login_password
@@ -41,6 +42,7 @@ services:
       - ${AGENT_PLATFORM_DOCKER_SOCKET_GID:?set socket group id}
     secrets:
       - session_secret
+      - master_key
       - login_password
       - api_token
     depends_on:
@@ -77,6 +79,7 @@ services:
       - ${AGENT_PLATFORM_DOCKER_SOCKET_GID:?set socket group id}
     secrets:
       - session_secret
+      - master_key
       - login_password
       - api_token
     depends_on:
@@ -219,6 +222,8 @@ volumes:
   grafana-data:
 
 secrets:
+  master_key:
+    file: ${AGENT_PLATFORM_MASTER_KEY_FILE:?set AGENT_PLATFORM_MASTER_KEY_FILE}
   session_secret:
     file: ${AGENT_PLATFORM_SESSION_SECRET_FILE:?set AGENT_PLATFORM_SESSION_SECRET_FILE}
   login_password:

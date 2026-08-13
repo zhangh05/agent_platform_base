@@ -101,11 +101,18 @@ QueryLoop 不要求模型预先猜测完整工作流。模型可发起普通单�
 
 ```text
 tool policy requires approval
-  -> pending approval + checkpoint
-  -> TaskState waiting_approval
-  -> user approve/reject/edit_args
-  -> resume or fail
+  -> persist encrypted exact-call continuation + pending approvals
+  -> return immediately without occupying a runtime/HTTP worker
+  -> user approve/reject
+  -> atomically claim once
+  -> re-enter QueryLoop and revalidate schema, policy, risk and approved call keys
+  -> canonical ToolRuntime execution + final response, or fail closed
 ```
+
+普通 Agent continuation 只接受由服务端从加密持久记录构造的类型化授权对象；HTTP/WS
+metadata 中的同名 JSON 不能形成授权。多个审批全部通过后才能抢占执行，重复 resolve 不会
+重复执行；进程若在执行抢占后异常退出，状态保持 `running` 并禁止自动重放破坏性操作。
+待审批轮只持久化用户消息，恢复成功后只补最终助手消息，避免把“等待审批”写成对话结论。
 
 ## Memory Governance
 
@@ -148,3 +155,5 @@ system 规则。子 Agent 的角色、工具范围和预算进入 system prompt�
 - 时间线视图读取 `AgentResult.events` 和 runtime state。
 - 会话、最近运行、workspace 全部显式绑定。
 - 前端不得制造默认 workspace，也不得自行补已移除的 API 格式。
+- 所有 SSE 入口统一使用认证流客户端：登录态使用 HttpOnly Cookie，API Token 模式使用
+  Fetch streaming 的 `Authorization` header；平台凭据不得进入 URL 查询参数。

@@ -90,6 +90,20 @@ class StatelessContext:
     extras: dict[str, Any] = field(default_factory=dict)
 
 
+@dataclass(frozen=True)
+class ApprovedToolContinuation:
+    """Server-created approval grant for one exact persisted tool batch.
+
+    This type is deliberately not JSON-deserialised at the HTTP/runtime
+    boundary.  Only the encrypted continuation store may construct it, which
+    prevents caller metadata from manufacturing an approval bypass.
+    """
+
+    continuation_id: str
+    tool_calls: tuple[dict[str, Any], ...]
+    approved_node_ids: tuple[str, ...]
+
+
 @dataclass
 class ToolResult:
     """Standardized result from any tool execution."""

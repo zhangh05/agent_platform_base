@@ -9,6 +9,7 @@ v3.2.0 (Guardian): Expanded the approval API surface.
 
 from __future__ import annotations
 
+import concurrent.futures
 import json
 import logging
 import queue
@@ -19,6 +20,63 @@ from typing import Iterator
 from flask import Response, jsonify, request, stream_with_context
 
 _LOG = logging.getLogger(__name__)
+_CONTINUATION_EXECUTOR = concurrent.futures.ThreadPoolExecutor(
+    max_workers=4,
+    thread_name_prefix="approval-continuation",
+)
+
+
+def _resume_agent_continuation(workspace_id: str, continuation_id: str, grant, payload) -> None:
+    """Resume a claimed continuation off the HTTP request thread."""
+    from agent.runtime.approval_continuation import finish_continuation
+    from agent.runtime.session_events import push_error, push_turn_done
+
+    session_id = str(payload.get("session_id") or "")
+    try:
+        from agent.app.service import get_default_agent_app
+
+        resumed = get_default_agent_app().submit_user_message(
+            user_input=str(payload.get("user_input") or ""),
+            workspace_id=workspace_id,
+            session_id=session_id,
+            metadata={
+                "__approved_tool_continuation": grant,
+                "__approval_continuation_resume": True,
+                "approval_parent_run_id": str(payload.get("parent_run_id") or ""),
+                "transport": "approval_resume",
+            },
+        )
+        completed = finish_continuation(
+            workspace_id,
+            continuation_id,
+            completed_run_id=str(getattr(resumed, "turn_id", "") or ""),
+            error="" if bool(getattr(resumed, "ok", False)) else "; ".join(
+                list(getattr(resumed, "errors", None) or [])
+            ),
+        )
+        if completed.get("status") == "completed":
+            push_turn_done(
+                session_id,
+                str(getattr(resumed, "turn_id", "") or ""),
+                str(getattr(resumed, "final_response", "") or ""),
+                workspace_id=workspace_id,
+            )
+        else:
+            push_error(
+                session_id,
+                "approval_resume_failed",
+                str(completed.get("error") or "审批后的任务未完成"),
+                workspace_id=workspace_id,
+            )
+    except Exception as exc:  # noqa: BLE001 - background boundary must persist failure
+        _LOG.exception("approval continuation failed continuation=%s", continuation_id)
+        finish_continuation(workspace_id, continuation_id, error=str(exc))
+        push_error(
+            session_id,
+            "approval_resume_failed",
+            "审批后的任务恢复失败，请查看运行记录。",
+            workspace_id=workspace_id,
+        )
 
 
 def _approval_actor_allowed(pending_req) -> tuple[bool, dict]:
@@ -139,6 +197,36 @@ def register_approval_routes(app) -> None:
                     from workflows.service import reject_workflow_run
                     rejected = reject_workflow_run(ws_id, req.run_id, approval_id)
                     runtime_result = {"ok": rejected is not None, "workflow_run": rejected}
+            elif meta.get("continuation_id"):
+                from agent.runtime.approval_continuation import (
+                    record_decision_and_claim,
+                )
+                continuation_id = str(meta["continuation_id"])
+                record, grant, payload = record_decision_and_claim(
+                    workspace_id=ws_id,
+                    continuation_id=continuation_id,
+                    approval_id=approval_id,
+                    allowed=allowed,
+                )
+                runtime_result = {
+                    "ok": record.get("status") not in {"failed"},
+                    "continuation_id": continuation_id,
+                    "continuation_status": record.get("status"),
+                }
+                if grant is not None and payload is not None:
+                    from storage.principal import bind_storage_principal
+
+                    _CONTINUATION_EXECUTOR.submit(
+                        bind_storage_principal(_resume_agent_continuation),
+                        ws_id,
+                        continuation_id,
+                        grant,
+                        payload,
+                    )
+                    runtime_result.update({
+                        "ok": True,
+                        "continuation_status": "running",
+                    })
         except Exception as exc:  # noqa: BLE001 - final HTTP boundary must return a structured failure
             _LOG.warning("resume_after_approval failed approval=%s task=%s ws=%s (non-fatal)",
                          approval_id, task_id or "?", ws_id or "?", exc_info=True)

@@ -86,7 +86,7 @@ export function KnowledgeLibrary() {
   );
 
   useEffect(() => {
-    if (!currentWorkspaceId || typeof EventSource === "undefined") return;
+    if (!currentWorkspaceId || typeof fetch === "undefined") return;
     const stream = storageApi.events(currentWorkspaceId);
     let refreshTimer: ReturnType<typeof setTimeout> | undefined;
     const refresh = (event: Event) => {

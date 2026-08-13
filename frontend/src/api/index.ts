@@ -10,7 +10,8 @@
  * /knowledge/search, /knowledge/chunks, /review-items, etc.
  */
 
-import { apiBaseURL, apiRequest, TIMEOUTS } from "./client";
+import { apiRequest, TIMEOUTS } from "./client";
+import { openSSE, type SSEConnection } from "./sse";
 import type {
   AgentResult,
   Artifact,
@@ -405,8 +406,8 @@ export const storageApi = {
     apiRequest<{ ok: boolean; file_id: string }>({
       method: "DELETE", url: `/storage/files/${file_id}`, params: { workspace_id, confirm: "true", force: "true" },
     }),
-  events: (workspace_id: string): EventSource =>
-    new EventSource(apiUrlWithAuth(`/storage/events?workspace_id=${encodeURIComponent(workspace_id)}`)),
+  events: (workspace_id: string): SSEConnection =>
+    openSSE(`/storage/events?workspace_id=${encodeURIComponent(workspace_id)}`),
 };
 
 export const knowledgeApi = {
@@ -1009,9 +1010,9 @@ export const approvalApi = {
   },
 };
 
-/** Open the Guardian SSE stream. Returns an EventSource that the caller must close. */
-export function openApprovalStream(workspaceId: string, onEvent: (e: { kind: string; approval_id: string; session_id: string; workspace_id: string; tool_id: string; allowed: boolean; ts: number }) => void, onError?: (err: Event) => void): EventSource {
-  const es = new EventSource(apiUrlWithAuth(`/agent/approvals/sse?workspace_id=${encodeURIComponent(workspaceId)}`));
+/** Open the Guardian SSE stream. The caller must close the returned connection. */
+export function openApprovalStream(workspaceId: string, onEvent: (e: { kind: string; approval_id: string; session_id: string; workspace_id: string; tool_id: string; allowed: boolean; ts: number }) => void, onError?: (err: Event) => void): SSEConnection {
+  const es = openSSE(`/agent/approvals/sse?workspace_id=${encodeURIComponent(workspaceId)}`);
   es.onmessage = (ev) => {
     try {
       onEvent(JSON.parse(ev.data));
@@ -1227,25 +1228,7 @@ export const workspaceStatusApi = {
 };
 
 export const sseApi = {
-  /** Create EventSource for agent streaming */
-  connect: (sessionId: string, workspaceId: string): EventSource =>
-    new EventSource(apiUrlWithAuth(`/agent/sse/stream/${encodeURIComponent(sessionId)}?workspace_id=${encodeURIComponent(workspaceId)}`)),
+  /** Create an authenticated SSE connection for agent streaming. */
+  connect: (sessionId: string, workspaceId: string): SSEConnection =>
+    openSSE(`/agent/sse/stream/${encodeURIComponent(sessionId)}?workspace_id=${encodeURIComponent(workspaceId)}`),
 };
-
-function apiUrl(path: string): string {
-  return `${apiBaseURL}${path.startsWith("/") ? path : `/${path}`}`;
-}
-
-function apiUrlWithAuth(path: string): string {
-  const raw = apiUrl(path);
-  // EventSource cannot attach an Authorization header.  Logged-in browser
-  // sessions authenticate with their cookie; this query token is only the
-  // compatibility fallback for API-token deployments.  Keep this helper
-  // SSE-only and redact `access_token` in every proxy/access log.
-  const token = import.meta.env.VITE_API_TOKEN
-    || (typeof window !== "undefined" ? window.localStorage.getItem("NA_API_TOKEN") : null);
-  if (!token) return raw;
-  const separator = raw.includes("?") ? "&" : "?";
-  const params = new URLSearchParams({ access_token: token });
-  return `${raw}${separator}${params.toString()}`;
-}

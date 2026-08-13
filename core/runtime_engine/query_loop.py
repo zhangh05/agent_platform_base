@@ -28,6 +28,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional
 
 from .models import (
+    ApprovedToolContinuation,
     ExecutionNode,
     ExecutionStatus,
     SSOTRuntimeConfig,
@@ -1209,6 +1210,62 @@ class QueryLoop:
             values.setdefault("llm_calls", llm_calls)
             return QueryLoopResult(metrics=projected_metrics, **values)
 
+        # A resolved ordinary approval re-enters the same QueryLoop with a
+        # server-only typed grant. Revalidate the exact persisted calls, then
+        # execute through the canonical executor before asking the LLM to
+        # synthesize or continue. Plain caller JSON can never satisfy this
+        # isinstance boundary.
+        continuation = ctx.extras.get("__approved_tool_continuation")
+        if isinstance(continuation, ApprovedToolContinuation):
+            resumed_calls = self._parse_tool_calls(list(continuation.tool_calls))
+            resumed_calls = self._unique_call_ids(resumed_calls, iterations, used_call_ids)
+            approved_keys = set(ctx.extras.get("approved_tool_call_keys") or [])
+            approved_node_ids = set(continuation.approved_node_ids)
+            approved_keys.update(
+                self._tool_call_key(call)
+                for call in resumed_calls
+                if call.id in approved_node_ids
+            )
+            ctx.extras["approved_tool_call_keys"] = sorted(approved_keys)
+            ctx.extras["approval_resolved"] = True
+            ctx.extras["approval_allowed"] = True
+            ctx.extras["approval_continuation_id"] = continuation.continuation_id
+            resumed_gate = self._prepare_tool_calls(ctx, resumed_calls)
+            if not resumed_gate.get("ok"):
+                return finish(
+                    final_response=str(resumed_gate.get("message") or "审批后的工具调用校验失败。"),
+                    error=str(resumed_gate.get("error") or "approval_continuation_invalid"),
+                    errors=list(resumed_gate.get("errors") or []),
+                    risk_level=str(resumed_gate.get("risk_level") or "high"),
+                    hard_block=bool(resumed_gate.get("hard_block")),
+                )
+            resumed_calls = list(resumed_gate["tool_calls"])
+            used_call_ids.update(call.id for call in resumed_calls)
+            execution_started = time.monotonic()
+            budget.begin_execution()
+            try:
+                resumed_results = await self._executor.execute(resumed_calls, ctx=ctx, budget=budget)
+            finally:
+                budget.end_execution()
+                execution_duration_ms += (time.monotonic() - execution_started) * 1000
+            all_results.extend(resumed_results)
+            for call, result in zip(resumed_calls, resumed_results):
+                completed_call_keys.add(self._completion_key(call, mutation_epoch))
+                if result.ok and not self._executor._is_read_only_call(call):
+                    mutation_epoch += 1
+            polled_results = await self._settle_tracking(ctx, resumed_results, budget=budget)
+            if polled_results:
+                all_results.extend(polled_results)
+                resumed_results = resumed_results + polled_results
+            register_tool_evidence(ctx.extras, resumed_results)
+            messages = self._append_tool_round(messages, resumed_calls, resumed_results)
+            if any(not result.ok for result in resumed_results):
+                messages = self._append_turn_nudge(
+                    messages, self._build_tool_failure_recovery_nudge(
+                        [result for result in resumed_results if not result.ok]
+                    ),
+                )
+
         # Trusted UI workflows may hand off explicit artifact ids after a
         # background task completes. Read those workspace-scoped artifacts
         # through the canonical runtime before planning, then let the LLM decide
@@ -1392,9 +1449,34 @@ class QueryLoop:
                             "risk_level": gate.get("risk_level", "high"),
                             "approval_nodes": list(gate.get("approval_nodes") or []),
                         })
-                    decision = self._approval_handler(ctx, gate)
+                    gate_for_approval = {
+                        **gate,
+                        "tool_calls": [
+                            asdict(call)
+                            for call in list(gate.get("tool_calls") or tool_calls)
+                        ],
+                    }
+                    decision = self._approval_handler(ctx, gate_for_approval)
                     if inspect.isawaitable(decision):
                         decision = await decision
+                    if isinstance(decision, dict) and decision.get("status") == "pending":
+                        return finish(
+                            final_response="该操作正在等待审批，批准后将从当前步骤继续。",
+                            tool_results=all_results,
+                            iterations=iterations,
+                            total_tool_calls=len(all_results),
+                            llm_calls=llm_calls,
+                            error="approval_required",
+                            risk_level=gate.get("risk_level", "high"),
+                            approval_required=True,
+                            approval_nodes=list(gate.get("approval_nodes") or []),
+                            approval_details=list(gate.get("approval_details") or []),
+                            metrics={
+                                "approval_pending": True,
+                                "approval_ids": list(decision.get("approval_ids") or []),
+                                "approval_continuation_id": str(decision.get("continuation_id") or ""),
+                            },
+                        )
                     if not bool(decision):
                         ctx.extras["approval_resolved"] = True
                         ctx.extras["approval_allowed"] = False
@@ -2264,6 +2346,15 @@ class QueryLoop:
             for node in approval_nodes
         )
         if risk.requires_approval and not approval_satisfied:
+            repaired_calls = [LLMToolCall(
+                id=n.id,
+                name=n.tool,
+                arguments=dict(n.args or {}),
+                step_id=n.step_id,
+                depends_on=list(n.depends_on),
+                result_bindings=dict(n.result_bindings),
+                failure_policy=n.failure_policy,
+            ) for n in nodes]
             return {
                 "ok": False,
                 "error": "approval_required",
@@ -2271,6 +2362,7 @@ class QueryLoop:
                 "approval_required": True,
                 "approval_nodes": list(risk.approval_nodes),
                 "approval_details": list(risk.approval_details),
+                "tool_calls": repaired_calls,
                 "risk_level": risk.risk_level,
                 "message": (
                     "该操作需要用户审批后才能继续执行。"

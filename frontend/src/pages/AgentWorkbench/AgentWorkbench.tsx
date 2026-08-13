@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect, useCallback } from "react";
 import { sessionsApi, settingsApi, sseApi } from "../../api";
 import { getApiAccessToken } from "../../api/client";
+import type { SSEConnection } from "../../api/sse";
 import { useSessionStore } from "../../stores/session";
 import { useWorkbenchStore, type ChatMsg } from "../../stores/workbench";
 import { useToastStore } from "../../stores/toast";
@@ -297,9 +298,9 @@ export function TaskWorkbench() {
 
   // SSE real-time timeline updates
   useEffect(() => {
-    if (!currentSessionId || !currentWorkspaceId || typeof EventSource === "undefined") return;
+    if (!currentSessionId || !currentWorkspaceId || typeof fetch === "undefined") return;
     let closed = false;
-    let es: EventSource | null = null;
+    let es: SSEConnection | null = null;
     const refreshMessages = () => {
       sessionsApi.messages(currentSessionId, currentWorkspaceId)
         .then((res) => { if (res.messages?.length) mergeFromBackend(currentSessionId, res.messages); })

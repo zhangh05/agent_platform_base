@@ -133,7 +133,7 @@ export function DataCenter() {
   useEffect(() => () => contentAbort.current?.abort(), []);
 
   useEffect(() => {
-    if (!workspaceId || typeof EventSource === "undefined") return;
+    if (!workspaceId || typeof fetch === "undefined") return;
     const stream = storageApi.events(workspaceId);
     let timer: ReturnType<typeof setTimeout> | undefined;
     const refresh = () => {

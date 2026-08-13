@@ -6,15 +6,24 @@ import base64
 import hashlib
 import json
 import os
+from pathlib import Path
 
-from cryptography.fernet import Fernet
+from cryptography.fernet import Fernet, InvalidToken
+
 from storage.atomic_io import atomic_write_json
 from storage.locking import FileLock
 from storage.records import runtime_record_file
 
 
 def _fernet() -> Fernet:
-    master = os.environ.get("AGENT_PLATFORM_MASTER_KEY", "")
+    master = os.environ.get("AGENT_PLATFORM_MASTER_KEY", "").strip()
+    if not master:
+        key_file = os.environ.get("AGENT_PLATFORM_MASTER_KEY_FILE", "").strip()
+        if key_file:
+            try:
+                master = Path(key_file).read_text(encoding="utf-8").strip()
+            except OSError as exc:
+                raise RuntimeError("AGENT_PLATFORM_MASTER_KEY_FILE is not readable") from exc
     if len(master) < 16:
         raise RuntimeError("AGENT_PLATFORM_MASTER_KEY must contain at least 16 characters")
     return Fernet(base64.urlsafe_b64encode(hashlib.sha256(master.encode()).digest()))
@@ -45,7 +54,7 @@ def get_secret(reference: str) -> str:
         data = json.loads(path.read_text(encoding="utf-8"))
         encrypted = data.get(secret_id, "")
         return _fernet().decrypt(encrypted.encode()).decode() if encrypted else ""
-    except Exception:
+    except (InvalidToken, OSError, RuntimeError, TypeError, ValueError):
         return ""
 
 

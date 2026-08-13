@@ -1,6 +1,7 @@
 import { useEffect, useState, useRef, useCallback } from "react";
 import { useSessionStore } from "../stores/session";
 import { approvalApi, openApprovalStream } from "../api";
+import type { SSEConnection } from "../api/sse";
 import { IconAlert, IconCheck, IconClose, IconClock } from "./Icon";
 import "./ApprovalBubble.css";
 
@@ -53,7 +54,7 @@ export function ApprovalBubble({ onResolved }: { onResolved?: (decision: "approv
     if (!currentSessionId || !currentWorkspaceId) return;
 
     let cancelled = false;
-    let es: EventSource | null = null;
+    let es: SSEConnection | null = null;
     let pollTimer: ReturnType<typeof setInterval> | null = null;
     let pollInFlight = false;
     let authorized = false;

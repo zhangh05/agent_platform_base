@@ -133,6 +133,7 @@ jobs:
       MINIO_ROOT_USER: minioadmin
       MINIO_ROOT_PASSWORD: integration-password
       GRAFANA_ADMIN_PASSWORD: integration-password
+      AGENT_PLATFORM_MASTER_KEY_FILE: /dev/null
       AGENT_PLATFORM_SESSION_SECRET_FILE: /dev/null
       AGENT_PLATFORM_LOGIN_PASSWORD_FILE: /dev/null
       AGENT_PLATFORM_API_TOKEN_FILE: /dev/null
