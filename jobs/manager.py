@@ -32,7 +32,7 @@ def _record_job_status(status: str) -> None:
     try:
         from observability.metrics import record_operation
         record_operation("job", status)
-    except Exception:
+    except (ImportError, TypeError, ValueError):
         _LOG.debug("job metric update failed", exc_info=True)
 
 

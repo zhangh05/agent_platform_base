@@ -129,7 +129,7 @@ class ToolRuntimeClient:
             from observability.metrics import record_operation
             status = "succeeded" if result.status in ("succeeded", "dry_run") else str(result.status or "failed")
             record_operation("tool", status)
-        except Exception:
+        except (ImportError, TypeError, ValueError):
             _LOG.debug("tool metric update failed", exc_info=True)
         return result
 

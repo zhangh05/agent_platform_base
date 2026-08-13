@@ -348,16 +348,13 @@ class ApprovalStore:
             raise ValueError("invalid_workspace_id") from exc
         approval_id = f"apr_{uuid.uuid4().hex[:12]}"
         if not requester:
-            try:
-                from storage.principal import current_storage_principal
-                requester = current_storage_principal()
-            except Exception:
-                requester = ""
+            from storage.principal import current_storage_principal
+            requester = current_storage_principal()
         if requester and not requester_id:
             try:
                 from storage.principal import principal_storage_key
                 requester_id = principal_storage_key(requester)
-            except Exception:
+            except (OSError, TypeError, ValueError):
                 requester_id = ""
         ttl = approval_ttl_seconds() if ttl_seconds is None else max(
             _MIN_APPROVAL_TTL_SECONDS,

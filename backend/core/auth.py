@@ -242,7 +242,7 @@ def current_request_actor() -> dict | None:
     try:
         from storage.principal import principal_storage_key
         actor_id = principal_storage_key(username)
-    except Exception:
+    except (OSError, TypeError, ValueError):
         actor_id = ""
     return {
         "username": username,
