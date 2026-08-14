@@ -3,7 +3,17 @@ import { formatDate } from "./format";
 export function formatEventTime(ev: any): string {
   const v = ev.occurred_at || ev.timestamp;
   if (v == null) return "—";
-  return formatDate(v, "compact");
+  const numeric = typeof v === "number"
+    ? v
+    : (typeof v === "string" && /^\d+(?:\.\d+)?$/.test(v.trim()) ? Number(v) : null);
+  if (numeric != null) {
+    // Runtime traces may persist Unix seconds. Passing those directly to Date
+    // treats them as milliseconds and produces misleading January 1970 dates.
+    if (!Number.isFinite(numeric) || numeric < 1_000_000_000) return "—";
+    const milliseconds = numeric < 1_000_000_000_000 ? numeric * 1000 : numeric;
+    return formatDate(new Date(milliseconds).toISOString(), "compact");
+  }
+  return formatDate(String(v), "compact");
 }
 
 export function formatEventDetail(ev: any): Record<string, unknown> {

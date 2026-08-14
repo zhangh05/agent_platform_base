@@ -13,18 +13,6 @@ import { formatDate } from "../utils/format";
 
 const SESSION_PREVIEW_LIMIT = 12;
 
-const INTENT_LABELS: Record<string, string> = {
-  assistant_chat: "智能对话",
-  network_diagnosis: "网络诊断",
-  knowledge_query: "知识查询",
-  report_generation: "报告生成",
-};
-
-function intentLabel(intent?: string): string {
-  if (!intent) return "";
-  return INTENT_LABELS[intent] || intent.replace(/_/g, " ");
-}
-
 function runStatusLabel(status?: string): string {
   return ({ ok: "成功", partial: "部分完成", failed: "失败", error: "失败", running: "执行中", pending: "等待中", cancelled: "已取消" } as Record<string, string>)[status || ""] || status || "未知";
 }
@@ -55,7 +43,6 @@ interface RecentRunSummary {
   intent?: string;
   created_at?: string;
   session_id?: string;
-  session_title?: string;
 }
 
 /**
@@ -349,7 +336,7 @@ export function Sidebar() {
                         autoFocus
                       />
                     ) : (
-                      <span className="title">
+                      <span className="title" title={sess.title || sess.session_id}>
                         {sess.title || sess.session_id}
                       </span>
                     )}
@@ -421,15 +408,10 @@ export function Sidebar() {
         >
           {(d) => (
             <div className="list" data-testid="runs-list">
-              {(d.runs ?? []).slice(0, 8).map((r, i) => {
+              {(d.runs ?? []).slice(0, 5).map((r, i) => {
                 const runId = r.run_id ?? `run-${i}`;
                 const summary = r.user_input_summary || r.intent || "";
                 const label = summary ? (summary.length > 24 ? summary.slice(0, 24) + "…" : summary) : runId;
-                const intentBadge = r.intent ? (
-                  <span className="run-intent">
-                    {intentLabel(r.intent)}
-                  </span>
-                ) : null;
                 return (
                   <div
                     className="list-item run-item cursor-pointer"
@@ -447,12 +429,7 @@ export function Sidebar() {
                       <span className="title text-sm">{label}</span>
                     </div>
                     <div className="run-meta-row">
-                      {r.session_title && (
-                        <span className="text-xs run-session-label" title={`会话: ${r.session_title}`}>
-                          {r.session_title}
-                        </span>
-                      )}
-                      {intentBadge}
+                      <span className="run-status-label">{runStatusLabel(r.status)}</span>
                       {r.created_at && (
                         <span className="text-xs faint">
                           {formatDate(r.created_at, "time")}

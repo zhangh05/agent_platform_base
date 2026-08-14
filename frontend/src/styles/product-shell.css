@@ -2,7 +2,7 @@
 
 :root {
   --h-header: 68px;
-  --w-sidebar: 170px;
+  --w-sidebar: 208px;
   --accent: #087b82;
   --accent-2: #075e65;
   --accent-soft: #e8f5f5;
@@ -251,9 +251,40 @@
 
 .session-item-main .title,
 .run-item .title {
+  display: block;
+  flex: 1;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.session-item {
+  position: relative;
+}
+
+.session-item .row-actions {
+  position: absolute;
+  top: 50%;
+  right: 5px;
+  z-index: 1;
+  padding-left: 4px;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-50%);
+}
+
+.session-item.active .row-actions {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.session-item:hover .row-actions,
+.session-item:focus-within .row-actions,
+.session-item.active:hover .row-actions,
+.session-item.active:focus-within .row-actions {
+  opacity: 1;
+  pointer-events: auto;
 }
 
 .row-actions {
@@ -261,7 +292,7 @@
 }
 
 @media (max-width: 1180px) {
-  :root { --w-sidebar: 176px; }
+  :root { --w-sidebar: 196px; }
   .app-header { gap: 14px; padding-inline: 18px; }
   .brand { min-width: 154px; }
   .app-nav { gap: 0; }

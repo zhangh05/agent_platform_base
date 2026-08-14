@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import type { CSSProperties } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { runtimeAuditApi } from "../../api";
 import {
@@ -23,6 +24,8 @@ const STATUS_LABEL: Record<string, string> = {
   cancelled: "取消",
 };
 
+const EVENT_VIRTUALIZATION_THRESHOLD = 80;
+
 function auditRunId(turn: RuntimeAuditTurn, index: number): string {
   return turn.run_id || turn.turn_id || turn.trace_id || `run-${index + 1}`;
 }
@@ -33,9 +36,17 @@ function auditRunLabel(turn: RuntimeAuditTurn, index: number): string {
   return `运行 ${index + 1}`;
 }
 
+function auditEventKey(event: RuntimeEvent, index: number): string {
+  return String(
+    event.event_id
+    || [event.event_type || event.type || "unknown", event.occurred_at || event.timestamp || "", index].join(":"),
+  );
+}
+
 export function RuntimeAudit() {
   const { currentWorkspaceId } = useSessionStore();
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
+  const [expandedEventKey, setExpandedEventKey] = useState<string | null>(null);
 
   const turns = useAsync<{ runs: RuntimeAuditTurn[] }>(
     (s) =>
@@ -62,14 +73,61 @@ export function RuntimeAudit() {
 
   // Virtualize the (potentially large) trace-event list so scrolling stays smooth.
   const events = trace.state.kind === "success" ? trace.state.data.events : [];
+  const shouldVirtualizeEvents = events.length > EVENT_VIRTUALIZATION_THRESHOLD;
   const parentRef = useRef<HTMLDivElement | null>(null);
   const virtualizer = useVirtualizer({
-    count: events.length,
+    count: shouldVirtualizeEvents ? events.length : 0,
     getScrollElement: () => parentRef.current,
     estimateSize: () => 120,
     overscan: 8,
     measureElement: (el) => el?.getBoundingClientRect().height ?? 120,
   });
+
+  useEffect(() => {
+    setExpandedEventKey(null);
+  }, [selectedRunId]);
+
+  const renderEvent = (ev: RuntimeEvent, index: number, virtualStart?: number) => {
+    const eventType = ev.event_type || ev.type || "unknown";
+    const details = formatEventDetail(ev);
+    const label = formatEventLabel(ev);
+    const isOk = eventType !== "turn_failed";
+    const eventKey = auditEventKey(ev, index);
+    const expanded = expandedEventKey === eventKey;
+    const virtual = virtualStart != null;
+    return (
+      <div
+        key={eventKey}
+        data-index={virtual ? index : undefined}
+        data-testid={`audit-event-${eventKey}`}
+        ref={virtual ? virtualizer.measureElement : undefined}
+        style={virtual ? ({ "--ra-t": `translateY(${virtualStart}px)` } as CSSProperties) : undefined}
+        className={`card ${virtual ? "ra-event-card" : "ra-event-card-static"}`}
+      >
+        <button
+          type="button"
+          className="ra-event-toggle"
+          aria-expanded={expanded}
+          data-testid={`audit-event-toggle-${eventKey}`}
+          onClick={() => setExpandedEventKey((current) => current === eventKey ? null : eventKey)}
+        >
+          <span className="row-flex min-w-0">
+            <span className={"status-dot ra-dot-sm " + (isOk ? "ok" : "err")} />
+            <span className="text-sm">{label}</span>
+          </span>
+          <span className="muted text-xs mono">{formatEventTime(ev)}</span>
+        </button>
+        {expanded ? (
+          <div className="ra-event-detail" data-testid={`audit-event-detail-${eventKey}`}>
+            <div className="ra-collapse-summary">开发诊断 · {eventType}</div>
+            <CodeBlock language="json">
+              {JSON.stringify(details, null, 2)}
+            </CodeBlock>
+          </div>
+        ) : null}
+      </div>
+    );
+  };
 
   return (
     <div className="page" data-testid="page-audit">
@@ -223,51 +281,24 @@ export function RuntimeAudit() {
                           </div>
                         ) : null;
                       })()}
-                      <div
-                        ref={parentRef}
-                        className="list-scroll ra-events-scroll"
-                        data-testid="audit-events"
-                      >
+                      {shouldVirtualizeEvents ? (
                         <div
-                          ref={(el) => {
-                            if (el) el.style.setProperty("--ra-h", `${virtualizer.getTotalSize()}px`);
-                          }}
-                          className="ra-virtual-inner"
+                          ref={parentRef}
+                          className="list-scroll ra-events-scroll"
+                          data-testid="audit-events"
                         >
-                          {virtualizer.getVirtualItems().map((vi) => {
-                            const ev = events[vi.index];
-                            const eventType = ev.event_type || ev.type || "unknown";
-                            const details = formatEventDetail(ev);
-                            const label = formatEventLabel(ev);
-                            const isOk = eventType !== "turn_failed";
-                            return (
-                              <div
-                                key={ev.event_id}
-                                data-index={vi.index}
-                                ref={(node) => {
-                                  virtualizer.measureElement(node);
-                                  if (node) node.style.setProperty("--ra-t", `translateY(${vi.start}px)`);
-                                }}
-                                className="card ra-event-card"
-                              >
-                                <div className="row-flex ra-justify-between">
-                                  <span className="row-flex min-w-0">
-                                    <span className={"status-dot ra-dot-sm " + (isOk ? "ok" : "err")} />
-                                    <span className="text-sm">{label}</span>
-                                  </span>
-                                  <span className="muted text-xs mono">{formatEventTime(ev)}</span>
-                                </div>
-                                <details className="collapse mt-2">
-                                  <summary className="ra-collapse-summary">开发诊断 · {eventType}</summary>
-                                  <CodeBlock language="json">
-                                    {JSON.stringify(details, null, 2)}
-                                  </CodeBlock>
-                                </details>
-                              </div>
-                            );
-                          })}
+                          <div
+                            className="ra-virtual-inner"
+                            style={{ height: `${virtualizer.getTotalSize()}px` }}
+                          >
+                            {virtualizer.getVirtualItems().map((vi) => renderEvent(events[vi.index], vi.index, vi.start))}
+                          </div>
                         </div>
-                      </div>
+                      ) : (
+                        <div className="list-scroll ra-events-scroll" data-testid="audit-events">
+                          {events.map((ev, index) => renderEvent(ev, index))}
+                        </div>
+                      )}
                     </>
                   )}
                 </>

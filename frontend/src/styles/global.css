@@ -1019,28 +1019,17 @@ pre code {
 .run-meta-row {
   display: flex;
   align-items: center;
-  gap: 5px;
+  justify-content: space-between;
+  gap: 8px;
+  width: calc(100% - 14px);
   min-width: 0;
   margin-left: 14px;
 }
 
-.run-intent {
-  max-width: 120px;
-  padding: 1px 5px;
+.run-status-label {
   overflow: hidden;
   color: var(--text-4);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  background: var(--surface);
-  border: 1px solid var(--line-2);
-  border-radius: var(--r-4);
-  font-family: var(--font-mono);
   font-size: var(--fs-10);
-}
-.run-session-label {
-  max-width: 100px;
-  overflow: hidden;
-  color: var(--text-3);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -7720,16 +7709,15 @@ summary:focus-visible,
   overflow-y: auto;
 }
 
-/* Virtual list inner wrapper (dynamic height via --ra-h CSS variable) */
+/* Virtual list inner wrapper; the virtualizer supplies its measured height inline. */
 .ra-virtual-inner {
-  height: var(--ra-h, 0);
   position: relative;
 }
 
 /* Virtualized event card (dynamic transform via --ra-t CSS variable) */
 .ra-event-card {
   padding: 12px;
-  margin-bottom: 8px;
+  margin-bottom: 0;
   position: absolute;
   top: 0;
   left: 0;
@@ -7737,9 +7725,32 @@ summary:focus-visible,
   transform: var(--ra-t, none);
 }
 
-/* Justify between for row-flex overrides */
-.ra-justify-between {
+.ra-event-card-static {
+  position: relative;
+  margin-bottom: 8px;
+}
+
+.ra-event-toggle {
+  display: flex;
+  width: 100%;
+  align-items: center;
   justify-content: space-between;
+  gap: 12px;
+  padding: 0;
+  color: inherit;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+}
+
+.ra-event-toggle:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 4px;
+}
+
+.ra-event-detail {
+  padding-top: 9px;
 }
 
 /* Small status-dot (8px) */
@@ -7749,7 +7760,8 @@ summary:focus-visible,
 }
 
 /* Collapse summary with smaller, muted text */
-.collapse .ra-collapse-summary {
+.collapse .ra-collapse-summary,
+.ra-event-detail .ra-collapse-summary {
   font-size: 11px;
   color: var(--ink-mute);
 }
@@ -9200,10 +9212,10 @@ summary:focus-visible,
 .message-row.assistant .message-stack { width: min(930px, calc(100% - 44px)); }
 .chat-bubble.assistant { padding: 18px 20px; border-radius: 12px; }
 .chat-bubble.user { padding: 12px 15px; border-radius: 12px 5px 12px 12px; }
-.wb-input-bar { padding: 14px clamp(14px, 3vw, 28px) 12px; background: var(--surface); border-top: 1px solid var(--line-2); }
-.wb-input-row { max-width: 1120px; min-height: 52px; margin: 0 auto; border-radius: 12px; box-shadow: 0 8px 24px color-mix(in srgb, var(--text) 5%, transparent); }
+.wb-input-bar { padding: 10px 16px 8px; background: var(--surface); border-top: 1px solid var(--line-2); }
+.wb-input-row { max-width: none; min-height: 82px; margin: 0 auto; border-radius: 12px; box-shadow: 0 8px 24px color-mix(in srgb, var(--text) 5%, transparent); }
 .wb-input-row:focus-within { box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 14%, transparent), 0 8px 24px color-mix(in srgb, var(--text) 5%, transparent); }
-.wb-composer-meta { display: flex; justify-content: space-between; gap: 12px; max-width: 1120px; margin: 8px auto 0; color: var(--text-4); font-size: var(--fs-10); }
+.wb-composer-meta { display: flex; justify-content: space-between; gap: 12px; max-width: none; margin: 6px auto 0; color: var(--text-4); font-size: var(--fs-10); }
 .wb-composer-meta span:last-child { color: var(--text-3); text-align: right; }
 .chat-result-inline { padding: 12px 0 2px; }
 .result-overview { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 0 0 12px; padding: 10px 12px; background: color-mix(in srgb, var(--surface-2) 80%, transparent); border: 1px solid var(--line-2); border-radius: 8px; }

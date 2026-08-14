@@ -7,6 +7,7 @@ import { RuntimeAudit } from "../pages/RuntimeAudit/RuntimeAudit";
 import { enqueue, installMockApi, resetMocks } from "./mockServer";
 import { useSessionStore, useUIStore } from "../stores/session";
 import { useWorkbenchStore } from "../stores/workbench";
+import { formatEventTime } from "../utils/runEvent";
 
 describe("Experience polish", () => {
   beforeEach(() => {
@@ -188,6 +189,43 @@ describe("Experience polish", () => {
       expect.anything(),
       expect.anything(),
     );
+  });
+
+  it("expands short audit traces without virtualized card reflow", async () => {
+    enqueue("/runs/recent", {
+      status: 200,
+      data: {
+        runs: [
+          { run_id: "run-event", turn_id: "", trace_id: "trace-event", session_id: "s1", status: "ok", started_at: "", finished_at: "", visible_tools: [], tool_call_count: 1, error_count: 0, warning_count: 0, events: [] },
+        ],
+      },
+    });
+    enqueue("/workspaces/default/runs/run-event/trace", {
+      status: 200,
+      data: {
+        events: [
+          { event_id: "event-1", event_type: "tool_call_started", timestamp: 1786699729.6, payload: { canonical_tool_id: "web.manage" } },
+        ],
+      },
+    });
+
+    render(<RuntimeAudit />);
+    fireEvent.click(await screen.findByTestId("turn-run-event"));
+
+    const toggle = await screen.findByTestId("audit-event-toggle-event-1");
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    fireEvent.click(toggle);
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByTestId("audit-event-detail-event-1")).toHaveTextContent("web.manage");
+    fireEvent.click(toggle);
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByTestId("audit-event-detail-event-1")).not.toBeInTheDocument();
+  });
+
+  it("formats Unix-second trace timestamps without showing 1970", () => {
+    const formatted = formatEventTime({ timestamp: 1786699729.6 });
+    expect(formatted).not.toContain("1970");
+    expect(formatEventTime({ timestamp: 12.5 })).toBe("—");
   });
 
   it("keeps a noisy session list bounded in the sidebar", async () => {
