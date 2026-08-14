@@ -1,6 +1,6 @@
 .wb-shell {
   display: grid !important;
-  grid-template-columns: minmax(0, 55.4%) minmax(390px, 44.6%);
+  grid-template-columns: minmax(0, 1fr) clamp(300px, 20vw, 340px);
   grid-template-rows: minmax(0, 1fr);
   height: 100%;
   min-height: 0;
@@ -422,8 +422,8 @@
   align-items: flex-start;
   justify-content: space-between;
   gap: 18px;
-  min-height: 92px;
-  padding: 24px 28px 20px;
+  min-height: 76px;
+  padding: 18px 18px 16px;
   border-bottom: 1px solid var(--line-2);
 }
 
@@ -450,7 +450,9 @@
   color: var(--text-3);
   font-size: 11px;
   font-weight: 650;
-  white-space: nowrap;
+  justify-content: flex-end;
+  max-width: 145px;
+  text-align: right;
 }
 
 .task-progress-summary .status-dot { background: var(--text-4); }
@@ -460,14 +462,14 @@
 
 .task-phase-list {
   min-height: 0;
-  padding: 20px 28px 28px;
+  padding: 18px 18px 22px;
   overflow-y: auto;
 }
 
 .task-phase {
   display: grid;
   grid-template-columns: 34px minmax(0, 1fr);
-  min-height: 96px;
+  min-height: 84px;
 }
 
 .task-phase-rail {
@@ -521,14 +523,14 @@
 
 .task-phase-content {
   min-width: 0;
-  padding: 3px 0 24px 12px;
+  padding: 3px 0 20px 10px;
 }
 
 .task-phase-title-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 14px;
+  gap: 8px;
 }
 
 .task-phase-title-row h3 {
@@ -567,8 +569,8 @@
   grid-template-columns: 34px minmax(0, 1fr) 20px;
   gap: 10px;
   align-items: center;
-  min-height: 66px;
-  padding: 11px 12px;
+  min-height: 58px;
+  padding: 9px 10px;
   border-bottom: 1px solid var(--line-2);
 }
 
@@ -621,7 +623,7 @@
 .task-progress-footer {
   display: grid;
   gap: 10px;
-  padding: 16px 28px 20px;
+  padding: 14px 18px 16px;
   color: var(--text-4);
   border-top: 1px solid var(--line-2);
   font-size: 10px;
@@ -641,13 +643,13 @@
 }
 
 @media (max-width: 1180px) {
-  .wb-shell { grid-template-columns: minmax(0, 1fr) 350px; }
+  .wb-shell { grid-template-columns: minmax(0, 1fr) 300px; }
   .wb-header { padding-inline: 18px; }
   .wb-header-status { display: none; }
-  .task-progress-header, .task-phase-list, .task-progress-footer { padding-inline: 20px; }
+  .task-progress-header, .task-phase-list, .task-progress-footer { padding-inline: 16px; }
 }
 
-@media (max-width: 820px) {
+@media (max-width: 900px) {
   .wb-shell { grid-template-columns: minmax(0, 1fr); }
   .task-progress-panel { display: none; }
   .wb-conversation-column { border-right: 0; }

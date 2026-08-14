@@ -200,22 +200,18 @@ describe("Experience polish", () => {
       updated_at: "",
       message_count: 0,
     }));
-    enqueue("/workspaces", {
-      status: 200,
-      data: {
-        workspaces: [
-          { workspace_id: "default", name: "default", is_default: true, created_at: "", stats: { session_count: 15, artifact_count: 0, knowledge_source_count: 0 } },
-        ],
-      },
-    });
     enqueue("/sessions", { status: 200, data: { sessions } });
     enqueue("/runs/recent", { status: 200, data: { runs: [] } });
 
     render(<Sidebar />);
 
     expect(await screen.findByText("Session 0")).toBeInTheDocument();
+    expect(screen.queryByTestId("ws-list")).not.toBeInTheDocument();
     expect(screen.queryByText("Session 12")).not.toBeInTheDocument();
     expect(screen.getByText("另有 3 个活跃会话")).toBeInTheDocument();
+    const sessionPanel = screen.getByText("最近会话").closest(".sidebar-panel");
+    const runPanel = screen.getByText("最近任务").closest(".sidebar-panel");
+    expect(sessionPanel?.nextElementSibling).toBe(runPanel);
   });
 
   it("keeps the selected session visible when it is outside the sidebar preview", async () => {

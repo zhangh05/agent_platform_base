@@ -144,6 +144,7 @@
   height: 100%;
   min-height: 0;
   padding: 18px 12px 14px;
+  overflow-y: auto;
 }
 
 .sidebar-shortcuts {
@@ -181,9 +182,15 @@
   color: var(--text-4);
 }
 
-.sidebar-session-panel { order: 2; flex: 1; min-height: 160px; overflow: hidden auto; }
-.sidebar-runs-panel { order: 3; max-height: 220px; overflow: hidden auto; }
-.sidebar-workspace-panel { order: 4; margin-top: auto; border-top: 1px solid var(--line-2); border-bottom: 0; }
+.sidebar-session-panel,
+.sidebar-runs-panel {
+  flex: 0 0 auto;
+  min-height: 0;
+  overflow: visible;
+}
+
+.sidebar-session-panel { order: 2; }
+.sidebar-runs-panel { order: 3; }
 
 .sidebar-panel {
   padding: 18px 0;
@@ -201,6 +208,29 @@
 }
 
 .sidebar-content .list { gap: 3px; }
+
+.sidebar-panel .empty {
+  min-height: 0;
+  align-items: flex-start;
+  padding: 8px 10px 4px;
+  text-align: left;
+}
+
+.sidebar-panel .empty-icon {
+  display: none;
+}
+
+.sidebar-panel .empty-text,
+.sidebar-panel .empty-hint {
+  margin: 0;
+  color: var(--text-4);
+  font-size: 11px;
+  font-weight: 560;
+}
+
+.sidebar-panel .empty-hint {
+  margin-top: 3px;
+}
 
 .sidebar-content .list-item {
   min-height: 38px;

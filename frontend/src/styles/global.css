@@ -9107,7 +9107,7 @@ summary:focus-visible,
 
 /* Organization Center */
 .user-management-notice { padding: 10px 14px; margin-bottom: 12px; color: var(--ok); font-size: var(--fs-11); border: 1px solid color-mix(in srgb, var(--ok) 32%, var(--line-2)); border-radius: 7px; background: color-mix(in srgb, var(--ok) 8%, var(--surface)); }
-.user-access-summary { display: grid; grid-template-columns: repeat(3, minmax(105px, 145px)) minmax(280px, 1fr); gap: 1px; margin-bottom: 16px; overflow: hidden; border: 1px solid var(--line-2); border-radius: var(--r-8); background: var(--line-2); }
+.user-access-summary { display: grid; grid-template-columns: repeat(2, minmax(105px, 145px)) minmax(280px, 1fr); gap: 1px; margin-bottom: 16px; overflow: hidden; border: 1px solid var(--line-2); border-radius: var(--r-8); background: var(--line-2); }
 .user-access-summary > div, .user-access-summary article { min-height: 78px; padding: 14px 16px; background: var(--surface); }
 .user-access-summary > div { display: flex; flex-direction: column; justify-content: center; gap: 3px; }
 .user-access-summary > div b { color: var(--text-1); font-size: 22px; }
