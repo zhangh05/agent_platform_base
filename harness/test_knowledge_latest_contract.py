@@ -37,8 +37,8 @@ def test_knowledge_search_rejects_unknown_query_params():
 def test_knowledge_upload_writes_through_filestore(monkeypatch, tmp_path):
     workspace_root = tmp_path / "workspaces"
     workspace_root.mkdir()
-    monkeypatch.setenv("NA_WORKSPACE_ROOT", str(workspace_root))
-    monkeypatch.setenv("AGENT_PLATFORM_WORKSPACE_DIR", str(workspace_root))
+    monkeypatch.setenv("LZCORE_WORKSPACE_ROOT", str(workspace_root))
+    monkeypatch.setenv("LZCORE_WORKSPACE_DIR", str(workspace_root))
 
     from backend.main import app
     from storage.file_store import list_files
@@ -157,7 +157,7 @@ def test_import_from_artifact_uses_current_store_and_is_searchable(tmp_path, mon
     from backend.main import app
 
     ws_root = tmp_path / "workspaces"
-    monkeypatch.setenv("NA_WORKSPACE_ROOT", str(ws_root))
+    monkeypatch.setenv("LZCORE_WORKSPACE_ROOT", str(ws_root))
 
     rec = save_artifact(
         "latest_knowledge_ws",

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Stop Agent Platform Base backend + frontend on macOS/Linux.
+# Stop LZCore backend + frontend on macOS/Linux.
 
 set -euo pipefail
 
@@ -8,8 +8,8 @@ BACKEND_PORT="${BACKEND_PORT:-8011}"
 FRONTEND_PORT="${FRONTEND_PORT:-5273}"
 BACKEND_PID_FILE="$ROOT/.backend.pid"
 FRONTEND_PID_FILE="$ROOT/.frontend.pid"
-BACKEND_SCREEN="${BACKEND_SCREEN:-agent-platform-base-backend}"
-FRONTEND_SCREEN="${FRONTEND_SCREEN:-agent-platform-base-frontend}"
+BACKEND_SCREEN="${BACKEND_SCREEN:-lzcore-backend}"
+FRONTEND_SCREEN="${FRONTEND_SCREEN:-lzcore-frontend}"
 
 process_cwd() {
     lsof -a -p "$1" -d cwd -Fn 2>/dev/null | sed -n 's/^n//p' | head -n 1

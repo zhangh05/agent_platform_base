@@ -1,5 +1,5 @@
-export const ACTIVE_USER_KEY = "agent_platform_active_user";
-export const ACTIVE_WORKSPACE_KEY = "agent_platform_active_workspace";
+export const ACTIVE_USER_KEY = "lzcore_active_user";
+export const ACTIVE_WORKSPACE_KEY = "lzcore_active_workspace";
 
 function read(key: string): string {
   try { return typeof localStorage === "undefined" ? "" : localStorage.getItem(key) || ""; } catch { return ""; }

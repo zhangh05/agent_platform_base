@@ -11,7 +11,7 @@ alerting:
         - targets: ["alertmanager:9093"]
 
 scrape_configs:
-  - job_name: agent-platform
+  - job_name: lzcore
     metrics_path: /metrics
     bearer_token_file: /run/secrets/api_token
     static_configs:

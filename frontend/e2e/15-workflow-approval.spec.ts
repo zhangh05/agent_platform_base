@@ -13,7 +13,7 @@ test("15. workflow approval can be rejected and audited", async ({ api, workspac
         node_id: "destructive_probe",
         name: "Destructive approval probe",
         tool_id: "exec.run",
-        arguments: { action: "shell", command: "rm -f /tmp/agent-platform-e2e-never-created" },
+        arguments: { action: "shell", command: "rm -f /tmp/lzcore-e2e-never-created" },
         depends_on: [],
       }],
     },
@@ -52,7 +52,7 @@ test("15. workflow approval can be rejected and audited", async ({ api, workspac
       nodes: [{
         node_id: "approved_probe",
         tool_id: "exec.run",
-        arguments: { action: "shell", command: "rm -f /tmp/agent-platform-e2e-never-created; echo RESUMED" },
+        arguments: { action: "shell", command: "rm -f /tmp/lzcore-e2e-never-created; echo RESUMED" },
         depends_on: [],
       }],
     },

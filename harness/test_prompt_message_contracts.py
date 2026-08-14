@@ -81,7 +81,7 @@ class TestRenderer:
         assert messages[0].role == "system"
         assert "You are 联智中枢" in messages[0].content
         assert "without the production tool loop" in messages[0].content
-        assert "Agent Platform Base explanation layer. Follow prompt exactly" not in messages[0].content
+        assert "LZCore explanation layer. Follow prompt exactly" not in messages[0].content
         assert messages[1].role == "user"
         assert messages[1].content == "你好"
 

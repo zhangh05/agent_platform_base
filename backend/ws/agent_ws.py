@@ -137,9 +137,9 @@ def register_ws_routes(app):
                             return
                     else:
                         from flask import session
-                        authenticated_username = str(session.get("agent_platform_user") or "")
-                        authenticated_role = str(session.get("agent_platform_role") or "viewer")
-                        authenticated_workspaces = list(session.get("agent_platform_workspaces") or [])
+                        authenticated_username = str(session.get("lzcore_user") or "")
+                        authenticated_role = str(session.get("lzcore_role") or "viewer")
+                        authenticated_workspaces = list(session.get("lzcore_workspaces") or [])
                     _auth_checked = True
 
                 # System WebSocket — register for broadcasts, skip agent turn

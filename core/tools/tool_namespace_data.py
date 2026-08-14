@@ -1,4 +1,4 @@
-"""Canonical tool namespace for Agent Platform Base.
+"""Canonical tool namespace for LZCore.
 
 The namespace is intentionally domain-neutral. Product-specific projects should
 add their own tools through canonical registry entries instead of reviving

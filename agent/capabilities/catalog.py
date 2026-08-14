@@ -1,4 +1,4 @@
-"""Single-source business capability catalog for Agent Platform Base.
+"""Single-source business capability catalog for LZCore.
 
 A "business capability" is a thin description of a thing the agent can
 do, plus a list of recommended tool ids. It is NOT a tool registration

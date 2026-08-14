@@ -22,7 +22,7 @@ def _workflow(workspace_id: str, workflow_id: str = "approval_binding") -> None:
 
 
 def test_forged_approval_id_cannot_execute_workflow(monkeypatch, tmp_path):
-    monkeypatch.setenv("NA_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("LZCORE_WORKSPACE_ROOT", str(tmp_path))
     reset_approval_store_for_tests()
     _workflow("approval_ws")
     run = execute_workflow("approval_ws", "approval_binding", approvals={"guarded": "forged"})
@@ -31,7 +31,7 @@ def test_forged_approval_id_cannot_execute_workflow(monkeypatch, tmp_path):
 
 
 def test_exact_approved_action_resumes_same_workflow_run(monkeypatch, tmp_path):
-    monkeypatch.setenv("NA_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("LZCORE_WORKSPACE_ROOT", str(tmp_path))
     reset_approval_store_for_tests()
     _workflow("approval_ws")
     waiting = execute_workflow("approval_ws", "approval_binding")

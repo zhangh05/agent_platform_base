@@ -3,7 +3,7 @@ from storage.principal import storage_principal
 
 
 def test_storage_events_are_isolated_by_storage_principal(monkeypatch, tmp_path):
-    monkeypatch.setenv("NA_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("LZCORE_WORKSPACE_ROOT", str(tmp_path))
     with storage_principal("alice"):
         with subscribe("team") as alice_events:
             with storage_principal("bob"):

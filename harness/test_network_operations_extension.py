@@ -12,8 +12,8 @@ from extensions.network_operations.device_tools import (
 
 
 def _setup(monkeypatch, tmp_path):
-    monkeypatch.setenv("NA_WORKSPACE_ROOT", str(tmp_path / "workspaces"))
-    monkeypatch.setenv("AGENT_PLATFORM_MASTER_KEY", "test-extension-master-key")
+    monkeypatch.setenv("LZCORE_WORKSPACE_ROOT", str(tmp_path / "workspaces"))
+    monkeypatch.setenv("LZCORE_MASTER_KEY", "test-extension-master-key")
 
 
 def test_assets_store_only_an_encrypted_credential_reference(monkeypatch, tmp_path):
@@ -226,7 +226,7 @@ def test_network_extension_llm_descriptions_expose_actions_and_arguments():
 
 def test_extension_routes_cover_asset_and_inspection_flow(monkeypatch, tmp_path):
     _setup(monkeypatch, tmp_path)
-    monkeypatch.setenv("AGENT_PLATFORM_LOGIN_ENABLED", "false")
+    monkeypatch.setenv("LZCORE_LOGIN_ENABLED", "false")
     from extensions.runtime import reset_extension_cache_for_tests
     reset_extension_cache_for_tests()
     from backend.main import create_app

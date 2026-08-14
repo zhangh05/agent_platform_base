@@ -149,7 +149,7 @@ class TestContentSizeGuard:
 
 class TestEnvOverride:
     def test_env_override_max_size(self, temp_dirs, monkeypatch):
-        monkeypatch.setenv("AGENT_PLATFORM_MAX_UPLOAD_MB", "1")
+        monkeypatch.setenv("LZCORE_MAX_UPLOAD_MB", "1")
         from artifacts.store import _get_max_size
         assert _get_max_size() == 1 * 1024 * 1024
 

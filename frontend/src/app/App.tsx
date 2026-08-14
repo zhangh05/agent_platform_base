@@ -55,8 +55,8 @@ function clearUserScopedFrontendState(nextSession?: Awaited<ReturnType<typeof au
   if (nextSession?.username) void useWorkbenchStore.persist.rehydrate();
   else {
     try {
-      localStorage.removeItem(scopedLocalStorageKey("na_workbench"));
-      localStorage.removeItem(scopedLocalStorageKey("na_session", false));
+      localStorage.removeItem(scopedLocalStorageKey("lzcore_workbench"));
+      localStorage.removeItem(scopedLocalStorageKey("lzcore_session", false));
     } catch { /* storage can be unavailable */ }
     void useWorkbenchStore.persist.rehydrate();
   }

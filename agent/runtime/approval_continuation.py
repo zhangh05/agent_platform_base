@@ -55,12 +55,12 @@ def _bounded_env_seconds(name: str, default: int, minimum: int, maximum: int) ->
 
 def continuation_stall_seconds() -> int:
     return _bounded_env_seconds(
-        "AGENT_PLATFORM_CONTINUATION_STALL_SECONDS", 900, 60, 7 * 24 * 60 * 60
+        "LZCORE_CONTINUATION_STALL_SECONDS", 900, 60, 7 * 24 * 60 * 60
     )
 
 
 def continuation_retention_seconds() -> int:
-    days = _bounded_env_seconds("AGENT_PLATFORM_CONTINUATION_RETENTION_DAYS", 30, 1, 3650)
+    days = _bounded_env_seconds("LZCORE_CONTINUATION_RETENTION_DAYS", 30, 1, 3650)
     return days * 24 * 60 * 60
 
 

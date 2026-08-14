@@ -22,7 +22,7 @@ from storage.workspace_files import write_python_temp_script
 _MAX_INPUT_BYTES = 1_048_576
 _MAX_CODE_BYTES = 1_048_576
 _MAX_OUTPUT_BYTES = 1_048_576
-_CONTAINER_IMAGE_ENV = "AGENT_PLATFORM_PYTHON_CONTAINER_IMAGE"
+_CONTAINER_IMAGE_ENV = "LZCORE_PYTHON_CONTAINER_IMAGE"
 
 
 def _docker_client_env() -> dict[str, str]:
@@ -39,16 +39,16 @@ def _loopback_host(host: str) -> bool:
 
 
 def _requires_strong_isolation() -> bool:
-    host = os.environ.get("AGENT_PLATFORM_RUNTIME_BIND_HOST", "127.0.0.1")
+    host = os.environ.get("LZCORE_RUNTIME_BIND_HOST", "127.0.0.1")
     if not _loopback_host(host):
         return True
-    if _truthy(os.environ.get("AGENT_PLATFORM_IDENTITY_ENABLED")):
+    if _truthy(os.environ.get("LZCORE_IDENTITY_ENABLED")):
         return True
-    if os.environ.get("AGENT_PLATFORM_LOGIN_USERNAME", "").strip() and os.environ.get(
-        "AGENT_PLATFORM_LOGIN_PASSWORD", ""
+    if os.environ.get("LZCORE_LOGIN_USERNAME", "").strip() and os.environ.get(
+        "LZCORE_LOGIN_PASSWORD", ""
     ):
         return True
-    return _truthy(os.environ.get("AGENT_PLATFORM_PYTHON_REQUIRE_STRONG_ISOLATION"))
+    return _truthy(os.environ.get("LZCORE_PYTHON_REQUIRE_STRONG_ISOLATION"))
 
 
 def _empty_result(timeout: int, error: str, isolation_level: str, *, runner: str) -> dict[str, Any]:
@@ -130,7 +130,7 @@ class DockerStrongIsolationRunner:
     @classmethod
     def available(cls) -> "DockerStrongIsolationRunner | None":
         image = os.environ.get(_CONTAINER_IMAGE_ENV, "").strip()
-        allow_mutable = _truthy(os.environ.get("AGENT_PLATFORM_ALLOW_MUTABLE_PYTHON_IMAGE"))
+        allow_mutable = _truthy(os.environ.get("LZCORE_ALLOW_MUTABLE_PYTHON_IMAGE"))
         if not image or ("@sha256:" not in image and not allow_mutable):
             return None
         docker_bin = shutil.which("docker")
@@ -164,7 +164,7 @@ class DockerStrongIsolationRunner:
             prepared.update({"isolation_level": self.isolation_level, "runner": self.runner_name})
             return prepared
         temp_dir, script_path = prepared
-        container_name = f"agent-platform-python-{uuid.uuid4().hex[:16]}"
+        container_name = f"lzcore-python-{uuid.uuid4().hex[:16]}"
         # Host secrets are not passed to Docker. The script mount is read-only;
         # a tiny tmpfs is the sole writable filesystem inside the container.
         command = [
@@ -255,7 +255,7 @@ def select_python_runner() -> PythonRunner:
         if runner is not None:
             return runner
         return UnavailableStrongIsolationRunner("docker runner unavailable")
-    if _truthy(os.environ.get("AGENT_PLATFORM_TRUSTED_LOCAL_PYTHON_EXECUTION")):
+    if _truthy(os.environ.get("LZCORE_TRUSTED_LOCAL_PYTHON_EXECUTION")):
         return BestEffortPythonRunner()
     runner = DockerStrongIsolationRunner.available()
     if runner is not None:

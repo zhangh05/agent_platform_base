@@ -26,13 +26,13 @@ class JobQueue(Protocol):
 
 def queue_mode() -> str:
     import os
-    return os.environ.get("AGENT_PLATFORM_QUEUE_MODE", "filesystem").strip().lower() or "filesystem"
+    return os.environ.get("LZCORE_QUEUE_MODE", "filesystem").strip().lower() or "filesystem"
 
 
 def queue_configuration() -> dict[str, Any]:
     import os
     mode = queue_mode()
-    configured = bool(os.environ.get("AGENT_PLATFORM_QUEUE_URL"))
+    configured = bool(os.environ.get("LZCORE_QUEUE_URL"))
     return {"mode": mode, "url_configured": configured, "distributed_ready": mode == "redis" and configured}
 
 
@@ -62,9 +62,9 @@ class FileJobQueue:
 
 
 class RedisJobQueue:
-    QUEUED = "agent-platform:jobs:queued"
-    PROCESSING = "agent-platform:jobs:processing"
-    LEASES = "agent-platform:jobs:leases"
+    QUEUED = "lzcore:jobs:queued"
+    PROCESSING = "lzcore:jobs:processing"
+    LEASES = "lzcore:jobs:leases"
 
     def __init__(self, url: str):
         import redis
@@ -137,8 +137,8 @@ def get_job_queue():
     import os
     mode = queue_mode()
     if mode == "redis":
-        url = os.environ.get("AGENT_PLATFORM_QUEUE_URL", "").strip()
+        url = os.environ.get("LZCORE_QUEUE_URL", "").strip()
         if not url:
-            raise RuntimeError("AGENT_PLATFORM_QUEUE_URL is required for redis queue")
+            raise RuntimeError("LZCORE_QUEUE_URL is required for redis queue")
         return RedisJobQueue(url)
     return FileJobQueue()

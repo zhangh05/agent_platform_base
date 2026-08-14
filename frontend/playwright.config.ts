@@ -17,9 +17,9 @@ const BACKEND_PORT = Number(process.env.E2E_BACKEND_PORT ?? "18011");
 const FRONTEND_PORT = Number(process.env.E2E_FRONTEND_PORT ?? "15273");
 const BACKEND_URL = process.env.E2E_BACKEND_URL ?? `http://127.0.0.1:${BACKEND_PORT}`;
 const FRONTEND_URL = process.env.E2E_FRONTEND_URL ?? `http://127.0.0.1:${FRONTEND_PORT}`;
-const STORAGE_ROOT = fs.mkdtempSync(path.join(os.tmpdir(), "agent-platform-e2e-"));
+const STORAGE_ROOT = fs.mkdtempSync(path.join(os.tmpdir(), "lzcore-e2e-"));
 const STORAGE_TOKEN = crypto.randomUUID();
-const STORAGE_MARKER = path.join(STORAGE_ROOT, ".agent-platform-e2e-owner");
+const STORAGE_MARKER = path.join(STORAGE_ROOT, ".lzcore-e2e-owner");
 const ADMIN_PASSWORD = crypto
   .createHash("sha256")
   .update(`${REPO_ROOT}:${BACKEND_PORT}:${FRONTEND_PORT}:e2e-admin`)
@@ -36,7 +36,7 @@ const cleanupOwnedStorage = () => {
   try {
     const resolvedRoot = fs.realpathSync(STORAGE_ROOT);
     const resolvedTmp = fs.realpathSync(os.tmpdir());
-    const ownedName = path.basename(resolvedRoot).startsWith("agent-platform-e2e-");
+    const ownedName = path.basename(resolvedRoot).startsWith("lzcore-e2e-");
     const underTmp = path.dirname(resolvedRoot) === resolvedTmp;
     const markerMatches = fs.readFileSync(STORAGE_MARKER, "utf8") === STORAGE_TOKEN;
     if (ownedName && underTmp && markerMatches) fs.rmSync(resolvedRoot, { recursive: true, force: true });
@@ -56,16 +56,16 @@ process.env.E2E_API_TOKEN = API_TOKEN;
 
 const commonEnv = {
   ...process.env,
-  NA_WORKSPACE_ROOT: STORAGE_ROOT,
-  AGENT_PLATFORM_RUNTIME_BIND_HOST: "127.0.0.1",
-  AGENT_PLATFORM_TRUSTED_LOCAL_PYTHON_EXECUTION: "true",
-  AGENT_PLATFORM_IDENTITY_ENABLED: "true",
-  AGENT_PLATFORM_AUTH_ENABLED: "true",
-  AGENT_PLATFORM_API_TOKEN: API_TOKEN,
-  AGENT_PLATFORM_LOGIN_ENABLED: "true",
-  AGENT_PLATFORM_LOGIN_USERNAME: "E2EAdmin",
-  AGENT_PLATFORM_LOGIN_PASSWORD: ADMIN_PASSWORD,
-  AGENT_PLATFORM_SESSION_SECRET: crypto.randomBytes(32).toString("hex"),
+  LZCORE_WORKSPACE_ROOT: STORAGE_ROOT,
+  LZCORE_RUNTIME_BIND_HOST: "127.0.0.1",
+  LZCORE_TRUSTED_LOCAL_PYTHON_EXECUTION: "true",
+  LZCORE_IDENTITY_ENABLED: "true",
+  LZCORE_AUTH_ENABLED: "true",
+  LZCORE_API_TOKEN: API_TOKEN,
+  LZCORE_LOGIN_ENABLED: "true",
+  LZCORE_LOGIN_USERNAME: "E2EAdmin",
+  LZCORE_LOGIN_PASSWORD: ADMIN_PASSWORD,
+  LZCORE_SESSION_SECRET: crypto.randomBytes(32).toString("hex"),
 };
 
 export default defineConfig({

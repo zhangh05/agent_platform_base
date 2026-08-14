@@ -9,7 +9,7 @@ from agent.llm.settings import resolve_provider_llm_config
 
 
 def _configured_provider(task: str) -> str:
-    key = "AGENT_PLATFORM_MODEL_ROUTE_" + "".join(ch if ch.isalnum() else "_" for ch in task.upper())
+    key = "LZCORE_MODEL_ROUTE_" + "".join(ch if ch.isalnum() else "_" for ch in task.upper())
     return os.environ.get(key, "").strip()
 
 

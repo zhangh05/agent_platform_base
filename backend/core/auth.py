@@ -2,11 +2,11 @@
 """Global API authentication middleware.
 
 Environment variables:
-  AGENT_PLATFORM_AUTH_ENABLED  — "true" or "false" (default: false)
-  AGENT_PLATFORM_API_TOKEN     — shared secret for Bearer / X-API-Key auth
-  AGENT_PLATFORM_LOGIN_ENABLED — "true" or "false" (default: true when username/password are set)
-  AGENT_PLATFORM_LOGIN_USERNAME — web login username
-  AGENT_PLATFORM_LOGIN_PASSWORD — web login password
+  LZCORE_AUTH_ENABLED  — "true" or "false" (default: false)
+  LZCORE_API_TOKEN     — shared secret for Bearer / X-API-Key auth
+  LZCORE_LOGIN_ENABLED — "true" or "false" (default: true when username/password are set)
+  LZCORE_LOGIN_USERNAME — web login username
+  LZCORE_LOGIN_PASSWORD — web login password
 
 Public endpoints (no auth required even when enabled):
   - /api/health, /health
@@ -31,11 +31,11 @@ from urllib.parse import urlparse
 
 import flask
 
-logger = logging.getLogger("agent_platform_base.auth")
+logger = logging.getLogger("lzcore.auth")
 
 def _is_auth_enabled() -> bool:
-    """Read AGENT_PLATFORM_AUTH_ENABLED from env (re-evaluated each call for testability)."""
-    return os.environ.get("AGENT_PLATFORM_AUTH_ENABLED", "false").strip().lower() in (
+    """Read LZCORE_AUTH_ENABLED from env (re-evaluated each call for testability)."""
+    return os.environ.get("LZCORE_AUTH_ENABLED", "false").strip().lower() in (
         "true", "1", "yes", "on",
     )
 
@@ -57,19 +57,19 @@ def _secret_value(name: str) -> str:
 
 def _get_api_token() -> str:
     """Read the API token from env or a mounted secret file."""
-    return _secret_value("AGENT_PLATFORM_API_TOKEN")
+    return _secret_value("LZCORE_API_TOKEN")
 
 
 def _get_login_username() -> str:
-    return os.environ.get("AGENT_PLATFORM_LOGIN_USERNAME", "").strip()
+    return os.environ.get("LZCORE_LOGIN_USERNAME", "").strip()
 
 
 def _get_login_password() -> str:
-    return _secret_value("AGENT_PLATFORM_LOGIN_PASSWORD")
+    return _secret_value("LZCORE_LOGIN_PASSWORD")
 
 
 def _is_login_enabled() -> bool:
-    raw = os.environ.get("AGENT_PLATFORM_LOGIN_ENABLED", "").strip().lower()
+    raw = os.environ.get("LZCORE_LOGIN_ENABLED", "").strip().lower()
     if raw:
         return raw in ("true", "1", "yes", "on")
     return bool(_get_login_username() and _get_login_password())
@@ -93,7 +93,7 @@ def validate_network_listener(host: str) -> None:
     effective_login = _is_login_enabled() and bool(_get_login_username() and _get_login_password())
     if effective_api_auth or effective_login or _is_identity_enabled():
         return
-    if os.environ.get("AGENT_PLATFORM_ALLOW_UNAUTHENTICATED_NETWORK", "").strip().lower() in {
+    if os.environ.get("LZCORE_ALLOW_UNAUTHENTICATED_NETWORK", "").strip().lower() in {
         "1", "true", "yes", "on",
     }:
         logger.critical("DANGER: unauthenticated network listener explicitly allowed on %s", host)
@@ -186,30 +186,30 @@ def _request_has_valid_api_token() -> bool:
 
 def is_current_session_authenticated() -> bool:
     if _is_identity_enabled():
-        username = str(flask.session.get("agent_platform_user") or "")
+        username = str(flask.session.get("lzcore_user") or "")
         if not username:
             return False
         from backend.core.identity import get_user
         identity_user = get_user(username)
         if identity_user and identity_user.get("enabled", True):
-            flask.session["agent_platform_role"] = identity_user.get("role", "viewer")
-            flask.session["agent_platform_org"] = identity_user.get("organization_id", "default")
-            flask.session["agent_platform_workspaces"] = list(identity_user.get("workspace_ids") or [])
-            flask.session["agent_platform_home_workspace"] = identity_user.get("home_workspace_id", "")
+            flask.session["lzcore_role"] = identity_user.get("role", "viewer")
+            flask.session["lzcore_org"] = identity_user.get("organization_id", "default")
+            flask.session["lzcore_workspaces"] = list(identity_user.get("workspace_ids") or [])
+            flask.session["lzcore_home_workspace"] = identity_user.get("home_workspace_id", "")
             return True
         configured_username = _get_login_username()
         if configured_username and hmac.compare_digest(username, configured_username):
-            flask.session["agent_platform_role"] = "admin"
-            flask.session["agent_platform_org"] = "default"
-            flask.session["agent_platform_workspaces"] = ["default"]
-            flask.session["agent_platform_home_workspace"] = "default"
+            flask.session["lzcore_role"] = "admin"
+            flask.session["lzcore_org"] = "default"
+            flask.session["lzcore_workspaces"] = ["default"]
+            flask.session["lzcore_home_workspace"] = "default"
             return True
         flask.session.clear()
         return False
     if not _is_login_enabled():
         return False
     username = _get_login_username()
-    session_user = flask.session.get("agent_platform_user")
+    session_user = flask.session.get("lzcore_user")
     return bool(username and session_user and hmac.compare_digest(str(session_user), username))
 
 
@@ -229,10 +229,10 @@ def current_request_actor() -> dict | None:
         }
     if not is_current_session_authenticated():
         return None
-    username = str(flask.session.get("agent_platform_user") or "").strip()
+    username = str(flask.session.get("lzcore_user") or "").strip()
     if not username:
         return None
-    role = str(flask.session.get("agent_platform_role") or "admin")
+    role = str(flask.session.get("lzcore_role") or "admin")
     try:
         from storage.principal import principal_storage_key
         actor_id = principal_storage_key(username)
@@ -254,8 +254,8 @@ def handle_auth_status():
     if session_authenticated and _is_identity_enabled():
         try:
             from backend.core.identity import get_user
-            current = get_user(str(flask.session.get("agent_platform_user") or ""))
-            platform_admin = current is None or str(flask.session.get("agent_platform_role") or "") == "owner"
+            current = get_user(str(flask.session.get("lzcore_user") or ""))
+            platform_admin = current is None or str(flask.session.get("lzcore_role") or "") == "owner"
         except Exception:
             platform_admin = False
     return flask.jsonify({
@@ -263,22 +263,22 @@ def handle_auth_status():
         "login_enabled": _is_login_enabled() or _is_identity_enabled(),
         "authenticated": authenticated,
         "username": "api-token" if api_token_authenticated else (
-            flask.session.get("agent_platform_user") if session_authenticated else ""
+            flask.session.get("lzcore_user") if session_authenticated else ""
         ),
         "role": "owner" if api_token_authenticated else (
-            flask.session.get("agent_platform_role", "") if session_authenticated else ""
+            flask.session.get("lzcore_role", "") if session_authenticated else ""
         ),
         "organization_id": "default" if api_token_authenticated else (
-            flask.session.get("agent_platform_org", "") if session_authenticated else ""
+            flask.session.get("lzcore_org", "") if session_authenticated else ""
         ),
         "workspace_ids": ["default"] if api_token_authenticated else (
-            list(flask.session.get("agent_platform_workspaces") or []) if session_authenticated else []
+            list(flask.session.get("lzcore_workspaces") or []) if session_authenticated else []
         ),
         "home_workspace_id": "default" if api_token_authenticated else (
-            flask.session.get("agent_platform_home_workspace", "") if session_authenticated else ""
+            flask.session.get("lzcore_home_workspace", "") if session_authenticated else ""
         ),
         "identity_enabled": _is_identity_enabled(),
-        "oidc_enabled": os.environ.get("AGENT_PLATFORM_OIDC_ENABLED", "false").strip().lower() in {"1", "true", "yes", "on"},
+        "oidc_enabled": os.environ.get("LZCORE_OIDC_ENABLED", "false").strip().lower() in {"1", "true", "yes", "on"},
         "platform_admin": platform_admin,
         "auth_type": "api_token" if api_token_authenticated else (
             "session" if session_authenticated else "none"
@@ -289,13 +289,13 @@ def handle_auth_status():
 def establish_identity_session(identity_user: dict) -> None:
     """Create the canonical browser session for a verified identity."""
     flask.session.clear()
-    flask.session["agent_platform_user"] = identity_user["username"]
-    flask.session["agent_platform_role"] = identity_user.get("role", "viewer")
-    flask.session["agent_platform_org"] = identity_user.get("organization_id", "default")
-    flask.session["agent_platform_workspaces"] = list(
+    flask.session["lzcore_user"] = identity_user["username"]
+    flask.session["lzcore_role"] = identity_user.get("role", "viewer")
+    flask.session["lzcore_org"] = identity_user.get("organization_id", "default")
+    flask.session["lzcore_workspaces"] = list(
         identity_user.get("workspace_ids") or [identity_user.get("organization_id", "default")]
     )
-    flask.session["agent_platform_home_workspace"] = identity_user.get("home_workspace_id", "")
+    flask.session["lzcore_home_workspace"] = identity_user.get("home_workspace_id", "")
 
 
 def handle_auth_login():
@@ -323,12 +323,12 @@ def handle_auth_login():
         and hmac.compare_digest(password.encode("utf-8"), configured_password.encode("utf-8"))
     ):
         flask.session.clear()
-        flask.session["agent_platform_user"] = configured_username
+        flask.session["lzcore_user"] = configured_username
         if _is_identity_enabled():
-            flask.session["agent_platform_role"] = "admin"
-            flask.session["agent_platform_org"] = "default"
-            flask.session["agent_platform_workspaces"] = ["default"]
-            flask.session["agent_platform_home_workspace"] = "default"
+            flask.session["lzcore_role"] = "admin"
+            flask.session["lzcore_org"] = "default"
+            flask.session["lzcore_workspaces"] = ["default"]
+            flask.session["lzcore_home_workspace"] = "default"
         return flask.jsonify({"ok": True, "username": configured_username})
     logger.warning("login_denied: username=%s", username[:64])
     return _unauthorized_response("Invalid username or password")
@@ -340,7 +340,7 @@ def handle_auth_logout():
 
 
 def _configured_dev_origins() -> set[str]:
-    raw = os.environ.get("AGENT_PLATFORM_ALLOWED_ORIGINS", "")
+    raw = os.environ.get("LZCORE_ALLOWED_ORIGINS", "")
     origins = {item.strip().rstrip("/") for item in raw.split(",") if item.strip()}
     ports = _configured_workbench_ports()
     for port in ports:
@@ -353,7 +353,7 @@ def _configured_dev_origins() -> set[str]:
 
 
 def _configured_workbench_ports() -> set[int]:
-    raw = os.environ.get("AGENT_PLATFORM_WORKBENCH_PORTS", "5273,5274")
+    raw = os.environ.get("LZCORE_WORKBENCH_PORTS", "5273,5274")
     ports: set[int] = set()
     for item in raw.split(","):
         try:
@@ -426,11 +426,11 @@ def register_auth_middleware(app: flask.Flask) -> None:
     Call after all routes are defined but before first request.
     """
     if _is_login_enabled() or _is_identity_enabled():
-        app.secret_key = _secret_value("AGENT_PLATFORM_SESSION_SECRET") or _get_api_token() or secrets.token_urlsafe(32)
+        app.secret_key = _secret_value("LZCORE_SESSION_SECRET") or _get_api_token() or secrets.token_urlsafe(32)
         app.config.update(
             SESSION_COOKIE_HTTPONLY=True,
-            SESSION_COOKIE_SAMESITE=os.environ.get("AGENT_PLATFORM_SESSION_SAMESITE", "Lax"),
-            SESSION_COOKIE_SECURE=os.environ.get("AGENT_PLATFORM_SESSION_SECURE", "false").strip().lower() in ("true", "1", "yes", "on"),
+            SESSION_COOKIE_SAMESITE=os.environ.get("LZCORE_SESSION_SAMESITE", "Lax"),
+            SESSION_COOKIE_SECURE=os.environ.get("LZCORE_SESSION_SECURE", "false").strip().lower() in ("true", "1", "yes", "on"),
         )
         logger.info("Web login authentication enabled")
 
@@ -438,7 +438,7 @@ def register_auth_middleware(app: flask.Flask) -> None:
         logger.info("API token authentication disabled; CSRF origin checks remain enabled")
     elif not _API_TOKEN:
         logger.warning(
-            "AGENT_PLATFORM_AUTH_ENABLED=true but AGENT_PLATFORM_API_TOKEN is empty! "
+            "LZCORE_AUTH_ENABLED=true but LZCORE_API_TOKEN is empty! "
             "All protected endpoints will reject requests."
         )
     else:
@@ -469,7 +469,7 @@ def register_auth_middleware(app: flask.Flask) -> None:
                 if session_authenticated:
                     from storage.principal import set_storage_principal
                     flask.g._storage_principal_token = set_storage_principal(
-                        str(flask.session.get("agent_platform_user") or "")
+                        str(flask.session.get("lzcore_user") or "")
                     )
                 elif api_token_authenticated:
                     from storage.principal import set_storage_principal
@@ -491,7 +491,7 @@ def register_auth_middleware(app: flask.Flask) -> None:
         api_token = _get_api_token()
 
         if not api_token:
-            logger.error("auth_denied: AGENT_PLATFORM_API_TOKEN is empty but auth is enabled")
+            logger.error("auth_denied: LZCORE_API_TOKEN is empty but auth is enabled")
             return _unauthorized_response("Server authentication misconfigured — no API token set")
 
         if not token:
@@ -522,9 +522,9 @@ def _authorize_identity_request():
     if not _is_identity_enabled() or _request_has_valid_api_token():
         return None
     path = flask.request.path
-    role = str(flask.session.get("agent_platform_role") or "viewer")
+    role = str(flask.session.get("lzcore_role") or "viewer")
     from backend.core.identity import get_user
-    current_user = get_user(str(flask.session.get("agent_platform_user") or ""))
+    current_user = get_user(str(flask.session.get("lzcore_user") or ""))
     platform_admin = current_user is None or role == "owner"
     if path.startswith("/api/identity/") and not _role_at_least(role, "admin"):
         return flask.jsonify({"ok": False, "error": "forbidden"}), 403
@@ -555,7 +555,7 @@ def _authorize_identity_request():
         return None
     try:
         from backend.core.identity import can_access_workspace
-        allowed = can_access_workspace(role, list(flask.session.get("agent_platform_workspaces") or []), workspace_id, write=flask.request.method not in {"GET", "HEAD"})
+        allowed = can_access_workspace(role, list(flask.session.get("lzcore_workspaces") or []), workspace_id, write=flask.request.method not in {"GET", "HEAD"})
     except Exception:
         allowed = False
     if not allowed:

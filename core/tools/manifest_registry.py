@@ -1,4 +1,4 @@
-"""Capability manifests for Agent Platform Base tools."""
+"""Capability manifests for LZCore tools."""
 
 from __future__ import annotations
 

@@ -10,7 +10,7 @@ from core.tools.python_runner import DockerStrongIsolationRunner
 
 
 pytestmark = pytest.mark.skipif(
-    os.environ.get("AGENT_PLATFORM_RUN_DOCKER_INTEGRATION") != "1",
+    os.environ.get("LZCORE_RUN_DOCKER_INTEGRATION") != "1",
     reason="real Docker integration is opt-in",
 )
 
@@ -22,7 +22,7 @@ def _runner() -> DockerStrongIsolationRunner:
 
 
 def test_real_container_executes_with_declared_isolation(monkeypatch, tmp_path):
-    monkeypatch.setenv("NA_WORKSPACE_ROOT", str(tmp_path / "workspaces"))
+    monkeypatch.setenv("LZCORE_WORKSPACE_ROOT", str(tmp_path / "workspaces"))
     code = """
 result = {"sum": sum(input_data["values"])}
 """
@@ -43,7 +43,7 @@ result = {"sum": sum(input_data["values"])}
 
 
 def test_network_and_host_write_code_is_rejected_before_container(monkeypatch, tmp_path):
-    monkeypatch.setenv("NA_WORKSPACE_ROOT", str(tmp_path / "workspaces"))
+    monkeypatch.setenv("LZCORE_WORKSPACE_ROOT", str(tmp_path / "workspaces"))
     runner = _runner()
     network = runner.execute(
         code="import socket\nsocket.create_connection(('1.1.1.1', 53))",
@@ -59,7 +59,7 @@ def test_network_and_host_write_code_is_rejected_before_container(monkeypatch, t
 
 
 def test_timeout_force_removes_container(monkeypatch, tmp_path):
-    monkeypatch.setenv("NA_WORKSPACE_ROOT", str(tmp_path / "workspaces"))
+    monkeypatch.setenv("LZCORE_WORKSPACE_ROOT", str(tmp_path / "workspaces"))
     result = _runner().execute(
         code="while True: pass",
         workspace_id="docker_integration",

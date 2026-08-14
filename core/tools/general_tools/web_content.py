@@ -38,7 +38,7 @@ DEFAULT_MAX_LENGTH = 8000       # default max chars for extracted content; cover
 MAX_CACHE_ENTRIES = 500
 CACHE_TTL_SECONDS = 900         # 15 minutes
 FETCH_TIMEOUT = 15
-FETCH_USER_AGENT = "AgentPlatformBase/1.0 (+https://github.com/zhangh05/agent_platform_base)"
+FETCH_USER_AGENT = "LZCore/1.0 (+https://github.com/zhangh05/lzcore)"
 _MAX_FETCH_BYTES = 5 * 1024 * 1024
 
 # ── Cache ─────────────────────────────────────────────────────────────

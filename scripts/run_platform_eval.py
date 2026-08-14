@@ -11,7 +11,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
-os.environ["NA_WORKSPACE_ROOT"] = tempfile.mkdtemp(prefix="agent-platform-eval-")
+os.environ["LZCORE_WORKSPACE_ROOT"] = tempfile.mkdtemp(prefix="lzcore-eval-")
 
 from core.tools.context import ToolRuntimeContext
 from core.tools.integration import get_default_tool_runtime_client

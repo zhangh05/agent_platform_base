@@ -64,8 +64,8 @@ class S3ObjectStore:
         from botocore.config import Config
         self.bucket = bucket
         self.prefix = prefix.strip("/")
-        endpoint_url = os.environ.get("AGENT_PLATFORM_S3_ENDPOINT_URL", "").strip() or None
-        addressing_style = os.environ.get("AGENT_PLATFORM_S3_ADDRESSING_STYLE", "auto").strip() or "auto"
+        endpoint_url = os.environ.get("LZCORE_S3_ENDPOINT_URL", "").strip() or None
+        addressing_style = os.environ.get("LZCORE_S3_ADDRESSING_STYLE", "auto").strip() or "auto"
         self.client = boto3.client(
             "s3",
             endpoint_url=endpoint_url,
@@ -109,10 +109,10 @@ class S3ObjectStore:
 
 def object_store_mode() -> str:
     import os
-    explicit = os.environ.get("AGENT_PLATFORM_OBJECT_STORE_MODE", "").strip().lower()
+    explicit = os.environ.get("LZCORE_OBJECT_STORE_MODE", "").strip().lower()
     if explicit:
         return "s3" if explicit in {"s3", "object"} else "local"
-    legacy = os.environ.get("AGENT_PLATFORM_STORAGE_MODE", "filesystem").strip().lower()
+    legacy = os.environ.get("LZCORE_STORAGE_MODE", "filesystem").strip().lower()
     return "s3" if legacy in {"s3", "object"} else "local"
 
 
@@ -129,10 +129,10 @@ def _workspace_object_prefix(workspace_id: str) -> str:
 def get_object_store(workspace_id: str = ""):
     import os
     if object_store_mode() == "s3":
-        bucket = os.environ.get("AGENT_PLATFORM_OBJECT_STORE_BUCKET", "").strip()
+        bucket = os.environ.get("LZCORE_OBJECT_STORE_BUCKET", "").strip()
         if not bucket:
-            raise RuntimeError("AGENT_PLATFORM_OBJECT_STORE_BUCKET is required")
-        base_prefix = os.environ.get("AGENT_PLATFORM_OBJECT_STORE_PREFIX", "").strip("/")
+            raise RuntimeError("LZCORE_OBJECT_STORE_BUCKET is required")
+        base_prefix = os.environ.get("LZCORE_OBJECT_STORE_PREFIX", "").strip("/")
         scoped_prefix = "/".join(part for part in (base_prefix, _workspace_object_prefix(workspace_id)) if part) if workspace_id else base_prefix
         return S3ObjectStore(bucket, scoped_prefix)
     return LocalObjectStore(workspace_id=workspace_id)

@@ -7,7 +7,7 @@ import pytest
 
 @pytest.fixture
 def image_attachment(monkeypatch, tmp_path):
-    monkeypatch.setenv("NA_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("LZCORE_WORKSPACE_ROOT", str(tmp_path))
     from storage.file_store import import_user_upload
 
     source = tmp_path / "diagram.png"
@@ -57,7 +57,7 @@ def test_file_attachment_guidance_is_trusted_and_uses_canonical_extract_action()
 
 
 def test_websocket_attachment_validation_uses_authenticated_user_scope(monkeypatch, tmp_path):
-    monkeypatch.setenv("NA_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("LZCORE_WORKSPACE_ROOT", str(tmp_path))
     from storage.principal import storage_principal
     from storage.file_store import import_user_upload
     from backend.ws.agent_ws import _normalize_ws_attachments

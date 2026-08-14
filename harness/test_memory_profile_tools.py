@@ -7,7 +7,7 @@ from core.tools.schemas import ToolInvocation
 
 
 def test_profile_set_persists_structured_preferences(monkeypatch, tmp_path):
-    monkeypatch.setenv("NA_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("LZCORE_WORKSPACE_ROOT", str(tmp_path))
     workspace_id = f"ws_profile_{uuid.uuid4().hex[:8]}"
     set_result = handle_memory_set_profile(ToolInvocation(
         tool_id="memory.manage", workspace_id=workspace_id,

@@ -48,7 +48,7 @@ export const apiClient: AxiosInstance = axios.create({
 
 export function getApiAccessToken(): string {
   return import.meta.env.VITE_API_TOKEN
-    || (typeof window !== "undefined" ? window.localStorage.getItem("NA_API_TOKEN") : "")
+    || (typeof window !== "undefined" ? window.localStorage.getItem("LZCORE_API_TOKEN") : "")
     || "";
 }
 

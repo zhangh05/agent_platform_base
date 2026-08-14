@@ -9,7 +9,7 @@ import pytest
 
 
 pytestmark = pytest.mark.skipif(
-    os.environ.get("AGENT_PLATFORM_RUN_DISTRIBUTED_INTEGRATION") != "1",
+    os.environ.get("LZCORE_RUN_DISTRIBUTED_INTEGRATION") != "1",
     reason="distributed service integration is opt-in",
 )
 
@@ -17,7 +17,7 @@ pytestmark = pytest.mark.skipif(
 def test_postgres_records_are_visible_across_adapter_instances():
     from storage.backend import PostgresRecordBackend
 
-    dsn = os.environ["AGENT_PLATFORM_DATABASE_URL"]
+    dsn = os.environ["LZCORE_DATABASE_URL"]
     first = PostgresRecordBackend(dsn)
     second = PostgresRecordBackend(dsn)
     key = f"integration/{uuid.uuid4().hex}"
@@ -30,7 +30,7 @@ def test_postgres_records_are_visible_across_adapter_instances():
 def test_redis_lease_reclaim_survives_new_queue_instance():
     from jobs.queue import RedisJobQueue
 
-    url = os.environ["AGENT_PLATFORM_QUEUE_URL"]
+    url = os.environ["LZCORE_QUEUE_URL"]
     first = RedisJobQueue(url)
     second = RedisJobQueue(url)
     first.client.delete(first.QUEUED, first.PROCESSING, first.LEASES)
@@ -54,8 +54,8 @@ def test_s3_object_round_trip_through_two_clients():
     from botocore.config import Config
     from storage.object_store import S3ObjectStore
 
-    endpoint = os.environ["AGENT_PLATFORM_S3_ENDPOINT_URL"]
-    bucket = os.environ["AGENT_PLATFORM_OBJECT_STORE_BUCKET"]
+    endpoint = os.environ["LZCORE_S3_ENDPOINT_URL"]
+    bucket = os.environ["LZCORE_OBJECT_STORE_BUCKET"]
     client = boto3.client(
         "s3",
         endpoint_url=endpoint,

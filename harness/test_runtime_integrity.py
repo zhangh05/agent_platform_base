@@ -4,7 +4,7 @@ import asyncio
 
 
 def _reset_context_runtime(tmp_path, monkeypatch):
-    monkeypatch.setenv("NA_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("LZCORE_WORKSPACE_ROOT", str(tmp_path))
     import core.context.context_store as context_store
     import core.context.unified_retriever as unified_retriever
 
@@ -47,7 +47,7 @@ def test_knowledge_source_keeps_full_content_and_disable_hides_chunks(tmp_path, 
 def test_memory_management_search_includes_pending_records(tmp_path, monkeypatch):
     import storage.memory_governance as governance
 
-    monkeypatch.setenv("NA_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("LZCORE_WORKSPACE_ROOT", str(tmp_path))
     record = governance.MemoryRecord(
         workspace_id="review_ws",
         status="pending",
@@ -65,7 +65,7 @@ def test_memory_management_search_includes_pending_records(tmp_path, monkeypatch
 def test_memory_store_rejects_path_like_memory_ids(tmp_path, monkeypatch):
     import storage.memory_governance as governance
 
-    monkeypatch.setenv("NA_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("LZCORE_WORKSPACE_ROOT", str(tmp_path))
     store = governance.MemoryStore()
     assert store.get("review_ws", "../../escape") is None
     assert store.delete_file("review_ws", "../../escape") is False
@@ -76,7 +76,7 @@ def test_memory_hard_delete_removes_record_and_context_projection(tmp_path, monk
     import storage.memory_governance as governance
     from core.context.context_store import get_context_store
 
-    monkeypatch.setenv("NA_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("LZCORE_WORKSPACE_ROOT", str(tmp_path))
     record = governance.MemoryRecord(
         workspace_id="review_ws",
         status="active",

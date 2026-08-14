@@ -12,7 +12,7 @@
  *  - 每个会话最多 100 条消息
  *  - 最多保留 20 个最近会话
  *  - 超出后按最近一条消息时间执行 LRU 淘汰
- *  - localStorage key: "na_workbench"
+ *  - localStorage key: "lzcore_workbench"
  */
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
@@ -658,9 +658,9 @@ export const useWorkbenchStore = create<WorkbenchState>()(
       },
     }),
     {
-      name: "na_workbench",
+      name: "lzcore_workbench",
       version: 3,
-      storage: createJSONStorage(() => debouncedStorage("na_workbench")),
+      storage: createJSONStorage(() => debouncedStorage("lzcore_workbench")),
       // v3: drop `results` from persistence — Timeline derives runs from
       // bySession now, so we only need to persist bySession + lastUserInput.
       migrate: (persisted: unknown, _version: number) => {

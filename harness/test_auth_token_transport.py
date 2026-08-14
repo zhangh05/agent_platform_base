@@ -19,8 +19,8 @@ def test_api_token_headers_remain_supported():
 
 
 def test_api_token_auth_status_is_a_browser_usable_owner_session(monkeypatch):
-    monkeypatch.setenv("AGENT_PLATFORM_API_TOKEN", "secret-token")
-    monkeypatch.setenv("AGENT_PLATFORM_AUTH_ENABLED", "true")
+    monkeypatch.setenv("LZCORE_API_TOKEN", "secret-token")
+    monkeypatch.setenv("LZCORE_AUTH_ENABLED", "true")
     from backend.core.auth import handle_auth_status
 
     app = Flask(__name__)

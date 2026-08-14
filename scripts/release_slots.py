@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Stage, activate, and roll back immutable Agent Platform releases."""
+"""Stage, activate, and roll back immutable LZCore releases."""
 
 from __future__ import annotations
 

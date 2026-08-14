@@ -17,8 +17,8 @@ def _without_docker(monkeypatch):
 
 def test_non_loopback_mode_requires_strong_runner(monkeypatch):
     _without_docker(monkeypatch)
-    monkeypatch.setenv("AGENT_PLATFORM_RUNTIME_BIND_HOST", "0.0.0.0")
-    monkeypatch.delenv("AGENT_PLATFORM_TRUSTED_LOCAL_PYTHON_EXECUTION", raising=False)
+    monkeypatch.setenv("LZCORE_RUNTIME_BIND_HOST", "0.0.0.0")
+    monkeypatch.delenv("LZCORE_TRUSTED_LOCAL_PYTHON_EXECUTION", raising=False)
     runner = select_python_runner()
     assert isinstance(runner, UnavailableStrongIsolationRunner)
     result = runner.execute(code="print(1)", workspace_id="ws", run_id="r", timeout=1, input_data={})
@@ -29,28 +29,28 @@ def test_non_loopback_mode_requires_strong_runner(monkeypatch):
 
 def test_trusted_local_opt_in_uses_best_effort_runner(monkeypatch):
     _without_docker(monkeypatch)
-    monkeypatch.setenv("AGENT_PLATFORM_RUNTIME_BIND_HOST", "127.0.0.1")
-    monkeypatch.setenv("AGENT_PLATFORM_TRUSTED_LOCAL_PYTHON_EXECUTION", "true")
+    monkeypatch.setenv("LZCORE_RUNTIME_BIND_HOST", "127.0.0.1")
+    monkeypatch.setenv("LZCORE_TRUSTED_LOCAL_PYTHON_EXECUTION", "true")
     assert isinstance(select_python_runner(), BestEffortPythonRunner)
 
 
 def test_identity_mode_requires_strong_runner_even_on_loopback(monkeypatch):
     _without_docker(monkeypatch)
-    monkeypatch.setenv("AGENT_PLATFORM_RUNTIME_BIND_HOST", "127.0.0.1")
-    monkeypatch.setenv("AGENT_PLATFORM_IDENTITY_ENABLED", "true")
-    monkeypatch.setenv("AGENT_PLATFORM_TRUSTED_LOCAL_PYTHON_EXECUTION", "true")
+    monkeypatch.setenv("LZCORE_RUNTIME_BIND_HOST", "127.0.0.1")
+    monkeypatch.setenv("LZCORE_IDENTITY_ENABLED", "true")
+    monkeypatch.setenv("LZCORE_TRUSTED_LOCAL_PYTHON_EXECUTION", "true")
     assert isinstance(select_python_runner(), UnavailableStrongIsolationRunner)
 
 
 def test_container_runner_requires_operator_pinned_image(monkeypatch):
-    monkeypatch.delenv("AGENT_PLATFORM_PYTHON_CONTAINER_IMAGE", raising=False)
-    monkeypatch.delenv("AGENT_PLATFORM_ALLOW_MUTABLE_PYTHON_IMAGE", raising=False)
+    monkeypatch.delenv("LZCORE_PYTHON_CONTAINER_IMAGE", raising=False)
+    monkeypatch.delenv("LZCORE_ALLOW_MUTABLE_PYTHON_IMAGE", raising=False)
     assert DockerStrongIsolationRunner.available() is None
 
 
 def test_container_runner_requires_pinned_image_to_exist_locally(monkeypatch):
     image = "python@example.invalid@sha256:" + "a" * 64
-    monkeypatch.setenv("AGENT_PLATFORM_PYTHON_CONTAINER_IMAGE", image)
+    monkeypatch.setenv("LZCORE_PYTHON_CONTAINER_IMAGE", image)
     monkeypatch.setattr("core.tools.python_runner.shutil.which", lambda _name: "/usr/bin/docker")
 
     def fake_run(command, **_kwargs):
@@ -63,7 +63,7 @@ def test_container_runner_requires_pinned_image_to_exist_locally(monkeypatch):
 
 
 def test_container_runner_cleans_host_script_after_execution(monkeypatch, tmp_path):
-    monkeypatch.setenv("NA_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("LZCORE_WORKSPACE_ROOT", str(tmp_path))
     runner = DockerStrongIsolationRunner(
         docker_bin="/usr/bin/docker",
         image="python@example.invalid@sha256:" + "a" * 64,

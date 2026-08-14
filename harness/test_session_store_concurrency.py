@@ -10,7 +10,7 @@ import pytest
 
 
 def _process_update(root: str, session_id: str, workspace_id: str, field: str, value: str) -> None:
-    os.environ["NA_WORKSPACE_ROOT"] = root
+    os.environ["LZCORE_WORKSPACE_ROOT"] = root
     from storage.session_store import update_session
 
     if field == "title":
@@ -22,7 +22,7 @@ def _process_update(root: str, session_id: str, workspace_id: str, field: str, v
 
 
 def _process_ensure(root: str, session_id: str, workspace_id: str) -> None:
-    os.environ["NA_WORKSPACE_ROOT"] = root
+    os.environ["LZCORE_WORKSPACE_ROOT"] = root
     from storage.session_store import ensure_session
 
     ensure_session(session_id, workspace_id, title="parallel")
@@ -30,7 +30,7 @@ def _process_ensure(root: str, session_id: str, workspace_id: str) -> None:
 
 @pytest.fixture
 def isolated_store(monkeypatch, tmp_path: Path) -> Path:
-    monkeypatch.setenv("NA_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("LZCORE_WORKSPACE_ROOT", str(tmp_path))
     return tmp_path
 
 

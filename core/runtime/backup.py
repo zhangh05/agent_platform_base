@@ -27,8 +27,8 @@ MAX_BACKUP_BYTES = 10 * 1024 * 1024 * 1024
 
 
 def backup_root() -> Path:
-    configured = os.getenv("AGENT_PLATFORM_BACKUP_DIR", "").strip()
-    root = Path(configured).expanduser().resolve() if configured else get_workspace_root().parent / ".agent-platform-backups"
+    configured = os.getenv("LZCORE_BACKUP_DIR", "").strip()
+    root = Path(configured).expanduser().resolve() if configured else get_workspace_root().parent / ".lzcore-backups"
     root.mkdir(parents=True, exist_ok=True)
     return root
 

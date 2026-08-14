@@ -12,8 +12,8 @@ from storage.workspace_store import (
 
 
 def test_configured_admin_uses_strict_user_and_workspace_paths(monkeypatch, tmp_path):
-    monkeypatch.setenv("NA_WORKSPACE_ROOT", str(tmp_path))
-    monkeypatch.setenv("AGENT_PLATFORM_LOGIN_USERNAME", "Admin")
+    monkeypatch.setenv("LZCORE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("LZCORE_LOGIN_USERNAME", "Admin")
     key = principal_storage_key("Admin")
 
     with storage_principal("Admin"):
@@ -22,7 +22,7 @@ def test_configured_admin_uses_strict_user_and_workspace_paths(monkeypatch, tmp_
 
 
 def test_workspace_catalog_is_separate_from_user_data(monkeypatch, tmp_path):
-    monkeypatch.setenv("NA_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("LZCORE_WORKSPACE_ROOT", str(tmp_path))
     with storage_principal("Admin"):
         ensure_workspace("default")
     assert list_workspace_ids() == ["default"]
@@ -31,7 +31,7 @@ def test_workspace_catalog_is_separate_from_user_data(monkeypatch, tmp_path):
 
 
 def test_workspace_control_metadata_is_written_to_catalog(monkeypatch, tmp_path):
-    monkeypatch.setenv("NA_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("LZCORE_WORKSPACE_ROOT", str(tmp_path))
     with storage_principal("Admin"):
         update_workspace_state("default", {"organization_id": "network", "owner_username": "Admin"})
         listed = list_workspaces()
@@ -40,7 +40,7 @@ def test_workspace_control_metadata_is_written_to_catalog(monkeypatch, tmp_path)
 
 
 def test_workspace_rename_and_delete_cover_every_user_data_root(monkeypatch, tmp_path):
-    monkeypatch.setenv("NA_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("LZCORE_WORKSPACE_ROOT", str(tmp_path))
     for username in ("Admin", "network"):
         with storage_principal(username):
             ensure_workspace("team")
@@ -59,7 +59,7 @@ def test_workspace_rename_and_delete_cover_every_user_data_root(monkeypatch, tmp
 
 
 def test_user_creation_eagerly_provisions_immutable_root_and_delete_removes_it(monkeypatch, tmp_path):
-    monkeypatch.setenv("NA_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("LZCORE_WORKSPACE_ROOT", str(tmp_path))
     user = upsert_user("alice", "password", "viewer", "org", ["team"], home_workspace_id="team")
 
     user_id = resolve_user_storage_id("alice")
@@ -73,7 +73,7 @@ def test_user_creation_eagerly_provisions_immutable_root_and_delete_removes_it(m
 
 
 def test_workspace_objects_and_approval_audit_follow_user_workspace_root(monkeypatch, tmp_path):
-    monkeypatch.setenv("NA_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("LZCORE_WORKSPACE_ROOT", str(tmp_path))
     upsert_user("alice", "password", "viewer", "org", ["team"])
     upsert_user("bob", "password", "viewer", "org_b", ["team_b"])
     from storage.approval_record_store import approval_log_path
@@ -90,7 +90,7 @@ def test_workspace_objects_and_approval_audit_follow_user_workspace_root(monkeyp
 
 
 def test_one_user_memory_is_shared_across_their_workspaces(monkeypatch, tmp_path):
-    monkeypatch.setenv("NA_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("LZCORE_WORKSPACE_ROOT", str(tmp_path))
     upsert_user("alice", "password", "viewer", "org", ["one", "two"])
     from storage.memory_governance import MemoryRecord, MemoryStore, MemoryWriteGate
 
@@ -102,7 +102,7 @@ def test_one_user_memory_is_shared_across_their_workspaces(monkeypatch, tmp_path
 
 
 def test_identity_upgrade_assigns_immutable_ids_without_preserving_legacy_roots(monkeypatch, tmp_path):
-    monkeypatch.setenv("NA_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("LZCORE_WORKSPACE_ROOT", str(tmp_path))
     from storage.atomic_io import atomic_write_json
     from storage.records import runtime_record_file
 

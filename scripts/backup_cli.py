@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Create, list, verify, prune, or restore Agent Platform backups."""
+"""Create, list, verify, prune, or restore LZCore backups."""
 
 from __future__ import annotations
 

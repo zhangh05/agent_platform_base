@@ -5,7 +5,7 @@ from core.tools.schemas import ToolInvocation
 
 
 def test_non_pdf_returns_a_normal_tool_error(monkeypatch, tmp_path):
-    monkeypatch.setenv("NA_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("LZCORE_WORKSPACE_ROOT", str(tmp_path))
     workspace = "ws_pdf_contract"
     target = tmp_path / workspace / "bad.pdf"
     target.parent.mkdir(parents=True)

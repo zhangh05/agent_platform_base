@@ -1,7 +1,7 @@
 # Current Project Structure
 
 ```text
-agent_platform_base/
+lzcore/
 ├── agent/
 │   ├── app/                    # AgentApp, session/thread orchestration
 │   ├── capabilities/           # Business capability catalog only

@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# Start Agent Platform Base backend + frontend on macOS/Linux.
+# Start LZCore backend + frontend on macOS/Linux.
 
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 CONFIG_ALLOWED_ORIGINS=""
 if [ -f "$ROOT/.env.local" ]; then
-    CONFIG_ALLOWED_ORIGINS="$(sed -n 's/^AGENT_PLATFORM_ALLOWED_ORIGINS=//p' "$ROOT/.env.local" | tail -n 1)"
+    CONFIG_ALLOWED_ORIGINS="$(sed -n 's/^LZCORE_ALLOWED_ORIGINS=//p' "$ROOT/.env.local" | tail -n 1)"
     set -a
     # shellcheck disable=SC1091
     . "$ROOT/.env.local"
@@ -21,8 +21,8 @@ INSTALL_DEPS="${INSTALL_DEPS:-auto}"
 LOG_DIR="${LOG_DIR:-$ROOT/logs}"
 BACKEND_PID_FILE="$ROOT/.backend.pid"
 FRONTEND_PID_FILE="$ROOT/.frontend.pid"
-BACKEND_SCREEN="${BACKEND_SCREEN:-agent-platform-base-backend}"
-FRONTEND_SCREEN="${FRONTEND_SCREEN:-agent-platform-base-frontend}"
+BACKEND_SCREEN="${BACKEND_SCREEN:-lzcore-backend}"
+FRONTEND_SCREEN="${FRONTEND_SCREEN:-lzcore-frontend}"
 
 log() { printf '%s\n' "$*"; }
 fail() { log "[ERROR] $*" >&2; exit 1; }
@@ -247,17 +247,17 @@ start_backend() {
     if [ -n "$CONFIG_ALLOWED_ORIGINS" ]; then
         allowed_origins="$allowed_origins,$CONFIG_ALLOWED_ORIGINS"
     fi
-    export AGENT_PLATFORM_ALLOWED_ORIGINS="$allowed_origins"
-    export AGENT_PLATFORM_RUNTIME_BIND_HOST="$BACKEND_HOST"
+    export LZCORE_ALLOWED_ORIGINS="$allowed_origins"
+    export LZCORE_RUNTIME_BIND_HOST="$BACKEND_HOST"
 
     log "[backend] Starting on $BACKEND_HOST:$BACKEND_PORT..."
     : > "$LOG_DIR/backend-$BACKEND_PORT.log"
     stop_screen "$BACKEND_SCREEN"
     if command -v screen >/dev/null 2>&1; then
         screen -dmS "$BACKEND_SCREEN" /bin/bash -lc \
-            "cd '$ROOT' && export AGENT_PLATFORM_ALLOWED_ORIGINS='$allowed_origins' && exec '$PYTHON_BIN' backend/main.py --host '$BACKEND_HOST' --port '$BACKEND_PORT' >> '$LOG_DIR/backend-$BACKEND_PORT.log' 2>&1"
+            "cd '$ROOT' && export LZCORE_ALLOWED_ORIGINS='$allowed_origins' && exec '$PYTHON_BIN' backend/main.py --host '$BACKEND_HOST' --port '$BACKEND_PORT' >> '$LOG_DIR/backend-$BACKEND_PORT.log' 2>&1"
     else
-        (cd "$ROOT" && export AGENT_PLATFORM_ALLOWED_ORIGINS="$allowed_origins" && nohup "$PYTHON_BIN" backend/main.py --host "$BACKEND_HOST" --port "$BACKEND_PORT" >> "$LOG_DIR/backend-$BACKEND_PORT.log" 2>&1 </dev/null &)
+        (cd "$ROOT" && export LZCORE_ALLOWED_ORIGINS="$allowed_origins" && nohup "$PYTHON_BIN" backend/main.py --host "$BACKEND_HOST" --port "$BACKEND_PORT" >> "$LOG_DIR/backend-$BACKEND_PORT.log" 2>&1 </dev/null &)
     fi
     wait_for_url backend "http://127.0.0.1:$BACKEND_PORT/api/health" || { stop_started_services; fail "Backend failed to start. See $LOG_DIR/backend-$BACKEND_PORT.log"; }
     write_port_pid "$BACKEND_PORT" "$BACKEND_PID_FILE"
@@ -315,7 +315,7 @@ print_summary() {
 }
 
 main() {
-    log "Agent Platform Base"
+    log "LZCore"
     startup_security_validate_network_exposure "$BACKEND_HOST" "$FRONTEND_HOST" || fail "Unsafe network startup configuration."
     mkdir -p "$LOG_DIR"
     detect_venv || true

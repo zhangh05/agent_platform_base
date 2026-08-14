@@ -1,11 +1,11 @@
-# Agent Platform Base Frontend
+# LZCore Frontend
 
-Agent Platform Base 的 React/TypeScript 前端。
+LZCore 的 React/TypeScript 前端。
 
 ## Run
 
 ```bash
-cd /Users/zhangh01/Desktop/agent_platform_base/frontend
+cd /Users/zhangh01/Desktop/lzcore/frontend
 npm run dev -- --host 0.0.0.0
 ```
 

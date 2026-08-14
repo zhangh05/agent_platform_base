@@ -1,4 +1,4 @@
-"""Tool contracts for Agent Platform Base runtime scheduling and retry policy."""
+"""Tool contracts for LZCore runtime scheduling and retry policy."""
 
 from __future__ import annotations
 

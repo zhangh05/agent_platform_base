@@ -616,7 +616,7 @@ def _lookup_open_meteo_weather(*, location: str, days: int, language: str,
                     "format": "json",
                 },
                 timeout=15,
-                headers={"User-Agent": "AgentPlatformBase/1.0 (+https://github.com/zhangh05/agent_platform_base)"},
+                headers={"User-Agent": "LZCore/1.0 (+https://github.com/zhangh05/lzcore)"},
             )
             if geo_resp.status_code != 200:
                 return _result(_DummyInv(""), False, {
@@ -671,7 +671,7 @@ def _lookup_open_meteo_weather(*, location: str, days: int, language: str,
                     "https://api.open-meteo.com/v1/forecast",
                     params=forecast_params,
                     timeout=15,
-                    headers={"User-Agent": "AgentPlatformBase/1.0 (+https://github.com/zhangh05/agent_platform_base)"},
+                    headers={"User-Agent": "LZCore/1.0 (+https://github.com/zhangh05/lzcore)"},
                 )
                 if weather_resp.status_code == 200 or attempt == 1:
                     break

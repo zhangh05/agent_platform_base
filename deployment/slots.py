@@ -20,8 +20,8 @@ class ReleaseError(RuntimeError):
 
 
 def release_root(value: str | Path | None = None) -> Path:
-    configured = value or os.getenv("AGENT_PLATFORM_RELEASE_ROOT", "")
-    root = Path(configured).expanduser().resolve() if configured else Path(__file__).resolve().parent.parent.parent / ".agent-platform-releases"
+    configured = value or os.getenv("LZCORE_RELEASE_ROOT", "")
+    root = Path(configured).expanduser().resolve() if configured else Path(__file__).resolve().parent.parent.parent / ".lzcore-releases"
     root.mkdir(parents=True, exist_ok=True)
     (root / "releases").mkdir(exist_ok=True)
     return root

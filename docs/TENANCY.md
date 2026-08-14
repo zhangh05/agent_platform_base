@@ -8,9 +8,9 @@ and user access records together.
 Enable the control plane with:
 
 ```bash
-export AGENT_PLATFORM_IDENTITY_ENABLED=true
-export AGENT_PLATFORM_SESSION_SECRET='...'
-export AGENT_PLATFORM_MASTER_KEY='...'
+export LZCORE_IDENTITY_ENABLED=true
+export LZCORE_SESSION_SECRET='...'
+export LZCORE_MASTER_KEY='...'
 ```
 
 The configured `Admin` environment-login account is the protected platform

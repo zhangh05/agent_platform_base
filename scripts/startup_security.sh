@@ -21,19 +21,19 @@ startup_security_is_loopback_host() {
 }
 
 startup_security_auth_mode() {
-    if startup_security_is_truthy "${AGENT_PLATFORM_AUTH_ENABLED:-}" \
-        && [ -n "${AGENT_PLATFORM_API_TOKEN:-}" ]; then
+    if startup_security_is_truthy "${LZCORE_AUTH_ENABLED:-}" \
+        && [ -n "${LZCORE_API_TOKEN:-}" ]; then
         printf '%s\n' 'api_token'
         return 0
     fi
-    if startup_security_is_truthy "${AGENT_PLATFORM_IDENTITY_ENABLED:-}"; then
+    if startup_security_is_truthy "${LZCORE_IDENTITY_ENABLED:-}"; then
         printf '%s\n' 'identity'
         return 0
     fi
-    local login_flag="${AGENT_PLATFORM_LOGIN_ENABLED:-}"
+    local login_flag="${LZCORE_LOGIN_ENABLED:-}"
     if { [ -z "$login_flag" ] || startup_security_is_truthy "$login_flag"; } \
-        && [ -n "${AGENT_PLATFORM_LOGIN_USERNAME:-}" ] \
-        && [ -n "${AGENT_PLATFORM_LOGIN_PASSWORD:-}" ]; then
+        && [ -n "${LZCORE_LOGIN_USERNAME:-}" ] \
+        && [ -n "${LZCORE_LOGIN_PASSWORD:-}" ]; then
         printf '%s\n' 'login'
         return 0
     fi
@@ -56,11 +56,11 @@ startup_security_validate_network_exposure() {
         return 0
     fi
 
-    if startup_security_is_truthy "${AGENT_PLATFORM_ALLOW_UNAUTHENTICATED_NETWORK:-}"; then
-        printf '%s\n' "[security] DANGER: unauthenticated network listener explicitly allowed by AGENT_PLATFORM_ALLOW_UNAUTHENTICATED_NETWORK=true." >&2
+    if startup_security_is_truthy "${LZCORE_ALLOW_UNAUTHENTICATED_NETWORK:-}"; then
+        printf '%s\n' "[security] DANGER: unauthenticated network listener explicitly allowed by LZCORE_ALLOW_UNAUTHENTICATED_NETWORK=true." >&2
         return 0
     fi
 
-    printf '%s\n' "[security] Refusing network listener without effective API token, login, or identity authentication. Use loopback hosts, configure authentication, or explicitly set AGENT_PLATFORM_ALLOW_UNAUTHENTICATED_NETWORK=true for trusted development only." >&2
+    printf '%s\n' "[security] Refusing network listener without effective API token, login, or identity authentication. Use loopback hosts, configure authentication, or explicitly set LZCORE_ALLOW_UNAUTHENTICATED_NETWORK=true for trusted development only." >&2
     return 1
 }

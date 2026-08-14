@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Create a minimal installable Agent Platform extension."""
+"""Create a minimal installable LZCore extension."""
 
 from __future__ import annotations
 

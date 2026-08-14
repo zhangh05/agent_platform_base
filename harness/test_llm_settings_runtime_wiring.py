@@ -38,7 +38,7 @@ class TestLLMProviderSettings:
     def test_env_fallback_when_no_active_provider(self, monkeypatch, tmp_path):
         _isolate_provider_store(monkeypatch, tmp_path)
         monkeypatch.setenv("MINIMAX_API_KEY", "sk-env-key123456")
-        monkeypatch.setenv("AGENT_PLATFORM_LLM_ENABLED", "true")
+        monkeypatch.setenv("LZCORE_LLM_ENABLED", "true")
 
         from agent.llm.config import resolve_provider_config
         cfg = resolve_provider_config()

@@ -21,7 +21,7 @@ workspaces
 logs
 reports
 output
-.agent-platform-backups
+.lzcore-backups
 config/llm.local.yaml
 config/llm.local.json
 config/providers

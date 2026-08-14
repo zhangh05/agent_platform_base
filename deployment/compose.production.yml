@@ -1,30 +1,30 @@
-name: agent-platform
+name: lzcore
 
 x-backend-environment: &backend-environment
-  NA_WORKSPACE_ROOT: /var/lib/agent-platform/workspaces
-  AGENT_PLATFORM_RUNTIME_BIND_HOST: 0.0.0.0
-  AGENT_PLATFORM_IDENTITY_ENABLED: "true"
-  AGENT_PLATFORM_AUTH_ENABLED: "true"
-  AGENT_PLATFORM_SESSION_SECURE: "true"
-  AGENT_PLATFORM_SESSION_SECRET_FILE: /run/secrets/session_secret
-  AGENT_PLATFORM_MASTER_KEY_FILE: /run/secrets/master_key
-  AGENT_PLATFORM_API_TOKEN_FILE: /run/secrets/api_token
-  AGENT_PLATFORM_LOGIN_USERNAME: ${AGENT_PLATFORM_LOGIN_USERNAME:-Admin}
-  AGENT_PLATFORM_LOGIN_PASSWORD_FILE: /run/secrets/login_password
-  AGENT_PLATFORM_RECORD_STORE_MODE: postgres
-  AGENT_PLATFORM_DATABASE_URL: postgresql://agent_platform:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/agent_platform
-  AGENT_PLATFORM_OBJECT_STORE_MODE: s3
-  AGENT_PLATFORM_OBJECT_STORE_BUCKET: agent-platform
-  AGENT_PLATFORM_OBJECT_STORE_PREFIX: production
-  AGENT_PLATFORM_S3_ENDPOINT_URL: http://minio:9000
-  AGENT_PLATFORM_S3_ADDRESSING_STYLE: path
-  AGENT_PLATFORM_QUEUE_MODE: redis
-  AGENT_PLATFORM_QUEUE_URL: redis://redis:6379/0
-  AGENT_PLATFORM_APPROVAL_TTL_SECONDS: ${AGENT_PLATFORM_APPROVAL_TTL_SECONDS:-1800}
-  AGENT_PLATFORM_CONTINUATION_STALL_SECONDS: ${AGENT_PLATFORM_CONTINUATION_STALL_SECONDS:-900}
-  AGENT_PLATFORM_CONTINUATION_RETENTION_DAYS: ${AGENT_PLATFORM_CONTINUATION_RETENTION_DAYS:-30}
-  AGENT_PLATFORM_PYTHON_REQUIRE_STRONG_ISOLATION: "true"
-  AGENT_PLATFORM_PYTHON_CONTAINER_IMAGE: ${AGENT_PLATFORM_PYTHON_CONTAINER_IMAGE:?set an immutable image digest}
+  LZCORE_WORKSPACE_ROOT: /var/lib/lzcore/workspaces
+  LZCORE_RUNTIME_BIND_HOST: 0.0.0.0
+  LZCORE_IDENTITY_ENABLED: "true"
+  LZCORE_AUTH_ENABLED: "true"
+  LZCORE_SESSION_SECURE: "true"
+  LZCORE_SESSION_SECRET_FILE: /run/secrets/session_secret
+  LZCORE_MASTER_KEY_FILE: /run/secrets/master_key
+  LZCORE_API_TOKEN_FILE: /run/secrets/api_token
+  LZCORE_LOGIN_USERNAME: ${LZCORE_LOGIN_USERNAME:-Admin}
+  LZCORE_LOGIN_PASSWORD_FILE: /run/secrets/login_password
+  LZCORE_RECORD_STORE_MODE: postgres
+  LZCORE_DATABASE_URL: postgresql://lzcore:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/lzcore
+  LZCORE_OBJECT_STORE_MODE: s3
+  LZCORE_OBJECT_STORE_BUCKET: lzcore
+  LZCORE_OBJECT_STORE_PREFIX: production
+  LZCORE_S3_ENDPOINT_URL: http://minio:9000
+  LZCORE_S3_ADDRESSING_STYLE: path
+  LZCORE_QUEUE_MODE: redis
+  LZCORE_QUEUE_URL: redis://redis:6379/0
+  LZCORE_APPROVAL_TTL_SECONDS: ${LZCORE_APPROVAL_TTL_SECONDS:-1800}
+  LZCORE_CONTINUATION_STALL_SECONDS: ${LZCORE_CONTINUATION_STALL_SECONDS:-900}
+  LZCORE_CONTINUATION_RETENTION_DAYS: ${LZCORE_CONTINUATION_RETENTION_DAYS:-30}
+  LZCORE_PYTHON_REQUIRE_STRONG_ISOLATION: "true"
+  LZCORE_PYTHON_CONTAINER_IMAGE: ${LZCORE_PYTHON_CONTAINER_IMAGE:?set an immutable image digest}
   DOCKER_HOST: unix:///run/docker.sock
   AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER:?set MINIO_ROOT_USER}
   AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:?set MINIO_ROOT_PASSWORD}
@@ -38,10 +38,10 @@ services:
     restart: unless-stopped
     environment: *backend-environment
     volumes:
-      - platform-data:/var/lib/agent-platform
-      - ${AGENT_PLATFORM_DOCKER_SOCKET:-/var/run/docker.sock}:/run/docker.sock
+      - lzcore-data:/var/lib/lzcore
+      - ${LZCORE_DOCKER_SOCKET:-/var/run/docker.sock}:/run/docker.sock
     group_add:
-      - ${AGENT_PLATFORM_DOCKER_SOCKET_GID:?set socket group id}
+      - ${LZCORE_DOCKER_SOCKET_GID:?set socket group id}
     secrets:
       - session_secret
       - master_key
@@ -73,12 +73,12 @@ services:
     command: ["python", "-c", "from jobs.worker import start_worker; start_worker()"]
     environment:
       <<: *backend-environment
-      AGENT_PLATFORM_WORKER_ID: production-worker-1
+      LZCORE_WORKER_ID: production-worker-1
     volumes:
-      - platform-data:/var/lib/agent-platform
-      - ${AGENT_PLATFORM_DOCKER_SOCKET:-/var/run/docker.sock}:/run/docker.sock
+      - lzcore-data:/var/lib/lzcore
+      - ${LZCORE_DOCKER_SOCKET:-/var/run/docker.sock}:/run/docker.sock
     group_add:
-      - ${AGENT_PLATFORM_DOCKER_SOCKET_GID:?set socket group id}
+      - ${LZCORE_DOCKER_SOCKET_GID:?set socket group id}
     secrets:
       - session_secret
       - master_key
@@ -112,11 +112,11 @@ services:
     image: caddy:2.10-alpine
     restart: unless-stopped
     ports:
-      - "${AGENT_PLATFORM_HTTPS_PORT:-443}:443"
+      - "${LZCORE_HTTPS_PORT:-443}:443"
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
-      - ${AGENT_PLATFORM_TLS_CERT_FILE:?set AGENT_PLATFORM_TLS_CERT_FILE}:/run/tls/tls.crt:ro
-      - ${AGENT_PLATFORM_TLS_KEY_FILE:?set AGENT_PLATFORM_TLS_KEY_FILE}:/run/tls/tls.key:ro
+      - ${LZCORE_TLS_CERT_FILE:?set LZCORE_TLS_CERT_FILE}:/run/tls/tls.crt:ro
+      - ${LZCORE_TLS_KEY_FILE:?set LZCORE_TLS_KEY_FILE}:/run/tls/tls.key:ro
     depends_on:
       - frontend
     read_only: true
@@ -130,13 +130,13 @@ services:
     image: postgres:16-alpine
     restart: unless-stopped
     environment:
-      POSTGRES_DB: agent_platform
-      POSTGRES_USER: agent_platform
+      POSTGRES_DB: lzcore
+      POSTGRES_USER: lzcore
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
     volumes:
       - postgres-data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U agent_platform -d agent_platform"]
+      test: ["CMD-SHELL", "pg_isready -U lzcore -d lzcore"]
       interval: 5s
       timeout: 5s
       retries: 20
@@ -180,7 +180,7 @@ services:
     command:
       - >-
         mc alias set local http://minio:9000 "$${MINIO_ROOT_USER}" "$${MINIO_ROOT_PASSWORD}" &&
-        mc mb --ignore-existing local/agent-platform
+        mc mb --ignore-existing local/lzcore
 
   prometheus:
     image: prom/prometheus:v3.5.0
@@ -216,7 +216,7 @@ services:
       - prometheus
 
 volumes:
-  platform-data:
+  lzcore-data:
   postgres-data:
   redis-data:
   minio-data:
@@ -225,10 +225,10 @@ volumes:
 
 secrets:
   master_key:
-    file: ${AGENT_PLATFORM_MASTER_KEY_FILE:?set AGENT_PLATFORM_MASTER_KEY_FILE}
+    file: ${LZCORE_MASTER_KEY_FILE:?set LZCORE_MASTER_KEY_FILE}
   session_secret:
-    file: ${AGENT_PLATFORM_SESSION_SECRET_FILE:?set AGENT_PLATFORM_SESSION_SECRET_FILE}
+    file: ${LZCORE_SESSION_SECRET_FILE:?set LZCORE_SESSION_SECRET_FILE}
   login_password:
-    file: ${AGENT_PLATFORM_LOGIN_PASSWORD_FILE:?set AGENT_PLATFORM_LOGIN_PASSWORD_FILE}
+    file: ${LZCORE_LOGIN_PASSWORD_FILE:?set LZCORE_LOGIN_PASSWORD_FILE}
   api_token:
-    file: ${AGENT_PLATFORM_API_TOKEN_FILE:?set AGENT_PLATFORM_API_TOKEN_FILE}
+    file: ${LZCORE_API_TOKEN_FILE:?set LZCORE_API_TOKEN_FILE}

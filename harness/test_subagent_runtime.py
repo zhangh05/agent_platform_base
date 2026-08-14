@@ -265,8 +265,8 @@ class TestProfileToolsFilter:
         from storage.workspace_store import ensure_workspace
         from agent.runtime.durable.subagent import _load_task, _save_task
 
-        monkeypatch.setenv("NA_WORKSPACE_ROOT", str(tmp_path))
-        monkeypatch.setenv("AGENT_PLATFORM_LOGIN_USERNAME", "Admin")
+        monkeypatch.setenv("LZCORE_WORKSPACE_ROOT", str(tmp_path))
+        monkeypatch.setenv("LZCORE_LOGIN_USERNAME", "Admin")
         ws = f"ws_principal_restart_{uuid.uuid4().hex[:8]}"
         with storage_principal("Admin"):
             ensure_workspace(ws)

@@ -60,7 +60,7 @@ test("13b. API-token SSE uses an Authorization header and a credential-free URL"
   expect(apiToken).not.toBe("");
   const context = await browser.newContext({ storageState: { cookies: [], origins: [] } });
   await context.addInitScript((token) => {
-    window.localStorage.setItem("NA_API_TOKEN", token);
+    window.localStorage.setItem("LZCORE_API_TOKEN", token);
   }, apiToken);
   const tokenPage = await context.newPage();
   const streamRequest = tokenPage.waitForRequest(

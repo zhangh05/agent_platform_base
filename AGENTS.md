@@ -1,6 +1,6 @@
 # AGENTS.md
 
-This file is the handoff contract for AI coding agents working in Agent Platform Base.
+This file is the handoff contract for AI coding agents working in LZCore.
 
 ## Non-Negotiable Rules
 

@@ -7,10 +7,10 @@ from pathlib import Path
 from agent import __version__ as PACKAGE_VERSION
 
 # Project roots
-AGENT_PLATFORM_ROOT = Path(__file__).resolve().parent.parent.parent
+LZCORE_ROOT = Path(__file__).resolve().parent.parent.parent
 
 # Port
-UNIFIED_PORT = int(os.environ.get("AGENT_PLATFORM_PORT", "8011"))
+UNIFIED_PORT = int(os.environ.get("LZCORE_PORT", "8011"))
 
 # Build commit
 def _resolve_build_commit() -> str:
@@ -18,7 +18,7 @@ def _resolve_build_commit() -> str:
         result = subprocess.run(
             ["git", "rev-parse", "--short", "HEAD"],
             capture_output=True, text=True,
-            cwd=str(AGENT_PLATFORM_ROOT),
+            cwd=str(LZCORE_ROOT),
         )
         if result.returncode == 0:
             return result.stdout.strip()
@@ -29,7 +29,7 @@ def _resolve_build_commit() -> str:
 BUILD_COMMIT = _resolve_build_commit()
 
 # App identity
-APP_NAME = "agent_platform_base"
-APP_VERSION = os.environ.get("AGENT_PLATFORM_VERSION", PACKAGE_VERSION)
+APP_NAME = "lzcore"
+APP_VERSION = os.environ.get("LZCORE_VERSION", PACKAGE_VERSION)
 API_MODE = "unified"
 PRODUCT_READY = True

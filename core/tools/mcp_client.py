@@ -41,7 +41,7 @@ class StdioMcpClient:
             stderr=subprocess.DEVNULL, text=True, bufsize=1, cwd=self.config.cwd,
             env={**os.environ, **(self.config.env or {})},
         )
-        self.request("initialize", {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "agent-platform-base", "version": "1"}})
+        self.request("initialize", {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "lzcore", "version": "1"}})
         self.notify("notifications/initialized", {})
         return self
 

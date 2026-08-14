@@ -19,7 +19,7 @@ from storage.memory_governance import (
 
 @pytest.fixture
 def isolated_memory(tmp_path, monkeypatch):
-    monkeypatch.setenv("NA_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("LZCORE_WORKSPACE_ROOT", str(tmp_path))
     try:
         import core.context.context_store as context_store
         context_store._stores.clear()

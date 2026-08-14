@@ -1,6 +1,6 @@
 # Extension development
 
-Agent Platform Base discovers bundled extensions from `extensions/*/extension.json`
+LZCore discovers bundled extensions from `extensions/*/extension.json`
 and locally installed extensions from `plugins/*/extension.json`. An extension can
 contribute governed tools, namespaced Flask routes, and lazily loaded workbench pages.
 
@@ -39,8 +39,8 @@ Generate a key pair with OpenSSL, then configure the publisher and server:
 ```bash
 openssl genpkey -algorithm ED25519 -out extension-signing-private.pem
 openssl pkey -in extension-signing-private.pem -pubout -out extension-signing-public.pem
-export AGENT_PLATFORM_EXTENSION_SIGNING_PRIVATE_KEY="$PWD/extension-signing-private.pem"
-export AGENT_PLATFORM_EXTENSION_SIGNING_PUBLIC_KEY="$PWD/extension-signing-public.pem"
+export LZCORE_EXTENSION_SIGNING_PRIVATE_KEY="$PWD/extension-signing-private.pem"
+export LZCORE_EXTENSION_SIGNING_PUBLIC_KEY="$PWD/extension-signing-public.pem"
 ```
 
 Build, verify, publish, and install with:

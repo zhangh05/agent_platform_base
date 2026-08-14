@@ -180,9 +180,9 @@ def register_workspace_routes(app):
             from backend.core.auth import _request_has_valid_api_token
             from backend.core.identity import get_user, identity_enabled
             if identity_enabled() and not _request_has_valid_api_token():
-                current = get_user(str(session.get("agent_platform_user") or ""))
-                if current is not None and str(session.get("agent_platform_role") or "") != "owner":
-                    allowed = set(session.get("agent_platform_workspaces") or [])
+                current = get_user(str(session.get("lzcore_user") or ""))
+                if current is not None and str(session.get("lzcore_role") or "") != "owner":
+                    allowed = set(session.get("lzcore_workspaces") or [])
                     workspaces = [item for item in workspaces if item.get("workspace_id") in allowed]
         except Exception:
             workspaces = []
@@ -203,7 +203,7 @@ def register_workspace_routes(app):
         ensure_workspace(ws_id)
         from flask import session
         from backend.core.identity import identity_enabled
-        organization_id = str(session.get("agent_platform_org") or data.get("organization_id") or "default")
+        organization_id = str(session.get("lzcore_org") or data.get("organization_id") or "default")
         from storage.workspace_store import update_workspace_state
         state = update_workspace_state(ws_id, {"organization_id": organization_id})
         if identity_enabled():

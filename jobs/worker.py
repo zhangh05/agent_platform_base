@@ -50,8 +50,8 @@ def run_once() -> dict:
     try:
         with FileLock(lock_path, timeout=0):
             queue_backend = get_job_queue()
-            worker_id = os.getenv("AGENT_PLATFORM_WORKER_ID", "").strip() or f"{socket.gethostname()}:{os.getpid()}"
-            lease_seconds = max(30, int(os.getenv("AGENT_PLATFORM_JOB_LEASE_SECONDS", "120")))
+            worker_id = os.getenv("LZCORE_WORKER_ID", "").strip() or f"{socket.gethostname()}:{os.getpid()}"
+            lease_seconds = max(30, int(os.getenv("LZCORE_JOB_LEASE_SECONDS", "120")))
             reclaimed = queue_backend.reclaim_stale(lease_seconds)
             receipt = queue_backend.claim(worker_id)
             if not receipt:
@@ -100,7 +100,7 @@ def get_worker_state() -> dict:
             from storage.time_utils import from_iso
             age = max(0.0, time.time() - from_iso(updated_at))
             state["heartbeat_age_seconds"] = round(age, 2)
-            stale_after = max(30, int(os.getenv("AGENT_PLATFORM_WORKER_STALE_SECONDS", "180")))
+            stale_after = max(30, int(os.getenv("LZCORE_WORKER_STALE_SECONDS", "180")))
             state["healthy"] = not (state.get("status") == "running" and age > stale_after)
             if not state["healthy"]:
                 state["status"] = "stale"

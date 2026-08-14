@@ -1,8 +1,8 @@
 groups:
-  - name: agent-platform
+  - name: lzcore
     rules:
       - alert: AgentPlatformTargetDown
-        expr: up{job="agent-platform"} == 0
+        expr: up{job="lzcore"} == 0
         for: 2m
         labels: {severity: critical}
         annotations:
@@ -11,9 +11,9 @@ groups:
 
       - alert: AgentPlatformHighHttp5xxRate
         expr: >-
-          sum(rate(agent_platform_http_requests_total{status=~"5.."}[5m]))
+          sum(rate(lzcore_http_requests_total{status=~"5.."}[5m]))
           /
-          clamp_min(sum(rate(agent_platform_http_requests_total[5m])), 0.001)
+          clamp_min(sum(rate(lzcore_http_requests_total[5m])), 0.001)
           > 0.05
         for: 10m
         labels: {severity: critical}
@@ -22,7 +22,7 @@ groups:
           runbook: docs/OPERATIONS_RUNBOOK.md#接口错误率升高
 
       - alert: AgentPlatformApprovalWaitingTooLong
-        expr: agent_platform_operational_gauge{name="approval_pending"} > 0
+        expr: lzcore_operational_gauge{name="approval_pending"} > 0
         for: 20m
         labels: {severity: warning}
         annotations:
@@ -30,7 +30,7 @@ groups:
           runbook: docs/OPERATIONS_RUNBOOK.md#审批积压
 
       - alert: AgentPlatformToolFailures
-        expr: sum(increase(agent_platform_operations_total{operation="tool",status!="succeeded",status!="dry_run"}[10m])) > 5
+        expr: sum(increase(lzcore_operations_total{operation="tool",status!="succeeded",status!="dry_run"}[10m])) > 5
         for: 5m
         labels: {severity: warning}
         annotations:
@@ -38,7 +38,7 @@ groups:
           runbook: docs/OPERATIONS_RUNBOOK.md#工具失败
 
       - alert: AgentPlatformJobFailures
-        expr: sum(increase(agent_platform_operations_total{operation="job",status="failed"}[15m])) > 3
+        expr: sum(increase(lzcore_operations_total{operation="job",status="failed"}[15m])) > 3
         for: 5m
         labels: {severity: warning}
         annotations:

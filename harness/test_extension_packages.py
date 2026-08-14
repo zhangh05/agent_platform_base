@@ -83,7 +83,7 @@ def test_package_rejects_tampering_and_path_traversal(tmp_path: Path):
 
 def test_install_upgrade_publish_and_soft_uninstall(monkeypatch, tmp_path: Path):
     private, public = _keys()
-    monkeypatch.setenv("NA_WORKSPACE_ROOT", str(tmp_path / "workspaces"))
+    monkeypatch.setenv("LZCORE_WORKSPACE_ROOT", str(tmp_path / "workspaces"))
     first = tmp_path / "v1.apx"
     second = tmp_path / "v2.apx"
     build_package(_extension(tmp_path / "one", "1.0.0"), first, key=private)

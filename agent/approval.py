@@ -93,7 +93,7 @@ def new_approval_id() -> str:
 
 def approval_ttl_seconds() -> int:
     """Return the single server-authoritative approval lifetime."""
-    raw = os.environ.get("AGENT_PLATFORM_APPROVAL_TTL_SECONDS", "").strip()
+    raw = os.environ.get("LZCORE_APPROVAL_TTL_SECONDS", "").strip()
     try:
         value = int(raw) if raw else _DEFAULT_APPROVAL_TTL_SECONDS
     except ValueError:

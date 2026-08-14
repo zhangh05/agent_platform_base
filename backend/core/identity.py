@@ -71,7 +71,7 @@ def ensure_identity_storage_ids() -> int:
 
 
 def identity_enabled() -> bool:
-    return os.environ.get("AGENT_PLATFORM_IDENTITY_ENABLED", "false").strip().lower() in {"1", "true", "yes", "on"}
+    return os.environ.get("LZCORE_IDENTITY_ENABLED", "false").strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _path():

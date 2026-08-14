@@ -1,27 +1,27 @@
-name: agent-platform-server
+name: lzcore-server
 
 x-backend-common: &backend-common
-  image: agent-platform-backend:server
+  image: lzcore-backend:server
   build:
     context: ..
     dockerfile: deployment/backend.Dockerfile
   env_file:
     - ../.env.local
   environment:
-    NA_WORKSPACE_ROOT: /var/lib/agent-platform/workspaces
-    AGENT_PLATFORM_RUNTIME_BIND_HOST: 0.0.0.0
-    AGENT_PLATFORM_RECORD_STORE_MODE: filesystem
-    AGENT_PLATFORM_OBJECT_STORE_MODE: local
-    AGENT_PLATFORM_QUEUE_MODE: filesystem
-    AGENT_PLATFORM_SESSION_SECURE: "false"
-    AGENT_PLATFORM_PYTHON_REQUIRE_STRONG_ISOLATION: "true"
+    LZCORE_WORKSPACE_ROOT: /var/lib/lzcore/workspaces
+    LZCORE_RUNTIME_BIND_HOST: 0.0.0.0
+    LZCORE_RECORD_STORE_MODE: filesystem
+    LZCORE_OBJECT_STORE_MODE: local
+    LZCORE_QUEUE_MODE: filesystem
+    LZCORE_SESSION_SECURE: "false"
+    LZCORE_PYTHON_REQUIRE_STRONG_ISOLATION: "true"
     DOCKER_HOST: unix:///run/docker.sock
   volumes:
-    - ../workspaces:/var/lib/agent-platform/workspaces
+    - ../workspaces:/var/lib/lzcore/workspaces
     - ../config/providers:/app/config/providers
     - /var/run/docker.sock:/run/docker.sock
   group_add:
-    - "${AGENT_PLATFORM_DOCKER_SOCKET_GID:?set AGENT_PLATFORM_DOCKER_SOCKET_GID in deployment/.env}"
+    - "${LZCORE_DOCKER_SOCKET_GID:?set LZCORE_DOCKER_SOCKET_GID in deployment/.env}"
   restart: unless-stopped
   security_opt:
     - no-new-privileges:true
@@ -32,7 +32,7 @@ services:
   backend:
     <<: *backend-common
     ports:
-      - "127.0.0.1:${AGENT_PLATFORM_BACKEND_PORT:-8011}:8011"
+      - "127.0.0.1:${LZCORE_BACKEND_PORT:-8011}:8011"
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8011/api/ready', timeout=5)"]
       interval: 10s
@@ -44,26 +44,26 @@ services:
     <<: *backend-common
     command: ["python", "-c", "from jobs.worker import start_worker; start_worker()"]
     environment:
-      NA_WORKSPACE_ROOT: /var/lib/agent-platform/workspaces
-      AGENT_PLATFORM_RUNTIME_BIND_HOST: 0.0.0.0
-      AGENT_PLATFORM_RECORD_STORE_MODE: filesystem
-      AGENT_PLATFORM_OBJECT_STORE_MODE: local
-      AGENT_PLATFORM_QUEUE_MODE: filesystem
-      AGENT_PLATFORM_SESSION_SECURE: "false"
-      AGENT_PLATFORM_PYTHON_REQUIRE_STRONG_ISOLATION: "true"
-      AGENT_PLATFORM_WORKER_ID: server-worker-1
+      LZCORE_WORKSPACE_ROOT: /var/lib/lzcore/workspaces
+      LZCORE_RUNTIME_BIND_HOST: 0.0.0.0
+      LZCORE_RECORD_STORE_MODE: filesystem
+      LZCORE_OBJECT_STORE_MODE: local
+      LZCORE_QUEUE_MODE: filesystem
+      LZCORE_SESSION_SECURE: "false"
+      LZCORE_PYTHON_REQUIRE_STRONG_ISOLATION: "true"
+      LZCORE_WORKER_ID: server-worker-1
       DOCKER_HOST: unix:///run/docker.sock
     depends_on:
       backend:
         condition: service_healthy
 
   frontend:
-    image: agent-platform-frontend:server
+    image: lzcore-frontend:server
     build:
       context: ..
       dockerfile: deployment/frontend.Dockerfile
     ports:
-      - "${AGENT_PLATFORM_HTTP_PORT:-5273}:8080"
+      - "${LZCORE_HTTP_PORT:-5273}:8080"
     depends_on:
       backend:
         condition: service_healthy

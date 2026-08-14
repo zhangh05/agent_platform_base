@@ -397,9 +397,9 @@ def test_independent_reads_honor_parallel_width():
 
 
 def test_python_bridge_accepts_structured_input_and_returns_structured_result(monkeypatch, tmp_path):
-    monkeypatch.setenv("NA_WORKSPACE_ROOT", str(tmp_path / "workspaces"))
-    monkeypatch.setenv("AGENT_PLATFORM_RUNTIME_BIND_HOST", "127.0.0.1")
-    monkeypatch.setenv("AGENT_PLATFORM_TRUSTED_LOCAL_PYTHON_EXECUTION", "true")
+    monkeypatch.setenv("LZCORE_WORKSPACE_ROOT", str(tmp_path / "workspaces"))
+    monkeypatch.setenv("LZCORE_RUNTIME_BIND_HOST", "127.0.0.1")
+    monkeypatch.setenv("LZCORE_TRUSTED_LOCAL_PYTHON_EXECUTION", "true")
     from core.tools.python_exec import execute_python_code
 
     outcome = execute_python_code(
@@ -559,7 +559,7 @@ def test_plain_json_plan_text_is_not_an_alternate_tool_call_path():
 
 
 def test_saved_workflow_runs_independent_reads_in_parallel(monkeypatch, tmp_path):
-    monkeypatch.setenv("NA_WORKSPACE_ROOT", str(tmp_path / "workspaces"))
+    monkeypatch.setenv("LZCORE_WORKSPACE_ROOT", str(tmp_path / "workspaces"))
     import workflows.service as service
 
     lock = threading.Lock()

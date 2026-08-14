@@ -2,8 +2,8 @@ from __future__ import annotations
 
 
 def _setup(monkeypatch, tmp_path):
-    monkeypatch.setenv("NA_WORKSPACE_ROOT", str(tmp_path / "workspaces"))
-    monkeypatch.setenv("AGENT_PLATFORM_LOGIN_ENABLED", "false")
+    monkeypatch.setenv("LZCORE_WORKSPACE_ROOT", str(tmp_path / "workspaces"))
+    monkeypatch.setenv("LZCORE_LOGIN_ENABLED", "false")
 
 
 def test_workspace_review_items_returns_empty_without_legacy_review_module(monkeypatch, tmp_path):

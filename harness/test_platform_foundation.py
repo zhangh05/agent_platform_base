@@ -67,7 +67,7 @@ def test_local_object_store_is_atomic_and_scoped(tmp_path):
 
 
 def test_identity_uses_hashed_password_and_role(monkeypatch, tmp_path):
-    monkeypatch.setenv("AGENT_PLATFORM_WORKSPACE_DIR", str(tmp_path))
+    monkeypatch.setenv("LZCORE_WORKSPACE_DIR", str(tmp_path))
     user = upsert_user("alice", "correct horse", "admin")
     assert user == {"username": "alice", "role": "admin", "organization_id": "default", "workspace_ids": ["default"], "home_workspace_id": "", "enabled": True}
     assert verify_user("alice", "correct horse")["role"] == "admin"
@@ -76,7 +76,7 @@ def test_identity_uses_hashed_password_and_role(monkeypatch, tmp_path):
 
 
 def test_model_route_preserves_active_provider_without_policy(monkeypatch):
-    monkeypatch.delenv("AGENT_PLATFORM_MODEL_ROUTE_ASSISTANT_CHAT", raising=False)
+    monkeypatch.delenv("LZCORE_MODEL_ROUTE_ASSISTANT_CHAT", raising=False)
     active = {"provider": "mock", "model": "mock-safe"}
     routed = resolve_model_route("assistant_chat", active)
     assert routed["provider"] == "mock"
@@ -84,11 +84,11 @@ def test_model_route_preserves_active_provider_without_policy(monkeypatch):
 
 
 def test_identity_viewer_is_workspace_scoped(monkeypatch, tmp_path):
-    monkeypatch.setenv("NA_WORKSPACE_ROOT", str(tmp_path))
-    monkeypatch.setenv("AGENT_PLATFORM_IDENTITY_ENABLED", "true")
-    monkeypatch.setenv("AGENT_PLATFORM_SESSION_SECRET", "test-secret")
-    monkeypatch.delenv("AGENT_PLATFORM_LOGIN_USERNAME", raising=False)
-    monkeypatch.delenv("AGENT_PLATFORM_LOGIN_PASSWORD", raising=False)
+    monkeypatch.setenv("LZCORE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("LZCORE_IDENTITY_ENABLED", "true")
+    monkeypatch.setenv("LZCORE_SESSION_SECRET", "test-secret")
+    monkeypatch.delenv("LZCORE_LOGIN_USERNAME", raising=False)
+    monkeypatch.delenv("LZCORE_LOGIN_PASSWORD", raising=False)
     from storage.workspace_store import ensure_workspace
     from backend.core.identity import ensure_organization
     ensure_workspace("tenant_a")
@@ -109,7 +109,7 @@ def test_identity_viewer_is_workspace_scoped(monkeypatch, tmp_path):
     assert client.get("/api/workspaces/tenant_b/state", headers=headers).status_code == 200
     assert client.get("/api/workspaces/tenant_a/state", headers=headers).status_code == 403
 
-    monkeypatch.setenv("AGENT_PLATFORM_API_TOKEN", "service-token")
+    monkeypatch.setenv("LZCORE_API_TOKEN", "service-token")
     service_headers = {**headers, "X-API-Key": "service-token"}
     all_workspaces = client.get("/api/workspaces", headers=service_headers).get_json()["workspaces"]
     assert {item["workspace_id"] for item in all_workspaces} >= {"tenant_a", "tenant_b"}
@@ -117,11 +117,11 @@ def test_identity_viewer_is_workspace_scoped(monkeypatch, tmp_path):
 
 
 def test_admin_exclusively_manages_ordinary_user_access(monkeypatch, tmp_path):
-    monkeypatch.setenv("NA_WORKSPACE_ROOT", str(tmp_path / "workspaces"))
-    monkeypatch.setenv("AGENT_PLATFORM_IDENTITY_ENABLED", "true")
-    monkeypatch.setenv("AGENT_PLATFORM_LOGIN_USERNAME", "Admin")
-    monkeypatch.setenv("AGENT_PLATFORM_LOGIN_PASSWORD", "admin-password")
-    monkeypatch.setenv("AGENT_PLATFORM_SESSION_SECRET", "admin-session-secret")
+    monkeypatch.setenv("LZCORE_WORKSPACE_ROOT", str(tmp_path / "workspaces"))
+    monkeypatch.setenv("LZCORE_IDENTITY_ENABLED", "true")
+    monkeypatch.setenv("LZCORE_LOGIN_USERNAME", "Admin")
+    monkeypatch.setenv("LZCORE_LOGIN_PASSWORD", "admin-password")
+    monkeypatch.setenv("LZCORE_SESSION_SECRET", "admin-session-secret")
     from storage.workspace_store import ensure_workspace
     ensure_workspace("default")
     ensure_workspace("team_a")
@@ -197,7 +197,7 @@ def test_admin_exclusively_manages_ordinary_user_access(monkeypatch, tmp_path):
 
 
 def test_model_candidates_include_active_fallback(monkeypatch):
-    monkeypatch.setenv("AGENT_PLATFORM_MODEL_ROUTE_ASSISTANT_CHAT", "deepseek")
+    monkeypatch.setenv("LZCORE_MODEL_ROUTE_ASSISTANT_CHAT", "deepseek")
     monkeypatch.setattr("agent.llm.router.resolve_provider_llm_config", lambda provider: {"provider": provider, "model": "routed"})
     candidates = resolve_model_candidates("assistant_chat", {"provider": "openai", "model": "active"})
     assert [item["provider"] for item in candidates] == ["deepseek", "openai"]
@@ -332,7 +332,7 @@ def test_image_request_never_falls_back_to_text_only_provider(monkeypatch):
 
 
 def test_mcp_runs_through_governed_skill_tool(monkeypatch, tmp_path):
-    monkeypatch.setenv("NA_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("LZCORE_WORKSPACE_ROOT", str(tmp_path))
     from storage.workspace_store import ensure_workspace
     ensure_workspace("mcp_ws")
     server = """import json,sys
@@ -369,9 +369,9 @@ def test_mcp_request_has_a_hard_timeout():
 
 
 def test_provider_api_key_is_encrypted_at_rest(monkeypatch, tmp_path):
-    monkeypatch.setenv("NA_WORKSPACE_ROOT", str(tmp_path / "workspaces"))
-    monkeypatch.setenv("AGENT_PLATFORM_IDENTITY_ENABLED", "true")
-    monkeypatch.setenv("AGENT_PLATFORM_MASTER_KEY", "test-master-key-at-least-16")
+    monkeypatch.setenv("LZCORE_WORKSPACE_ROOT", str(tmp_path / "workspaces"))
+    monkeypatch.setenv("LZCORE_IDENTITY_ENABLED", "true")
+    monkeypatch.setenv("LZCORE_MASTER_KEY", "test-master-key-at-least-16")
     import agent.llm.provider_store as store
     providers_dir = tmp_path / "providers"
     monkeypatch.setattr(store, "PROVIDERS_DIR", providers_dir)

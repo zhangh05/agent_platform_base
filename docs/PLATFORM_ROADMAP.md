@@ -34,16 +34,16 @@ variables without making network calls.
 
 ## Stage 3: enterprise control plane
 
-Set `AGENT_PLATFORM_IDENTITY_ENABLED=true` to enable the file-backed identity
+Set `LZCORE_IDENTITY_ENABLED=true` to enable the file-backed identity
 adapter. User passwords are PBKDF2-hashed, sessions refresh current roles and
 workspace membership on every request, and `/api/identity/users` supports
 administrator-managed users. Provider API keys are encrypted at rest when
-`AGENT_PLATFORM_MASTER_KEY` is configured. The existing
+`LZCORE_MASTER_KEY` is configured. The existing
 environment-variable login remains compatible and acts as an administrator
 bootstrap when identity mode is enabled.
 
 Task-specific model routing is available through variables such as
-`AGENT_PLATFORM_MODEL_ROUTE_ASSISTANT_CHAT=deepseek`. A routed provider is tried
+`LZCORE_MODEL_ROUTE_ASSISTANT_CHAT=deepseek`. A routed provider is tried
 first and real invocation failures fall back to the active provider. Explicit
 per-call configuration remains authoritative.
 

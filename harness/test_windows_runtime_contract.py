@@ -78,7 +78,7 @@ def test_powershell_respects_cwd_timeout_env_and_exit_code(monkeypatch, tmp_path
             command="Get-Item missing",
             working_dir=str(tmp_path),
             timeout=45,
-            env_vars={"AGENT_PLATFORM_TEST": "ok", "OPENAI_API_KEY": "blocked"},
+            env_vars={"LZCORE_TEST": "ok", "OPENAI_API_KEY": "blocked"},
         )
     )
 
@@ -87,7 +87,7 @@ def test_powershell_respects_cwd_timeout_env_and_exit_code(monkeypatch, tmp_path
     assert result["error"] == "bad command"
     assert captured["cwd"] == str(tmp_path)
     assert captured["timeout"] == 45
-    assert captured["env"]["AGENT_PLATFORM_TEST"] == "ok"
+    assert captured["env"]["LZCORE_TEST"] == "ok"
     assert "OPENAI_API_KEY" not in captured["env"]
     assert captured["argv"][-2:] == ["-Command", "Get-Item missing"]
 

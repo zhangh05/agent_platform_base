@@ -1,6 +1,6 @@
 # Architecture
 
-Agent Platform Base 只有一条运行时主链路：
+LZCore 只有一条运行时主链路：
 
 ```text
 HTTP / WebSocket / SSE / Job entry

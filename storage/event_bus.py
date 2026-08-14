@@ -94,9 +94,9 @@ class RedisEventBus:
 
 def get_event_bus():
     import os
-    mode = os.environ.get("AGENT_PLATFORM_EVENT_BUS_MODE", "inprocess").strip().lower()
+    mode = os.environ.get("LZCORE_EVENT_BUS_MODE", "inprocess").strip().lower()
     if mode == "redis":
-        url = os.environ.get("AGENT_PLATFORM_EVENT_BUS_URL") or os.environ.get("AGENT_PLATFORM_QUEUE_URL", "")
+        url = os.environ.get("LZCORE_EVENT_BUS_URL") or os.environ.get("LZCORE_QUEUE_URL", "")
         if not url:
             raise RuntimeError("Redis event bus URL is required")
         return RedisEventBus(url)

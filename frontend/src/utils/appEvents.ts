@@ -1,5 +1,5 @@
 export const APP_EVENTS = {
-  RUN_COMPLETED: "agent-platform-base:run-completed",
+  RUN_COMPLETED: "lzcore:run-completed",
 } as const;
 
 export function notifyRunCompleted(): void {

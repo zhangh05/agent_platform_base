@@ -13,7 +13,7 @@ def _inv(workspace_id: str, patch_text: str) -> ToolInvocation:
 
 
 def test_patch_rejects_stale_context_without_modifying_file(monkeypatch, tmp_path):
-    monkeypatch.setenv("NA_WORKSPACE_ROOT", str(tmp_path / "workspaces"))
+    monkeypatch.setenv("LZCORE_WORKSPACE_ROOT", str(tmp_path / "workspaces"))
     target = tmp_path / "workspaces" / "test_ws" / "files" / "data" / "config.txt"
     target.parent.mkdir(parents=True)
     target.write_text("current=value\n", encoding="utf-8")
@@ -26,7 +26,7 @@ def test_patch_rejects_stale_context_without_modifying_file(monkeypatch, tmp_pat
 
 
 def test_patch_applies_when_context_matches(monkeypatch, tmp_path):
-    monkeypatch.setenv("NA_WORKSPACE_ROOT", str(tmp_path / "workspaces"))
+    monkeypatch.setenv("LZCORE_WORKSPACE_ROOT", str(tmp_path / "workspaces"))
     target = tmp_path / "workspaces" / "test_ws" / "files" / "data" / "config.txt"
     target.parent.mkdir(parents=True)
     target.write_text("old=value\n", encoding="utf-8")

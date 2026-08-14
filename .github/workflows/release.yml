@@ -53,7 +53,7 @@ jobs:
             @{ Name = "3.12"; Python = "${{ steps.python312.outputs.python-path }}" },
             @{ Name = "3.13"; Python = "${{ steps.python313.outputs.python-path }}" }
           )) {
-            $venv = Join-Path $env:RUNNER_TEMP "agent-platform-base-wheelhouse-$($runtime.Name)"
+            $venv = Join-Path $env:RUNNER_TEMP "lzcore-wheelhouse-$($runtime.Name)"
             $runtimePython = $runtime.Python
             & $runtimePython -m venv $venv
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
@@ -88,7 +88,7 @@ jobs:
       - name: Assemble Windows package
         shell: pwsh
         run: |
-          $stage = Join-Path $PWD "release/agent-platform-base"
+          $stage = Join-Path $PWD "release/lzcore"
           New-Item -ItemType Directory -Force $stage | Out-Null
           robocopy $PWD $stage /E /XD .git .github .venv .runtime node_modules logs data workspaces reports release frontend\test-results frontend\playwright-report /XF .backend.pid .frontend.pid *.log | Out-Null
           $robocopyExitCode = $LASTEXITCODE
@@ -128,11 +128,11 @@ jobs:
           # code so GitHub's pwsh wrapper does not mark the step as failed.
           $global:LASTEXITCODE = 0
           $version = "${{ github.ref_name }}"
-          Compress-Archive -Path $stage -DestinationPath "release/agent-platform-base-$version-windows-x64.zip" -Force
+          Compress-Archive -Path $stage -DestinationPath "release/lzcore-$version-windows-x64.zip" -Force
           exit 0
 
       - name: Publish release asset
         uses: softprops/action-gh-release@v2
         with:
-          files: release/agent-platform-base-*-windows-x64.zip
+          files: release/lzcore-*-windows-x64.zip
           generate_release_notes: true

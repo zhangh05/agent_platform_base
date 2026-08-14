@@ -50,8 +50,8 @@ def test_redis_queue_renews_and_reclaims_stale_leases():
 def test_backup_verify_restore_and_traversal_rejection(monkeypatch, tmp_path: Path):
     workspace_root = tmp_path / "workspaces"
     backup_dir = tmp_path / "backups"
-    monkeypatch.setenv("NA_WORKSPACE_ROOT", str(workspace_root))
-    monkeypatch.setenv("AGENT_PLATFORM_BACKUP_DIR", str(backup_dir))
+    monkeypatch.setenv("LZCORE_WORKSPACE_ROOT", str(workspace_root))
+    monkeypatch.setenv("LZCORE_BACKUP_DIR", str(backup_dir))
     source = workspace_root / "default" / "runs" / "run.json"
     source.parent.mkdir(parents=True)
     source.write_text('{"status":"original"}', encoding="utf-8")
@@ -104,7 +104,7 @@ def test_release_slots_activate_and_rollback(tmp_path: Path):
 
 
 def test_readiness_and_bounded_http_metrics(monkeypatch, tmp_path: Path):
-    monkeypatch.setenv("NA_WORKSPACE_ROOT", str(tmp_path / "workspaces"))
+    monkeypatch.setenv("LZCORE_WORKSPACE_ROOT", str(tmp_path / "workspaces"))
     from backend.main import create_app
     app = create_app()
     app.config.update(TESTING=True)
@@ -116,20 +116,20 @@ def test_readiness_and_bounded_http_metrics(monkeypatch, tmp_path: Path):
     metrics = client.get("/api/metrics").get_json()
     assert any(item["route"] == "/api/health" for item in metrics["requests"])
     prometheus = client.get("/metrics").get_data(as_text=True)
-    assert "agent_platform_http_requests_total" in prometheus
+    assert "lzcore_http_requests_total" in prometheus
 
     from observability.metrics import record_operation, set_operational_gauge, render_prometheus
     record_operation("tool", "failed")
     set_operational_gauge("approval_pending", 2)
     rendered = render_prometheus()
-    assert 'agent_platform_operations_total{operation="tool",status="failed"}' in rendered
-    assert 'agent_platform_operational_gauge{name="approval_pending"} 2.0' in rendered
+    assert 'lzcore_operations_total{operation="tool",status="failed"}' in rendered
+    assert 'lzcore_operational_gauge{name="approval_pending"} 2.0' in rendered
 
 
 def test_metrics_require_auth_when_api_auth_is_enabled(monkeypatch, tmp_path: Path):
-    monkeypatch.setenv("NA_WORKSPACE_ROOT", str(tmp_path / "workspaces"))
-    monkeypatch.setenv("AGENT_PLATFORM_AUTH_ENABLED", "true")
-    monkeypatch.setenv("AGENT_PLATFORM_API_TOKEN", "metrics-token")
+    monkeypatch.setenv("LZCORE_WORKSPACE_ROOT", str(tmp_path / "workspaces"))
+    monkeypatch.setenv("LZCORE_AUTH_ENABLED", "true")
+    monkeypatch.setenv("LZCORE_API_TOKEN", "metrics-token")
     from backend.main import create_app
     client = create_app().test_client()
     assert client.get("/api/health").status_code == 200
@@ -138,10 +138,10 @@ def test_metrics_require_auth_when_api_auth_is_enabled(monkeypatch, tmp_path: Pa
 
 
 def test_record_and_object_stores_can_be_configured_independently(monkeypatch):
-    monkeypatch.setenv("AGENT_PLATFORM_RECORD_STORE_MODE", "postgres")
-    monkeypatch.setenv("AGENT_PLATFORM_OBJECT_STORE_MODE", "s3")
-    monkeypatch.setenv("AGENT_PLATFORM_DATABASE_URL", "postgresql://example.invalid/platform")
-    monkeypatch.setenv("AGENT_PLATFORM_OBJECT_STORE_BUCKET", "platform-artifacts")
+    monkeypatch.setenv("LZCORE_RECORD_STORE_MODE", "postgres")
+    monkeypatch.setenv("LZCORE_OBJECT_STORE_MODE", "s3")
+    monkeypatch.setenv("LZCORE_DATABASE_URL", "postgresql://example.invalid/platform")
+    monkeypatch.setenv("LZCORE_OBJECT_STORE_BUCKET", "platform-artifacts")
     from storage.backend import backend_mode, validate_backend_configuration
     from storage.object_store import object_store_mode
     assert backend_mode() == "postgres"

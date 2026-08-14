@@ -245,7 +245,7 @@ def handle_runtime_local_info(inv: ToolInvocation) -> dict:
     from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
     timezone_name = str(
-        os.environ.get("AGENT_PLATFORM_DISPLAY_TIMEZONE") or "Asia/Shanghai"
+        os.environ.get("LZCORE_DISPLAY_TIMEZONE") or "Asia/Shanghai"
     ).strip() or "Asia/Shanghai"
     try:
         display_timezone = ZoneInfo(timezone_name)

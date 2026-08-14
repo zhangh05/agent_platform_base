@@ -232,8 +232,8 @@ def _merge(base: dict, override: dict):
 
 
 def _apply_env_overrides(config: dict):
-    if os.environ.get("AGENT_PLATFORM_LLM_ENABLED"):
-        val = os.environ["AGENT_PLATFORM_LLM_ENABLED"].lower()
+    if os.environ.get("LZCORE_LLM_ENABLED"):
+        val = os.environ["LZCORE_LLM_ENABLED"].lower()
         if val in ("0", "false", "no"):
             config["enabled"] = False
         elif val in ("1", "true", "yes"):

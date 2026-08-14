@@ -38,7 +38,7 @@ class OtlpHttpTraceExporter:
         start = _unix_nano(trace.get("started_at"))
         end = _unix_nano(trace.get("finished_at")) or start
         span = {"traceId": trace_id, "spanId": span_id, "name": "agent.run", "kind": 1, "startTimeUnixNano": str(start), "endTimeUnixNano": str(end), "attributes": [{"key": "gen_ai.agent.id", "value": {"stringValue": str(trace.get("run_id", ""))}}, {"key": "agent.workspace.id", "value": {"stringValue": str(trace.get("workspace_id", ""))}}], "status": {"code": 1 if trace.get("status") == "success" else 2}}
-        payload = json.dumps({"resourceSpans": [{"resource": {"attributes": [{"key": "service.name", "value": {"stringValue": "agent-platform-base"}}]}, "scopeSpans": [{"scope": {"name": "agent-platform-base"}, "spans": [span]}]}]}).encode()
+        payload = json.dumps({"resourceSpans": [{"resource": {"attributes": [{"key": "service.name", "value": {"stringValue": "lzcore"}}]}, "scopeSpans": [{"scope": {"name": "lzcore"}, "spans": [span]}]}]}).encode()
         endpoint = self.endpoint if self.endpoint.endswith("/v1/traces") else self.endpoint + "/v1/traces"
         request = urllib.request.Request(endpoint, data=payload, method="POST", headers={"Content-Type": "application/json"})
         with urllib.request.urlopen(request, timeout=self.timeout):

@@ -25,7 +25,7 @@ def read_frontend_source_text() -> str:
     return "\n".join(chunks)
 
 # Ensure all temp dirs exist before monkeypatching
-_temp_base = Path(tempfile.mkdtemp(prefix="na_test_"))
+_temp_base = Path(tempfile.mkdtemp(prefix="lzcore_test_"))
 _temp_mem = _temp_base / "memory_data"
 _temp_ws = _temp_base / "workspaces"
 _temp_rpts = _temp_base / "reports"
@@ -42,7 +42,7 @@ def temp_dirs(monkeypatch):
     ws_dir = _temp_ws
     reports_dir = _temp_rpts
 
-    # Reset ContextStore; storage root is controlled by NA_WORKSPACE_ROOT.
+    # Reset ContextStore; storage root is controlled by LZCORE_WORKSPACE_ROOT.
     try:
         import core.context.context_store as _cs
         _cs._stores.clear()
@@ -55,10 +55,10 @@ def temp_dirs(monkeypatch):
         pass
 
     # Set env vars
-    monkeypatch.setenv("AGENT_PLATFORM_REPORTS_DIR", str(reports_dir))
-    monkeypatch.setenv("AGENT_PLATFORM_MEMORY_DIR", str(mem_dir))
-    monkeypatch.setenv("AGENT_PLATFORM_WORKSPACE_DIR", str(ws_dir))
-    monkeypatch.setenv("NA_WORKSPACE_ROOT", str(ws_dir))
+    monkeypatch.setenv("LZCORE_REPORTS_DIR", str(reports_dir))
+    monkeypatch.setenv("LZCORE_MEMORY_DIR", str(mem_dir))
+    monkeypatch.setenv("LZCORE_WORKSPACE_DIR", str(ws_dir))
+    monkeypatch.setenv("LZCORE_WORKSPACE_ROOT", str(ws_dir))
 
     yield {
         "memory_dir": mem_dir,
@@ -113,7 +113,7 @@ def protect_llm_config():
     backup_dir = None
     if providers_dir.exists():
         import tempfile
-        backup_dir = Path(tempfile.mkdtemp(prefix="na_provider_backup_")) / "providers"
+        backup_dir = Path(tempfile.mkdtemp(prefix="lzcore_provider_backup_")) / "providers"
         shutil.copytree(providers_dir, backup_dir, dirs_exist_ok=True)
     try:
         yield

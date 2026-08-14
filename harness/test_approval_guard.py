@@ -366,7 +366,7 @@ def test_approval_store_cache_isolated_by_storage_principal(monkeypatch, tmp_pat
     from agent.approval import get_approval_store, reset_approval_store_for_tests
     from storage.principal import storage_principal
 
-    monkeypatch.setenv("NA_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("LZCORE_WORKSPACE_ROOT", str(tmp_path))
     monkeypatch.setattr(approval_module, "_APPROVALS_FILE", None)
     reset_approval_store_for_tests(remove_persisted=True)
     try:

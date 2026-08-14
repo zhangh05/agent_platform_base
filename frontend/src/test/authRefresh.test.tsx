@@ -143,7 +143,7 @@ describe("authenticated refresh", () => {
 
   it("hides and guards user management for an ordinary user", async () => {
     window.history.replaceState({}, "", "/users");
-    localStorage.setItem("agent_platform_active_user", "Admin");
+    localStorage.setItem("lzcore_active_user", "Admin");
     useSessionStore.getState().setCurrentWorkspace("default");
     useWorkbenchStore.getState().switchSession("admin-session");
     useWorkbenchStore.getState().appendUser("管理员的私有内容", "admin-session");

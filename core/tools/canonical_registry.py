@@ -1,4 +1,4 @@
-"""Canonical tool registry for Agent Platform Base.
+"""Canonical tool registry for LZCore.
 
 This file is intentionally domain-neutral. Product projects can extend the
 registry, but the base exposes only generic runtime, workspace, knowledge,

@@ -14,8 +14,8 @@ from core.runtime_engine.tool_runtime import ToolRuntime
 
 
 def _storage(monkeypatch, tmp_path):
-    monkeypatch.setenv("NA_WORKSPACE_ROOT", str(tmp_path / "workspaces"))
-    monkeypatch.setenv("AGENT_PLATFORM_MASTER_KEY", "approval-test-master-key")
+    monkeypatch.setenv("LZCORE_WORKSPACE_ROOT", str(tmp_path / "workspaces"))
+    monkeypatch.setenv("LZCORE_MASTER_KEY", "approval-test-master-key")
 
 
 def test_continuation_claim_is_durable_and_single_owner(monkeypatch, tmp_path):
@@ -57,11 +57,11 @@ def test_continuation_claim_is_durable_and_single_owner(monkeypatch, tmp_path):
 
 
 def test_continuation_encryption_accepts_mounted_master_key(monkeypatch, tmp_path):
-    monkeypatch.setenv("NA_WORKSPACE_ROOT", str(tmp_path / "workspaces"))
-    monkeypatch.delenv("AGENT_PLATFORM_MASTER_KEY", raising=False)
+    monkeypatch.setenv("LZCORE_WORKSPACE_ROOT", str(tmp_path / "workspaces"))
+    monkeypatch.delenv("LZCORE_MASTER_KEY", raising=False)
     master_key = tmp_path / "master-key"
     master_key.write_text("mounted-approval-master-key", encoding="utf-8")
-    monkeypatch.setenv("AGENT_PLATFORM_MASTER_KEY_FILE", str(master_key))
+    monkeypatch.setenv("LZCORE_MASTER_KEY_FILE", str(master_key))
     from agent.runtime.approval_continuation import create_continuation
 
     continuation_id = create_continuation(
@@ -159,7 +159,7 @@ def test_approval_batch_failure_compensates_continuation(monkeypatch, tmp_path):
 
 def test_stale_running_continuation_is_observable_but_never_replayed(monkeypatch, tmp_path):
     _storage(monkeypatch, tmp_path)
-    monkeypatch.setenv("AGENT_PLATFORM_CONTINUATION_STALL_SECONDS", "60")
+    monkeypatch.setenv("LZCORE_CONTINUATION_STALL_SECONDS", "60")
     from agent.runtime.approval_continuation import (
         close_stalled_continuation,
         create_continuation,
@@ -212,7 +212,7 @@ def test_stale_running_continuation_is_observable_but_never_replayed(monkeypatch
 
 def test_orphan_pending_continuation_expires_and_releases_secret(monkeypatch, tmp_path):
     _storage(monkeypatch, tmp_path)
-    monkeypatch.setenv("AGENT_PLATFORM_APPROVAL_TTL_SECONDS", "60")
+    monkeypatch.setenv("LZCORE_APPROVAL_TTL_SECONDS", "60")
     from agent.runtime.approval_continuation import (
         create_continuation,
         maintain_continuations,

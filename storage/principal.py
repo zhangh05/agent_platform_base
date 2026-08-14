@@ -14,7 +14,7 @@ from functools import wraps
 from typing import Iterator
 
 _principal: contextvars.ContextVar[str] = contextvars.ContextVar(
-    "agent_platform_storage_principal", default=""
+    "lzcore_storage_principal", default=""
 )
 
 
@@ -60,7 +60,7 @@ def principal_storage_key(username: str) -> str:
 
 def known_storage_principals() -> list[str]:
     """Return configured and identity-managed users for restart recovery jobs."""
-    usernames = {os.environ.get("AGENT_PLATFORM_LOGIN_USERNAME", "").strip()}
+    usernames = {os.environ.get("LZCORE_LOGIN_USERNAME", "").strip()}
     try:
         from backend.core.identity import list_users
         usernames.update(str(item.get("username") or "").strip() for item in list_users())

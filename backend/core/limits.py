@@ -7,7 +7,7 @@ DEFAULT_SOURCE_CONFIG_MAX_BYTES = 10 * 1024 * 1024
 
 def get_source_config_max_bytes() -> int:
     """Return the maximum accepted source_config size in bytes."""
-    raw_bytes = os.environ.get("AGENT_PLATFORM_MAX_SOURCE_CONFIG_BYTES", "")
+    raw_bytes = os.environ.get("LZCORE_MAX_SOURCE_CONFIG_BYTES", "")
     try:
         value = int(raw_bytes)
         if value > 0:
@@ -15,7 +15,7 @@ def get_source_config_max_bytes() -> int:
     except ValueError:
         pass
 
-    raw_mb = os.environ.get("AGENT_PLATFORM_MAX_UPLOAD_MB", "")
+    raw_mb = os.environ.get("LZCORE_MAX_UPLOAD_MB", "")
     try:
         value = int(raw_mb)
         if value > 0:

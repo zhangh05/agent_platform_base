@@ -211,7 +211,7 @@ def test_sub_agent_run_record_written(tmp_path, monkeypatch):
     from storage.workspace_store import ensure_workspace
 
     ws_root = tmp_path / "workspaces"
-    monkeypatch.setenv("NA_WORKSPACE_ROOT", str(ws_root))
+    monkeypatch.setenv("LZCORE_WORKSPACE_ROOT", str(ws_root))
 
     ensure_workspace("ws_sub")
 
@@ -247,11 +247,11 @@ def test_sub_agent_run_record_written(tmp_path, monkeypatch):
 def test_approval_timeout_helper_reads_env(monkeypatch):
     from agent.approval import approval_ttl_seconds
 
-    monkeypatch.delenv("AGENT_PLATFORM_APPROVAL_TTL_SECONDS", raising=False)
+    monkeypatch.delenv("LZCORE_APPROVAL_TTL_SECONDS", raising=False)
     assert approval_ttl_seconds() == 1800
-    monkeypatch.setenv("AGENT_PLATFORM_APPROVAL_TTL_SECONDS", "3600")
+    monkeypatch.setenv("LZCORE_APPROVAL_TTL_SECONDS", "3600")
     assert approval_ttl_seconds() == 3600
-    monkeypatch.setenv("AGENT_PLATFORM_APPROVAL_TTL_SECONDS", "1")
+    monkeypatch.setenv("LZCORE_APPROVAL_TTL_SECONDS", "1")
     assert approval_ttl_seconds() == 60
 
 

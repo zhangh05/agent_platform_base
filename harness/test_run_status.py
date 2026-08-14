@@ -91,7 +91,7 @@ def test_merge_result_projection_reconciles_status_on_failure(monkeypatch, tmp_p
     """The full write → merge path must end with status=='error' for failed runs."""
     from agent.runtime import turn_persistence as tp
     import storage.run_record_store as rs
-    monkeypatch.setenv("NA_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("LZCORE_WORKSPACE_ROOT", str(tmp_path))
     (tmp_path / "default" / "runs").mkdir(parents=True, exist_ok=True)
 
     # Pretend the run was a failure: ok=False, errors=["something broke"]
@@ -140,7 +140,7 @@ def test_merge_result_projection_reconciles_status_on_success(monkeypatch, tmp_p
     """Successful run must end with status=='ok' AND ok==True."""
     from agent.runtime import turn_persistence as tp
     import storage.run_record_store as rs
-    monkeypatch.setenv("NA_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("LZCORE_WORKSPACE_ROOT", str(tmp_path))
     (tmp_path / "default" / "runs").mkdir(parents=True, exist_ok=True)
 
     class _FakeResult:
@@ -177,7 +177,7 @@ def test_merge_result_projection_preserves_partial_status(monkeypatch, tmp_path)
     from agent.runtime import turn_persistence as tp
     import storage.run_record_store as rs
 
-    monkeypatch.setenv("NA_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("LZCORE_WORKSPACE_ROOT", str(tmp_path))
     (tmp_path / "default" / "runs").mkdir(parents=True, exist_ok=True)
 
     class _FakeResult:
@@ -223,7 +223,7 @@ def test_run_record_warning_count_uses_agent_result_warnings(monkeypatch, tmp_pa
     from agent.runtime import turn_persistence as tp
     import storage.run_record_store as rs
 
-    monkeypatch.setenv("NA_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("LZCORE_WORKSPACE_ROOT", str(tmp_path))
     (tmp_path / "default" / "runs").mkdir(parents=True, exist_ok=True)
 
     class _FakeResult:
@@ -326,7 +326,7 @@ def test_persist_run_record_uses_result_llm_metadata(monkeypatch, tmp_path):
     """Run-store llm_metadata must mirror AgentResult.metadata['llm']."""
     from agent.runtime.turn_persistence import persist_run_record
 
-    monkeypatch.setenv("NA_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("LZCORE_WORKSPACE_ROOT", str(tmp_path))
     (tmp_path / "default" / "runs").mkdir(parents=True, exist_ok=True)
 
     class _Session:

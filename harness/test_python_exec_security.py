@@ -114,13 +114,13 @@ class TestPythonExecEnvironment:
         monkeypatch.setenv("OPENAI_API_KEY", "sk-test123456")
         monkeypatch.setenv("MINIMAX_API_KEY", "group_test_key_abc")
         monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-deepseek-test123")
-        monkeypatch.setenv("AGENT_PLATFORM_API_TOKEN", "secret-token")
+        monkeypatch.setenv("LZCORE_API_TOKEN", "secret-token")
         from core.tools.python_exec import _build_safe_env
         env = _build_safe_env()
         assert "OPENAI_API_KEY" not in env
         assert "MINIMAX_API_KEY" not in env
         assert "DEEPSEEK_API_KEY" not in env
-        assert "AGENT_PLATFORM_API_TOKEN" not in env
+        assert "LZCORE_API_TOKEN" not in env
 
     def test_safe_env_includes_safe_vars(self, monkeypatch):
         """Safe env should include safe env vars like HOME, LANG."""
@@ -180,8 +180,8 @@ class TestPythonExecSubprocess:
     def test_execute_safe_code(self, tmp_path, monkeypatch):
         """Execute safe Python code in sandbox."""
         from core.tools.python_exec import execute_python_code
-        monkeypatch.setenv("NA_WORKSPACE_ROOT", str(tmp_path))
-        monkeypatch.setenv("AGENT_PLATFORM_TRUSTED_LOCAL_PYTHON_EXECUTION", "true")
+        monkeypatch.setenv("LZCORE_WORKSPACE_ROOT", str(tmp_path))
+        monkeypatch.setenv("LZCORE_TRUSTED_LOCAL_PYTHON_EXECUTION", "true")
         result = execute_python_code(
             run_id="test_run", code="print('hello sandbox')",
             workspace_id="default",

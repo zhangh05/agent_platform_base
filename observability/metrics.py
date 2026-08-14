@@ -69,20 +69,20 @@ def _label(value: str) -> str:
 
 def render_prometheus() -> str:
     snapshot = metrics_snapshot()
-    lines = ["# HELP agent_platform_uptime_seconds Process uptime.", "# TYPE agent_platform_uptime_seconds gauge", f"agent_platform_uptime_seconds {snapshot['uptime_seconds']}"]
-    lines.extend(["# HELP agent_platform_http_requests_total HTTP requests.", "# TYPE agent_platform_http_requests_total counter"])
+    lines = ["# HELP lzcore_uptime_seconds Process uptime.", "# TYPE lzcore_uptime_seconds gauge", f"lzcore_uptime_seconds {snapshot['uptime_seconds']}"]
+    lines.extend(["# HELP lzcore_http_requests_total HTTP requests.", "# TYPE lzcore_http_requests_total counter"])
     for item in snapshot["requests"]:
-        lines.append(f'agent_platform_http_requests_total{{method="{_label(item["method"])}",route="{_label(item["route"])}",status="{item["status"]}"}} {item["count"]}')
-    lines.extend(["# HELP agent_platform_http_request_duration_seconds Request duration sum.", "# TYPE agent_platform_http_request_duration_seconds summary"])
+        lines.append(f'lzcore_http_requests_total{{method="{_label(item["method"])}",route="{_label(item["route"])}",status="{item["status"]}"}} {item["count"]}')
+    lines.extend(["# HELP lzcore_http_request_duration_seconds Request duration sum.", "# TYPE lzcore_http_request_duration_seconds summary"])
     for item in snapshot["durations"]:
         labels = f'method="{_label(item["method"])}",route="{_label(item["route"])}"'
-        lines.append(f"agent_platform_http_request_duration_seconds_count{{{labels}}} {item['count']}")
-        lines.append(f"agent_platform_http_request_duration_seconds_sum{{{labels}}} {item['sum_seconds']}")
-    lines.extend(["# HELP agent_platform_operations_total Bounded platform operation outcomes.", "# TYPE agent_platform_operations_total counter"])
+        lines.append(f"lzcore_http_request_duration_seconds_count{{{labels}}} {item['count']}")
+        lines.append(f"lzcore_http_request_duration_seconds_sum{{{labels}}} {item['sum_seconds']}")
+    lines.extend(["# HELP lzcore_operations_total Bounded platform operation outcomes.", "# TYPE lzcore_operations_total counter"])
     for item in snapshot["operations"]:
         labels = f'operation="{_label(item["operation"])}",status="{_label(item["status"])}"'
-        lines.append(f"agent_platform_operations_total{{{labels}}} {item['count']}")
-    lines.extend(["# HELP agent_platform_operational_gauge Current bounded platform operational state.", "# TYPE agent_platform_operational_gauge gauge"])
+        lines.append(f"lzcore_operations_total{{{labels}}} {item['count']}")
+    lines.extend(["# HELP lzcore_operational_gauge Current bounded platform operational state.", "# TYPE lzcore_operational_gauge gauge"])
     for item in snapshot["gauges"]:
-        lines.append(f'agent_platform_operational_gauge{{name="{_label(item["name"])}"}} {item["value"]}')
+        lines.append(f'lzcore_operational_gauge{{name="{_label(item["name"])}"}} {item["value"]}')
     return "\n".join(lines) + "\n"

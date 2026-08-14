@@ -300,7 +300,7 @@ def test_approval_handler_resumes_exact_call():
             name="exec.run",
             arguments={
                 "action": "shell",
-                "command": "rm -f /tmp/agent-platform-base-test-file",
+                "command": "rm -f /tmp/lzcore-test-file",
             },
         )]),
         LLMResponse(content="completed"),

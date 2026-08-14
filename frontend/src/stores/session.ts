@@ -15,9 +15,9 @@ import type { StateStorage } from "zustand/middleware";
 import { scopedLocalStorageKey, setActiveWorkspaceScope } from "../utils/userScope";
 
 const userSessionStorage: StateStorage = {
-  getItem: () => localStorage.getItem(scopedLocalStorageKey("na_session", false)),
-  setItem: (_name, value) => localStorage.setItem(scopedLocalStorageKey("na_session", false), value),
-  removeItem: () => localStorage.removeItem(scopedLocalStorageKey("na_session", false)),
+  getItem: () => localStorage.getItem(scopedLocalStorageKey("lzcore_session", false)),
+  setItem: (_name, value) => localStorage.setItem(scopedLocalStorageKey("lzcore_session", false), value),
+  removeItem: () => localStorage.removeItem(scopedLocalStorageKey("lzcore_session", false)),
 };
 
 export function isInternalSessionId(id: string | null | undefined): boolean {
@@ -58,7 +58,7 @@ export const useSessionStore = create<SessionState>()(
         }),
     }),
     {
-      name: "na_session",
+      name: "lzcore_session",
       storage: createJSONStorage(() => userSessionStorage),
       partialize: (s) => ({
         currentWorkspaceId: s.currentWorkspaceId,
@@ -100,7 +100,7 @@ export const useUIStore = create<UIState>()(
       setTheme: (theme) => set({ theme }),
     }),
     {
-      name: "na_ui",
+      name: "lzcore_ui",
       partialize: (s) => ({
         sidebarOpen: s.sidebarOpen,
         theme: s.theme,

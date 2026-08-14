@@ -32,31 +32,31 @@ def check_configuration() -> list[str]:
         errors.append("production requires S3 object storage")
     if queue_mode() != "redis":
         errors.append("production requires Redis queue mode")
-    if not _truthy("AGENT_PLATFORM_IDENTITY_ENABLED"):
+    if not _truthy("LZCORE_IDENTITY_ENABLED"):
         errors.append("identity mode must be enabled")
-    if not _truthy("AGENT_PLATFORM_SESSION_SECURE"):
+    if not _truthy("LZCORE_SESSION_SECURE"):
         errors.append("secure session cookies must be enabled")
-    if len(_secret_value("AGENT_PLATFORM_SESSION_SECRET")) < 32:
+    if len(_secret_value("LZCORE_SESSION_SECRET")) < 32:
         errors.append("session secret must contain at least 32 characters")
     if len(_get_login_password()) < 12:
         errors.append("bootstrap login password must contain at least 12 characters")
     if len(_get_api_token()) < 24:
         errors.append("API/metrics token must contain at least 24 characters")
-    oidc_enabled = _truthy("AGENT_PLATFORM_OIDC_ENABLED")
-    if _truthy("AGENT_PLATFORM_REQUIRE_OIDC") and not oidc_enabled:
+    oidc_enabled = _truthy("LZCORE_OIDC_ENABLED")
+    if _truthy("LZCORE_REQUIRE_OIDC") and not oidc_enabled:
         errors.append("enterprise profile requires OIDC")
     if oidc_enabled:
-        if not os.environ.get("AGENT_PLATFORM_OIDC_ISSUER", "").startswith("https://"):
+        if not os.environ.get("LZCORE_OIDC_ISSUER", "").startswith("https://"):
             errors.append("OIDC issuer must use HTTPS")
-        if not os.environ.get("AGENT_PLATFORM_PUBLIC_URL", "").startswith("https://"):
+        if not os.environ.get("LZCORE_PUBLIC_URL", "").startswith("https://"):
             errors.append("OIDC public URL must use HTTPS")
-        if not os.environ.get("AGENT_PLATFORM_OIDC_CLIENT_ID", "").strip():
+        if not os.environ.get("LZCORE_OIDC_CLIENT_ID", "").strip():
             errors.append("OIDC client ID is required")
-        if not _secret_value("AGENT_PLATFORM_OIDC_CLIENT_SECRET"):
+        if not _secret_value("LZCORE_OIDC_CLIENT_SECRET"):
             errors.append("OIDC client secret is required")
     if approval_ttl_seconds() < 900:
         errors.append("approval TTL must be at least 900 seconds in production")
-    image = os.environ.get("AGENT_PLATFORM_PYTHON_CONTAINER_IMAGE", "").strip()
+    image = os.environ.get("LZCORE_PYTHON_CONTAINER_IMAGE", "").strip()
     if "@sha256:" not in image:
         errors.append("Python runner image must use an immutable sha256 digest")
     from core.tools.python_runner import DockerStrongIsolationRunner

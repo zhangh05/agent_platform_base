@@ -33,7 +33,7 @@ def uuid7() -> str:
 
 @dataclass
 class AgentState:
-    """Canonical state projection for Agent Platform Base runtime records."""
+    """Canonical state projection for LZCore runtime records."""
 
     request_id: str = field(default_factory=uuid7)
     user_input: str = ""

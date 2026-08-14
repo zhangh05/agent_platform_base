@@ -13,9 +13,9 @@ async function cleanupOwnedStorage() {
   if (!STORAGE_ROOT || !STORAGE_TOKEN) throw new Error("missing E2E storage ownership metadata");
   const resolvedRoot = await fs.realpath(STORAGE_ROOT);
   const resolvedTmp = await fs.realpath(os.tmpdir());
-  const marker = path.join(resolvedRoot, ".agent-platform-e2e-owner");
+  const marker = path.join(resolvedRoot, ".lzcore-e2e-owner");
   const markerToken = await fs.readFile(marker, "utf8");
-  if (path.dirname(resolvedRoot) !== resolvedTmp || !path.basename(resolvedRoot).startsWith("agent-platform-e2e-") || markerToken !== STORAGE_TOKEN) {
+  if (path.dirname(resolvedRoot) !== resolvedTmp || !path.basename(resolvedRoot).startsWith("lzcore-e2e-") || markerToken !== STORAGE_TOKEN) {
     throw new Error(`refusing to remove unowned E2E storage root: ${resolvedRoot}`);
   }
   await fs.rm(resolvedRoot, { recursive: true, force: true });

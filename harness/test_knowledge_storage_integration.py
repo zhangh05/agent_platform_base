@@ -14,8 +14,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 def knowledge_ws(monkeypatch, tmp_path):
     ws = tmp_path / "workspaces"
     ws.mkdir()
-    monkeypatch.setenv("NA_WORKSPACE_ROOT", str(ws))
-    monkeypatch.setenv("AGENT_PLATFORM_WORKSPACE_DIR", str(ws))
+    monkeypatch.setenv("LZCORE_WORKSPACE_ROOT", str(ws))
+    monkeypatch.setenv("LZCORE_WORKSPACE_DIR", str(ws))
     try:
         import artifacts.store as _as
     except Exception:

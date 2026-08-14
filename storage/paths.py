@@ -17,7 +17,7 @@ _USER_ID_PATTERN = re.compile(r"^usr_[0-9a-f]{32}$")
 
 def get_workspace_root() -> Path:
     """Return the workspace root directory, respecting env vars."""
-    env = os.environ.get("NA_WORKSPACE_ROOT") or os.environ.get("AGENT_PLATFORM_WORKSPACE_DIR")
+    env = os.environ.get("LZCORE_WORKSPACE_ROOT") or os.environ.get("LZCORE_WORKSPACE_DIR")
     return Path(env if env else REPO_ROOT / "workspaces").resolve()
 
 

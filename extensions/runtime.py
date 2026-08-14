@@ -53,7 +53,7 @@ def _load_entrypoint(manifest: ExtensionManifest, root: Path) -> dict[str, Any]:
     source = (root / relative_file).resolve()
     if root.resolve() not in source.parents or not source.is_file():
         raise ExtensionValidationError(f"entrypoint not found inside extension: {source}")
-    module_name = f"agent_platform_extension_{manifest.extension_id.replace('.', '_')}"
+    module_name = f"lzcore_extension_{manifest.extension_id.replace('.', '_')}"
     spec = importlib.util.spec_from_file_location(module_name, source)
     if spec is None or spec.loader is None:
         raise ExtensionValidationError(f"cannot load entrypoint: {source}")

@@ -104,8 +104,8 @@ def handle_llm_test():
     try:
         from flask import session
         from backend.core.identity import get_user
-        role = str(session.get("agent_platform_role") or "viewer")
-        current = get_user(str(session.get("agent_platform_user") or ""))
+        role = str(session.get("lzcore_role") or "viewer")
+        current = get_user(str(session.get("lzcore_user") or ""))
         is_platform_admin = current is None or role == "owner"
     except Exception:
         # Identity-disabled deployments retain their existing authenticated

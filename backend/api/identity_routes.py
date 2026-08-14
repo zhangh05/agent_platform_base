@@ -23,10 +23,10 @@ from backend.core.identity import (
 def _context():
     if not identity_enabled():
         return None, (jsonify({"ok": False, "error": "identity_disabled"}), 404)
-    role = str(session.get("agent_platform_role") or "")
+    role = str(session.get("lzcore_role") or "")
     if not has_role(role, "admin"):
         return None, (jsonify({"ok": False, "error": "forbidden"}), 403)
-    username = str(session.get("agent_platform_user") or "")
+    username = str(session.get("lzcore_user") or "")
     user = get_user(username)
     platform_admin = user is None or role == "owner"
     if platform_admin:
@@ -35,7 +35,7 @@ def _context():
     return {
         "username": username,
         "role": role,
-        "organization_id": str(session.get("agent_platform_org") or "default"),
+        "organization_id": str(session.get("lzcore_org") or "default"),
         "platform_admin": platform_admin,
     }, None
 

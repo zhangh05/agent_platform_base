@@ -64,7 +64,7 @@ def test_older_history_summary_is_structured_and_redacted():
 
 
 def test_context_store_uses_workspace_storage_root(monkeypatch, tmp_path):
-    monkeypatch.setenv("NA_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("LZCORE_WORKSPACE_ROOT", str(tmp_path))
     store = ContextStore("alpha")
     assert store._items_path == tmp_path / "alpha" / "context" / "items.jsonl"
 
@@ -74,9 +74,9 @@ def test_context_store_singleton_tracks_workspace_root_changes(monkeypatch, tmp_
 
     root_a = tmp_path / "a"
     root_b = tmp_path / "b"
-    monkeypatch.setenv("NA_WORKSPACE_ROOT", str(root_a))
+    monkeypatch.setenv("LZCORE_WORKSPACE_ROOT", str(root_a))
     first = get_context_store("samews")
-    monkeypatch.setenv("NA_WORKSPACE_ROOT", str(root_b))
+    monkeypatch.setenv("LZCORE_WORKSPACE_ROOT", str(root_b))
     second = get_context_store("samews")
 
     assert first is not second
@@ -85,7 +85,7 @@ def test_context_store_singleton_tracks_workspace_root_changes(monkeypatch, tmp_
 
 
 def test_retriever_cache_isolated_by_storage_principal(monkeypatch, tmp_path):
-    monkeypatch.setenv("NA_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("LZCORE_WORKSPACE_ROOT", str(tmp_path))
     with storage_principal("alice"):
         alice = get_retriever("team")
         alice._store.put({
@@ -108,14 +108,14 @@ def test_retriever_cache_isolated_by_storage_principal(monkeypatch, tmp_path):
 
 
 def test_context_store_rejects_cross_workspace_item(monkeypatch, tmp_path):
-    monkeypatch.setenv("NA_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("LZCORE_WORKSPACE_ROOT", str(tmp_path))
     store = ContextStore("alpha")
     with pytest.raises(ValueError, match="does not match"):
         store.put({"workspace_id": "beta", "content": "wrong workspace"})
 
 
 def test_context_store_filters_after_last_write_wins(monkeypatch, tmp_path):
-    monkeypatch.setenv("NA_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("LZCORE_WORKSPACE_ROOT", str(tmp_path))
     store = ContextStore("alpha")
     store.put({"item_id": "same", "item_type": "memory_hit", "content": "old"})
     store.put({"item_id": "same", "item_type": "knowledge_chunk", "content": "new"})
@@ -124,7 +124,7 @@ def test_context_store_filters_after_last_write_wins(monkeypatch, tmp_path):
 
 
 def test_memory_context_retrieval_enforces_scope(monkeypatch, tmp_path):
-    monkeypatch.setenv("NA_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("LZCORE_WORKSPACE_ROOT", str(tmp_path))
     retriever = UnifiedRetriever("alpha")
     common = {
         "item_type": "memory_hit",
@@ -146,7 +146,7 @@ def test_memory_context_retrieval_enforces_scope(monkeypatch, tmp_path):
 
 
 def test_cross_session_hits_cannot_crowd_out_visible_memory(monkeypatch, tmp_path):
-    monkeypatch.setenv("NA_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("LZCORE_WORKSPACE_ROOT", str(tmp_path))
     retriever = UnifiedRetriever("alpha")
     for index in range(40):
         retriever._store.put({
@@ -177,7 +177,7 @@ def test_cross_session_hits_cannot_crowd_out_visible_memory(monkeypatch, tmp_pat
 
 
 def test_retriever_does_not_rescan_unchanged_store(monkeypatch, tmp_path):
-    monkeypatch.setenv("NA_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("LZCORE_WORKSPACE_ROOT", str(tmp_path))
     retriever = UnifiedRetriever("alpha")
     retriever._store.put({
         "item_id": "k1",
@@ -202,7 +202,7 @@ def test_retriever_does_not_rescan_unchanged_store(monkeypatch, tmp_path):
 def test_retriever_applies_boosts_before_final_top_k(monkeypatch, tmp_path):
     from datetime import datetime, timezone
 
-    monkeypatch.setenv("NA_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("LZCORE_WORKSPACE_ROOT", str(tmp_path))
     retriever = UnifiedRetriever("alpha")
     old_ts = "2020-01-01T00:00:00+00:00"
     fresh_ts = datetime.now(timezone.utc).isoformat()

@@ -1,6 +1,6 @@
 """Generic artifact lineage and evidence projection.
 
-Agent Platform Base does not define domain authority. It only groups artifacts
+LZCore does not define domain authority. It only groups artifacts
 by explicit evidence keys when producers provide them, marks the latest complete
 item in each stream, and treats everything else as ordinary deliverables.
 """

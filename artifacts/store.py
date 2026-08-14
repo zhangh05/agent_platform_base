@@ -44,7 +44,7 @@ MAX_FILE_SIZE = 200 * 1024 * 1024  # 200MB
 def _get_max_size() -> int:
     """Resolve max artifact size from env or default."""
     try:
-        mb = int(os.environ.get("AGENT_PLATFORM_MAX_UPLOAD_MB", "0"))
+        mb = int(os.environ.get("LZCORE_MAX_UPLOAD_MB", "0"))
         if mb > 0:
             return mb * 1024 * 1024
     except ValueError:

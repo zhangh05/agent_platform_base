@@ -116,7 +116,7 @@ def test_history_tool_context_keeps_failures_and_latest_evidence():
 
 
 def test_secret_artifact_is_redacted_at_rest_and_not_readable(monkeypatch, tmp_path):
-    monkeypatch.setenv("NA_WORKSPACE_ROOT", str(tmp_path / "workspaces"))
+    monkeypatch.setenv("LZCORE_WORKSPACE_ROOT", str(tmp_path / "workspaces"))
     from artifacts.store import read_artifact_content, save_artifact
 
     artifact = save_artifact(

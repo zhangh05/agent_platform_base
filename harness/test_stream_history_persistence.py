@@ -283,7 +283,7 @@ class TestRuntimeRoutesAtomicWrite:
         from backend.api import runtime_routes
         from storage.principal import storage_principal
 
-        monkeypatch.setenv("NA_WORKSPACE_ROOT", str(tmp_path))
+        monkeypatch.setenv("LZCORE_WORKSPACE_ROOT", str(tmp_path))
         with storage_principal("alice"):
             alice_key = runtime_routes._history_key("team")
             runtime_routes._tool_exec_history.pop(alice_key, None)

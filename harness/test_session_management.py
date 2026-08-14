@@ -159,7 +159,7 @@ class TestLiveSessionIsolation:
 
 class TestSessionRunAssociation:
     def test_run_record_creates_caller_owned_session_before_association(self, monkeypatch, tmp_path):
-        monkeypatch.setenv("NA_WORKSPACE_ROOT", str(tmp_path))
+        monkeypatch.setenv("LZCORE_WORKSPACE_ROOT", str(tmp_path))
         session_id = "browser_session_1"
         state = AgentState(
             request_id="run_first_001",
@@ -177,7 +177,7 @@ class TestSessionRunAssociation:
         assert fetched["title"] == "first browser turn"
 
     def test_list_repairs_legacy_session_title_and_run_ids(self, monkeypatch, tmp_path):
-        monkeypatch.setenv("NA_WORKSPACE_ROOT", str(tmp_path))
+        monkeypatch.setenv("LZCORE_WORKSPACE_ROOT", str(tmp_path))
         from storage.message_store import SessionMessageStore
 
         session_id = "legacy_browser_1"

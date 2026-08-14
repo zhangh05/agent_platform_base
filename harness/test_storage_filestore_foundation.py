@@ -16,7 +16,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 @pytest.fixture
 def tmp_workspace(monkeypatch, tmp_path):
     """Set up a temporary workspace root for testing."""
-    monkeypatch.setenv("NA_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("LZCORE_WORKSPACE_ROOT", str(tmp_path))
     from storage.paths import ensure_workspace_storage_dirs
     ensure_workspace_storage_dirs("test_ws")
     return tmp_path

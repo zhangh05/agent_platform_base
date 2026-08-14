@@ -40,8 +40,8 @@ from typing import List, Optional
 # Force the workspace root into a temp dir so we don't pollute
 # real workspaces.
 _TMP_ROOT = Path(tempfile.mkdtemp(prefix="knowledge_eval_v102_"))
-os.environ["NA_WORKSPACE_ROOT"] = str(_TMP_ROOT)
-os.environ["AGENT_PLATFORM_WORKSPACE_DIR"] = str(_TMP_ROOT)
+os.environ["LZCORE_WORKSPACE_ROOT"] = str(_TMP_ROOT)
+os.environ["LZCORE_WORKSPACE_DIR"] = str(_TMP_ROOT)
 
 # Also override the artifacts fallback path if used.
 try:

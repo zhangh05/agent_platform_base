@@ -26,7 +26,7 @@ def _definition():
 
 
 def test_cross_extension_dag_executes_and_persists_redacted_inputs(monkeypatch, tmp_path):
-    monkeypatch.setenv("NA_WORKSPACE_ROOT", str(tmp_path / "workspaces"))
+    monkeypatch.setenv("LZCORE_WORKSPACE_ROOT", str(tmp_path / "workspaces"))
     from extensions.runtime import reset_extension_cache_for_tests
     from core.tools.integration import reset_default_client_for_tests
     reset_extension_cache_for_tests(); reset_default_client_for_tests()
@@ -40,7 +40,7 @@ def test_cross_extension_dag_executes_and_persists_redacted_inputs(monkeypatch, 
 
 
 def test_workflow_validation_rejects_cycles_and_unknown_tools(monkeypatch, tmp_path):
-    monkeypatch.setenv("NA_WORKSPACE_ROOT", str(tmp_path / "workspaces"))
+    monkeypatch.setenv("LZCORE_WORKSPACE_ROOT", str(tmp_path / "workspaces"))
     cyclic = _definition()
     cyclic["nodes"][0]["depends_on"] = ["second"]
     with pytest.raises(WorkflowError, match="cycle"):
@@ -56,7 +56,7 @@ def test_workflow_validation_rejects_cycles_and_unknown_tools(monkeypatch, tmp_p
 
 
 def test_missing_runtime_input_is_recorded_as_a_failed_node(monkeypatch, tmp_path):
-    monkeypatch.setenv("NA_WORKSPACE_ROOT", str(tmp_path / "workspaces"))
+    monkeypatch.setenv("LZCORE_WORKSPACE_ROOT", str(tmp_path / "workspaces"))
     from extensions.runtime import reset_extension_cache_for_tests
     from core.tools.integration import reset_default_client_for_tests
     reset_extension_cache_for_tests(); reset_default_client_for_tests()
@@ -68,7 +68,7 @@ def test_missing_runtime_input_is_recorded_as_a_failed_node(monkeypatch, tmp_pat
 
 
 def test_continue_runs_independent_branch_but_skips_failed_dependents(monkeypatch, tmp_path):
-    monkeypatch.setenv("NA_WORKSPACE_ROOT", str(tmp_path / "workspaces"))
+    monkeypatch.setenv("LZCORE_WORKSPACE_ROOT", str(tmp_path / "workspaces"))
     import workflows.service as service
 
     seen = []
@@ -107,7 +107,7 @@ def test_continue_runs_independent_branch_but_skips_failed_dependents(monkeypatc
 
 
 def test_workflow_job_runs_through_durable_job_lifecycle(monkeypatch, tmp_path):
-    monkeypatch.setenv("NA_WORKSPACE_ROOT", str(tmp_path / "workspaces"))
+    monkeypatch.setenv("LZCORE_WORKSPACE_ROOT", str(tmp_path / "workspaces"))
     from extensions.runtime import reset_extension_cache_for_tests
     from core.tools.integration import reset_default_client_for_tests
     reset_extension_cache_for_tests(); reset_default_client_for_tests()
@@ -124,12 +124,12 @@ def test_workflow_job_runs_through_durable_job_lifecycle(monkeypatch, tmp_path):
 
 
 def test_organization_workspace_isolation_and_workflow_roles(monkeypatch, tmp_path):
-    monkeypatch.setenv("NA_WORKSPACE_ROOT", str(tmp_path / "workspaces"))
-    monkeypatch.setenv("AGENT_PLATFORM_IDENTITY_ENABLED", "true")
-    monkeypatch.setenv("AGENT_PLATFORM_SESSION_SECRET", "workflow-session-secret")
-    monkeypatch.setenv("AGENT_PLATFORM_MASTER_KEY", "workflow-master-key")
-    monkeypatch.delenv("AGENT_PLATFORM_LOGIN_USERNAME", raising=False)
-    monkeypatch.delenv("AGENT_PLATFORM_LOGIN_PASSWORD", raising=False)
+    monkeypatch.setenv("LZCORE_WORKSPACE_ROOT", str(tmp_path / "workspaces"))
+    monkeypatch.setenv("LZCORE_IDENTITY_ENABLED", "true")
+    monkeypatch.setenv("LZCORE_SESSION_SECRET", "workflow-session-secret")
+    monkeypatch.setenv("LZCORE_MASTER_KEY", "workflow-master-key")
+    monkeypatch.delenv("LZCORE_LOGIN_USERNAME", raising=False)
+    monkeypatch.delenv("LZCORE_LOGIN_PASSWORD", raising=False)
     from backend.core.identity import upsert_user
     from storage.workspace_store import ensure_workspace
     ensure_workspace("team_a"); ensure_workspace("team_b"); ensure_workspace("root_owner")

@@ -42,7 +42,7 @@ def _material(value: str | bytes | None, env_name: str) -> bytes:
 
 
 def _private_key(value: str | bytes | None = None) -> Ed25519PrivateKey:
-    raw = _material(value, "AGENT_PLATFORM_EXTENSION_SIGNING_PRIVATE_KEY")
+    raw = _material(value, "LZCORE_EXTENSION_SIGNING_PRIVATE_KEY")
     try:
         if raw.startswith(b"-----BEGIN"):
             key = serialization.load_pem_private_key(raw, password=None)
@@ -55,7 +55,7 @@ def _private_key(value: str | bytes | None = None) -> Ed25519PrivateKey:
 
 
 def _public_key(value: str | bytes | None = None) -> Ed25519PublicKey:
-    raw = _material(value, "AGENT_PLATFORM_EXTENSION_SIGNING_PUBLIC_KEY")
+    raw = _material(value, "LZCORE_EXTENSION_SIGNING_PUBLIC_KEY")
     try:
         if raw.startswith(b"-----BEGIN"):
             try:

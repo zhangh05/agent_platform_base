@@ -162,7 +162,7 @@ def _wikipedia_search_results(requests_module, query: str, domains: list[str], l
             "format": "json",
         },
         timeout=8,
-        headers={"User-Agent": "AgentPlatformBase/1.0 (+https://github.com/zhangh05/agent_platform_base)"},
+        headers={"User-Agent": "LZCore/1.0 (+https://github.com/zhangh05/lzcore)"},
     )
     data = resp.json()
     titles = data[1] if isinstance(data, list) and len(data) > 1 and isinstance(data[1], list) else []
@@ -384,7 +384,7 @@ def handle_web_search(inv: ToolInvocation) -> dict:
                 params=_duckduckgo_search_params(search_query, recency, language, safe_search),
                 timeout=12,
                 headers={
-                    "User-Agent": "AgentPlatformBase/1.0 (+https://github.com/zhangh05/agent_platform_base)",
+                    "User-Agent": "LZCore/1.0 (+https://github.com/zhangh05/lzcore)",
                     "Accept-Language": language,
                 },
             )

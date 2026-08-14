@@ -59,11 +59,11 @@ jobs:
       - name: Resolve immutable Python runner image
         run: |
           docker pull python:3.12-slim
-          echo "AGENT_PLATFORM_PYTHON_CONTAINER_IMAGE=$(docker image inspect python:3.12-slim --format '{{index .RepoDigests 0}}')" >> "$GITHUB_ENV"
+          echo "LZCORE_PYTHON_CONTAINER_IMAGE=$(docker image inspect python:3.12-slim --format '{{index .RepoDigests 0}}')" >> "$GITHUB_ENV"
       - name: Exercise real container security boundaries
         env:
-          AGENT_PLATFORM_RUN_DOCKER_INTEGRATION: "1"
-          AGENT_PLATFORM_RUNTIME_BIND_HOST: "0.0.0.0"
+          LZCORE_RUN_DOCKER_INTEGRATION: "1"
+          LZCORE_RUNTIME_BIND_HOST: "0.0.0.0"
         run: |
           python -m pip install pytest
           python -m pytest harness/integration/test_docker_runner_integration.py -q --tb=short
@@ -74,13 +74,13 @@ jobs:
       postgres:
         image: postgres:16-alpine
         env:
-          POSTGRES_DB: agent_platform
-          POSTGRES_USER: agent_platform
+          POSTGRES_DB: lzcore
+          POSTGRES_USER: lzcore
           POSTGRES_PASSWORD: integration-password
         ports:
           - 5432:5432
         options: >-
-          --health-cmd "pg_isready -U agent_platform -d agent_platform"
+          --health-cmd "pg_isready -U lzcore -d lzcore"
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
@@ -113,12 +113,12 @@ jobs:
           exit 1
       - name: Exercise real distributed adapters
         env:
-          AGENT_PLATFORM_RUN_DISTRIBUTED_INTEGRATION: "1"
-          AGENT_PLATFORM_DATABASE_URL: postgresql://agent_platform:integration-password@127.0.0.1:5432/agent_platform
-          AGENT_PLATFORM_QUEUE_URL: redis://127.0.0.1:6379/0
-          AGENT_PLATFORM_S3_ENDPOINT_URL: http://127.0.0.1:9000
-          AGENT_PLATFORM_S3_ADDRESSING_STYLE: path
-          AGENT_PLATFORM_OBJECT_STORE_BUCKET: agent-platform-ci
+          LZCORE_RUN_DISTRIBUTED_INTEGRATION: "1"
+          LZCORE_DATABASE_URL: postgresql://lzcore:integration-password@127.0.0.1:5432/lzcore
+          LZCORE_QUEUE_URL: redis://127.0.0.1:6379/0
+          LZCORE_S3_ENDPOINT_URL: http://127.0.0.1:9000
+          LZCORE_S3_ADDRESSING_STYLE: path
+          LZCORE_OBJECT_STORE_BUCKET: lzcore-ci
           AWS_ACCESS_KEY_ID: minioadmin
           AWS_SECRET_ACCESS_KEY: minioadmin
           AWS_DEFAULT_REGION: us-east-1
@@ -133,25 +133,25 @@ jobs:
       MINIO_ROOT_USER: minioadmin
       MINIO_ROOT_PASSWORD: integration-password
       GRAFANA_ADMIN_PASSWORD: integration-password
-      AGENT_PLATFORM_MASTER_KEY_FILE: /dev/null
-      AGENT_PLATFORM_SESSION_SECRET_FILE: /dev/null
-      AGENT_PLATFORM_LOGIN_PASSWORD_FILE: /dev/null
-      AGENT_PLATFORM_API_TOKEN_FILE: /dev/null
-      AGENT_PLATFORM_TLS_CERT_FILE: /dev/null
-      AGENT_PLATFORM_TLS_KEY_FILE: /dev/null
-      AGENT_PLATFORM_DOCKER_SOCKET_GID: "0"
+      LZCORE_MASTER_KEY_FILE: /dev/null
+      LZCORE_SESSION_SECRET_FILE: /dev/null
+      LZCORE_LOGIN_PASSWORD_FILE: /dev/null
+      LZCORE_API_TOKEN_FILE: /dev/null
+      LZCORE_TLS_CERT_FILE: /dev/null
+      LZCORE_TLS_KEY_FILE: /dev/null
+      LZCORE_DOCKER_SOCKET_GID: "0"
     steps:
       - uses: actions/checkout@v6
       - name: Resolve production runner image and validate Compose
         run: |
           docker pull python:3.12-slim
-          export AGENT_PLATFORM_PYTHON_CONTAINER_IMAGE="$(docker image inspect python:3.12-slim --format '{{index .RepoDigests 0}}')"
-          echo "AGENT_PLATFORM_PYTHON_CONTAINER_IMAGE=$AGENT_PLATFORM_PYTHON_CONTAINER_IMAGE" >> "$GITHUB_ENV"
+          export LZCORE_PYTHON_CONTAINER_IMAGE="$(docker image inspect python:3.12-slim --format '{{index .RepoDigests 0}}')"
+          echo "LZCORE_PYTHON_CONTAINER_IMAGE=$LZCORE_PYTHON_CONTAINER_IMAGE" >> "$GITHUB_ENV"
           docker compose -f deployment/compose.production.yml config -q
       - name: Build production images and verify bundled Docker client
         run: |
           docker compose -f deployment/compose.production.yml build backend frontend
-          docker run --rm agent-platform-backend:latest docker --version
+          docker run --rm lzcore-backend:latest docker --version
 
   lint:
     runs-on: ubuntu-latest

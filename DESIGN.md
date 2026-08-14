@@ -1,4 +1,4 @@
-# Agent Platform Base Design
+# LZCore Design
 
 本设计文档只描述当前实现，不保留历史架构、历史工具名或旁路实现。
 

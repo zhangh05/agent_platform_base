@@ -4,12 +4,12 @@ import { App } from "./app/App";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import "./styles/global.css";
 
-// Theme initialization — read from Zustand persist store (na_ui) or
+// Theme initialization — read from Zustand persist store (lzcore_ui) or
 // fall back to prefers-color-scheme. We do this BEFORE React mounts so
 // the first paint uses the correct tokens and there's no flash.
 (function initTheme() {
   try {
-    const raw = localStorage.getItem("na_ui");
+    const raw = localStorage.getItem("lzcore_ui");
     if (raw) {
       const ui = JSON.parse(raw);
       if (ui.state?.theme === "light" || ui.state?.theme === "dark") {

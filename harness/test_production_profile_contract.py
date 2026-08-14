@@ -30,7 +30,7 @@ def test_compose_profile_has_required_runtime_boundaries():
     assert services["backend"]["cap_drop"] == ["ALL"]
     assert services["frontend"]["read_only"] is True
     assert {"master_key", "session_secret", "login_password", "api_token"} <= set(profile["secrets"])
-    assert profile["x-backend-environment"]["AGENT_PLATFORM_MASTER_KEY_FILE"] == "/run/secrets/master_key"
+    assert profile["x-backend-environment"]["LZCORE_MASTER_KEY_FILE"] == "/run/secrets/master_key"
 
 
 def test_observability_profile_has_alerts_dashboard_and_runbook():
@@ -39,7 +39,7 @@ def test_observability_profile_has_alerts_dashboard_and_runbook():
     assert prometheus["scrape_configs"][0]["bearer_token_file"] == "/run/secrets/api_token"
     names = {rule["alert"] for group in alerts["groups"] for rule in group["rules"]}
     assert {"AgentPlatformTargetDown", "AgentPlatformApprovalWaitingTooLong", "AgentPlatformToolFailures"} <= names
-    assert (ROOT / "deployment" / "observability" / "grafana-provisioning" / "dashboards" / "json" / "agent-platform.json").is_file()
+    assert (ROOT / "deployment" / "observability" / "grafana-provisioning" / "dashboards" / "json" / "lzcore.json").is_file()
     assert (ROOT / "docs" / "OPERATIONS_RUNBOOK.md").is_file()
 
 
@@ -48,26 +48,26 @@ def test_secret_files_are_supported(monkeypatch, tmp_path):
 
     files = {}
     for name, value in {
-        "AGENT_PLATFORM_API_TOKEN": "a" * 32,
-        "AGENT_PLATFORM_LOGIN_PASSWORD": "b" * 16,
-        "AGENT_PLATFORM_SESSION_SECRET": "c" * 40,
+        "LZCORE_API_TOKEN": "a" * 32,
+        "LZCORE_LOGIN_PASSWORD": "b" * 16,
+        "LZCORE_SESSION_SECRET": "c" * 40,
     }.items():
         path = tmp_path / name.lower()
         path.write_text(value, encoding="utf-8")
         monkeypatch.delenv(name, raising=False)
         monkeypatch.setenv(f"{name}_FILE", str(path))
         files[name] = value
-    assert _get_api_token() == files["AGENT_PLATFORM_API_TOKEN"]
-    assert _get_login_password() == files["AGENT_PLATFORM_LOGIN_PASSWORD"]
-    assert _secret_value("AGENT_PLATFORM_SESSION_SECRET") == files["AGENT_PLATFORM_SESSION_SECRET"]
+    assert _get_api_token() == files["LZCORE_API_TOKEN"]
+    assert _get_login_password() == files["LZCORE_LOGIN_PASSWORD"]
+    assert _secret_value("LZCORE_SESSION_SECRET") == files["LZCORE_SESSION_SECRET"]
 
 
 def test_oidc_claim_mapping_and_disabled_routes(monkeypatch):
     from backend.core.oidc import _username_from_claims
     from backend.main import create_app
 
-    monkeypatch.delenv("AGENT_PLATFORM_OIDC_ENABLED", raising=False)
-    monkeypatch.setenv("AGENT_PLATFORM_OIDC_USERNAME_CLAIM", "preferred_username")
+    monkeypatch.delenv("LZCORE_OIDC_ENABLED", raising=False)
+    monkeypatch.setenv("LZCORE_OIDC_USERNAME_CLAIM", "preferred_username")
     assert _username_from_claims({"preferred_username": "alice", "sub": "subject"}) == "alice"
     assert _username_from_claims({"email": "alice@example.com"}) == "alice@example.com"
     with pytest.raises(ValueError):

@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-PROJECT_ROOT = Path("/Users/zhangh01/Desktop/agent_platform_base")
+PROJECT_ROOT = Path("/Users/zhangh01/Desktop/lzcore")
 
 
 def test_run_shell_blocks_api_keys_and_tokens():
@@ -28,7 +28,7 @@ def test_run_shell_blocks_api_keys_and_tokens():
 
     sentinels = {
         "OPENAI_API_KEY": "sk-sentinel-openai-1234567890abcdef",
-        "AGENT_PLATFORM_ADMIN_TOKEN": "admin-sentinel-987654321",
+        "LZCORE_ADMIN_TOKEN": "admin-sentinel-987654321",
         "LLM_TOKEN": "llm-sentinel-abcdef",
         "PROXY_URL": "http://user:pass@proxy.example.com",
         "GITHUB_PASSWORD": "pw-sentinel-abcdef",
@@ -138,7 +138,7 @@ def test_exec_defaults_to_current_workspace(monkeypatch, tmp_path):
     from core.tools.schemas import ToolInvocation
     from core.tools.general_tools import command_tools
 
-    monkeypatch.setenv("NA_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("LZCORE_WORKSPACE_ROOT", str(tmp_path))
     captured = {}
 
     def fake_run(command, cwd=None, shell="/bin/bash", env=None, timeout=None):
@@ -160,7 +160,7 @@ def test_exec_rejects_workdir_outside_current_workspace(monkeypatch, tmp_path):
     from core.tools.schemas import ToolInvocation
     from core.tools.general_tools import command_tools
 
-    monkeypatch.setenv("NA_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("LZCORE_WORKSPACE_ROOT", str(tmp_path))
     result = command_tools.handle_command_approved_exec(ToolInvocation(
         tool_id="exec.run", workspace_id="default",
         arguments={"action": "shell", "command": "pwd", "working_dir": "/tmp"},

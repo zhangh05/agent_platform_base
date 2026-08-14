@@ -126,13 +126,13 @@ def _build_provider_config(provider_id: str, data: Optional[dict] = None) -> dic
 def _write_json(provider_id: str, data: dict):
     data["updated_at"] = now_iso()
     persisted = dict(data)
-    if persisted.get("api_key") and os.environ.get("AGENT_PLATFORM_MASTER_KEY"):
+    if persisted.get("api_key") and os.environ.get("LZCORE_MASTER_KEY"):
         from storage.secret_store import set_secret
         persisted["secret_ref"] = set_secret(f"llm/{provider_id}", persisted["api_key"])
         persisted["api_key"] = ""
         data["secret_ref"] = persisted["secret_ref"]
-    elif persisted.get("api_key") and os.environ.get("AGENT_PLATFORM_IDENTITY_ENABLED", "false").lower() in {"1", "true", "yes", "on"}:
-        raise RuntimeError("AGENT_PLATFORM_MASTER_KEY is required before saving provider keys in identity mode")
+    elif persisted.get("api_key") and os.environ.get("LZCORE_IDENTITY_ENABLED", "false").lower() in {"1", "true", "yes", "on"}:
+        raise RuntimeError("LZCORE_MASTER_KEY is required before saving provider keys in identity mode")
     write_provider_config(PROVIDERS_DIR, provider_id, persisted)
 
 

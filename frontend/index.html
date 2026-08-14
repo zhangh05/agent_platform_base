@@ -8,20 +8,13 @@
     <meta name="description" content="联智中枢" />
     <title>联智中枢</title>
     <script>
-      // Run before the application module imports Zustand stores. Legacy
-      // workbench entries can contain complete run/tool payloads and may block
-      // the browser while JSON.parse runs during hydration. Chat history is
-      // server-owned, so these browser caches are intentionally disposable.
+      // Clear only interrupted stream markers before the application starts.
+      // Current LZCore stores are preserved and hydrated by Zustand.
       try {
         const staleKeys = [];
         for (let index = 0; index < localStorage.length; index += 1) {
           const key = localStorage.key(index) || "";
-          if (
-            key === "na_workbench"
-            || key.startsWith("na_workbench:")
-            || key.startsWith("na_workbench_v4:")
-            || key.startsWith("chat_stream_inflight:")
-          ) staleKeys.push(key);
+          if (key.startsWith("chat_stream_inflight:")) staleKeys.push(key);
         }
         staleKeys.forEach((key) => localStorage.removeItem(key));
       } catch (_) {

@@ -1,6 +1,6 @@
 # Storage Current State
 
-Agent Platform Base uses workspace-scoped local storage. The base keeps only generic runtime data:
+LZCore uses workspace-scoped local storage. The base keeps only generic runtime data:
 
 | Data | Store |
 | --- | --- |

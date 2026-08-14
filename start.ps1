@@ -24,7 +24,7 @@ $BundledPython = Join-Path $Root "runtime\python\python.exe"
 $BundledNode = Join-Path $Root "runtime\node\node.exe"
 
 function Write-Step([string]$Message) {
-    Write-Host "[agent-platform-base] $Message" -ForegroundColor Cyan
+    Write-Host "[lzcore] $Message" -ForegroundColor Cyan
 }
 
 function Fail([string]$Message) {
@@ -297,7 +297,7 @@ try {
     $backendRunning = Assert-Port "backend" $BackendPort $backendHealth $BackendPidFile
     if (-not $backendRunning) {
         Write-Step "Starting backend on ${BackendHost}:$BackendPort..."
-        $env:AGENT_PLATFORM_ALLOWED_ORIGINS = Get-AllowedOrigins
+        $env:LZCORE_ALLOWED_ORIGINS = Get-AllowedOrigins
         $backend = Start-Process -FilePath $Python `
             -ArgumentList @("backend\main.py", "--host", $BackendHost, "--port", "$BackendPort") `
             -WorkingDirectory $Root -WindowStyle Hidden -PassThru `
@@ -326,7 +326,7 @@ try {
     }
 
     Write-Host ""
-    Write-Host "Agent Platform Base is ready:" -ForegroundColor Green
+    Write-Host "LZCore is ready:" -ForegroundColor Green
     Write-Host "  UI:      $frontendHealth"
     Write-Host "  API:     $backendHealth"
     Write-Host "  Logs:    $LogDir"

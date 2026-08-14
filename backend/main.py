@@ -392,10 +392,10 @@ def create_app():
     def backend_root():
         return jsonify({
             "ok": True,
-            "service": "agent_platform_base_backend",
+            "service": "lzcore_backend",
             "api_base": "/api",
             "frontend_url": os.environ.get(
-                "AGENT_PLATFORM_FRONTEND_DEV_URL",
+                "LZCORE_FRONTEND_DEV_URL",
                 "http://127.0.0.1:5273",
             ),
         })
@@ -417,7 +417,7 @@ def main():
     from backend.core.auth import validate_network_listener
     validate_network_listener(args.host)
     # Python execution policy must see the actual listener even when backend.main is started directly.
-    os.environ["AGENT_PLATFORM_RUNTIME_BIND_HOST"] = args.host
+    os.environ["LZCORE_RUNTIME_BIND_HOST"] = args.host
     app.config["PORT"] = port
 
     print(f"联智中枢 running on http://{args.host}:{port}")
