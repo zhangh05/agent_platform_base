@@ -237,6 +237,9 @@ def run_ssot_turn(
             "execution_outcome": str(
                 (runtime_result.metadata or {}).get("execution_outcome") or "complete"
             ),
+            "tool_execution_outcome": str(
+                (runtime_result.metadata or {}).get("tool_execution_outcome") or "complete"
+            ),
             # Read-only terminal facts for API/UI consumers. QueryLoop remains
             # the only owner of execution, recovery and write fencing.
             "unknown_outcome": (

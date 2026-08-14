@@ -30,6 +30,7 @@ export {
   List as IconMenu,
   MagnifyingGlass as IconSearch,
   Moon as IconMoon,
+  DotsThreeVertical as IconMore,
   PaperPlaneTilt as IconSend,
   Paperclip as IconAttachment,
   PencilSimple as IconEdit,

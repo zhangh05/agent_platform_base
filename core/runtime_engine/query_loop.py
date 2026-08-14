@@ -1315,17 +1315,24 @@ class QueryLoop:
                     ctx.extras.get("response_quality_events") or []
                 ),
             }
-            from .turn_outcome import derive_execution_outcome
-            projected_metrics["execution_outcome"] = derive_execution_outcome(all_results)
-            projected_metrics.update(dict(values.pop("metrics", {}) or {}))
+            metric_overrides = dict(values.pop("metrics", {}) or {})
+            projected_metrics.update(metric_overrides)
             from .goal_assertions import evaluate_goal_assertions
             assertion_result = evaluate_goal_assertions(ctx, all_results)
             projected_metrics["goal_assertions"] = assertion_result
             if assertion_result["required"] and assertion_result["status"] != "passed":
-                projected_metrics["execution_outcome"] = (
-                    "unknown" if assertion_result["status"] == "unknown" else "partial"
-                )
                 values.setdefault("error", "goal_assertion_not_satisfied")
+            from .turn_outcome import derive_execution_outcome, derive_tool_execution_outcome
+            projected_metrics["tool_execution_outcome"] = derive_tool_execution_outcome(all_results)
+            projected_metrics["execution_outcome"] = (
+                "unknown"
+                if metric_overrides.get("execution_outcome") == "unknown"
+                else derive_execution_outcome(
+                    all_results,
+                    terminal_error=values.get("error"),
+                    goal_assertions=assertion_result,
+                )
+            )
             values.setdefault("tool_results", all_results)
             values.setdefault("iterations", iterations)
             values.setdefault("total_tool_calls", len(all_results))

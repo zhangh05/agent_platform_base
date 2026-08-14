@@ -173,6 +173,57 @@ def test_merge_result_projection_reconciles_status_on_success(monkeypatch, tmp_p
     assert rec["status"] == "ok"
 
 
+def test_recovered_tool_failures_do_not_mark_completed_task_partial(monkeypatch, tmp_path):
+    from agent.runtime import turn_persistence as tp
+    import storage.run_record_store as rs
+
+    monkeypatch.setenv("LZCORE_WORKSPACE_ROOT", str(tmp_path))
+    (tmp_path / "default" / "runs").mkdir(parents=True, exist_ok=True)
+
+    class _FakeResult:
+        ok = True
+        errors = []
+        warnings = ["partial_tool_failure: two failed, one succeeded"]
+        tool_calls = []
+        tool_decision = {}
+        no_tool_reason = ""
+        trace_id = "tr-recovered"
+        final_response = "172.19.0.2"
+
+        def to_dict(self):
+            return {
+                "ok": True,
+                "errors": [],
+                "warnings": self.warnings,
+                "turn_id": "r-recovered",
+                "trace_id": self.trace_id,
+                "tool_calls": [],
+                "tool_decision": {},
+                "no_tool_reason": "",
+                "metadata": {
+                    "execution_outcome": "complete",
+                    "tool_execution_outcome": "partial",
+                },
+            }
+
+    state = _state(
+        result_ok=True,
+        result_errors=[],
+        execution_outcome="complete",
+        tool_execution_outcome="partial",
+        warnings=_FakeResult.warnings,
+    )
+    state.request_id = "r-recovered"
+    rid = rs.write_run_record(state, "default")
+    tp._merge_result_projection(rid, "default", _FakeResult(), context=None)
+
+    rec = json.loads((tmp_path / "default" / "runs" / f"{rid}.json").read_text())
+    assert rec["status"] == "ok"
+    assert rec["execution_outcome"] == "complete"
+    assert rec["tool_execution_outcome"] == "partial"
+    assert rec["warning_count"] == 1
+
+
 def test_merge_result_projection_preserves_partial_status(monkeypatch, tmp_path):
     from agent.runtime import turn_persistence as tp
     import storage.run_record_store as rs

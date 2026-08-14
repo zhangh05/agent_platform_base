@@ -7,7 +7,7 @@ import { useToastStore } from "../stores/toast";
 import { isApiError, AgentResult } from "../types";
 import type { ToolCallResult, RuntimeEvent } from "../types";
 import type { Session } from "../types";
-import { IconArchive, IconBolt, IconChat, IconEdit, IconPlus, IconTrash, IconWorkspace } from "../components/Icon";
+import { IconArchive, IconBolt, IconChat, IconEdit, IconMore, IconPlus, IconTrash, IconWorkspace } from "../components/Icon";
 import { APP_EVENTS } from "../utils/appEvents";
 import { formatDate } from "../utils/format";
 
@@ -18,6 +18,7 @@ function runStatusLabel(status?: string): string {
 }
 
 interface AgentRunDetail {
+  ok?: boolean;
   status?: string;
   final_response?: string;
   events?: RuntimeEvent[];
@@ -43,6 +44,7 @@ interface RecentRunSummary {
   intent?: string;
   created_at?: string;
   session_id?: string;
+  ok?: boolean;
 }
 
 /**
@@ -98,7 +100,7 @@ export function Sidebar() {
       const raw = (await runtimeAuditApi.run(currentWorkspaceId, rid)) as AgentRunResponse;
       const runData: AgentRunDetail = raw.run ?? (raw as unknown as AgentRunDetail);
       const result: AgentResult = {
-        ok: /ok|completed|success/i.test(runData.status || r.status || ""),
+        ok: runData.ok ?? r.ok ?? /ok|completed|success/i.test(runData.status || r.status || ""),
         final_response: runData.final_response || "",
         events: runData.events || [],
         trace_id: runData.trace_id || "",
@@ -120,7 +122,7 @@ export function Sidebar() {
     } catch {
       // Minimal fallback from summary
       const result: AgentResult = {
-        ok: /ok|completed|success/i.test(r.status || ""),
+        ok: r.ok ?? /ok|completed|success/i.test(r.status || ""),
         final_response: "",
         events: [],
         trace_id: "",
@@ -350,35 +352,28 @@ export function Sidebar() {
                       <button className="btn sm ghost btn-xs-compact" onClick={(e) => { e.stopPropagation(); cancelEditSession(); }} type="button">×</button>
                     </div>
                   ) : (
-                    <div className="row-actions">
-                      <button
-                        onClick={(e) => { e.stopPropagation(); startEditSession(sess); }}
-                        className="btn ghost sm icon-only"
-                        type="button" title="重命名"
+                    <details className="session-menu">
+                      <summary
+                        onClick={(e) => e.stopPropagation()}
+                        className="btn ghost sm icon-only session-more-trigger"
+                        title="会话操作"
+                        aria-label={`打开“${sess.title || sess.session_id}”的会话操作`}
+                        data-testid={`session-menu-trigger-${sess.session_id}`}
                       >
-                        <IconEdit size={12} />
-                      </button>
-                      <button
-                        onClick={(e) => { e.stopPropagation(); void onDeleteSession(sess); }}
-                        className="btn ghost sm icon-only text-danger"
-                        type="button" title="删除"
-                      >
-                        <IconTrash size={12} />
-                      </button>
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          void onArchive(sess);
-                        }}
-                        className="btn ghost sm icon-only"
-                        data-testid={`btn-archive-${sess.session_id}`}
-                        type="button"
-                        aria-label="归档"
-                        title="归档"
-                      >
-                        <IconArchive size={12} />
-                      </button>
-                    </div>
+                        <IconMore size={15} weight="bold" />
+                      </summary>
+                      <div className="session-action-menu" role="menu" aria-label="会话操作">
+                        <button type="button" role="menuitem" onClick={(e) => { e.stopPropagation(); e.currentTarget.closest("details")?.removeAttribute("open"); startEditSession(sess); }}>
+                          <IconEdit size={14} /><span>重命名</span>
+                        </button>
+                        <button type="button" role="menuitem" onClick={(e) => { e.stopPropagation(); e.currentTarget.closest("details")?.removeAttribute("open"); void onArchive(sess); }} data-testid={`btn-archive-${sess.session_id}`}>
+                          <IconArchive size={14} /><span>归档</span>
+                        </button>
+                        <button type="button" role="menuitem" className="danger" onClick={(e) => { e.stopPropagation(); e.currentTarget.closest("details")?.removeAttribute("open"); void onDeleteSession(sess); }}>
+                          <IconTrash size={14} /><span>永久删除</span>
+                        </button>
+                      </div>
+                    </details>
                   )}
                 </div>
               ))}

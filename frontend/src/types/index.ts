@@ -243,6 +243,8 @@ export interface AgentResult {
     output_truncation_reason?: string;
     /** Durable runtime terminal projection. Unknown means a write may still run externally. */
     execution_outcome?: "complete" | "partial" | "failed" | "unknown";
+    /** Aggregate tool-attempt telemetry; failed attempts may coexist with a completed task. */
+    tool_execution_outcome?: "complete" | "partial" | "failed" | "unknown";
     /** Read-only trigger fact for a fail-closed unknown write outcome. */
     unknown_outcome?: {
       status?: "unknown";

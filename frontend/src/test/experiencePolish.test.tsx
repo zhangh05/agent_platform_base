@@ -252,6 +252,37 @@ describe("Experience polish", () => {
     expect(sessionPanel?.nextElementSibling).toBe(runPanel);
   });
 
+  it("keeps session actions in one accessible menu", async () => {
+    enqueue("/sessions", {
+      status: 200,
+      data: {
+        sessions: [{
+          session_id: "sess-menu",
+          workspace_id: "default",
+          title: "查看本机IP地址",
+          status: "active",
+          created_at: "",
+          updated_at: "",
+          message_count: 2,
+        }],
+      },
+    });
+    enqueue("/runs/recent", { status: 200, data: { runs: [] } });
+
+    render(<Sidebar />);
+
+    const trigger = await screen.findByTestId("session-menu-trigger-sess-menu");
+    const sessionItem = screen.getByTestId("sess-sess-menu");
+    expect(sessionItem.querySelectorAll(":scope > .row-actions")).toHaveLength(0);
+    expect(sessionItem.querySelectorAll(".session-more-trigger")).toHaveLength(1);
+    fireEvent.click(trigger);
+    expect(trigger.closest("details")).toHaveAttribute("open");
+    const menu = screen.getByRole("menu", { name: "会话操作" });
+    expect(menu).toHaveTextContent("重命名");
+    expect(menu).toHaveTextContent("归档");
+    expect(menu).toHaveTextContent("永久删除");
+  });
+
   it("keeps the selected session visible when it is outside the sidebar preview", async () => {
     const sessions = Array.from({ length: 15 }, (_, i) => ({
       session_id: `sess-${i}`,

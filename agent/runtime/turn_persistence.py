@@ -97,6 +97,10 @@ def persist_run_record(session, turn, result, context) -> None:
                 str((result.metadata or {}).get("execution_outcome") or "")
                 if result else ""
             ),
+            tool_execution_outcome=(
+                str((result.metadata or {}).get("tool_execution_outcome") or "")
+                if result else ""
+            ),
             skill_results=skill_results,
             tool_results=skill_results,
         )
@@ -282,6 +286,7 @@ def _merge_result_projection(run_id: str, ws_id: str, result, context) -> None:
         "warnings": [redact_text(str(w))[:300] for w in list(result_dict.get("warnings") or [])[:20]],
         "warning_count": len(list(result_dict.get("warnings") or [])),
         "execution_outcome": str(metadata.get("execution_outcome") or "complete"),
+        "tool_execution_outcome": str(metadata.get("tool_execution_outcome") or "complete"),
     })
     if isinstance(record.get("result_counts"), dict):
         record["result_counts"]["warnings"] = record["warning_count"]
@@ -312,6 +317,7 @@ def _merge_result_projection(run_id: str, ws_id: str, result, context) -> None:
             "trace_id": record.get("trace_id", ""),
             "status": record.get("status", ""),
             "execution_outcome": record.get("execution_outcome", ""),
+            "tool_execution_outcome": record.get("tool_execution_outcome", ""),
             "tool_calls": _safe_tool_calls(list(record.get("tool_calls") or [])),
             "tool_decision": _safe_metadata(dict(record.get("tool_decision") or {})),
             "metadata": _safe_metadata(dict(record.get("metadata") or {})),

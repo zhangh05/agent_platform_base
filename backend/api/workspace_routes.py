@@ -353,6 +353,7 @@ def register_workspace_routes(app):
             "visible_tools", "tool_call_count", "warning_count", "error_count",
             "tool_decision", "no_tool_reason",
             "execution_outcome",
+            "tool_execution_outcome",
             # Expose `ok` so the frontend can render badges from the current
             # AgentResult projection as well as the persisted status.
             "ok",

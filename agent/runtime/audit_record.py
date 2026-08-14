@@ -10,7 +10,7 @@ from storage.records import workspace_record_file
 from storage.redaction import redact_value
 
 _PAYLOAD_FIELDS = frozenset({
-    "turn_id", "trace_id", "status", "execution_outcome", "tool_calls",
+    "turn_id", "trace_id", "status", "execution_outcome", "tool_execution_outcome", "tool_calls",
     "tool_decision", "metadata", "warnings",
 })
 
