@@ -35,3 +35,15 @@
 ## 备份与恢复演练
 
 每月至少执行一次 `backup_cli.py create`、`verify` 和隔离目录恢复；记录 RPO、RTO、文件数、摘要校验和回滚路径。恢复前必须使用 `RESTORE` 明确确认，并在恢复后重新验证 `/api/ready`。
+
+## 审批续跑停滞
+
+当 `LZCoreContinuationStalled` 告警触发时，先在管理诊断页或 continuation 记录中核对 `continuation_id`、workspace、审批决定、`execution_phase` 与最后一次 heartbeat。**不得**通过直接调用工具处理器或重放原工具调用恢复执行。若状态无法由受控 read-back 确认，应由操作员关闭该 stalled continuation，并以新的、可审计的 Agent turn 发起后续操作。
+
+## 审批续跑不一致
+
+当 `LZCoreContinuationDecisionMismatch` 告警触发时，比较 Guardian durable approval record 的 `approval_id`、`workspace_id`、metadata 中的 `continuation_id` 与 continuation 的绑定审批列表。该告警表示持久事实不一致，协调器不会自动 claim、dispatch 或重放工具；应先冻结该 continuation 并完成操作结果核对，再决定关闭或重新发起操作。
+
+## 审批续跑协调器
+
+协调器仅负责补写已 durable 的 Guardian decision、标记过期/停滞 continuation、更新指标和执行 retention 清理。它不调用 canonical handler、不恢复工具执行。单机文件模式使用跨进程文件锁；配置 `LZCORE_REDIS_URL` 的部署使用 Redis lease。应监控 `continuation_reconciliation_lag_seconds`、`continuation_reconciliation_failure_count`、`continuation_stalled` 与 `continuation_decision_mismatch`。

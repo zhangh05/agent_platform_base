@@ -291,7 +291,9 @@ def _merge_result_projection(run_id: str, ws_id: str, result, context) -> None:
     is_ok = bool(result_dict.get("ok", True))
     has_errors = bool(result_dict.get("errors"))
     execution_outcome = str(metadata.get("execution_outcome") or "")
-    if not is_ok or has_errors:
+    if execution_outcome == "unknown":
+        record["status"] = "unknown"
+    elif not is_ok or has_errors:
         record["status"] = "error"
     elif execution_outcome == "partial":
         record["status"] = "partial"
@@ -302,6 +304,22 @@ def _merge_result_projection(run_id: str, ws_id: str, result, context) -> None:
         update_run_record(ws_id, run_id, record)
     except Exception:
         _log.warning("Cannot write result projection for run %s", run_id, exc_info=True)
+        return
+    try:
+        from agent.runtime.audit_record import write_audit_record
+        record["audit_id"] = write_audit_record(ws_id, run_id, {
+            "turn_id": record.get("turn_id", run_id),
+            "trace_id": record.get("trace_id", ""),
+            "status": record.get("status", ""),
+            "execution_outcome": record.get("execution_outcome", ""),
+            "tool_calls": _safe_tool_calls(list(record.get("tool_calls") or [])),
+            "tool_decision": _safe_metadata(dict(record.get("tool_decision") or {})),
+            "metadata": _safe_metadata(dict(record.get("metadata") or {})),
+            "warnings": list(record.get("warnings") or []),
+        })
+        update_run_record(ws_id, run_id, record)
+    except Exception:
+        _log.warning("Cannot write audit sidecar for run %s", run_id, exc_info=True)
 
 
 def _safe_tool_calls(tool_calls: list, *, limit: int = 64) -> list:

@@ -348,6 +348,25 @@ def create_app():
                 "[subagent startup] reconcile failed: %s", exc,
                 exc_info=True,
             )
+        try:
+            from agent.runtime.continuation_reconciler import (
+                reconcile_all_workspaces,
+                start_continuation_reconciler,
+            )
+            reconciled_continuations = reconcile_all_workspaces()
+            start_continuation_reconciler()
+            if reconciled_continuations:
+                import logging as _continuation_log
+                _continuation_log.getLogger(__name__).info(
+                    "[continuation startup] reconciliation complete: %s",
+                    reconciled_continuations,
+                )
+        except Exception as exc:
+            import logging as _continuation_log
+            _continuation_log.getLogger(__name__).warning(
+                "[continuation startup] reconcile failed: %s", exc,
+                exc_info=True,
+            )
 
     _recon_t = _threading.Thread(
         target=_startup_reconcile_async,

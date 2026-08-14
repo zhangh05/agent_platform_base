@@ -61,6 +61,11 @@ def principal_storage_key(username: str) -> str:
 def known_storage_principals() -> list[str]:
     """Return configured and identity-managed users for restart recovery jobs."""
     usernames = {os.environ.get("LZCORE_LOGIN_USERNAME", "").strip()}
+    if (
+        os.environ.get("LZCORE_API_TOKEN", "").strip()
+        or os.environ.get("LZCORE_API_TOKEN_FILE", "").strip()
+    ):
+        usernames.add("api-token")
     try:
         from backend.core.identity import list_users
         usernames.update(str(item.get("username") or "").strip() for item in list_users())

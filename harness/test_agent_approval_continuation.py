@@ -21,9 +21,10 @@ def _storage(monkeypatch, tmp_path):
 def test_continuation_claim_is_durable_and_single_owner(monkeypatch, tmp_path):
     _storage(monkeypatch, tmp_path)
     from agent.runtime.approval_continuation import (
+        claim_ready_continuation,
         create_continuation,
         finish_continuation,
-        record_decision_and_claim,
+        record_decision,
     )
 
     continuation_id = create_continuation(
@@ -34,26 +35,88 @@ def test_continuation_claim_is_durable_and_single_owner(monkeypatch, tmp_path):
         tool_calls=[{"id": "call-1", "name": "workspace.file", "arguments": {"action": "list"}}],
         approval_ids=["apr-1"],
     )
-    first, grant, payload = record_decision_and_claim(
+    ready = record_decision(
         workspace_id="default",
         continuation_id=continuation_id,
         approval_id="apr-1",
         allowed=True,
     )
-    assert first["status"] == "running"
+    assert ready["status"] == "ready"
+    first, grant, payload = claim_ready_continuation(
+        workspace_id="default", continuation_id=continuation_id,
+    )
+    assert first["status"] == "claimed"
     assert isinstance(grant, ApprovedToolContinuation)
     assert payload["session_id"] == "session-1"
 
-    second, duplicate_grant, duplicate_payload = record_decision_and_claim(
+    second, duplicate_grant, duplicate_payload = claim_ready_continuation(
         workspace_id="default",
         continuation_id=continuation_id,
-        approval_id="apr-1",
-        allowed=True,
     )
-    assert second["status"] == "running"
+    assert second["status"] == "claimed"
     assert duplicate_grant is None
     assert duplicate_payload is None
     assert finish_continuation("default", continuation_id, completed_run_id="run-2")["status"] == "completed"
+
+
+def test_repeated_same_decision_is_idempotent(monkeypatch, tmp_path):
+    _storage(monkeypatch, tmp_path)
+    from agent.runtime.approval_continuation import create_continuation, record_decision
+
+    continuation_id = create_continuation(
+        workspace_id="default",
+        session_id="session-1",
+        parent_run_id="run-1",
+        user_input="执行检查",
+        tool_calls=[{"id": "call-1", "name": "workspace.file", "arguments": {"action": "list"}}],
+        approval_ids=["apr-1", "apr-2"],
+    )
+    first = record_decision(
+        workspace_id="default", continuation_id=continuation_id,
+        approval_id="apr-1", allowed=True,
+    )
+    second = record_decision(
+        workspace_id="default", continuation_id=continuation_id,
+        approval_id="apr-1", allowed=True,
+    )
+    assert first["status"] == "pending"
+    assert second["decision_version"] == first["decision_version"]
+
+
+def test_reconciler_visits_only_each_principals_allowed_workspaces(monkeypatch):
+    import agent.runtime.continuation_reconciler as reconciler
+    import backend.core.identity as identity
+    import storage.principal as principal
+    import storage.workspace_store as workspace_store
+
+    monkeypatch.setattr(principal, "known_storage_principals", lambda: ["Admin", "network"])
+    monkeypatch.setattr(principal, "principal_storage_key", lambda name: f"id-{name}")
+    monkeypatch.setattr(identity, "get_user", lambda name: (
+        {"workspace_ids": ["default"]} if name == "network" else None
+    ))
+    monkeypatch.setattr(workspace_store, "list_workspace_ids", lambda **_kwargs: ["default", "ops"])
+    visited = []
+
+    def fake_reconcile(workspace_id):
+        visited.append((principal.current_storage_principal(), workspace_id))
+        return {
+            "pending": 1, "ready": 0, "claimed": 0, "dispatching": 0,
+            "stalled": 0, "expired": 0, "decision_mismatch": 0,
+            "oldest_pending_age_seconds": 5,
+        }
+
+    monkeypatch.setattr(reconciler, "reconcile_workspace", fake_reconcile)
+    outcomes = reconciler.reconcile_all_workspaces()
+    assert visited == [("Admin", "default"), ("Admin", "ops"), ("network", "default")]
+    assert sorted(outcomes) == ["id-Admin:default", "id-Admin:ops", "id-network:default"]
+
+
+def test_known_storage_principals_includes_configured_api_token(monkeypatch):
+    monkeypatch.setenv("LZCORE_LOGIN_USERNAME", "Admin")
+    monkeypatch.setenv("LZCORE_API_TOKEN_FILE", "/run/secrets/api_token")
+    monkeypatch.setattr("backend.core.identity.list_users", lambda: [{"username": "network"}])
+    from storage.principal import known_storage_principals
+    assert known_storage_principals() == ["Admin", "api-token", "network"]
 
 
 def test_continuation_encryption_accepts_mounted_master_key(monkeypatch, tmp_path):
@@ -161,11 +224,12 @@ def test_stale_running_continuation_is_observable_but_never_replayed(monkeypatch
     _storage(monkeypatch, tmp_path)
     monkeypatch.setenv("LZCORE_CONTINUATION_STALL_SECONDS", "60")
     from agent.runtime.approval_continuation import (
+        claim_ready_continuation,
         close_stalled_continuation,
         create_continuation,
         list_continuations,
         maintain_continuations,
-        record_decision_and_claim,
+        record_decision,
     )
     from storage.atomic_io import atomic_write_json
     from storage.records import workspace_record_file
@@ -178,11 +242,14 @@ def test_stale_running_continuation_is_observable_but_never_replayed(monkeypatch
         tool_calls=[{"id": "call-1", "name": "workspace.file", "arguments": {"action": "list"}}],
         approval_ids=["apr-1"],
     )
-    _, grant, _ = record_decision_and_claim(
+    record_decision(
         workspace_id="default",
         continuation_id=continuation_id,
         approval_id="apr-1",
         allowed=True,
+    )
+    _, grant, _ = claim_ready_continuation(
+        workspace_id="default", continuation_id=continuation_id,
     )
     assert grant is not None
     path = workspace_record_file(
@@ -196,11 +263,9 @@ def test_stale_running_continuation_is_observable_but_never_replayed(monkeypatch
     public = list_continuations("default", status="stalled")
     assert public[0]["continuation_id"] == continuation_id
     assert public[0]["stall_reason"] == "execution_heartbeat_expired"
-    _, duplicate_grant, _ = record_decision_and_claim(
+    _, duplicate_grant, _ = claim_ready_continuation(
         workspace_id="default",
         continuation_id=continuation_id,
-        approval_id="apr-1",
-        allowed=True,
     )
     assert duplicate_grant is None
     closed = close_stalled_continuation(
@@ -369,3 +434,95 @@ def test_resume_history_excludes_pending_run_and_keeps_one_conversation_pair(mon
         ("user", "删除文件"),
         ("assistant", "删除完成"),
     ]
+
+
+def test_decision_is_durable_before_separate_ready_claim(monkeypatch, tmp_path):
+    _storage(monkeypatch, tmp_path)
+    from agent.runtime.approval_continuation import (
+        claim_ready_continuation,
+        create_continuation,
+        record_decision,
+    )
+
+    continuation_id = create_continuation(
+        workspace_id="default",
+        session_id="session-1",
+        parent_run_id="run-1",
+        user_input="执行变更",
+        tool_calls=[{"id": "call-1", "name": "workspace.file", "arguments": {"action": "write"}}],
+        approval_ids=["apr-1"],
+    )
+
+    ready = record_decision(
+        workspace_id="default",
+        continuation_id=continuation_id,
+        approval_id="apr-1",
+        allowed=True,
+    )
+    assert ready["status"] == "ready"
+    assert ready["decisions"] == {"apr-1": True}
+
+    repeated = record_decision(
+        workspace_id="default",
+        continuation_id=continuation_id,
+        approval_id="apr-1",
+        allowed=True,
+    )
+    assert repeated["status"] == "ready"
+    assert repeated["decision_version"] == ready["decision_version"]
+
+    claimed, grant, _ = claim_ready_continuation(
+        workspace_id="default", continuation_id=continuation_id,
+    )
+    assert claimed["status"] == "claimed"
+    assert grant is not None
+
+    duplicate, duplicate_grant, _ = claim_ready_continuation(
+        workspace_id="default", continuation_id=continuation_id,
+    )
+    assert duplicate["status"] == "claimed"
+    assert duplicate_grant is None
+
+
+def test_reconciler_repairs_durable_guardian_decision_without_dispatch(monkeypatch, tmp_path):
+    _storage(monkeypatch, tmp_path)
+    from agent.approval import get_approval_store, reset_approval_store_for_tests
+    from agent.runtime.approval_continuation import (
+        claim_ready_continuation,
+        create_continuation,
+    )
+    from agent.runtime.continuation_reconciler import reconcile_workspace
+
+    reset_approval_store_for_tests(remove_persisted=True)
+    approval_id = "apr_000000000001"
+    continuation_id = create_continuation(
+        workspace_id="default",
+        session_id="session-1",
+        parent_run_id="run-1",
+        user_input="执行变更",
+        tool_calls=[{"id": "call-1", "name": "workspace.file", "arguments": {"action": "write"}}],
+        approval_ids=[approval_id],
+    )
+    store = get_approval_store("default")
+    store.create_batch([{
+        "approval_id": approval_id,
+        "session_id": "session-1",
+        "tool_id": "workspace.file",
+        "arguments": {"action": "write"},
+        "description": "write",
+        "risk_level": "high",
+        "workspace_id": "default",
+        "run_id": "run-1",
+        "metadata": {"continuation_id": continuation_id},
+    }])
+    assert store.resolve(approval_id, True, workspace_id="default") is not None
+
+    result = reconcile_workspace("default")
+    assert result["decision_repaired"] == 1
+    assert result["ready"] == 1
+
+    claimed, grant, _ = claim_ready_continuation(
+        workspace_id="default", continuation_id=continuation_id,
+    )
+    assert claimed["status"] == "claimed"
+    assert grant is not None

@@ -351,6 +351,7 @@ class SSOTRuntimeEngine:
                     "approval_required",
                     "duplicate_successful_tool_call",
                     "duplicate_tool_call",
+                    "unknown_outcome",
             }:
                 first_loop_error = loop_result.errors[0] if loop_result.errors else loop_result.error
                 loop_error_code = self._resolve_loop_error_code(
@@ -447,12 +448,14 @@ class SSOTRuntimeEngine:
         if extra:
             base_meta.update(extra)
 
+        execution_outcome = str(base_meta.get("execution_outcome") or "complete")
         return SSOTRuntimeResult(
             request_id=ctx.request_id,
             # A natural-language explanation cannot make the run successful
             # when every requested tool operation failed.
             success=(
-                len(errors) == 0
+                execution_outcome != "unknown"
+                and len(errors) == 0
                 and not (bool(node_results) and not any(r.success for r in node_results.values()))
             ),
             total_latency_ms=total_ms,

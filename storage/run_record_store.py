@@ -186,6 +186,8 @@ def _safe_quality_summary(result: dict) -> dict:
 
 def _safe_status(state: SimpleNamespace, result: dict) -> str:
     context = getattr(state, "context", {}) or {}
+    if str(getattr(state, "execution_outcome", "") or "") == "unknown":
+        return "unknown"
     if getattr(state, "error", None):
         return "error"
     if isinstance(context, dict) and context.get("capability_status") == "planned":

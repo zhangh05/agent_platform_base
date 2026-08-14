@@ -113,7 +113,7 @@ tool policy requires approval
 
 普通 Agent continuation 只接受由服务端从加密持久记录构造的类型化授权对象；HTTP/WS
 metadata 中的同名 JSON 不能形成授权。多个审批全部通过后才能抢占执行，重复 resolve 不会
-重复执行；进程若在执行抢占后异常退出，状态保持 `running` 并禁止自动重放破坏性操作。
+重复执行；进程若在执行抢占后异常退出，状态保持 `claimed` 或 `dispatching` 并禁止自动重放破坏性操作。
 待审批轮只持久化用户消息，恢复成功后只补最终助手消息，避免把“等待审批”写成对话结论。
 
 审批创建不存在 placeholder 绑定窗口：整批审批持久化失败时 continuation 会补偿删除，

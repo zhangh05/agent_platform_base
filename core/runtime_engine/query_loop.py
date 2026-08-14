@@ -342,6 +342,8 @@ class StreamingToolResult:
     ok: bool
     error: Optional[str] = None
     latency_ms: float = 0.0
+    error_code: str = ""
+    execution_may_continue: bool = False
 
 
 class StreamingToolExecutor:
@@ -375,6 +377,77 @@ class StreamingToolExecutor:
             tool_call.name,
             tool_call.arguments,
             self._tool_registry.get(tool_call.name.replace("__", ".")),
+        )
+
+    @staticmethod
+    def _result_may_continue(result: StreamingToolResult) -> bool:
+        """Read structured uncertainty without parsing error text."""
+        if result.execution_may_continue:
+            return True
+        output = result.output if isinstance(result.output, dict) else {}
+        metadata = output.get("metadata") if isinstance(output.get("metadata"), dict) else {}
+        return bool(
+            output.get("execution_may_continue")
+            or metadata.get("execution_may_continue")
+        )
+
+    def _mark_unknown_write_outcome(
+        self,
+        ctx: StatelessContext | None,
+        tool_call: LLMToolCall,
+        result: StreamingToolResult,
+    ) -> dict[str, Any]:
+        """Install a fail-closed fence when an external write may continue."""
+        output = result.output if isinstance(result.output, dict) else {}
+        record = {
+            "status": "unknown",
+            "tool_id": tool_call.name.replace("__", "."),
+            "call_id": tool_call.id,
+            "error_code": str(
+                result.error_code
+                or output.get("error_code")
+                or "TOOL_TIMEOUT_UNCERTAIN"
+            ),
+            "error": str(
+                result.error
+                or output.get("error")
+                or "tool outcome may still be running"
+            ),
+            "occurred_at": time.time(),
+            "execution_may_continue": True,
+        }
+        if ctx is not None:
+            current = ctx.extras.get("unknown_outcome")
+            if isinstance(current, dict) and current:
+                return dict(current)
+            ctx.extras["unknown_outcome"] = record
+        if self._emitter:
+            self._emitter.emit("unknown_outcome", record)
+        return record
+
+    @staticmethod
+    def _write_blocked_by_unknown_outcome(
+        tool_call: LLMToolCall,
+        trigger: dict[str, Any],
+    ) -> StreamingToolResult:
+        trigger_call_id = str(trigger.get("call_id") or "unknown")
+        error = (
+            "write execution is blocked because an earlier write has an "
+            f"unknown outcome (call_id={trigger_call_id})"
+        )
+        return StreamingToolResult(
+            tool_name=tool_call.name,
+            call_id=tool_call.id,
+            output={
+                "ok": False,
+                "executed": False,
+                "error_code": "WRITE_BLOCKED_BY_UNKNOWN_OUTCOME",
+                "error": error,
+                "unknown_outcome_trigger": dict(trigger),
+            },
+            ok=False,
+            error=error,
+            error_code="WRITE_BLOCKED_BY_UNKNOWN_OUTCOME",
         )
 
     async def execute(
@@ -735,6 +808,9 @@ class StreamingToolExecutor:
         # barrier. Executing all reads before all writes changes semantics for
         # batches such as [read, write, read].
         result_by_id: dict[str, StreamingToolResult] = {}
+        write_fence = (
+            dict(ctx.extras.get("unknown_outcome") or {}) if ctx is not None else {}
+        )
 
         async def execute_read_group(group: list[LLMToolCall]) -> None:
             if not group:
@@ -777,6 +853,8 @@ class StreamingToolExecutor:
                         },
                         ok=False,
                         error="parallel tool layer exceeded its execution budget; outcomes may be uncertain",
+                        error_code="PARALLEL_LAYER_TIMEOUT_UNCERTAIN",
+                        execution_may_continue=True,
                     )
                     for tc in group
                 ]
@@ -799,43 +877,78 @@ class StreamingToolExecutor:
                 continue
             await execute_read_group(read_group)
             read_group = []
-            self.max_parallel_width = max(self.max_parallel_width, 1)
-            if budget is not None and budget.remaining_execution_seconds() <= 0:
-                result_by_id[tc.id] = self._execution_budget_timeout(tc)
-                continue
-            try:
-                execution = self._execute_one(tc, ctx=ctx, budget=budget)
-                if budget is None:
-                    result_by_id[tc.id] = await execution
-                else:
-                    execution_task = asyncio.create_task(execution)
-                    execution_task.add_done_callback(self._consume_detached_task)
-                    result_by_id[tc.id] = await asyncio.wait_for(
-                        asyncio.shield(execution_task),
-                        timeout=max(0.001, budget.remaining_execution_seconds()),
-                    )
-            except asyncio.TimeoutError:
-                result_by_id[tc.id] = self._execution_budget_timeout(tc)
+            operation = None
+            if ctx is not None:
+                from .operation_ledger import plan_operation
+                operation = plan_operation(ctx, tc.name.replace("__", "."), tc.id, tc.arguments)
+            if write_fence:
+                result_by_id[tc.id] = self._write_blocked_by_unknown_outcome(tc, write_fence)
+            elif budget is not None and budget.remaining_execution_seconds() <= 0:
+                result_by_id[tc.id] = self._execution_budget_timeout(
+                    tc, may_continue=False,
+                )
+            else:
+                self.max_parallel_width = max(self.max_parallel_width, 1)
+                if operation is not None and ctx is not None:
+                    from .operation_ledger import start_operation
+                    start_operation(ctx.workspace_id, operation["operation_id"])
+                try:
+                    execution = self._execute_one(tc, ctx=ctx, budget=budget)
+                    if budget is None:
+                        result_by_id[tc.id] = await execution
+                    else:
+                        execution_task = asyncio.create_task(execution)
+                        execution_task.add_done_callback(self._consume_detached_task)
+                        result_by_id[tc.id] = await asyncio.wait_for(
+                            asyncio.shield(execution_task),
+                            timeout=max(0.001, budget.remaining_execution_seconds()),
+                        )
+                except asyncio.TimeoutError:
+                    result_by_id[tc.id] = self._execution_budget_timeout(tc, may_continue=True)
+            result = result_by_id[tc.id]
+            if operation is not None and ctx is not None:
+                from .operation_ledger import finish_operation
+                final_operation = finish_operation(ctx.workspace_id, operation["operation_id"], result)
+                output = dict(result.output or {})
+                output["operation_id"] = final_operation["operation_id"]
+                result.output = output
+            if self._result_may_continue(result):
+                write_fence = self._mark_unknown_write_outcome(ctx, tc, result)
         await execute_read_group(read_group)
 
         # Return in original order
         return [result_by_id[tc.id] for tc in tool_calls]
 
     @staticmethod
-    def _execution_budget_timeout(tool_call: LLMToolCall) -> StreamingToolResult:
-        error = "tool execution exceeded the remaining request budget; outcome may be uncertain"
+    def _execution_budget_timeout(
+        tool_call: LLMToolCall,
+        *,
+        may_continue: bool,
+    ) -> StreamingToolResult:
+        error = (
+            "tool execution exceeded the remaining request budget; outcome may be uncertain"
+            if may_continue else
+            "tool execution was not started because the remaining request budget was exhausted"
+        )
+        error_code = (
+            "TOOL_BUDGET_TIMEOUT_UNCERTAIN"
+            if may_continue else "TOOL_BUDGET_EXHAUSTED"
+        )
         return StreamingToolResult(
             tool_name=tool_call.name,
             call_id=tool_call.id,
             output={
                 "ok": False,
-                "error_code": "TOOL_BUDGET_TIMEOUT_UNCERTAIN",
+                "executed": False if not may_continue else True,
+                "error_code": error_code,
                 "error": error,
                 "retryable": False,
-                "execution_may_continue": True,
+                "execution_may_continue": may_continue,
             },
             ok=False,
             error=error,
+            error_code=error_code,
+            execution_may_continue=may_continue,
         )
 
     @staticmethod
@@ -881,6 +994,8 @@ class StreamingToolExecutor:
                 ok=result.get("ok", False),
                 error=result.get("error"),
                 latency_ms=float(_latency),
+                error_code=str(result.get("error_code") or ""),
+                execution_may_continue=bool(result.get("execution_may_continue")),
             )
         except Exception as e:
             return StreamingToolResult(
@@ -1073,6 +1188,8 @@ class StreamingToolExecutor:
             metadata["retry_count"] = result.retry_count
         if metadata:
             output = {**(output or {}), "metadata": metadata}
+        may_continue = bool(metadata.get("execution_may_continue"))
+        error_code = str(result.error_code or "")
         return StreamingToolResult(
             tool_name=result.tool,
             call_id=result.node_id or fallback_call_id,
@@ -1080,6 +1197,8 @@ class StreamingToolExecutor:
             ok=bool(result.success),
             error=result.error,
             latency_ms=float(result.latency_ms or 0.0),
+            error_code=error_code,
+            execution_may_continue=may_continue,
         )
 
 
@@ -1196,14 +1315,17 @@ class QueryLoop:
                     ctx.extras.get("response_quality_events") or []
                 ),
             }
-            successful_tools = sum(1 for result in all_results if result.ok)
-            failed_tools = len(all_results) - successful_tools
-            projected_metrics["execution_outcome"] = (
-                "partial" if successful_tools and failed_tools
-                else "failed" if failed_tools
-                else "complete"
-            )
+            from .turn_outcome import derive_execution_outcome
+            projected_metrics["execution_outcome"] = derive_execution_outcome(all_results)
             projected_metrics.update(dict(values.pop("metrics", {}) or {}))
+            from .goal_assertions import evaluate_goal_assertions
+            assertion_result = evaluate_goal_assertions(ctx, all_results)
+            projected_metrics["goal_assertions"] = assertion_result
+            if assertion_result["required"] and assertion_result["status"] != "passed":
+                projected_metrics["execution_outcome"] = (
+                    "unknown" if assertion_result["status"] == "unknown" else "partial"
+                )
+                values.setdefault("error", "goal_assertion_not_satisfied")
             values.setdefault("tool_results", all_results)
             values.setdefault("iterations", iterations)
             values.setdefault("total_tool_calls", len(all_results))
@@ -1227,6 +1349,9 @@ class QueryLoop:
                 if call.id in approved_node_ids
             )
             ctx.extras["approved_tool_call_keys"] = sorted(approved_keys)
+            ctx.extras["approved_tool_call_ids"] = [
+                call.id for call in resumed_calls if call.id in approved_node_ids
+            ]
             ctx.extras["approval_resolved"] = True
             ctx.extras["approval_allowed"] = True
             ctx.extras["approval_continuation_id"] = continuation.continuation_id
@@ -1641,6 +1766,27 @@ class QueryLoop:
 
                 # Append assistant message (with tool_calls) + tool results
                 messages = self._append_tool_round(messages, tool_calls, results)
+                unknown_outcome = ctx.extras.get("unknown_outcome")
+                if isinstance(unknown_outcome, dict) and unknown_outcome:
+                    trigger_tool = str(unknown_outcome.get("tool_id") or "操作")
+                    trigger_call = str(unknown_outcome.get("call_id") or "")
+                    return finish(
+                        final_response=(
+                            f"工具 {trigger_tool} 的执行结果处于未知状态"
+                            + (f"（调用 {trigger_call}）" if trigger_call else "")
+                            + "。系统已冻结本轮后续写操作，未自动重试、未推定成功或失败。"
+                            "请通过受控 read-back/reconcile 验证实际结果，或由操作员处置。"
+                        ),
+                        tool_results=all_results,
+                        iterations=iterations,
+                        total_tool_calls=len(all_results),
+                        llm_calls=llm_calls,
+                        error="unknown_outcome",
+                        metrics={
+                            "execution_outcome": "unknown",
+                            "unknown_outcome": dict(unknown_outcome),
+                        },
+                    )
                 failed_results = [result for result in results if not result.ok]
                 if failed_results:
                     if ctx.extras.get("orchestration_stop_requested"):

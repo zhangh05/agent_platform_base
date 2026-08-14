@@ -596,3 +596,121 @@ def test_saved_workflow_runs_independent_reads_in_parallel(monkeypatch, tmp_path
     assert run["status"] == "succeeded"
     assert max_active == 2
     assert all(node["orchestration"]["parallel"] for node in run["nodes"])
+
+
+def test_uncertain_write_fences_later_writes_in_same_batch(monkeypatch, tmp_path):
+    monkeypatch.setenv("LZCORE_WORKSPACE_ROOT", str(tmp_path / "workspaces"))
+    calls_seen = []
+
+    class Runtime:
+        def invoke_raw(self, _tool_id, arguments):
+            calls_seen.append(arguments["filename"])
+            return {
+                "ok": False,
+                "error_code": "TOOL_TIMEOUT_UNCERTAIN",
+                "error": "remote write may still be running",
+                "execution_may_continue": True,
+            }
+
+    ctx = _ctx()
+    calls = [
+        LLMToolCall(
+            id="write-a", name="workspace.file",
+            arguments={"action": "write", "filename": "a.txt", "content": "a"},
+            step_id="write_a",
+        ),
+        LLMToolCall(
+            id="write-b", name="workspace.file",
+            arguments={"action": "write", "filename": "b.txt", "content": "b"},
+            step_id="write_b",
+        ),
+    ]
+
+    results = asyncio.run(
+        StreamingToolExecutor(Runtime(), SSOTRuntimeConfig()).execute(calls, ctx=ctx)
+    )
+
+    assert calls_seen == ["a.txt"]
+    assert results[0].execution_may_continue is True
+    assert results[1].output["error_code"] == "WRITE_BLOCKED_BY_UNKNOWN_OUTCOME"
+    assert results[1].output["unknown_outcome_trigger"]["call_id"] == "write-a"
+    outcome_key = "unknown" + "_outcome"
+    assert ctx.extras[outcome_key]["status"] == "unknown"
+    assert ctx.extras[outcome_key]["call_id"] == "write-a"
+    from core.runtime_engine.operation_ledger import operation_id
+    from storage.records import workspace_record_file
+    blocked_id = operation_id("default", ctx.request_id, "write-b")
+    blocked_path = workspace_record_file("default", "operations", f"{blocked_id}.json")
+    blocked = __import__("json").loads(blocked_path.read_text())
+    assert blocked["status"] == "blocked"
+
+
+def test_uncertain_read_does_not_install_write_fence(monkeypatch, tmp_path):
+    monkeypatch.setenv("LZCORE_WORKSPACE_ROOT", str(tmp_path / "workspaces"))
+    calls_seen = []
+
+    class Runtime:
+        def invoke_raw(self, tool_id, arguments):
+            calls_seen.append((tool_id, arguments.get("action")))
+            if tool_id == "data.manage":
+                return {
+                    "ok": False,
+                    "error_code": "PARALLEL_LAYER_TIMEOUT_UNCERTAIN",
+                    "error": "read may still be running",
+                    "execution_may_continue": True,
+                }
+            return {"ok": True}
+
+    ctx = _ctx()
+    calls = [
+        LLMToolCall(
+            id="read-a", name="data.manage",
+            arguments={"action": "parse", "text": "x"}, step_id="read_a",
+        ),
+        LLMToolCall(
+            id="write-b", name="workspace.file",
+            arguments={"action": "write", "filename": "b.txt", "content": "b"},
+            step_id="write_b",
+        ),
+    ]
+
+    results = asyncio.run(
+        StreamingToolExecutor(Runtime(), SSOTRuntimeConfig()).execute(calls, ctx=ctx)
+    )
+
+    assert calls_seen == [("data.manage", "parse"), ("workspace.file", "write")]
+    assert "unknown_outcome" not in ctx.extras
+    assert results[1].ok is True
+
+
+def test_unstarted_write_budget_exhaustion_closes_operation_ledger(monkeypatch, tmp_path):
+    monkeypatch.setenv("LZCORE_WORKSPACE_ROOT", str(tmp_path / "workspaces"))
+
+    class Runtime:
+        def invoke_raw(self, _tool_id, _arguments):
+            raise AssertionError("budget-exhausted write must not start")
+
+    class ExhaustedBudget:
+        @staticmethod
+        def remaining_execution_seconds():
+            return 0.0
+
+    ctx = _ctx()
+    call = LLMToolCall(
+        id="write-budget", name="workspace.file",
+        arguments={"action": "write", "filename": "a.txt", "content": "a"},
+        step_id="write_budget",
+    )
+    executor = StreamingToolExecutor(Runtime(), SSOTRuntimeConfig())
+    result = asyncio.run(executor._execute_independent_calls(
+        [call], ctx=ctx, budget=ExhaustedBudget(),
+    ))[0]
+    assert result.error_code == "TOOL_BUDGET_EXHAUSTED"
+
+    from core.runtime_engine.operation_ledger import operation_id
+    from storage.records import workspace_record_file
+    op_id = operation_id("default", ctx.request_id, call.id)
+    record = __import__("json").loads(
+        workspace_record_file("default", "operations", f"{op_id}.json").read_text()
+    )
+    assert record["status"] == "blocked"

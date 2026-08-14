@@ -231,15 +231,23 @@ def register_approval_routes(app) -> None:
                     runtime_result = {"ok": rejected is not None, "workflow_run": rejected}
             elif meta.get("continuation_id"):
                 from agent.runtime.approval_continuation import (
-                    record_decision_and_claim,
+                    claim_ready_continuation,
+                    record_decision,
                 )
                 continuation_id = str(meta["continuation_id"])
-                record, grant, payload = record_decision_and_claim(
+                record = record_decision(
                     workspace_id=ws_id,
                     continuation_id=continuation_id,
                     approval_id=approval_id,
                     allowed=allowed,
                 )
+                grant = None
+                payload = None
+                if record.get("status") == "ready":
+                    record, grant, payload = claim_ready_continuation(
+                        workspace_id=ws_id,
+                        continuation_id=continuation_id,
+                    )
                 runtime_result = {
                     "ok": record.get("status") not in {"failed"},
                     "continuation_id": continuation_id,
@@ -257,7 +265,7 @@ def register_approval_routes(app) -> None:
                     )
                     runtime_result.update({
                         "ok": True,
-                        "continuation_status": "running",
+                        "continuation_status": "claimed",
                     })
         except Exception as exc:  # noqa: BLE001 - final HTTP boundary must return a structured failure
             _LOG.warning("resume_after_approval failed approval=%s task=%s ws=%s (non-fatal)",

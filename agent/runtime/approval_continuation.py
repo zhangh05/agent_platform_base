@@ -135,18 +135,18 @@ def delete_continuation(workspace_id: str, continuation_id: str) -> bool:
         return True
 
 
-def record_decision_and_claim(
+def record_decision(
     *,
     workspace_id: str,
     continuation_id: str,
     approval_id: str,
     allowed: bool,
-) -> tuple[dict[str, Any], ApprovedToolContinuation | None, dict[str, Any] | None]:
-    """Record one decision and atomically claim the continuation when ready.
+) -> dict[str, Any]:
+    """Durably record one Guardian decision without claiming execution.
 
-    A continuation has a single owner claim from ``pending`` to ``running``. A
-    process crash after that claim fails closed: it is never automatically
-    replayed, avoiding duplicate mutations.
+    Guardian is the approval authority. This idempotent transition is kept
+    separate from the owner claim so a reconciler can repair a crash between
+    those durable writes without replaying any tool.
     """
     path = _path(workspace_id, continuation_id)
     with FileLock(path.with_suffix(".lock")):
@@ -155,39 +155,71 @@ def record_decision_and_claim(
         if approval_id not in approval_ids:
             raise ValueError("approval_not_bound_to_continuation")
         status = str(record.get("status") or "")
-        if status != "pending":
-            return dict(record), None, None
+        if status in _TERMINAL_STATUSES | {"claimed", "dispatching", "stalled"}:
+            return dict(record)
+        if status not in {"pending", "ready"}:
+            raise RuntimeError("continuation_invalid_decision_state")
         decisions = dict(record.get("decisions") or {})
+        if approval_id in decisions and bool(decisions[approval_id]) != bool(allowed):
+            raise RuntimeError("approval_decision_conflict")
+        if approval_id in decisions:
+            return dict(record)
         decisions[approval_id] = bool(allowed)
         record["decisions"] = decisions
+        record["decision_version"] = int(record.get("decision_version") or 0) + 1
         record["updated_at"] = _now_iso()
-        if not allowed:
-            record["status"] = "rejected"
-            atomic_write_json(path, record)
-            delete_secret(str(record.get("payload_ref") or ""))
+        if not allowed or not all(bool(decisions.get(aid)) for aid in approval_ids if aid in decisions):
+            if not allowed:
+                record["status"] = "rejected"
+                record["execution_phase"] = "decision_rejected"
+                atomic_write_json(path, record)
+                delete_secret(str(record.get("payload_ref") or ""))
+                return dict(record)
+        if approval_ids and all(aid in decisions for aid in approval_ids):
+            if all(bool(decisions.get(aid)) for aid in approval_ids):
+                record["status"] = "ready"
+                record["execution_phase"] = "decision_ready"
+        atomic_write_json(path, record)
+        return dict(record)
+
+
+def claim_ready_continuation(
+    *,
+    workspace_id: str,
+    continuation_id: str,
+) -> tuple[dict[str, Any], ApprovedToolContinuation | None, dict[str, Any] | None]:
+    """CAS claim a fully approved continuation; never replay an active one."""
+    path = _path(workspace_id, continuation_id)
+    with FileLock(path.with_suffix(".lock")):
+        record = _read_unlocked(path)
+        if str(record.get("status") or "") != "ready":
             return dict(record), None, None
+        approval_ids = list(record.get("approval_ids") or [])
+        decisions = dict(record.get("decisions") or {})
         if not approval_ids or any(aid not in decisions for aid in approval_ids):
-            atomic_write_json(path, record)
             return dict(record), None, None
         if not all(bool(decisions.get(aid)) for aid in approval_ids):
             record["status"] = "rejected"
+            record["execution_phase"] = "decision_rejected"
+            record["updated_at"] = _now_iso()
             atomic_write_json(path, record)
             delete_secret(str(record.get("payload_ref") or ""))
             return dict(record), None, None
-
         payload_text = get_secret(str(record.get("payload_ref") or ""))
         if not payload_text or hashlib.sha256(payload_text.encode()).hexdigest() != record.get("payload_sha256"):
             record["status"] = "failed"
             record["error"] = "continuation_payload_unavailable_or_corrupt"
+            record["updated_at"] = _now_iso()
             atomic_write_json(path, record)
             raise RuntimeError(record["error"])
         payload = json.loads(payload_text)
         _validate_payload(record, payload)
-        record["status"] = "running"
-        record["claimed_at"] = _now_iso()
-        record["heartbeat_at"] = record["claimed_at"]
+        now = _now_iso()
+        record["status"] = "claimed"
+        record["claimed_at"] = now
+        record["heartbeat_at"] = now
         record["execution_phase"] = "claimed"
-        record["updated_at"] = _now_iso()
+        record["updated_at"] = now
         atomic_write_json(path, record)
         grant = ApprovedToolContinuation(
             continuation_id=continuation_id,
@@ -207,7 +239,7 @@ def finish_continuation(
     path = _path(workspace_id, continuation_id)
     with FileLock(path.with_suffix(".lock")):
         record = _read_unlocked(path)
-        if record.get("status") in {"running", "stalled"}:
+        if record.get("status") in {"claimed", "dispatching", "stalled"}:
             record["status"] = "failed" if error else "completed"
             record["execution_phase"] = "finished"
             record["completed_run_id"] = completed_run_id
@@ -222,9 +254,10 @@ def mark_continuation_dispatching(workspace_id: str, continuation_id: str) -> di
     path = _path(workspace_id, continuation_id)
     with FileLock(path.with_suffix(".lock")):
         record = _read_unlocked(path)
-        if record.get("status") != "running":
-            raise RuntimeError("continuation_not_running")
+        if record.get("status") != "claimed":
+            raise RuntimeError("continuation_not_claimed")
         now = _now_iso()
+        record["status"] = "dispatching"
         record["execution_phase"] = "dispatching"
         record["dispatch_started_at"] = now
         record["heartbeat_at"] = now
@@ -237,13 +270,13 @@ def heartbeat_continuation(workspace_id: str, continuation_id: str) -> bool:
     path = _path(workspace_id, continuation_id)
     with FileLock(path.with_suffix(".lock")):
         record = _read_unlocked(path)
-        if record.get("status") not in {"running", "stalled"}:
+        if record.get("status") not in {"claimed", "dispatching", "stalled"}:
             return False
         now = _now_iso()
         if record.get("status") == "stalled":
             # A live owner heartbeat proves the original execution is still
             # active; this never creates a new execution or replays a tool.
-            record["status"] = "running"
+            record["status"] = "dispatching"
             record.pop("stalled_at", None)
             record.pop("stall_reason", None)
         record["heartbeat_at"] = now
@@ -284,7 +317,7 @@ def maintain_continuations(workspace_id: str, *, force: bool = False) -> dict[st
                 atomic_write_json(path, record)
                 delete_secret(str(record.get("payload_ref") or ""))
                 counters["expired"] += 1
-            elif status == "running":
+            elif status in {"claimed", "dispatching"}:
                 heartbeat_age = _age_seconds(
                     record.get("heartbeat_at") or record.get("claimed_at") or record.get("updated_at"),
                     now_epoch,
@@ -389,3 +422,61 @@ def _validate_payload(record: dict[str, Any], payload: Any) -> None:
         or any(str(node_id) not in call_ids for node_id in approved_ids)
     ):
         raise ValueError("invalid_continuation_approved_nodes")
+
+
+def reconcile_decisions_from_guardian(
+    workspace_id: str,
+    approval_records: list[dict[str, Any]],
+) -> dict[str, int]:
+    """Repair missing continuation decisions from durable Guardian records.
+
+    This function only writes continuation state. It never claims, dispatches,
+    resumes, or invokes a tool, so startup/periodic reconciliation remains
+    fail-closed for side effects.
+    """
+    from storage.records import list_json_records
+
+    latest: dict[str, dict[str, Any]] = {}
+    for raw in approval_records:
+        if not isinstance(raw, dict) or not raw.get("resolved"):
+            continue
+        approval_id = str(raw.get("approval_id") or "")
+        metadata = raw.get("metadata") if isinstance(raw.get("metadata"), dict) else {}
+        if not approval_id or str(raw.get("workspace_id") or "") != workspace_id:
+            continue
+        latest[approval_id] = raw
+    counters = {"decision_repaired": 0, "decision_mismatch": 0, "ready": 0}
+    for raw in list_json_records(workspace_id, ("approvals", "continuations"), limit=5000):
+        if not isinstance(raw, dict):
+            continue
+        continuation_id = str(raw.get("continuation_id") or "")
+        status = str(raw.get("status") or "")
+        if not continuation_id or status not in {"pending", "ready"}:
+            continue
+        expected_ids = list(raw.get("approval_ids") or [])
+        decisions = dict(raw.get("decisions") or {})
+        for approval_id in expected_ids:
+            durable = latest.get(str(approval_id))
+            if not durable:
+                continue
+            metadata = durable.get("metadata") if isinstance(durable.get("metadata"), dict) else {}
+            if str(metadata.get("continuation_id") or "") != continuation_id:
+                counters["decision_mismatch"] += 1
+                continue
+            allowed = bool(durable.get("allowed"))
+            existing = decisions.get(approval_id)
+            if existing is not None and bool(existing) != allowed:
+                counters["decision_mismatch"] += 1
+                continue
+            if existing is None:
+                record_decision(
+                    workspace_id=workspace_id,
+                    continuation_id=continuation_id,
+                    approval_id=approval_id,
+                    allowed=allowed,
+                )
+                counters["decision_repaired"] += 1
+                decisions[approval_id] = allowed
+        if expected_ids and all(aid in decisions and bool(decisions[aid]) for aid in expected_ids):
+            counters["ready"] += 1
+    return counters

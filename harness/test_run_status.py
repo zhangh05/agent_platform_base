@@ -378,3 +378,16 @@ def test_persist_run_record_uses_result_llm_metadata(monkeypatch, tmp_path):
     assert rec["llm_metadata"]["used"] is True
     assert rec["llm_metadata"]["provider"] == "test-provider"
     assert rec["llm_metadata"]["model"] == "test-model"
+
+
+def test_safe_status_projects_unknown_before_generic_error_state():
+    from storage.run_record_store import _safe_status
+
+    state = SimpleNamespace(
+        context={},
+        error="runtime result is unknown",
+        result_ok=False,
+        result_errors=["runtime result is unknown"],
+        execution_outcome="unknown",
+    )
+    assert _safe_status(state, {}) == "unknown"

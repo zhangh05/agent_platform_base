@@ -43,9 +43,9 @@ def _expire_bound_continuation(req: "ApprovalRequest") -> None:
     if not continuation_id:
         return
     try:
-        from agent.runtime.approval_continuation import record_decision_and_claim
+        from agent.runtime.approval_continuation import record_decision
 
-        record_decision_and_claim(
+        record_decision(
             workspace_id=req.workspace_id,
             continuation_id=continuation_id,
             approval_id=req.approval_id,
