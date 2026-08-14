@@ -328,7 +328,11 @@ def test_approval_handler_resumes_exact_call():
         )
         engine.register_tool("exec.run", _mock.AsyncMock(return_value={"ok": True}))
 
-        result = await engine.run("test")
+        result = await engine.run(
+            "test",
+            workspace_id="default",
+            session_id="risk-policy-approval-test",
+        )
         assert result.success
         assert result.node_success_count == 1
         assert len(approvals) == 1
