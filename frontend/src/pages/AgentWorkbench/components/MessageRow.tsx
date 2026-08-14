@@ -9,6 +9,7 @@ import { StreamingContent } from "./StreamingContent";
 import { ThinkingBlock } from "./ThinkingBlock";
 import hljs from "highlight.js/lib/core";
 import { useSessionStore } from "../../../stores/session";
+import { IconAlert, IconDocument, IconSparkle } from "../../../components/Icon";
 
 const COPY_FEEDBACK_MS = 2000;
 
@@ -96,7 +97,7 @@ export const MessageRow = memo(function MessageRow({ m, idx: _idx, total: _total
                 <img src={attachment.previewUrl || `/api/storage/files/${encodeURIComponent(attachment.file_id)}/preview?workspace_id=${encodeURIComponent(workspaceId || "")}`} alt={attachment.name} />
                 <span>{attachment.name}</span>
               </a>
-            ) : <span className="chat-file-attachment" key={attachment.file_id}>📄 {attachment.name}</span>)}
+            ) : <span className="chat-file-attachment" key={attachment.file_id}><IconDocument size={14} /> {attachment.name}</span>)}
           </div> : null}
         </div></div>
         <div className="message-avatar user">我</div>
@@ -106,7 +107,7 @@ export const MessageRow = memo(function MessageRow({ m, idx: _idx, total: _total
 
   return (
     <div className={`message-row assistant${m.status === "error" ? " error" : ""}${m.status === "streaming" ? " streaming" : ""}`} data-testid="chat-assistant">
-      <div className="message-avatar agent">网</div>
+      <div className="message-avatar agent"><IconSparkle size={14} weight="fill" /></div>
       <div className="message-stack">
         {/* Live tool call chips during streaming */}
         {m.status === "streaming" && m.toolCalls && m.toolCalls.length > 0 && (
@@ -181,7 +182,7 @@ export const MessageRow = memo(function MessageRow({ m, idx: _idx, total: _total
         )}
         {m.status === "error" && m.error && (
           <div className="msg-error-box">
-            <span>⚠️ {humanFailure(m.result?.error_type, m.error ?? "").msg}</span>
+            <span><IconAlert size={14} /> {humanFailure(m.result?.error_type, m.error ?? "").msg}</span>
           </div>
         )}
       </div>

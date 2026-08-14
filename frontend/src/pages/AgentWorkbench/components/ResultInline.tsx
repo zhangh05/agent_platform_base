@@ -86,7 +86,7 @@ export const ResultInline = memo(function ResultInline({
   const toast = useToastStore((s) => s.show);
   const [saving, setSaving] = useState<"" | "memory" | "knowledge">("");
   const summaries: SourceSummary[] = (result?.metadata?.context_sources ?? result?.metadata?.source_summary ?? []);
-  const isFailed = !result?.ok;
+  const isFailed = Boolean(result && !result.ok);
   const hasFailedTool = ((result?.tool_calls) ?? []).some((tc) => !tc.ok);
   const finalText = (result?.final_response || fallbackText || "").trim();
   const retry = retryStats(result);
@@ -179,19 +179,21 @@ export const ResultInline = memo(function ResultInline({
 
   return (
     <div className="chat-result-inline">
-      <section className="result-overview" aria-label="执行摘要">
-        <div className="result-overview-main">
-          <span className={`result-overview-status ${isUnknownOutcome ? "unknown" : isFailed ? "failed" : "complete"}`}>
-            {isUnknownOutcome ? "结果未知" : isFailed ? "需要关注" : "本轮完成"}
+      {result ? (
+        <section className="result-overview" aria-label="执行摘要">
+          <div className="result-overview-main">
+            <span className={`result-overview-status ${isUnknownOutcome ? "unknown" : isFailed ? "failed" : "complete"}`}>
+              {isUnknownOutcome ? "结果未知" : isFailed ? "需要关注" : "本轮完成"}
+            </span>
+            <span className="result-overview-title">
+              {actionCount > 0 ? `已处理 ${actionCount} 个工具调用` : "已生成本轮答复"}
+            </span>
+          </div>
+          <span className="result-overview-meta">
+            {isUnknownOutcome ? "写入已冻结，等待受控核对" : failedToolCount > 0 ? `${failedToolCount} 项需要跟进` : successToolCount > 0 ? `${successToolCount} 项执行成功` : "可将结论沉淀到记忆或知识库"}
           </span>
-          <span className="result-overview-title">
-            {actionCount > 0 ? `已处理 ${actionCount} 个工具调用` : "已生成本轮答复"}
-          </span>
-        </div>
-        <span className="result-overview-meta">
-          {isUnknownOutcome ? "写入已冻结，等待受控核对" : failedToolCount > 0 ? `${failedToolCount} 项需要跟进` : successToolCount > 0 ? `${successToolCount} 项执行成功` : "可将结论沉淀到记忆或知识库"}
-        </span>
-      </section>
+        </section>
+      ) : null}
       {isUnknownOutcome && (
         <section className="unknown-outcome-alert" role="alert" data-testid="unknown-outcome-alert">
           <strong>执行结果未知，系统已冻结后续写操作</strong>

@@ -294,8 +294,21 @@ export function Sidebar() {
 
   return (
     <div data-testid="sidebar" className="sidebar-content">
+      <div className="sidebar-shortcuts" aria-label="工作台快捷操作">
+        <div className="sidebar-shortcut active"><IconWorkspace size={17} /><span>工作台</span></div>
+        <button
+          className="sidebar-shortcut"
+          onClick={onNewSession}
+          disabled={!currentWorkspaceId}
+          data-testid="btn-new-session"
+          type="button"
+        >
+          <IconEdit size={17} /><span>新会话</span><IconPlus className="sidebar-shortcut-tail" size={14} />
+        </button>
+      </div>
+
       {/* 工作区 — 后端已按当前用户过滤授权范围 */}
-      <div className="sidebar-panel">
+      <div className="sidebar-panel sidebar-workspace-panel">
         <div className="sidebar-panel-title">
           <IconWorkspace size={12} />
           <span>工作区</span>
@@ -323,20 +336,10 @@ export function Sidebar() {
       </div>
 
       {/* 会话 */}
-      <div className="sidebar-panel">
+      <div className="sidebar-panel sidebar-session-panel">
         <div className="sidebar-panel-title">
           <IconChat size={12} />
-          <span>会话</span>
-          <button
-            className="panel-action"
-            onClick={onNewSession}
-            disabled={!currentWorkspaceId}
-            data-testid="btn-new-session"
-            type="button"
-            aria-label="新建会话"
-          >
-            <IconPlus size={11} />
-          </button>
+          <span>最近会话</span>
         </div>
         <AsyncView
           state={sessList.state}
@@ -440,10 +443,10 @@ export function Sidebar() {
       </div>
 
       {/* 最近运行 */}
-      <div className="sidebar-panel">
+      <div className="sidebar-panel sidebar-runs-panel">
         <div className="sidebar-panel-title">
           <IconBolt size={12} />
-          <span>最近运行</span>
+          <span>最近任务</span>
         </div>
         <AsyncView
           state={recentRuns.state}

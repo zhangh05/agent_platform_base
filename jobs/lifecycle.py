@@ -10,9 +10,11 @@ Responsibilities:
 """
 
 import logging
+from typing import Any
 
 from jobs.store import get_job, update_job, list_jobs
 from jobs.manager import create_job, mark_failed, mark_running, mark_succeeded, update_progress
+from storage.time_utils import now_iso
 
 _log = logging.getLogger("jobs.lifecycle")
 
@@ -29,12 +31,217 @@ def _broadcast_job(job_id: str, ws_id: str, session_id: str = "") -> None:
             "status": rec.status, "title": rec.title,
             "run_ids": getattr(rec, "run_ids", []) or [],
             "output_artifacts": getattr(rec, "output_artifacts", []) or [],
-            "progress": (rec.progress or {}).get("current", 0) if hasattr(rec, "progress") else 0,
+            "progress": dict(getattr(rec, "progress", {}) or {}),
+            "active_turn": dict((getattr(rec, "metadata", {}) or {}).get("active_turn") or {}),
         }
         from backend.ws.agent_ws import broadcast_ws_event
         broadcast_ws_event({"name": "job_updated", "data": data})
     except Exception:
         pass
+
+
+_STAGE_PROGRESS: dict[str, tuple[int, str]] = {
+    "turn_started": (1, "理解问题"),
+    "planner_started": (1, "理解问题"),
+    "planner_completed": (1, "理解问题"),
+    "graph_compiled": (1, "理解问题"),
+    "structural_validated": (1, "理解问题"),
+    "semantic_validated": (1, "理解问题"),
+    "semantic_invalid": (1, "理解问题"),
+    "pre_repair_started": (1, "理解问题"),
+    "pre_repair_completed": (1, "理解问题"),
+    "risk_assessed": (1, "理解问题"),
+    "budget_ok": (1, "理解问题"),
+    "execution_started": (2, "收集证据"),
+    "orchestration_planned": (2, "收集证据"),
+    "orchestration_layer_started": (2, "收集证据"),
+    "orchestration_layer_completed": (2, "收集证据"),
+    "tool_call": (2, "收集证据"),
+    "tool_result": (2, "收集证据"),
+    "execution_completed": (2, "收集证据"),
+    "repair_attempt": (2, "收集证据"),
+    "merge_completed": (3, "分析判断"),
+    "response_started": (3, "分析判断"),
+    "model_started": (3, "分析判断"),
+    "response_completed": (4, "形成建议"),
+    "turn_completed": (4, "形成建议"),
+}
+
+
+def begin_session_turn(
+    ws_id: str,
+    session_id: str,
+    user_input: str,
+    *,
+    client_request_id: str = "",
+) -> str | None:
+    """Create a durable, user-visible snapshot before runtime work begins.
+
+    The job is session-scoped, while ``active_turn`` represents exactly one
+    request.  Updating this snapshot lets a refreshed browser recover the
+    current stage without replaying an operation or inventing progress.
+    """
+    if not session_id:
+        return None
+    job_id = _find_or_create_job(ws_id, session_id, user_input)
+    if not job_id:
+        return None
+    _ensure_running(ws_id, job_id)
+    rec = get_job(ws_id, job_id)
+    if not rec:
+        return None
+    metadata = dict(rec.metadata or {})
+    metadata["active_turn"] = {
+        "client_request_id": str(client_request_id or ""),
+        "session_id": session_id,
+        "status": "running",
+        "stage": "turn_started",
+        "stage_label": "理解问题",
+        "started_at": now_iso(),
+        "updated_at": now_iso(),
+        "events": [],
+        "tool_calls": [],
+        "run_id": "",
+        "trace_id": "",
+        "error": "",
+    }
+    update_job(ws_id, job_id, {
+        "metadata": metadata,
+        "progress": {
+            "current": 1,
+            "total": 4,
+            "percent": 25,
+            "message": "正在理解问题",
+            "current_step": "理解问题",
+            "updated_at": now_iso(),
+        },
+    })
+    _broadcast_job(job_id, ws_id, session_id)
+    return job_id
+
+
+def update_session_turn_stage(
+    ws_id: str,
+    job_id: str,
+    session_id: str,
+    event: dict[str, Any],
+) -> None:
+    """Persist one compact runtime event and broadcast the projected phase."""
+    if not job_id or not isinstance(event, dict):
+        return
+    rec = get_job(ws_id, job_id)
+    if not rec:
+        return
+    metadata = dict(rec.metadata or {})
+    active = dict(metadata.get("active_turn") or {})
+    if active.get("status") != "running":
+        return
+    stage = str(event.get("type") or event.get("name") or "event")
+    current, label = _STAGE_PROGRESS.get(stage, (
+        int((rec.progress or {}).get("current") or 1),
+        str((rec.progress or {}).get("current_step") or "理解问题"),
+    ))
+    compact = {
+        "type": stage,
+        "timestamp": event.get("timestamp"),
+        "elapsed_ms": int(event.get("elapsed_ms") or 0),
+    }
+    tool_id = str(event.get("tool_id") or event.get("name") or "") if stage in {"tool_call", "tool_result"} else ""
+    if tool_id:
+        compact["tool_id"] = tool_id
+        compact["call_id"] = str(event.get("call_id") or "")
+        if stage == "tool_result":
+            compact["ok"] = bool(event.get("ok", event.get("status") == "ok"))
+            compact["summary"] = str(event.get("summary") or event.get("message") or "")[:240]
+
+    events = [item for item in list(active.get("events") or []) if isinstance(item, dict)]
+    events.append(compact)
+    active["events"] = events[-80:]
+
+    tools = [item for item in list(active.get("tool_calls") or []) if isinstance(item, dict)]
+    if tool_id:
+        call_id = str(event.get("call_id") or "")
+        match_index = next((
+            index for index, item in enumerate(tools)
+            if (call_id and item.get("call_id") == call_id)
+            or (not call_id and item.get("tool_id") == tool_id and item.get("status") == "running")
+        ), -1)
+        next_tool = {
+            "call_id": call_id,
+            "tool_id": tool_id,
+            "status": "done" if stage == "tool_result" and compact.get("ok") else (
+                "failed" if stage == "tool_result" else "running"
+            ),
+            "ok": compact.get("ok", False),
+            "summary": compact.get("summary", ""),
+        }
+        if match_index >= 0:
+            tools[match_index] = {**tools[match_index], **next_tool}
+        else:
+            tools.append(next_tool)
+        active["tool_calls"] = tools[-24:]
+
+    active.update({
+        "stage": stage,
+        "stage_label": label,
+        "updated_at": now_iso(),
+    })
+    metadata["active_turn"] = active
+    update_job(ws_id, job_id, {
+        "metadata": metadata,
+        "progress": {
+            "current": current,
+            "total": 4,
+            "percent": current * 25,
+            "message": f"正在{label}",
+            "current_step": label,
+            "updated_at": now_iso(),
+        },
+    })
+    _broadcast_job(job_id, ws_id, session_id)
+
+
+def finish_session_turn_snapshot(
+    ws_id: str,
+    job_id: str,
+    session_id: str,
+    *,
+    run_id: str = "",
+    trace_id: str = "",
+    ok: bool,
+    error: str = "",
+) -> None:
+    """Close the durable turn snapshot before the session job is finalized."""
+    if not job_id:
+        return
+    rec = get_job(ws_id, job_id)
+    if not rec:
+        return
+    metadata = dict(rec.metadata or {})
+    active = dict(metadata.get("active_turn") or {})
+    active.update({
+        "status": "succeeded" if ok else "failed",
+        "stage": "turn_completed" if ok else "turn_failed",
+        "stage_label": "形成建议" if ok else "处理失败",
+        "updated_at": now_iso(),
+        "finished_at": now_iso(),
+        "run_id": str(run_id or ""),
+        "trace_id": str(trace_id or ""),
+        "error": str(error or "")[:240],
+    })
+    metadata["active_turn"] = active
+    update_job(ws_id, job_id, {
+        "metadata": metadata,
+        "progress": {
+            "current": 4,
+            "total": 4,
+            "percent": 100,
+            "message": "处理完成" if ok else "处理失败",
+            "current_step": "形成建议" if ok else "处理失败",
+            "updated_at": now_iso(),
+        },
+    })
+    _broadcast_job(job_id, ws_id, session_id)
 
 
 def attach_run_to_session_job(

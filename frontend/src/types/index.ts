@@ -809,9 +809,44 @@ export interface JobItem {
   updated_at?: string;
   finished_at?: string;
   error?: string;
-  progress?: number;
+  progress?: number | {
+    current?: number;
+    total?: number;
+    percent?: number;
+    message?: string;
+    current_step?: string;
+    updated_at?: string;
+  };
+  payload?: Record<string, unknown>;
+  metadata?: {
+    active_turn?: ActiveTurnSnapshot;
+    [key: string]: unknown;
+  };
+  run_ids?: string[];
   input_artifacts?: string[];
   output_artifacts?: string[];
+}
+
+export interface ActiveTurnSnapshot {
+  client_request_id?: string;
+  session_id?: string;
+  status?: "running" | "succeeded" | "failed" | "cancelled" | string;
+  stage?: string;
+  stage_label?: string;
+  started_at?: string;
+  updated_at?: string;
+  finished_at?: string;
+  run_id?: string;
+  trace_id?: string;
+  error?: string;
+  events?: RuntimeEvent[];
+  tool_calls?: Array<{
+    call_id?: string;
+    tool_id?: string;
+    status?: string;
+    ok?: boolean;
+    summary?: string;
+  }>;
 }
 
 export interface JobEvent {

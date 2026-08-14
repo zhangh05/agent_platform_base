@@ -119,3 +119,59 @@ def test_successful_turn_closes_job_as_succeeded(monkeypatch):
     )
 
     assert calls == [("default", "job_1", {"latest_run_id": "run_1"})]
+
+
+def test_live_turn_snapshot_projects_runtime_stage_and_tool(monkeypatch):
+    import jobs.lifecycle as lifecycle
+
+    rec = type("Rec", (), {
+        "status": "running",
+        "progress": {"current": 1, "current_step": "理解问题"},
+        "metadata": {
+            "active_turn": {
+                "status": "running",
+                "events": [],
+                "tool_calls": [],
+            },
+        },
+    })()
+    patches = []
+    monkeypatch.setattr(lifecycle, "get_job", lambda *_args: rec)
+    monkeypatch.setattr(lifecycle, "update_job", lambda _ws, _job, patch: patches.append(patch))
+    monkeypatch.setattr(lifecycle, "_broadcast_job", lambda *_args, **_kwargs: None)
+
+    lifecycle.update_session_turn_stage("default", "job_1", "session_1", {
+        "type": "tool_result",
+        "tool_id": "web.search",
+        "call_id": "call_1",
+        "ok": True,
+        "summary": "found three sources",
+        "elapsed_ms": 1200,
+    })
+
+    active = patches[-1]["metadata"]["active_turn"]
+    assert active["stage_label"] == "收集证据"
+    assert active["tool_calls"][0]["status"] == "done"
+    assert patches[-1]["progress"]["percent"] == 50
+
+
+def test_finished_live_turn_snapshot_is_refreshable(monkeypatch):
+    import jobs.lifecycle as lifecycle
+
+    rec = type("Rec", (), {
+        "metadata": {"active_turn": {"status": "running", "events": [], "tool_calls": []}},
+    })()
+    patches = []
+    monkeypatch.setattr(lifecycle, "get_job", lambda *_args: rec)
+    monkeypatch.setattr(lifecycle, "update_job", lambda _ws, _job, patch: patches.append(patch))
+    monkeypatch.setattr(lifecycle, "_broadcast_job", lambda *_args, **_kwargs: None)
+
+    lifecycle.finish_session_turn_snapshot(
+        "default", "job_1", "session_1",
+        run_id="run_1", trace_id="trace_1", ok=True,
+    )
+
+    active = patches[-1]["metadata"]["active_turn"]
+    assert active["status"] == "succeeded"
+    assert active["run_id"] == "run_1"
+    assert patches[-1]["progress"]["percent"] == 100

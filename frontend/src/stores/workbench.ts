@@ -68,6 +68,10 @@ export interface ChatMsg {
   /** Monotonic timer (ms) for the latest SSOT Runtime stage, used to
    *  render the small "(已等待 5.4s)" suffix. */
   progressElapsedMs?: number;
+  /** Compact live runtime events used by the task progress panel. */
+  runtimeEvents?: RuntimeEvent[];
+  /** Durable session-job id for explicit cancellation and refresh recovery. */
+  activeJobId?: string;
   attachments?: Array<{ file_id: string; name: string; mime_type: string; size_bytes: number; kind: "image" | "file"; previewUrl?: string }>;
 }
 
@@ -209,7 +213,7 @@ interface WorkbenchState {
   /** Update an existing message (streaming→ready/error, append tool calls) */
   updateAssistant: (
     msgId: string,
-    patch: Partial<Pick<ChatMsg, "status" | "text" | "error" | "toolCalls" | "trace_id" | "result" | "run_id" | "progressText" | "progressElapsedMs">>,
+    patch: Partial<Pick<ChatMsg, "status" | "text" | "error" | "toolCalls" | "trace_id" | "result" | "run_id" | "progressText" | "progressElapsedMs" | "runtimeEvents" | "activeJobId">>,
     session_id?: string,
   ) => void;
   setSending: (v: boolean) => void;

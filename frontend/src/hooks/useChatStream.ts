@@ -13,7 +13,7 @@
  */
 
 import { useCallback, useEffect, useRef } from "react";
-import { agentApi, sessionsApi } from "../api";
+import { agentApi, jobsApi, sessionsApi } from "../api";
 import { getApiAccessToken, realtimeEndpoint } from "../api/client";
 import { useWorkbenchStore } from "../stores/workbench";
 import { useSessionStore } from "../stores/session";
@@ -119,6 +119,17 @@ export function useChatStream(
   callbacksRef.current = callbacks;
 
   const stopStream = (): void => {
+    const currentSessionId = paramsRef.current.sessionId;
+    const workspaceId = paramsRef.current.workspaceId;
+    const currentMessages = currentSessionId
+      ? useWorkbenchStore.getState().bySession[currentSessionId] || []
+      : [];
+    const activeJobId = [...currentMessages].reverse().find(
+      (message) => message.role === "assistant" && message.status === "streaming" && message.activeJobId,
+    )?.activeJobId;
+    if (activeJobId && workspaceId) {
+      void jobsApi.cancel(activeJobId, workspaceId).catch(() => {});
+    }
     if (abortRef.current) { abortRef.current.abort(); abortRef.current = null; }
     if (msgWsRef.current) {
       try { msgWsRef.current.close(); } catch { /* noop */ }
@@ -167,7 +178,10 @@ export function useChatStream(
     useWorkbenchStore.getState().setSending(true);
 
     const fullText = text;
-    const turnMetadata = { ...metadataOverride };
+    const clientRequestId = typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+      ? crypto.randomUUID()
+      : `request-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    const turnMetadata = { ...metadataOverride, client_request_id: clientRequestId };
 
     // Try WebSocket streaming first, fall back to HTTP.
     const wsUrl = realtimeEndpoint("/ws/agent");
@@ -273,6 +287,20 @@ export function useChatStream(
                   streamingResult.events = [...(streamingResult.events || []), msg.data];
                 }
                 const stageName = msg.name as string;
+                if (msg.data && stageName !== "heartbeat") {
+                  const storeState = useWorkbenchStore.getState();
+                  const currentMessage = storeState.bySession[scratch]?.find((item) => item.id === streamingMsgId);
+                  const runtimeEvent = {
+                    ...msg.data,
+                    event_id: String(msg.data.event_id || `live-${clientRequestId}-${msg.seq || Date.now()}`),
+                    event_type: String(msg.data.event_type || msg.data.type || stageName),
+                    type: String(msg.data.type || stageName),
+                  };
+                  storeState.updateAssistant(streamingMsgId, {
+                    runtimeEvents: [...(currentMessage?.runtimeEvents || []), runtimeEvent],
+                    activeJobId: String(msg.data.job_id || currentMessage?.activeJobId || "") || undefined,
+                  }, scratch);
+                }
                 if (stageName === "model_started") {
                   streamState = beginModelStep(streamedText);
                   streamedText = "";
@@ -417,6 +445,7 @@ export function useChatStream(
         error: wsResult.errors?.[0],
         trace_id: wsResult.trace_id,
         run_id: wsResult.turn_id,
+        runtimeEvents: cleanResult.events || [],
       }, resolvedSid);
 
       // Defer heavy post-processing.

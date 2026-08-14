@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback } from "react";
-import { sessionsApi, settingsApi, sseApi } from "../../api";
+import { jobsApi, sessionsApi, settingsApi, sseApi } from "../../api";
 import { getApiAccessToken, realtimeEndpoint } from "../../api/client";
 import type { SSEConnection } from "../../api/sse";
 import { useSessionStore } from "../../stores/session";
@@ -7,15 +7,18 @@ import { useWorkbenchStore, type ChatMsg } from "../../stores/workbench";
 import { useToastStore } from "../../stores/toast";
 import { humanFailure } from "../../utils/humanizeError";
 import "./WorkbenchHighlight";
-import { IconAlert, IconSend } from "../../components/Icon";
+import { IconAlert, IconAttachment, IconChat, IconChevronDown, IconClose, IconDocument, IconHistory, IconRefresh, IconSend, IconStop } from "../../components/Icon";
 import { ApprovalBubble } from "../../components/ApprovalBubble";
 import { RuntimeEventTimeline } from "../../components/RuntimeEventTimeline";
 import "../../components/RuntimeEventTimeline.css";
+import "./AgentWorkbench.css";
 import { formatFileSize } from "../../utils/format";
 import { QUICK_CHIPS } from "./WorkbenchQuickChips";
 import { MessageRow } from "./components/MessageRow";
 import { scopedLocalStorageKey } from "../../utils/userScope";
 import { useWorkbenchSend, type PendingAttachment } from "../../hooks/useWorkbenchSend";
+import { useActiveTurn } from "../../hooks/useActiveTurn";
+import { TaskProgressPanel } from "./components/TaskProgressPanel";
 
 /* ── View mode ── */
 type ViewMode = "chat" | "timeline";
@@ -124,6 +127,9 @@ export function TaskWorkbench() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [llmHealth, setLlmHealth] = useState<{ connected: boolean; provider?: string; model?: string; recentFailure?: string; visionSupported?: boolean }>({ connected: false });
   const toast = useToastStore((s) => s.show);
+  const { job: activeJob, refresh: refreshActiveTurn } = useActiveTurn(currentWorkspaceId, currentSessionId);
+  const durableTurn = activeJob?.metadata?.active_turn;
+  const turnRunning = sending || activeJob?.status === "running";
   // System and message streams use separate refs for system WebSocket and message WebSocket
   // to prevent race conditions where message streaming overwrites the
   // system WS reference and vice versa.
@@ -236,7 +242,7 @@ export function TaskWorkbench() {
     sessionId: currentSessionId,
     input,
     attachments,
-    sending,
+    sending: turnRunning,
     visionSupported: llmHealth.visionSupported,
     setInput,
     setAttachments,
@@ -246,6 +252,36 @@ export function TaskWorkbench() {
     toast,
     pendingAutoMetadataRef,
   });
+
+  const latestAssistant = [...visibleHistory].reverse().find((message) => message.role === "assistant");
+  const latestUser = [...visibleHistory].reverse().find((message) => message.role === "user");
+  const sessionTitle = latestUser?.text.trim().split("\n")[0].slice(0, 32) || "新会话";
+  const terminalJobRef = useRef<string>("");
+
+  useEffect(() => {
+    const runId = String(durableTurn?.run_id || "");
+    if (!currentSessionId || !currentWorkspaceId || !runId || activeJob?.status === "running") return;
+    const marker = `${activeJob?.job_id || ""}:${runId}:${activeJob?.status || ""}`;
+    if (terminalJobRef.current === marker) return;
+    terminalJobRef.current = marker;
+    sessionsApi.messages(currentSessionId, currentWorkspaceId)
+      .then((response) => {
+        if (response.messages?.length) mergeFromBackend(currentSessionId, response.messages);
+        return useWorkbenchStore.getState().loadRunDetail(currentWorkspaceId, runId, currentSessionId);
+      })
+      .catch(() => {});
+  }, [activeJob?.job_id, activeJob?.status, currentSessionId, currentWorkspaceId, durableTurn?.run_id, mergeFromBackend]);
+
+  const stopActiveTurn = useCallback(() => {
+    if (sending) {
+      stopGeneration();
+      return;
+    }
+    if (!activeJob?.job_id || !currentWorkspaceId) return;
+    void jobsApi.cancel(activeJob.job_id, currentWorkspaceId)
+      .then(() => refreshActiveTurn())
+      .catch(() => {});
+  }, [activeJob?.job_id, currentWorkspaceId, refreshActiveTurn, sending, stopGeneration]);
 
   // Auto-grow input
   useEffect(() => {
@@ -417,179 +453,145 @@ export function TaskWorkbench() {
 
   return (
     <div className="wb-shell">
-      {/* ── Header bar ── */}
-      <div className="wb-header">
-        <div className="wb-header-context">
-          <span className="wb-header-kicker">智能运维工作台</span>
-          <div className="wb-header-status">
-            <span className={"dot " + (llmHealth.connected ? (llmHealth.recentFailure ? "warn" : "ok") : "err")} />
-            <span>{llmStatusLabel}</span>
+      <section className="wb-conversation-column">
+        <header className="wb-header">
+          <div className="wb-header-context">
+            <span className="wb-header-kicker">{viewMode === "chat" ? "当前会话" : "运行记录"}</span>
+            <h1 title={sessionTitle}>{viewMode === "chat" ? sessionTitle : "完整时间线"}</h1>
           </div>
-        </div>
-        <div className="wb-header-actions">
-          <span className="wb-header-session" title={currentSessionId || ""}>
-            {currentSessionId ? `会话 ${currentSessionId.slice(0, 8)}` : "待创建会话"}
-          </span>
-          {currentSessionId && visibleHistory && visibleHistory.length > 0 && (
-            <button className="wb-export-btn" title="导出对话" onClick={() => {
-              const md = visibleHistory.map((m) =>
-                `## ${m.role === "user" ? "用户" : "AI"}\n\n${m.text}\n\n---\n`
-              ).join("\n");
-              const blob = new Blob([md], { type: "text/markdown" });
-              const a = document.createElement("a");
-              a.href = URL.createObjectURL(blob);
-              a.download = `session-${currentSessionId.slice(0, 8)}-${new Date().toISOString().slice(0, 10)}.md`;
-              a.click();
-              setTimeout(() => URL.revokeObjectURL(a.href), 100);
-            }}>导出记录</button>
+          <div className="wb-header-actions">
+            <span className="wb-header-status">
+              <span className={"dot " + (llmHealth.connected ? (llmHealth.recentFailure ? "warn" : "ok") : "err")} />
+              {llmStatusLabel}
+            </span>
+            <button
+              type="button"
+              className={`wb-mode-btn ${viewMode === "chat" ? "active" : ""}`}
+              onClick={() => setViewMode("chat")}
+              data-testid="view-chat"
+            >
+              <IconChat size={15} />对话
+            </button>
+            <button
+              type="button"
+              className={`wb-mode-btn ${viewMode === "timeline" ? "active" : ""}`}
+              onClick={() => setViewMode("timeline")}
+              data-testid="view-timeline"
+            >
+              <IconHistory size={15} />时间线
+            </button>
+            {currentSessionId && visibleHistory.length > 0 ? (
+              <button className="wb-export-btn" title="导出对话" onClick={() => {
+                const md = visibleHistory.map((m) => `## ${m.role === "user" ? "用户" : "AI"}\n\n${m.text}\n\n---\n`).join("\n");
+                const blob = new Blob([md], { type: "text/markdown" });
+                const a = document.createElement("a");
+                a.href = URL.createObjectURL(blob);
+                a.download = `session-${currentSessionId.slice(0, 8)}-${new Date().toISOString().slice(0, 10)}.md`;
+                a.click();
+                setTimeout(() => URL.revokeObjectURL(a.href), 100);
+              }}>导出</button>
+            ) : null}
+          </div>
+        </header>
+
+        <div className="wb-chat" data-testid="chat-stream">
+          {viewMode === "timeline" ? (
+            <RuntimeEventTimeline messages={visibleHistory} />
+          ) : visibleHistory.length === 0 && !turnRunning ? (
+            <div className="wb-empty" data-testid="workbench-empty">
+              <span className="wb-empty-kicker">开始一次可靠的智能运维任务</span>
+              <h2>{currentSessionId ? "今天需要处理什么？" : "请先新建会话"}</h2>
+              <p>{currentSessionId ? "描述问题、上传文件或给出目标。联智中枢会调用合适的工具，并在右侧实时展示处理进度与证据。" : "点击左侧“新会话”，创建后即可开始。"}</p>
+              <div className="wb-empty-chips">
+                {QUICK_CHIPS.map((chip) => (
+                  <button key={chip.label} className="wb-input-chip" type="button" onClick={() => pickChip(chip.prompt)} title={currentSessionId ? chip.prompt : "请先新建会话"} disabled={!currentSessionId}>
+                    {chip.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          ) : (
+            <div ref={chatRef} className="wb-chat-list" role="log" aria-live={turnRunning ? "polite" : "off"} onScroll={handleChatScroll}>
+              {visibleHistory.map((message, index) => (
+                <MessageRow key={message.message_id || message.id} m={message} idx={index} total={visibleHistory.length} lastUserInput={lastUserInput} onRetryOriginal={handleRetryOriginal} />
+              ))}
+              {activeJob?.status === "running" && latestAssistant?.status !== "streaming" ? (
+                <div className="wb-restored-run" role="status">
+                  <span className="typing-indicator"><span className="typing-dot" /><span className="typing-dot" /><span className="typing-dot" /></span>
+                  <span>任务仍在服务器处理中，页面已重新接入实时状态。</span>
+                </div>
+              ) : null}
+            </div>
           )}
+          {showScrollBtn ? (
+            <button className="scroll-bottom-btn" onClick={handleScrollBtnClick} title="回到底部" type="button" aria-label="回到底部">
+              <IconChevronDown size={15} />
+            </button>
+          ) : null}
         </div>
-      </div>
-      <div className="wb-context-rail" aria-label="运行说明">
-        <span><b>分步骤执行</b>，处理过程清晰可查</span>
-        <span>写操作结果不确定时会自动暂停，等待核对</span>
-        {currentWorkspaceId && <span>当前工作区：{currentWorkspaceId}</span>}
-      </div>
 
-      {/* ── View mode toggle ── */}
-      <div className="wb-view-tabs">
-        <button
-          type="button"
-          className={`wb-view-tab ${viewMode === "chat" ? "active" : ""}`}
-          onClick={() => setViewMode("chat")}
-          data-testid="view-chat"
-        >
-          💬 对话
-        </button>
-        <button
-          type="button"
-          className={`wb-view-tab ${viewMode === "timeline" ? "active" : ""}`}
-          onClick={() => setViewMode("timeline")}
-          data-testid="view-timeline"
-        >
-          📋 时间线
-        </button>
-      </div>
+        {(() => {
+          if (!currentSessionId || turnRunning || !lastUserInput) return null;
+          const lastResult = latestAssistant?.result;
+          if (!lastResult || lastResult.metadata?.execution_outcome === "unknown" || lastResult.ok) return null;
+          return (
+            <div className="wb-retry-bar">
+              <IconAlert size={13} />
+              <span>{humanFailure(lastResult.error_type, lastResult.errors?.[0] ?? "请求失败").msg}</span>
+              {humanFailure(lastResult.error_type, lastResult.errors?.[0] ?? "").retryable ? (
+                <button type="button" onClick={() => onSendRef.current(lastUserInput)} data-testid="retry-btn"><IconRefresh size={13} />重试</button>
+              ) : null}
+            </div>
+          );
+        })()}
 
-      {/* ── Content area ── */}
-      <div className="wb-chat" data-testid="chat-stream">
-        {viewMode === "timeline" ? (
-          <RuntimeEventTimeline messages={visibleHistory ?? []} />
-        ) : (visibleHistory?.length ?? 0) === 0 && !sending ? (
-          <div className="wb-empty" data-testid="workbench-empty">
-            <h2>{currentSessionId ? "任务工作台" : "请先新建会话"}</h2>
-            <p>{currentSessionId ? "输入故障现象、配置片段或排查目标，智能体会按时间顺序展示处理过程。" : "点击左侧“会话”旁的 +，创建会话后即可开始。"}</p>
-            <div className="wb-empty-chips">
-              {QUICK_CHIPS.map((c) => (
-                <button key={c.label} className="wb-input-chip" type="button" onClick={() => pickChip(c.prompt)} title={currentSessionId ? c.prompt : "请先新建会话"} disabled={!currentSessionId}>
-                  {c.label}
-                </button>
+        <div className="wb-input-bar" onDragOver={handleDragOver} onDrop={handleDrop}>
+          {attachments.length > 0 ? (
+            <div className="wb-attachments">
+              {attachments.map((attachment) => (
+                <span key={attachment.id} className="tag wb-attachment-tag">
+                  {attachment.uploading ? <span className="spinner wb-attachment-spinner" /> : attachment.previewUrl ? <img className="wb-attachment-preview" src={attachment.previewUrl} alt="待识别图片" /> : <IconDocument size={14} />}
+                  <span className="wb-attachment-name">{attachment.name}</span>
+                  <button onClick={() => removeAttachment(attachment.id)} className="wb-attachment-remove" type="button" aria-label={`移除 ${attachment.name}`}><IconClose size={12} /></button>
+                </span>
               ))}
             </div>
-          </div>
-        ) : (
-          <div
-            ref={chatRef}
-            className="wb-chat-list"
-            role="log"
-            aria-live={sending ? "polite" : "off"}
-            onScroll={handleChatScroll}
-          >
-            {(visibleHistory ?? []).map((m, idx) => (
-              <MessageRow
-                key={m.message_id || m.id}
-                m={m}
-                idx={idx}
-                total={(visibleHistory ?? []).length}
-                lastUserInput={lastUserInput}
-                onRetryOriginal={handleRetryOriginal}
-              />
-            ))}
-          </div>
-        )}
-
-        {/* ── Scroll-to-bottom floating bubble ── */}
-        {showScrollBtn && (
-          <button className="scroll-bottom-btn" onClick={handleScrollBtnClick} title="回到底部" type="button">
-            <svg width="14" height="14" viewBox="0 0 16 16"><path d="M4 6l4 4 4-4" stroke="currentColor" strokeWidth="1.5" fill="none" strokeLinecap="round" strokeLinejoin="round"/></svg>
-          </button>
-        )}
-      </div>
-
-      {/* ── Retry bar (derive from last assistant message's result) ── */}
-      {(() => {
-        if (!currentSessionId || sending || !lastUserInput) return null;
-        const lastAssistant = [...(visibleHistory ?? [])].reverse().find((m) => m.role === "assistant");
-        const lastResult = lastAssistant?.result;
-        if (!lastResult) return null;
-        if (lastResult.metadata?.execution_outcome === "unknown") return null;
-        if (lastResult.ok) return null;
-        return (
-          <div className="wb-retry-bar">
-            <IconAlert size={11} />
-            <span>{humanFailure(lastResult.error_type, lastResult.errors?.[0] ?? "请求失败").msg}</span>
-            {humanFailure(lastResult.error_type, lastResult.errors?.[0] ?? "").retryable && (
-              <button type="button" onClick={() => onSendRef.current(lastUserInput)} data-testid="retry-btn">
-                🔄 重试
-              </button>
-            )}
-          </div>
-        );
-      })()}
-
-      {/* ── Input bar ── */}
-      <div className="wb-input-bar" onDragOver={handleDragOver} onDrop={handleDrop}>
-        {attachments.length > 0 && (
-          <div className="wb-attachments">
-            {attachments.map((a) => (
-              <span key={a.id} className="tag wb-attachment-tag">
-                {a.uploading ? <span className="spinner wb-attachment-spinner" /> : a.previewUrl ? <img className="wb-attachment-preview" src={a.previewUrl} alt="待识别图片" /> : "📄"}
-                <span className="wb-attachment-name">{a.name}</span>
-                <button onClick={() => removeAttachment(a.id)} className="wb-attachment-remove" type="button">&times;</button>
-              </span>
-            ))}
-          </div>
-        )}
-        <div className="wb-input-row">
-            <input ref={fileInputRef} type="file" multiple disabled={!currentSessionId || sending} accept=".txt,.md,.json,.csv,.tsv,.log,.conf,.cfg,.yaml,.yml,.xml,.html,.htm,.pdf,.docx,.xlsx,.pptx,.png,.jpg,.jpeg,.gif,.webp" onChange={(e) => { if (e.target.files) { addFiles(e.target.files); e.target.value = ""; } }} className="wb-file-input" />
-            <button className="wb-attach-btn" onClick={pickFile} disabled={!currentSessionId || sending} title={currentSessionId ? "上传常见文档、表格、演示文稿、配置或图片（单文件 100 MB，图片 5 MB）" : "请先新建会话"} type="button">
-              <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M8.5 1.5v9M5 5l3.5-3.5L12 5M2.5 10v2.5a1 1 0 001 1h9a1 1 0 001-1V10" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
-            </button>
+          ) : null}
+          <div className="wb-input-row">
             <textarea
               ref={inputRef}
               className="wb-input wb-input-content"
-              placeholder={currentSessionId ? "输入主机名、IP 或排查目标… (Enter 发送, Shift+Enter 换行)" : "请先点击左侧 + 新建会话"}
+              placeholder={currentSessionId ? "输入问题或添加文件" : "请先点击左侧 + 新建会话"}
               value={input}
-              onChange={(e) => handleInputChange(e.target.value)}
-              onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); onSend(); } }}
-              disabled={!currentSessionId || sending}
-              rows={1}
+              onChange={(event) => handleInputChange(event.target.value)}
+              onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); onSend(); } }}
+              disabled={!currentSessionId || turnRunning}
+              rows={2}
               data-testid="chat-input"
               spellCheck={false}
             />
-            {sending ? (
-              <button className="wb-stop" onClick={stopGeneration} title="停止生成" type="button" data-testid="btn-stop">
-                <svg width="12" height="12" viewBox="0 0 12 12"><rect x="1" y="1" width="10" height="10" rx="2" fill="currentColor"/></svg>
+            <div className="wb-composer-actions">
+              <input ref={fileInputRef} type="file" multiple disabled={!currentSessionId || turnRunning} accept=".txt,.md,.json,.csv,.tsv,.log,.conf,.cfg,.yaml,.yml,.xml,.html,.htm,.pdf,.docx,.xlsx,.pptx,.png,.jpg,.jpeg,.gif,.webp" onChange={(event) => { if (event.target.files) { addFiles(event.target.files); event.target.value = ""; } }} className="wb-file-input" />
+              <button className="wb-attach-btn" onClick={pickFile} disabled={!currentSessionId || turnRunning} title={currentSessionId ? "添加文件" : "请先新建会话"} type="button">
+                <IconAttachment size={16} /><span>添加文件</span>
               </button>
-            ) : (
-              <button
-                className="wb-send"
-                onClick={() => onSend()}
-                disabled={!currentSessionId || (!input.trim() && attachments.length === 0)}
-                data-testid="btn-send"
-                type="button"
-                aria-label="发送"
-                title="Enter 发送"
-              >
-                <IconSend size={14} />
-              </button>
-            )}
+              {turnRunning ? (
+                <button className="wb-stop" onClick={stopActiveTurn} title="停止任务" type="button" data-testid="btn-stop"><IconStop size={14} weight="fill" /><span>停止</span></button>
+              ) : (
+                <button className="wb-send" onClick={() => onSend()} disabled={!currentSessionId || (!input.trim() && attachments.length === 0)} data-testid="btn-send" type="button" aria-label="发送" title="Enter 发送">
+                  <IconSend size={17} />
+                </button>
+              )}
+            </div>
           </div>
-        <div className="wb-composer-meta">
-          <span>Enter 发送 · Shift + Enter 换行 · 支持拖拽或粘贴图片</span>
-          <span>{attachments.length > 0 ? `已附加 ${attachments.length}/8 个文件` : "当前会话中的操作会经过安全检查"}</span>
+          <div className="wb-composer-meta">
+            <span>Enter 发送 · Shift + Enter 换行</span>
+            <span>{attachments.length > 0 ? `已添加 ${attachments.length}/8 个文件` : "操作会经过权限与安全检查"}</span>
+          </div>
         </div>
-      </div>
+      </section>
+
+      <TaskProgressPanel latestAssistant={latestAssistant} snapshot={durableTurn} onShowTimeline={() => setViewMode("timeline")} />
 
       {/* ── Inline approval bubble for high-risk tools ── */}
       <ApprovalBubble />

@@ -119,8 +119,10 @@ describe("Experience polish", () => {
       });
     });
 
-    expect(await screen.findByText("你好")).toBeInTheDocument();
+    expect((await screen.findAllByText("你好")).length).toBeGreaterThan(0);
     expect(await screen.findByText("你好，我在。")).toBeInTheDocument();
+    expect(screen.queryByLabelText("执行摘要")).not.toBeInTheDocument();
+    expect(screen.queryByText("需要关注")).not.toBeInTheDocument();
     expect(screen.queryByTestId("workbench-empty")).not.toBeInTheDocument();
   });
 

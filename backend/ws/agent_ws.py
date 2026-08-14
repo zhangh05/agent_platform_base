@@ -60,6 +60,19 @@ def _normalize_ws_attachments(username: str, workspace_id: str, raw):
 # (job_updated, run_status) to all active clients.
 _active_ws_connections: dict[str, tuple[str, str, object]] = {}  # key → (username, workspace_id, ws)
 _active_ws_lock = threading.Lock()
+_active_turns: dict[tuple[str, str, str], threading.Event] = {}
+_active_turns_lock = threading.Lock()
+
+
+def request_active_turn_cancel(username: str, workspace_id: str, job_id: str) -> bool:
+    """Signal the in-process runtime worker owned by this user/workspace."""
+    key = (str(username or ""), str(workspace_id or ""), str(job_id or ""))
+    with _active_turns_lock:
+        cancel_event = _active_turns.get(key)
+    if cancel_event is None:
+        return False
+    cancel_event.set()
+    return True
 
 
 def broadcast_ws_event(event: dict) -> None:
@@ -263,7 +276,9 @@ def register_ws_routes(app):
                                         ensure_ascii=True,
                                     ))
                                 except Exception:
-                                    active_cancel_event.set()
+                                    # A browser refresh only detaches the viewer.
+                                    # The durable turn continues and can be recovered
+                                    # through the session job snapshot after reconnect.
                                     return
                                 next_heartbeat_at = now + _WS_HEARTBEAT_INTERVAL_SECONDS
                             continue
@@ -275,7 +290,8 @@ def register_ws_routes(app):
                         ws.send(json.dumps(event, ensure_ascii=True, default=str))
                         next_heartbeat_at = time.monotonic() + _WS_HEARTBEAT_INTERVAL_SECONDS
                     except Exception:
-                        active_cancel_event.set()
+                        # Do not cancel business execution merely because the
+                        # transport disappeared (refresh, sleep, network flap).
                         return
 
                 if error_holder["error"]:
@@ -291,8 +307,6 @@ def register_ws_routes(app):
             except Exception:
                 pass
         finally:
-            if active_cancel_event is not None:
-                active_cancel_event.set()
             if ws_key:
                 with _active_ws_lock:
                     _active_ws_connections.pop(ws_key, None)
@@ -370,6 +384,24 @@ def _run_agent_thread(
                         "summary": summary[:8000] + ("..." if len(summary) > 8000 else ""),
                         "call_id": event.get("call_id", ""),
                     }
+                if isinstance(data, dict):
+                    data = {
+                        **data,
+                        "job_id": str(stats.get("job_id") or ""),
+                        "client_request_id": str((metadata or {}).get("client_request_id") or ""),
+                    }
+                job_id_for_event = str(stats.get("job_id") or "")
+                if job_id_for_event and isinstance(event, dict) and name != "heartbeat":
+                    try:
+                        from jobs.lifecycle import update_session_turn_stage
+                        update_session_turn_stage(
+                            workspace_id,
+                            job_id_for_event,
+                            session_id,
+                            event,
+                        )
+                    except Exception:
+                        _log.exception("unable to persist live stage job=%s stage=%s", job_id_for_event, name)
                 event_queue.put({
                     "type": "event",
                     "name": name,
@@ -380,9 +412,29 @@ def _run_agent_thread(
             _log.warning("realtime_callback event push failed seq=%s", stats.get("event_seq"), exc_info=True)
 
     from storage.principal import storage_principal
+    job_id = ""
+    principal_scope = None
     try:
         principal_scope = storage_principal(username)
         principal_scope.__enter__()
+        try:
+            from jobs.lifecycle import begin_session_turn
+            job_id = str(begin_session_turn(
+                workspace_id,
+                session_id,
+                user_input,
+                client_request_id=str((metadata or {}).get("client_request_id") or ""),
+            ) or "")
+        except Exception:
+            # Runtime execution remains available if the observational job
+            # snapshot cannot be written; the failure is logged and never
+            # replaced with fabricated progress.
+            _log.exception("unable to start durable live turn session=%s", session_id)
+            job_id = ""
+        stats["job_id"] = job_id
+        if job_id and cancel_event is not None:
+            with _active_turns_lock:
+                _active_turns[(username, workspace_id, job_id)] = cancel_event
         # StreamEmitter stores callbacks thread-locally, so it must be set in
         # the same worker thread that runs AgentApp.submit_user_message().
         StreamEmitter.set_realtime_callback(realtime_callback)
@@ -406,7 +458,16 @@ def _run_agent_thread(
         effective_session_id = session_id or result_payload.get("session_id", "")
         if effective_session_id:
             try:
-                from jobs.lifecycle import attach_run_to_session_job
+                from jobs.lifecycle import attach_run_to_session_job, finish_session_turn_snapshot
+                finish_session_turn_snapshot(
+                    workspace_id,
+                    job_id,
+                    effective_session_id,
+                    run_id=result_payload.get("turn_id", ""),
+                    trace_id=result_payload.get("trace_id", ""),
+                    ok=bool(result_payload.get("ok", not result_payload.get("errors"))),
+                    error=str((result_payload.get("errors") or [""])[0]),
+                )
                 attach_run_to_session_job(
                     ws_id=workspace_id,
                     session_id=effective_session_id,
@@ -468,16 +529,32 @@ def _run_agent_thread(
     except Exception as e:
         traceback.print_exc()
         error_holder["error"] = str(e)[:500]
+        if job_id:
+            try:
+                from jobs.lifecycle import finish_session_turn_snapshot
+                finish_session_turn_snapshot(
+                    workspace_id,
+                    job_id,
+                    session_id,
+                    ok=False,
+                    error=str(e),
+                )
+            except Exception:
+                _log.exception("unable to persist failed live turn job=%s", job_id)
         put_terminal({"type": "error", "message": str(e)[:500]})
     finally:
-        try:
-            principal_scope.__exit__(None, None, None)
-        except Exception:
-            pass
+        if job_id:
+            with _active_turns_lock:
+                _active_turns.pop((username, workspace_id, job_id), None)
         try:
             StreamEmitter.clear_realtime_callback()
         except Exception:
             pass
+        if principal_scope is not None:
+            try:
+                principal_scope.__exit__(None, None, None)
+            except Exception:
+                pass
         try:
             event_queue.put(None, timeout=0.2)
         except queue.Full:

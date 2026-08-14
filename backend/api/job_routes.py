@@ -132,6 +132,14 @@ def register_job_routes(app):
         from jobs.manager import cancel_job
         try:
             rec = cancel_job(ws, job_id)
+            try:
+                from backend.ws.agent_ws import request_active_turn_cancel
+                from storage.principal import current_storage_principal
+                request_active_turn_cancel(current_storage_principal(), ws, job_id)
+            except Exception:
+                # The durable cancel_requested flag remains authoritative even
+                # when the worker is in another process or already terminal.
+                pass
             return jsonify({"ok": True, "job": sanitize_job_record_for_api(rec.as_dict())})
         except ValueError as e:
             return jsonify({"ok": False, "error": str(e)}), 400

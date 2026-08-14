@@ -3,6 +3,7 @@ import ReactDOM from "react-dom/client";
 import { App } from "./app/App";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import "./styles/global.css";
+import "./styles/product-shell.css";
 
 // Theme initialization — read from Zustand persist store (lzcore_ui) or
 // fall back to prefers-color-scheme. We do this BEFORE React mounts so

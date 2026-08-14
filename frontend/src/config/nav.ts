@@ -16,7 +16,7 @@ export interface NavItem {
   to: string;
   label: string;
   testid: string;
-  Icon: ComponentType<{ size?: number }>;
+  Icon: ComponentType<{ size?: string | number }>;
   adminOnly?: boolean;
 }
 
@@ -26,7 +26,7 @@ export interface NavGroup {
   description: string;
   to: string;
   testid: string;
-  Icon: ComponentType<{ size?: number }>;
+  Icon: ComponentType<{ size?: string | number }>;
   items: NavItem[];
 }
 
