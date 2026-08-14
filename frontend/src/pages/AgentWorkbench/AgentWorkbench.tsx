@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect, useCallback } from "react";
 import { sessionsApi, settingsApi, sseApi } from "../../api";
-import { getApiAccessToken } from "../../api/client";
+import { getApiAccessToken, realtimeEndpoint } from "../../api/client";
 import type { SSEConnection } from "../../api/sse";
 import { useSessionStore } from "../../stores/session";
 import { useWorkbenchStore, type ChatMsg } from "../../stores/workbench";
@@ -158,8 +158,7 @@ export function TaskWorkbench() {
   // Use systemWsRef for the persistent stream so message streaming cannot overwrite it.
   useEffect(() => {
     if (!currentWorkspaceId) return;
-    const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-    const wsUrl = `${protocol}//${window.location.host}/ws/agent`;
+    const wsUrl = realtimeEndpoint("/ws/agent");
     let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
     let closed = false;
     let retryDelay = 1000; // start at 1s, exponential backoff capped at 30s
@@ -420,24 +419,36 @@ export function TaskWorkbench() {
     <div className="wb-shell">
       {/* ── Header bar ── */}
       <div className="wb-header">
-        <div className="wb-header-status">
-          <span className={"dot " + (llmHealth.connected ? (llmHealth.recentFailure ? "warn" : "ok") : "err")} />
-          <span>{llmStatusLabel}</span>
+        <div className="wb-header-context">
+          <span className="wb-header-kicker">智能运维工作台</span>
+          <div className="wb-header-status">
+            <span className={"dot " + (llmHealth.connected ? (llmHealth.recentFailure ? "warn" : "ok") : "err")} />
+            <span>{llmStatusLabel}</span>
+          </div>
         </div>
-        {/* Export session as Markdown */}
-        {currentSessionId && visibleHistory && visibleHistory.length > 0 && (
-          <button className="wb-export-btn" title="导出对话" onClick={() => {
-            const md = visibleHistory.map((m) =>
-              `## ${m.role === "user" ? "🙋 用户" : "🤖 AI"}\n\n${m.text}\n\n---\n`
-            ).join("\n");
-            const blob = new Blob([md], { type: "text/markdown" });
-            const a = document.createElement("a");
-            a.href = URL.createObjectURL(blob);
-            a.download = `session-${currentSessionId.slice(0, 8)}-${new Date().toISOString().slice(0, 10)}.md`;
-            a.click();
-            setTimeout(() => URL.revokeObjectURL(a.href), 100);
-          }}>📥 导出</button>
-        )}
+        <div className="wb-header-actions">
+          <span className="wb-header-session" title={currentSessionId || ""}>
+            {currentSessionId ? `会话 ${currentSessionId.slice(0, 8)}` : "待创建会话"}
+          </span>
+          {currentSessionId && visibleHistory && visibleHistory.length > 0 && (
+            <button className="wb-export-btn" title="导出对话" onClick={() => {
+              const md = visibleHistory.map((m) =>
+                `## ${m.role === "user" ? "用户" : "AI"}\n\n${m.text}\n\n---\n`
+              ).join("\n");
+              const blob = new Blob([md], { type: "text/markdown" });
+              const a = document.createElement("a");
+              a.href = URL.createObjectURL(blob);
+              a.download = `session-${currentSessionId.slice(0, 8)}-${new Date().toISOString().slice(0, 10)}.md`;
+              a.click();
+              setTimeout(() => URL.revokeObjectURL(a.href), 100);
+            }}>导出记录</button>
+          )}
+        </div>
+      </div>
+      <div className="wb-context-rail" aria-label="运行说明">
+        <span><b>分步骤执行</b>，处理过程清晰可查</span>
+        <span>写操作结果不确定时会自动暂停，等待核对</span>
+        {currentWorkspaceId && <span>当前工作区：{currentWorkspaceId}</span>}
       </div>
 
       {/* ── View mode toggle ── */}
@@ -511,6 +522,7 @@ export function TaskWorkbench() {
         const lastAssistant = [...(visibleHistory ?? [])].reverse().find((m) => m.role === "assistant");
         const lastResult = lastAssistant?.result;
         if (!lastResult) return null;
+        if (lastResult.metadata?.execution_outcome === "unknown") return null;
         if (lastResult.ok) return null;
         return (
           <div className="wb-retry-bar">
@@ -573,6 +585,10 @@ export function TaskWorkbench() {
               </button>
             )}
           </div>
+        <div className="wb-composer-meta">
+          <span>Enter 发送 · Shift + Enter 换行 · 支持拖拽或粘贴图片</span>
+          <span>{attachments.length > 0 ? `已附加 ${attachments.length}/8 个文件` : "当前会话中的操作会经过安全检查"}</span>
+        </div>
       </div>
 
       {/* ── Inline approval bubble for high-risk tools ── */}
