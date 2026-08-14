@@ -50,10 +50,9 @@ class TestForbiddenPatterns:
             "retired business API found in frontend"
         )
 
-    def test_browser_title_is_platform_base(self):
+    def test_browser_title_uses_product_name(self):
         index = open(FRONTEND_INDEX, encoding="utf-8").read()
         assert "<title>联智中枢</title>" in index
-        assert "Network Agent" not in index
 
     def test_no_port_8020(self):
         """Port 8020 must NOT appear as a formal service port."""

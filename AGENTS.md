@@ -2,6 +2,14 @@
 
 This file is the handoff contract for AI coding agents working in LZCore.
 
+## Naming Contract
+
+- `联智中枢` is the only user-facing product name. Use it in the UI, model identity,
+  generated reports, operator-facing summaries, and product documentation.
+- `LZCore` is the framework and engineering name; `lzcore` is its repository,
+  package, deployment, storage, metric, and configuration slug.
+- Do not replace one layer with the other or reintroduce a retired project identity.
+
 ## Non-Negotiable Rules
 
 1. Keep this repository domain-neutral. Do not add product-specific features to the base unless they are introduced as clearly isolated extensions.

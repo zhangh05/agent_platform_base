@@ -3,15 +3,6 @@ import { formatDate } from './format';
 
 export function sanitizeAssistantText(text: string): string {
   const raw = text ?? "";
-  if (
-    /I'm (LZCore|联智中枢),\s*your AI assistant/i.test(raw) ||
-    /What would you like to do today\?/i.test(raw)
-  ) {
-    return [
-      "当前可处理：知识库检索、工作区文件、制品查看、数据处理、报告生成和系统诊断。",
-      "未接入的业务能力不会假装可用。",
-    ].join("\n");
-  }
   // Strip tool-call JSON blocks that accidentally leak into display text.
   const cleaned = raw
     .replace(/^\s*(exec|knowledge|workspace|web|memory|agent|browser|system|data|text|report|skill)\.\w+\s*:\s*\{.*\}\s*$/gm, "")

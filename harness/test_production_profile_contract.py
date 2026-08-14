@@ -38,7 +38,13 @@ def test_observability_profile_has_alerts_dashboard_and_runbook():
     alerts = yaml.safe_load((ROOT / "deployment" / "observability" / "alerts.yml").read_text(encoding="utf-8"))
     assert prometheus["scrape_configs"][0]["bearer_token_file"] == "/run/secrets/api_token"
     names = {rule["alert"] for group in alerts["groups"] for rule in group["rules"]}
-    assert {"AgentPlatformTargetDown", "AgentPlatformApprovalWaitingTooLong", "AgentPlatformToolFailures"} <= names
+    assert {
+        "LZCoreTargetDown",
+        "LZCoreHighHttp5xxRate",
+        "LZCoreApprovalWaitingTooLong",
+        "LZCoreToolFailures",
+        "LZCoreJobFailures",
+    } <= names
     assert (ROOT / "deployment" / "observability" / "grafana-provisioning" / "dashboards" / "json" / "lzcore.json").is_file()
     assert (ROOT / "docs" / "OPERATIONS_RUNBOOK.md").is_file()
 
