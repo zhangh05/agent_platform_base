@@ -237,6 +237,18 @@ def run_ssot_turn(
             "execution_outcome": str(
                 (runtime_result.metadata or {}).get("execution_outcome") or "complete"
             ),
+            # Read-only terminal facts for API/UI consumers. QueryLoop remains
+            # the only owner of execution, recovery and write fencing.
+            "unknown_outcome": (
+                dict((runtime_result.metadata or {}).get("unknown_outcome") or {})
+                if isinstance((runtime_result.metadata or {}).get("unknown_outcome"), dict)
+                else {}
+            ),
+            "goal_assertions": (
+                dict((runtime_result.metadata or {}).get("goal_assertions") or {})
+                if isinstance((runtime_result.metadata or {}).get("goal_assertions"), dict)
+                else {}
+            ),
             "evidence": dict((runtime_result.metadata or {}).get("evidence") or {}),
         }
         runtime_errors = list(runtime_result.errors or [])

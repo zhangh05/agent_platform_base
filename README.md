@@ -27,6 +27,13 @@ bash start.sh
 
 启动脚本会拒绝无有效认证的网络监听。仅在受信任的临时开发环境中，才可显式设置 `LZCORE_ALLOW_UNAUTHENTICATED_NETWORK=true` 放行；脚本会输出危险警告。CORS 仅是浏览器跨域策略，不能替代服务端认证。
 
+### 浏览器凭据与分离部署
+
+浏览器优先使用登录会话。若在受控测试或临时排障中必须使用 API token，前端仅从 `sessionStorage` 读取 `LZCORE_API_TOKEN`；不得将长期 token 注入 `VITE_API_TOKEN`、`localStorage`、URL、日志或构建产物。
+
+当 `VITE_API_BASE` 指向独立 API origin 时，HTTP API 与 WebSocket 均从该 origin 派生；页面 origin 只在未配置 API base 的同源部署中使用。反向代理必须同时转发 `/api`、`/ws/agent` 和 SSE 路径。
+
+
 
 ### Python 执行隔离
 

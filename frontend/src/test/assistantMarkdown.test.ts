@@ -101,3 +101,11 @@ describe("assistant markdown rendering", () => {
     expect(html).toContain("正文仍然可见");
   });
 });
+
+
+  it("allows only web and mail schemes while blocking unsafe link protocols", () => {
+    const html = renderAssistantHtml("[web](https://example.com) [mail](mailto:ops@example.com) [tel](tel:+100) [file](file:///tmp/x) [data](data:text/html,x) [protocol](//evil.example) [normalized](java\tscript:alert(1))");
+    expect(html).toContain("href=\"https://example.com\"");
+    expect(html).toContain("href=\"mailto:ops@example.com\"");
+    expect(html.match(/href=\"#blocked\"/g)).toHaveLength(5);
+  });

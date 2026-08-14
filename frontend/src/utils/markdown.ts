@@ -22,11 +22,17 @@ function escapeInlineHtml(text: string): string {
   return escapeHtml(text).replace(/&lt;br\s*\/?&gt;/gi, '<br />');
 }
 
-/** Block javascript:, data:, and other dangerous URL schemes. */
-const DANGEROUS_URL_RE = /^(javascript|data|vbscript):/i;
+/** Only allow explicit web/mail links and local/hash navigation in assistant Markdown. */
+const SAFE_URL_SCHEME_RE = /^(https?|mailto):/i;
 function safeUrl(url: string): string {
   const trimmed = url.trim();
-  return DANGEROUS_URL_RE.test(trimmed) ? "#blocked" : trimmed;
+  // Browsers discard ASCII tabs/newlines inside URL schemes. Reject control
+  // characters before scheme detection so `java\nscript:` cannot bypass the
+  // allowlist during URL normalization.
+  if (/[\u0000-\u001F\u007F]/.test(trimmed)) return "#blocked";
+  if (!trimmed || /^\\\\|^\/\//.test(trimmed)) return "#blocked";
+  if (/^[a-z][a-z0-9+.-]*:/i.test(trimmed) && !SAFE_URL_SCHEME_RE.test(trimmed)) return "#blocked";
+  return trimmed;
 }
 
 function safeHref(url: string, label: string): string {

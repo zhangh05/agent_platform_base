@@ -1054,6 +1054,39 @@ export const approvalContinuationsApi = {
     }),
 };
 
+export type OperationLedgerSummary = {
+  operation_id: string;
+  turn_id: string;
+  workspace_id: string;
+  session_id: string;
+  canonical_tool: string;
+  call_id: string;
+  status: "planned" | "running" | "succeeded" | "failed" | "unknown" | "blocked" | string;
+  risk_level?: string;
+  approval_continuation_id?: string;
+  idempotency?: string;
+  error_code?: string;
+  error?: string;
+  result_summary?: string;
+  planned_at?: string;
+  updated_at?: string;
+};
+
+export const operationLedgerApi = {
+  list: (workspaceId: string, signal?: AbortSignal) =>
+    apiRequest<{
+      ok: boolean;
+      operations: OperationLedgerSummary[];
+      count: number;
+      counts: Record<string, number>;
+    }>({
+      method: "GET",
+      url: "/admin/operation-ledger",
+      params: { workspace_id: workspaceId },
+    }, signal),
+};
+
+
 /** Open the Guardian SSE stream. The caller must close the returned connection. */
 export function openApprovalStream(workspaceId: string, onEvent: (e: { kind: string; approval_id: string; session_id: string; workspace_id: string; tool_id: string; allowed: boolean; ts: number }) => void, onError?: (err: Event) => void): SSEConnection {
   const es = openSSE(`/agent/approvals/sse?workspace_id=${encodeURIComponent(workspaceId)}`);

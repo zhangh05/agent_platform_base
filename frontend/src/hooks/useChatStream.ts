@@ -14,7 +14,7 @@
 
 import { useCallback, useEffect, useRef } from "react";
 import { agentApi, sessionsApi } from "../api";
-import { getApiAccessToken } from "../api/client";
+import { getApiAccessToken, realtimeEndpoint } from "../api/client";
 import { useWorkbenchStore } from "../stores/workbench";
 import { useSessionStore } from "../stores/session";
 import { isApiError } from "../types";
@@ -170,9 +170,7 @@ export function useChatStream(
     const turnMetadata = { ...metadataOverride };
 
     // Try WebSocket streaming first, fall back to HTTP.
-    const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-    const wsHost = window.location.host;
-    const wsUrl = `${protocol}//${wsHost}/ws/agent`;
+    const wsUrl = realtimeEndpoint("/ws/agent");
     abortRef.current = new AbortController();
 
     try {

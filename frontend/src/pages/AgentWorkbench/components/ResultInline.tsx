@@ -100,7 +100,10 @@ export const ResultInline = memo(function ResultInline({
   const contextCompacted = Boolean(result?.metadata?.context_compacted);
   const outputTruncated = Boolean(result?.metadata?.output_truncated);
   const truncationReason = String(result?.metadata?.output_truncation_reason || "");
-  const showActionTrace = !!result && (actionCount > 0 || retry.events.length > 0 || validationCorrection.attempts > 0 || toolRecoveryEvents.length > 0 || tracking.taskId || isFailed);
+  const executionOutcome = result?.metadata?.execution_outcome;
+  const isUnknownOutcome = executionOutcome === "unknown";
+  const unknownOutcome = result?.metadata?.unknown_outcome;
+  const showActionTrace = !!result && (actionCount > 0 || retry.events.length > 0 || validationCorrection.attempts > 0 || toolRecoveryEvents.length > 0 || tracking.taskId || isFailed || isUnknownOutcome);
 
   // Nothing to show — no result and no fallback text
   if (!result && !fallbackText) return null;
@@ -176,6 +179,34 @@ export const ResultInline = memo(function ResultInline({
 
   return (
     <div className="chat-result-inline">
+      <section className="result-overview" aria-label="执行摘要">
+        <div className="result-overview-main">
+          <span className={`result-overview-status ${isUnknownOutcome ? "unknown" : isFailed ? "failed" : "complete"}`}>
+            {isUnknownOutcome ? "结果未知" : isFailed ? "需要关注" : "本轮完成"}
+          </span>
+          <span className="result-overview-title">
+            {actionCount > 0 ? `已处理 ${actionCount} 个工具调用` : "已生成本轮答复"}
+          </span>
+        </div>
+        <span className="result-overview-meta">
+          {isUnknownOutcome ? "写入已冻结，等待受控核对" : failedToolCount > 0 ? `${failedToolCount} 项需要跟进` : successToolCount > 0 ? `${successToolCount} 项执行成功` : "可将结论沉淀到记忆或知识库"}
+        </span>
+      </section>
+      {isUnknownOutcome && (
+        <section className="unknown-outcome-alert" role="alert" data-testid="unknown-outcome-alert">
+          <strong>执行结果未知，系统已冻结后续写操作</strong>
+          <p>
+            外部写操作可能仍在执行。请先通过受控 read-back、运行审计或人工核对确认事实，
+            <b>不要重试原任务或换方案继续</b>。
+          </p>
+          <div className="unknown-outcome-facts">
+            {unknownOutcome?.tool_id && <span>工具：{unknownOutcome.tool_id}</span>}
+            {unknownOutcome?.call_id && <span>调用：{unknownOutcome.call_id}</span>}
+            {unknownOutcome?.error_code && <span>代码：{unknownOutcome.error_code}</span>}
+          </div>
+          <a className="unknown-outcome-link" href="/audit">查看运行审计</a>
+        </section>
+      )}
       {(contextCompacted || outputTruncated) && (
         <div
           className={`context-budget-notice ${outputTruncated ? "warning" : ""}`}
@@ -309,12 +340,12 @@ export const ResultInline = memo(function ResultInline({
           <button type="button" className="run-detail-button" onClick={() => void saveAsKnowledge()} disabled={!!saving}>
             {saving === "knowledge" ? "保存中…" : "存为知识"}
           </button>
-          {hasFailedTool && onRetryAlternative && (
+          {hasFailedTool && !isUnknownOutcome && onRetryAlternative && (
             <button type="button" className="run-detail-button" onClick={onRetryAlternative}>
               换方案继续
             </button>
           )}
-          {isFailed && onRetryOriginal && (
+          {isFailed && !isUnknownOutcome && onRetryOriginal && (
             <button type="button" className="run-detail-button" onClick={onRetryOriginal}>
               重试原任务
             </button>

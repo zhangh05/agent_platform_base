@@ -3,13 +3,13 @@ import { openSSE } from "../api/sse";
 
 describe("authenticated SSE transport", () => {
   afterEach(() => {
-    window.localStorage.removeItem("LZCORE_API_TOKEN");
+    window.sessionStorage.removeItem("LZCORE_API_TOKEN");
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
   });
 
   it("uses an Authorization header and never places the API token in the URL", async () => {
-    window.localStorage.setItem("LZCORE_API_TOKEN", "platform-secret-token");
+    window.sessionStorage.setItem("LZCORE_API_TOKEN", "platform-secret-token");
     let streamController!: ReadableStreamDefaultController<Uint8Array>;
     const body = new ReadableStream<Uint8Array>({
       start(controller) { streamController = controller; },
@@ -35,7 +35,7 @@ describe("authenticated SSE transport", () => {
   });
 
   it("parses named multiline events over fetch streaming", async () => {
-    window.localStorage.setItem("LZCORE_API_TOKEN", "token");
+    window.sessionStorage.setItem("LZCORE_API_TOKEN", "token");
     const encoder = new TextEncoder();
     const body = new ReadableStream<Uint8Array>({
       start(controller) {
@@ -59,7 +59,7 @@ describe("authenticated SSE transport", () => {
 
   it("stops reconnecting when a static API token is rejected", async () => {
     vi.useFakeTimers();
-    window.localStorage.setItem("LZCORE_API_TOKEN", "expired-token");
+    window.sessionStorage.setItem("LZCORE_API_TOKEN", "expired-token");
     const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 401 }));
     vi.stubGlobal("fetch", fetchMock);
 
@@ -75,7 +75,7 @@ describe("authenticated SSE transport", () => {
 
   it("rejects a non-SSE response instead of buffering an HTML error page", async () => {
     vi.useFakeTimers();
-    window.localStorage.setItem("LZCORE_API_TOKEN", "token");
+    window.sessionStorage.setItem("LZCORE_API_TOKEN", "token");
     const fetchMock = vi.fn().mockResolvedValue(new Response("<html>proxy error</html>", {
       status: 200,
       headers: { "Content-Type": "text/html" },
@@ -92,7 +92,7 @@ describe("authenticated SSE transport", () => {
 
   it("reconnects with the last event id and the server retry interval", async () => {
     vi.useFakeTimers();
-    window.localStorage.setItem("LZCORE_API_TOKEN", "token");
+    window.sessionStorage.setItem("LZCORE_API_TOKEN", "token");
     const encoder = new TextEncoder();
     const first = new ReadableStream<Uint8Array>({
       start(controller) {

@@ -32,3 +32,79 @@ def test_agent_app_submit_uses_ssot_runtime(monkeypatch, temp_dirs):
     assert result.metadata["runtime_engine"] == "ssot_runtime"
     assert result.metadata["timeline_summary"]["llm_calls"] == 1
     assert result.tool_calls == []
+
+
+def test_agent_app_projects_unknown_outcome_as_read_only_terminal_fact(monkeypatch, temp_dirs):
+    """The UI contract may observe uncertainty, but cannot own execution recovery."""
+    from types import SimpleNamespace
+    from agent.app.facade import AgentApp
+
+    class FakeEngine:
+        async def run(self, **_kwargs):
+            return SimpleNamespace(
+                success=False,
+                final_response="外部写操作等待受控核对。",
+                node_results={},
+                errors=["unknown_outcome"],
+                metadata={
+                    "execution_outcome": "unknown",
+                    "unknown_outcome": {
+                        "status": "unknown",
+                        "tool_id": "workspace.file",
+                        "call_id": "call-write-contract",
+                        "error_code": "TOOL_TIMEOUT_UNCERTAIN",
+                        "execution_may_continue": True,
+                    },
+                    "goal_assertions": {"required": True, "status": "unknown"},
+                },
+            )
+
+    monkeypatch.setattr(
+        "agent.runtime.ssot_runtime._build_engine",
+        lambda **_kwargs: FakeEngine(),
+    )
+    result = AgentApp().submit_user_message(
+        user_input="写入配置",
+        workspace_id="default",
+        metadata={"transport": "test"},
+    )
+
+    assert result.ok is False
+    assert result.metadata["execution_outcome"] == "unknown"
+    assert result.metadata["unknown_outcome"]["tool_id"] == "workspace.file"
+    assert result.metadata["unknown_outcome"]["call_id"] == "call-write-contract"
+    assert result.metadata["goal_assertions"]["status"] == "unknown"
+
+
+def test_agent_app_ignores_malformed_optional_terminal_facts(monkeypatch, temp_dirs):
+    """Optional metadata must not turn a completed request into a projection crash."""
+    from types import SimpleNamespace
+    from agent.app.facade import AgentApp
+
+    class FakeEngine:
+        async def run(self, **_kwargs):
+            return SimpleNamespace(
+                success=True,
+                final_response="完成。",
+                node_results={},
+                errors=[],
+                metadata={
+                    "execution_outcome": "complete",
+                    "unknown_outcome": "invalid",
+                    "goal_assertions": ["invalid"],
+                },
+            )
+
+    monkeypatch.setattr(
+        "agent.runtime.ssot_runtime._build_engine",
+        lambda **_kwargs: FakeEngine(),
+    )
+    result = AgentApp().submit_user_message(
+        user_input="检查状态",
+        workspace_id="default",
+        metadata={"transport": "test"},
+    )
+
+    assert result.ok is True
+    assert result.metadata["unknown_outcome"] == {}
+    assert result.metadata["goal_assertions"] == {}

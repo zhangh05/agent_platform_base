@@ -9,6 +9,7 @@ from typing import Any
 from storage.atomic_io import atomic_write_json
 from storage.locking import FileLock
 from storage.records import workspace_record_file
+from storage.redaction import redact_text
 
 
 def _now() -> str:
@@ -93,8 +94,37 @@ def finish_operation(workspace_id: str, op_id: str, result) -> dict[str, Any]:
             "finished_at": now,
             "updated_at": now,
             "error_code": str(getattr(result, "error_code", "") or "")[:120],
-            "error": str(getattr(result, "error", "") or "")[:500],
-            "result_summary": str(output.get("summary") or "")[:800],
+            "error": redact_text(str(getattr(result, "error", "") or ""))[:500],
+            "result_summary": redact_text(str(output.get("summary") or ""))[:800],
         })
         atomic_write_json(path, record)
         return record
+
+
+def list_operations(
+    workspace_id: str,
+    *,
+    status: str = "",
+    limit: int = 100,
+) -> list[dict[str, Any]]:
+    """Return redacted durable write-operation summaries for diagnostics only."""
+    from storage.records import list_json_records
+
+    records = list_json_records(workspace_id, ("operations",), limit=5000)
+    if status:
+        records = [item for item in records if str(item.get("status") or "") == status]
+    return [_public_operation_record(item) for item in records[:max(1, min(limit, 500))]]
+
+
+def _public_operation_record(record: dict[str, Any]) -> dict[str, Any]:
+    """Expose a stable, secret-free ledger projection; never return arguments."""
+    allowed = (
+        "schema", "operation_id", "turn_id", "workspace_id", "session_id",
+        "canonical_tool", "call_id", "read_only", "risk_level",
+        "approval_continuation_id", "idempotency", "status", "planned_at",
+        "started_at", "finished_at", "updated_at", "error_code",
+    )
+    public = {key: record[key] for key in allowed if key in record}
+    public["error"] = redact_text(str(record.get("error") or ""))[:500]
+    public["result_summary"] = redact_text(str(record.get("result_summary") or ""))[:800]
+    return public

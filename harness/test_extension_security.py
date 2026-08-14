@@ -61,6 +61,7 @@ def test_extension_routes_enforce_role_and_lifecycle(monkeypatch, tmp_path):
     assert viewer.get(
         "/api/admin/approval-continuations?workspace_id=default", headers=origin
     ).status_code == 403
+    assert viewer.get("/api/admin/operation-ledger?workspace_id=default", headers=origin).status_code == 403
 
     operator = app.test_client()
     operator.post("/api/auth/login", json={"username": "operator", "password": "password"}, headers=origin)
@@ -80,6 +81,13 @@ def test_extension_routes_enforce_role_and_lifecycle(monkeypatch, tmp_path):
     )
     assert continuation_status.status_code == 200
     assert continuation_status.get_json()["ok"] is True
+    ledger_status = admin.get("/api/admin/operation-ledger?workspace_id=default", headers=origin)
+    assert ledger_status.status_code == 200
+    assert ledger_status.get_json()["ok"] is True
+    assert admin.get(
+        "/api/admin/operation-ledger?workspace_id=default&status=not-a-state",
+        headers=origin,
+    ).status_code == 400
     assert admin.post("/api/extensions/repository/publish", headers=origin).status_code == 400
     assert admin.post("/api/extensions/network.operations/disable", headers=origin).status_code == 200
     blocked = admin.get("/api/extensions/network.operations/assets?workspace_id=default", headers=origin)

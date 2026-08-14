@@ -241,6 +241,24 @@ export interface AgentResult {
     };
     output_truncated?: boolean;
     output_truncation_reason?: string;
+    /** Durable runtime terminal projection. Unknown means a write may still run externally. */
+    execution_outcome?: "complete" | "partial" | "failed" | "unknown";
+    /** Read-only trigger fact for a fail-closed unknown write outcome. */
+    unknown_outcome?: {
+      status?: "unknown";
+      tool_id?: string;
+      call_id?: string;
+      error_code?: string;
+      error?: string;
+      occurred_at?: number;
+      execution_may_continue?: boolean;
+    };
+    /** Tool-fact validation summary for approval-bound work. */
+    goal_assertions?: {
+      required?: boolean;
+      status?: "not_required" | "passed" | "failed" | "unknown";
+      [key: string]: unknown;
+    };
   };
 }
 

@@ -33,6 +33,15 @@ export const TIMEOUTS = {
 } as const;
 
 const envBase = import.meta.env.VITE_API_BASE ?? "";
+
+export function realtimeEndpoint(path: string, configuredBase = envBase): string {
+  const normalizedPath = path.startsWith("/") ? path : `/${path}`;
+  if (typeof window === "undefined") return normalizedPath;
+  const origin = new URL(configuredBase || window.location.origin, window.location.origin);
+  const protocol = origin.protocol === "https:" ? "wss:" : "ws:";
+  return `${protocol}//${origin.host}${normalizedPath}`;
+}
+
 const baseURL = envBase
   ? envBase.replace(/\/+$/, "") + "/api"
   : "/api";
@@ -47,15 +56,27 @@ export const apiClient: AxiosInstance = axios.create({
 });
 
 export function getApiAccessToken(): string {
-  return import.meta.env.VITE_API_TOKEN
-    || (typeof window !== "undefined" ? window.localStorage.getItem("LZCORE_API_TOKEN") : "")
-    || "";
+  if (typeof window === "undefined") return "";
+  // Browser sessions are preferred. A build-time token would be embedded in
+  // public assets, so explicit API-token mode is tab/session scoped only.
+  return window.sessionStorage.getItem("LZCORE_API_TOKEN") || "";
 }
 
 let requestSeq = 0;
 function nextRequestId(): string {
   requestSeq += 1;
   return `req-${Date.now()}-${requestSeq}`;
+}
+
+/**
+ * Network failure cannot distinguish an unstarted write from a write whose
+ * response was lost. Only replay inherently safe reads here. Endpoints with a
+ * server-enforced idempotency contract must opt in explicitly at their call
+ * site rather than inheriting a broad transport retry.
+ */
+function isRetryableReadMethod(method?: string): boolean {
+  const normalized = String(method || "GET").toUpperCase();
+  return normalized === "GET" || normalized === "HEAD" || normalized === "OPTIONS";
 }
 
 apiClient.interceptors.request.use((config) => {
@@ -157,8 +178,9 @@ export async function apiRequest<T = unknown>(
       return res.data;
     } catch (err) {
       const ae = toApiError(err, (err as AxiosError)?.config?.url);
-      const retryable = ae.code === "network" || ae.code === "timeout" || ae.code === "rate_limited" ||
-                        (ae.status >= 500 && ae.status < 600);
+      const retryableTransportFailure = ae.code === "network" || ae.code === "timeout" || ae.code === "rate_limited" ||
+        (ae.status >= 500 && ae.status < 600);
+      const retryable = isRetryableReadMethod(config.method) && retryableTransportFailure;
       if (!retryable || signal?.aborted || attempt === maxRetries - 1) {
         throw ae;
       }

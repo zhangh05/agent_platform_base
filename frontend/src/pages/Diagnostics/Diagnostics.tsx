@@ -9,9 +9,9 @@ import { useEffect, useRef, useState, useCallback, useMemo, useSyncExternalStore
 import { Link } from "../../router";
 import {
   runtimeApi, agentUsageApi, retentionApi, archiveApi, contextApi, promptsApi,
-  approvalContinuationsApi,
+  approvalContinuationsApi, operationLedgerApi,
 } from "../../api";
-import type { ApprovalContinuationSummary } from "../../api";
+import type { ApprovalContinuationSummary, OperationLedgerSummary } from "../../api";
 import { useSessionStore } from "../../stores/session";
 import { LoadingState } from "../../components/common";
 import { IconRefresh } from "../../components/Icon";
@@ -64,6 +64,12 @@ type ContinuationData = {
   continuations: ApprovalContinuationSummary[];
   counts: Record<string, number>;
 };
+
+type OperationLedgerData = {
+  operations: OperationLedgerSummary[];
+  counts: Record<string, number>;
+};
+
 
 type DiagnosticsCache = {
   ts: string;
@@ -196,6 +202,8 @@ export function Diagnostics() {
   const [retention, setRetention] = useState<PolicyData>(cache?.retention ?? {});
   const [archive, setArchive] = useState<PolicyData>(cache?.archive ?? {});
   const [continuations, setContinuations] = useState<ContinuationData | null>(cache?.continuations ?? null);
+  const [operations, setOperations] = useState<OperationLedgerData | null>(null);
+  const [operationLedgerError, setOperationLedgerError] = useState(false);
   const [lastCheck, setLastCheck] = useState<string | null>(cache?.ts ?? null);
   const [closingContinuation, setClosingContinuation] = useState("");
 
@@ -215,6 +223,18 @@ export function Diagnostics() {
       setDetecting(false);
       return;
     }
+    setOperations(null);
+    setOperationLedgerError(false);
+    void operationLedgerApi.list(wsId, ctrl.signal).then((value) => {
+      if (!mountedRef.current || seq !== seqRef.current) return;
+      setOperations({
+        operations: value.operations ?? [],
+        counts: value.counts ?? {},
+      });
+    }).catch(() => {
+      if (!mountedRef.current || seq !== seqRef.current || ctrl.signal.aborted) return;
+      setOperationLedgerError(true);
+    });
     const [rh, sc, us, cs, pr, rp, ap, ac] = await Promise.allSettled([
       runtimeApi.health(wsId, ctrl.signal),
       runtimeApi.selfcheck(wsId, ctrl.signal),
@@ -282,7 +302,8 @@ export function Diagnostics() {
   const selfcheckIssueCount = selfcheck?.issues?.length ?? 0;
   const selfcheckOk = !selfcheck || (selfcheck.status === "healthy" && selfcheckIssueCount === 0);
   const continuationOk = (continuations?.counts.stalled ?? 0) === 0;
-  const allOk = runtimeOk && selfcheckOk && continuationOk;
+  const operationUnknownCount = operations?.counts.unknown ?? 0;
+  const allOk = runtimeOk && selfcheckOk && continuationOk && operationUnknownCount === 0;
   const hasData = health !== null || selfcheck !== null || usage !== null;
 
   const closeStalledContinuation = useCallback(async (continuationId: string) => {
@@ -354,7 +375,7 @@ export function Diagnostics() {
       </PageHeader>
 
       {/* Loading overlay during detection */}
-      {detecting ? (
+      {detecting && !hasData && !operations ? (
         <div className="page-body"><LoadingState text="检测中…" /></div>
       ) : (
         <div className="page-body page-body-flex">
@@ -549,6 +570,37 @@ export function Diagnostics() {
                   ))}
                 </div>
               ) : <Dim>管理员执行系统检测后可查看审批续跑状态</Dim>}
+            </Section>
+            <Section title="写操作账本" badge={operations ? (
+              <span className={`diag-section-badge ${operationUnknownCount === 0 ? "diag-text-ok" : "diag-text-warn"}`}>
+                {operationUnknownCount === 0 ? "无未知结果" : `${operationUnknownCount} 项待受控核对`}
+              </span>
+            ) : null}>
+              {operations ? (
+                <div className="diag-continuation-panel" data-testid="operation-ledger-panel">
+                  <div className="diag-continuation-summary">
+                    <Row label="结果未知" value={String(operationUnknownCount)} compact />
+                    <Row label="执行中" value={String(operations.counts.running ?? 0)} compact />
+                    <Row label="失败" value={String(operations.counts.failed ?? 0)} compact />
+                  </div>
+                  {operations.operations.filter((item) => item.status === "unknown" || item.status === "running").slice(0, 5).map((item) => (
+                    <div className="diag-continuation-alert" key={item.operation_id}>
+                      <div>
+                        <b>{item.operation_id}</b>
+                        <span>{item.canonical_tool} · {item.status === "unknown" ? "结果未知，先核对外部事实，禁止重试" : "仍在执行，请等待或按运维流程核对"}</span>
+                        {item.error_code && <small>{item.error_code}</small>}
+                      </div>
+                    </div>
+                  ))}
+                  {operations.operations.length === 0 && <Dim>当前工作区暂无耐久写操作记录</Dim>}
+                </div>
+              ) : operationLedgerError ? (
+                <Dim>写操作账本暂时无法读取，请重新检测</Dim>
+              ) : detecting ? (
+                <Dim>正在读取写操作账本…</Dim>
+              ) : (
+                <Dim>管理员执行系统检测后可查看写操作账本</Dim>
+              )}
             </Section>
           </div>
         </div>

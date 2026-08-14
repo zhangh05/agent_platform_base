@@ -43,6 +43,36 @@ def register_admin_routes(app) -> None:
             return jsonify({"ok": False, "error": str(exc)}), 409
         return jsonify(result)
 
+    @app.route("/api/admin/operation-ledger")
+    def operation_ledger_list():
+        """List redacted durable write-operation facts; this endpoint never replays work."""
+        from core.runtime_engine.operation_ledger import list_operations
+        from storage.ids import validate_workspace_id
+
+        try:
+            workspace_id = validate_workspace_id(str(request.args.get("workspace_id") or ""))
+        except (TypeError, ValueError):
+            return jsonify({"ok": False, "error": "invalid_workspace_id"}), 400
+        status = str(request.args.get("status") or "").strip()
+        allowed_statuses = {"planned", "running", "succeeded", "failed", "unknown", "blocked"}
+        if status and status not in allowed_statuses:
+            return jsonify({"ok": False, "error": "invalid_status"}), 400
+        try:
+            limit = max(1, min(int(request.args.get("limit") or 100), 500))
+        except (TypeError, ValueError):
+            return jsonify({"ok": False, "error": "invalid_limit"}), 400
+        records = list_operations(workspace_id, status=status, limit=limit)
+        counts: dict[str, int] = {}
+        for record in list_operations(workspace_id, limit=500):
+            state = str(record.get("status") or "unknown")
+            counts[state] = counts.get(state, 0) + 1
+        return jsonify({
+            "ok": True,
+            "operations": records,
+            "count": len(records),
+            "counts": counts,
+        })
+
     @app.route("/api/admin/approval-continuations")
     def approval_continuations_list():
         """Expose fail-closed continuation state without payloads or secrets."""
