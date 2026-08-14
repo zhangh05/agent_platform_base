@@ -91,7 +91,15 @@ export AGENT_PLATFORM_OBJECT_STORE_PREFIX='production'
 export AGENT_PLATFORM_QUEUE_MODE=redis
 export AGENT_PLATFORM_QUEUE_URL='redis://...'
 export AGENT_PLATFORM_APPROVAL_TTL_SECONDS=1800
+export AGENT_PLATFORM_CONTINUATION_STALL_SECONDS=900
+export AGENT_PLATFORM_CONTINUATION_RETENTION_DAYS=30
 ```
+
+普通 Agent 的高风险审批以最终 approval id 和加密 continuation 一致创建。
+执行线程会持续写入 heartbeat；超过 stall 阈值的 `running` 记录只会转为
+`stalled` 并告警，平台不会自动重放结果未知的外部操作。管理员可在系统状态页
+核对异常记录并将其关闭，关闭操作不会重新执行工具。终态记录按 retention 天数
+清理，密文在拒绝、失败、完成、过期或人工关闭时立即删除。
 
 `GET /api/health` is the lightweight liveness check. `GET /api/ready` performs
 real writable/connectivity checks for record storage, object storage, and the

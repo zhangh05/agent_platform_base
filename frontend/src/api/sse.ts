@@ -1,5 +1,13 @@
 import { apiBaseURL, getApiAccessToken } from "./client";
 
+const MAX_SSE_BUFFER_CHARS = 1024 * 1024;
+
+class SSEHTTPError extends Error {
+  constructor(readonly status: number) {
+    super(`sse_http_${status}`);
+  }
+}
+
 export interface SSEConnection {
   onmessage: ((event: MessageEvent<string>) => void) | null;
   onerror: ((event: Event) => void) | null;
@@ -64,7 +72,11 @@ class FetchSSEConnection extends EventTarget implements SSEConnection {
         signal: this.controller.signal,
       });
       if (!response.ok || !response.body) {
-        throw new Error(`sse_http_${response.status}`);
+        throw new SSEHTTPError(response.status);
+      }
+      const contentType = response.headers.get("content-type")?.toLowerCase() ?? "";
+      if (!contentType.includes("text/event-stream")) {
+        throw new Error("sse_invalid_content_type");
       }
       this.retryMs = 1000;
       await this.consume(response.body);
@@ -75,6 +87,12 @@ class FetchSSEConnection extends EventTarget implements SSEConnection {
       Object.defineProperty(event, "error", { value: error, enumerable: false });
       this.onerror?.(event);
       this.dispatchEvent(event);
+      // A static API token cannot recover from an authentication rejection.
+      // Stop the loop and let the auth/session layer create a new connection.
+      if (error instanceof SSEHTTPError && (error.status === 401 || error.status === 403)) {
+        this.close();
+        return;
+      }
       this.scheduleReconnect();
     }
   }
@@ -87,6 +105,9 @@ class FetchSSEConnection extends EventTarget implements SSEConnection {
       while (!this.closed) {
         const { value, done } = await reader.read();
         buffer += decoder.decode(value, { stream: !done }).replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+        if (buffer.length > MAX_SSE_BUFFER_CHARS && !buffer.includes("\n\n")) {
+          throw new Error("sse_frame_too_large");
+        }
         let boundary = buffer.indexOf("\n\n");
         while (boundary >= 0) {
           const frame = buffer.slice(0, boundary);

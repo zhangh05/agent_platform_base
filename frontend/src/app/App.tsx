@@ -426,15 +426,15 @@ export function App() {
       .status(ctrl.signal)
       .then((res) => {
         clearTimeout(loadingTimer);
-        if (!res.login_enabled) {
-          setSession(res);
-          setAuthState("public");
-          return;
-        }
         if (res.authenticated) {
           applyAuthenticatedSession(res);
           setSession(res);
           setAuthState("authenticated");
+          return;
+        }
+        if (!res.login_enabled) {
+          setSession(res);
+          setAuthState("public");
           return;
         }
         setAuthState("login");
@@ -481,7 +481,11 @@ export function App() {
   return (
     <BrowserRouter>
       <ExtensionRegistryProvider>
-        <AppShell canLogout={authState === "authenticated"} onLogout={handleLogout} session={session} />
+        <AppShell
+          canLogout={authState === "authenticated" && session?.auth_type !== "api_token"}
+          onLogout={handleLogout}
+          session={session}
+        />
       </ExtensionRegistryProvider>
     </BrowserRouter>
   );

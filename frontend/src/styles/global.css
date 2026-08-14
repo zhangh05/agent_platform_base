@@ -8955,6 +8955,36 @@ summary:focus-visible,
   border-bottom: 1px solid var(--line-2);
 }
 
+.diag-continuation-panel { display: grid; gap: 12px; }
+.diag-continuation-summary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+.diag-continuation-summary .diag-row {
+  padding: 10px 12px;
+  border: 1px solid var(--line-2);
+  border-radius: 8px;
+  background: var(--surface-2);
+}
+.diag-continuation-alert {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px 14px;
+  border: 1px solid var(--warning-border, #e8c46a);
+  border-radius: 8px;
+  background: var(--warning-bg, #fff8df);
+}
+.diag-continuation-alert > div { display: grid; gap: 4px; min-width: 0; }
+.diag-continuation-alert b { overflow-wrap: anywhere; }
+.diag-continuation-alert span { color: var(--text-3); font-size: var(--fs-12); }
+@media (max-width: 800px) {
+  .diag-continuation-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .diag-continuation-alert { align-items: flex-start; flex-direction: column; }
+}
+
 @media (max-width: 1180px) {
   .data-overview-layout { grid-template-columns: minmax(0, 1fr) 260px; }
   .data-relations-grid { grid-template-columns: 1fr; }

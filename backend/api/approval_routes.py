@@ -28,13 +28,41 @@ _CONTINUATION_EXECUTOR = concurrent.futures.ThreadPoolExecutor(
 
 def _resume_agent_continuation(workspace_id: str, continuation_id: str, grant, payload) -> None:
     """Resume a claimed continuation off the HTTP request thread."""
-    from agent.runtime.approval_continuation import finish_continuation
+    from agent.runtime.approval_continuation import (
+        continuation_stall_seconds,
+        finish_continuation,
+        heartbeat_continuation,
+        mark_continuation_dispatching,
+    )
     from agent.runtime.session_events import push_error, push_turn_done
 
     session_id = str(payload.get("session_id") or "")
+    heartbeat_stop = threading.Event()
+    heartbeat_thread = None
     try:
         from agent.app.service import get_default_agent_app
 
+        mark_continuation_dispatching(workspace_id, continuation_id)
+
+        def _heartbeat() -> None:
+            interval = max(10.0, min(60.0, continuation_stall_seconds() / 3))
+            while not heartbeat_stop.wait(interval):
+                try:
+                    if not heartbeat_continuation(workspace_id, continuation_id):
+                        return
+                except (FileNotFoundError, OSError, RuntimeError, ValueError):
+                    _LOG.warning(
+                        "approval continuation heartbeat failed continuation=%s",
+                        continuation_id,
+                        exc_info=True,
+                    )
+
+        heartbeat_thread = threading.Thread(
+            target=_heartbeat,
+            name=f"approval-heartbeat-{continuation_id[-8:]}",
+            daemon=True,
+        )
+        heartbeat_thread.start()
         resumed = get_default_agent_app().submit_user_message(
             user_input=str(payload.get("user_input") or ""),
             workspace_id=workspace_id,
@@ -77,6 +105,10 @@ def _resume_agent_continuation(workspace_id: str, continuation_id: str, grant, p
             "审批后的任务恢复失败，请查看运行记录。",
             workspace_id=workspace_id,
         )
+    finally:
+        heartbeat_stop.set()
+        if heartbeat_thread is not None:
+            heartbeat_thread.join(timeout=1.0)
 
 
 def _approval_actor_allowed(pending_req) -> tuple[bool, dict]:
@@ -235,6 +267,17 @@ def register_approval_routes(app) -> None:
                 "error": "approval_resume_failed",
                 "message": str(exc)[:500],
             }
+            if getattr(req, "session_id", ""):
+                try:
+                    from agent.runtime.session_events import push_error
+                    push_error(
+                        req.session_id,
+                        "approval_resume_failed",
+                        "审批已记录，但任务恢复失败，请查看运行记录或联系管理员。",
+                        workspace_id=ws_id,
+                    )
+                except (OSError, RuntimeError, TypeError, ValueError):
+                    _LOG.warning("unable to publish approval resume failure", exc_info=True)
 
         return jsonify({
             "ok": True,

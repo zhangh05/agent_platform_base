@@ -14,15 +14,16 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import threading
 import time
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
-from agent.runtime.utils import now_iso, from_iso
+from agent.runtime.utils import from_iso, now_iso
 
 logger = logging.getLogger(__name__)
 
@@ -83,6 +84,11 @@ _GC_INTERVAL_SECONDS = 600  # 10 minutes
 _DEFAULT_APPROVAL_TTL_SECONDS = 1800
 _MIN_APPROVAL_TTL_SECONDS = 60
 _MAX_APPROVAL_TTL_SECONDS = 7 * 24 * 60 * 60
+
+
+def new_approval_id() -> str:
+    """Allocate a public approval id before durable aggregate creation."""
+    return f"apr_{uuid.uuid4().hex[:12]}"
 
 
 def approval_ttl_seconds() -> int:
@@ -221,8 +227,15 @@ class ApprovalStore:
             from storage.approval_record_store import read_approval_records
 
             cutoff_iso = _now_iso_offset(-_RETENTION_DAYS * 86400)
+            latest: dict[str, dict[str, Any]] = {}
             for rec in read_approval_records(path=self._persist_path):
-                # Only restore still-pending records (resolved are history)
+                approval_id = str(rec.get("approval_id") or "")
+                if approval_id:
+                    latest[approval_id] = rec
+            for rec in latest.values():
+                # Approval JSONL is an event log. Restore only the latest state
+                # for each id or an older pending row can resurrect after its
+                # later resolved row is skipped.
                 if rec.get("resolved"):
                     continue
                 try:
@@ -273,41 +286,46 @@ class ApprovalStore:
             logger.warning("approval: failed to load history from %s",
                            self._persist_path, exc_info=True)
 
-    def _append_record(self, req: ApprovalRequest) -> None:
+    @staticmethod
+    def _record_for(req: ApprovalRequest) -> dict[str, Any]:
+        from core.tools.redaction import redact_tool_output
+
+        return {
+            "approval_id": req.approval_id,
+            "session_id": req.session_id,
+            "tool_id": req.tool_id,
+            "arguments": redact_tool_output(req.arguments or {}),
+            "description": req.description,
+            "risk_level": req.risk_level,
+            "workspace_id": req.workspace_id,
+            "run_id": req.run_id,
+            "job_id": req.job_id,
+            "metadata": redact_tool_output(req.metadata or {}),
+            "approval_kind": req.approval_kind,
+            "requester": req.requester,
+            "requester_id": req.requester_id,
+            "created_at": req.created_at,
+            "expires_at": req.expires_at,
+            "resolved": req.resolved,
+            "allowed": req.allowed if req.resolved else None,
+            "resolved_at": req.resolved_at,
+            "resolver": req.resolver,
+            "reason": req.reason,
+        }
+
+    def _append_record(self, req: ApprovalRequest, *, strict: bool = False) -> None:
         """Append a record (pending or resolved) to the JSONL audit log."""
         try:
-            from core.tools.redaction import redact_tool_output
             from storage.approval_record_store import append_approval_record
-
-            rec = {
-                "approval_id": req.approval_id,
-                "session_id": req.session_id,
-                "tool_id": req.tool_id,
-                "arguments": redact_tool_output(req.arguments or {}),
-                "description": req.description,
-                "risk_level": req.risk_level,
-                "workspace_id": req.workspace_id,
-                "run_id": req.run_id,
-                "job_id": req.job_id,
-                "metadata": redact_tool_output(req.metadata or {}),
-                "approval_kind": req.approval_kind,
-                "requester": req.requester,
-                "requester_id": req.requester_id,
-                "created_at": req.created_at,
-                "expires_at": req.expires_at,
-                "resolved": req.resolved,
-                "allowed": req.allowed if req.resolved else None,
-                "resolved_at": req.resolved_at,
-                "resolver": req.resolver,
-                "reason": req.reason,
-            }
-            append_approval_record(rec, path=self._persist_path)
+            append_approval_record(self._record_for(req), path=self._persist_path)
         except (OSError, TypeError, ValueError):
             # v3.9.9: ApprovalStore._append_record silently losing
             # every audit row is a real failure — silently skipping
             # a write hides every denied tool invocation. Surface it.
             logger.warning("approval: failed to append record to %s",
                            self._persist_path, exc_info=True)
+            if strict:
+                raise
 
     def _gc_history(self) -> None:
         """Periodically compact the audit log by removing records older than retention."""
@@ -339,7 +357,7 @@ class ApprovalStore:
                 return kept, None
 
             mutate_approval_records(_retain_recent, path=self._persist_path)
-        except OSError:
+        except (OSError, ValueError):
             logger.warning("approval: GC history compaction failed for %s",
                            self._persist_path, exc_info=True)
 
@@ -362,61 +380,106 @@ class ApprovalStore:
         Optional run_id/job_id provide traceability when the approval
         originates from a specific agent run or job.
         """
-        if not workspace_id:
-            raise ValueError("workspace_id is required")
-        try:
-            from storage.ids import validate_workspace_id
-            workspace_id = validate_workspace_id(workspace_id)
-        except Exception as exc:
-            raise ValueError("invalid_workspace_id") from exc
-        approval_id = f"apr_{uuid.uuid4().hex[:12]}"
-        if not requester:
-            from storage.principal import current_storage_principal
-            requester = current_storage_principal()
-        if requester and not requester_id:
+        return self.create_batch([{
+            "session_id": session_id,
+            "tool_id": tool_id,
+            "arguments": arguments,
+            "description": description,
+            "risk_level": risk_level,
+            "workspace_id": workspace_id,
+            "run_id": run_id,
+            "job_id": job_id,
+            "metadata": metadata,
+            "approval_kind": approval_kind,
+            "requester": requester,
+            "requester_id": requester_id,
+            "ttl_seconds": ttl_seconds,
+        }])[0]
+
+    def create_batch(self, specs: list[dict[str, Any]]) -> list[ApprovalRequest]:
+        """Persist and publish a complete approval batch without partial visibility.
+
+        A caller may preallocate each ``approval_id`` so another durable
+        aggregate can bind final ids before this transaction commits. The
+        batch is written atomically and is only then exposed in memory/SSE.
+        """
+        if not specs:
+            raise ValueError("approval_batch_is_empty")
+        requests: list[ApprovalRequest] = []
+        seen_ids: set[str] = set()
+        for spec in specs:
+            workspace_id = str(spec.get("workspace_id") or "")
+            if not workspace_id:
+                raise ValueError("workspace_id is required")
             try:
-                from storage.principal import principal_storage_key
-                requester_id = principal_storage_key(requester)
-            except (OSError, TypeError, ValueError):
-                requester_id = ""
-        ttl = approval_ttl_seconds() if ttl_seconds is None else max(
-            _MIN_APPROVAL_TTL_SECONDS,
-            min(int(ttl_seconds), _MAX_APPROVAL_TTL_SECONDS),
-        )
-        created_at = now_iso()
-        req = ApprovalRequest(
-            approval_id=approval_id,
-            session_id=session_id,
-            tool_id=tool_id,
-            arguments=arguments,
-            description=description,
-            risk_level=risk_level,
-            workspace_id=workspace_id,
-            run_id=run_id,
-            job_id=job_id,
-            metadata=metadata or {},
-            approval_kind=str(approval_kind or "interactive"),
-            requester=str(requester or ""),
-            requester_id=str(requester_id or ""),
-            created_at=created_at,
-            expires_at=_expires_at_from_created(created_at, ttl),
+                from storage.ids import validate_workspace_id
+                workspace_id = validate_workspace_id(workspace_id)
+            except Exception as exc:
+                raise ValueError("invalid_workspace_id") from exc
+            approval_id = str(spec.get("approval_id") or new_approval_id())
+            if not re.fullmatch(r"apr_[0-9a-f]{12}", approval_id) or approval_id in seen_ids:
+                raise ValueError("invalid_or_duplicate_approval_id")
+            seen_ids.add(approval_id)
+            requester = str(spec.get("requester") or "")
+            requester_id = str(spec.get("requester_id") or "")
+            if not requester:
+                from storage.principal import current_storage_principal
+                requester = current_storage_principal()
+            if requester and not requester_id:
+                try:
+                    from storage.principal import principal_storage_key
+                    requester_id = principal_storage_key(requester)
+                except (OSError, TypeError, ValueError):
+                    requester_id = ""
+            raw_ttl = spec.get("ttl_seconds")
+            ttl = approval_ttl_seconds() if raw_ttl is None else max(
+                _MIN_APPROVAL_TTL_SECONDS,
+                min(int(raw_ttl), _MAX_APPROVAL_TTL_SECONDS),
+            )
+            created_at = now_iso()
+            requests.append(ApprovalRequest(
+                approval_id=approval_id,
+                session_id=str(spec.get("session_id") or ""),
+                tool_id=str(spec.get("tool_id") or ""),
+                arguments=dict(spec.get("arguments") or {}),
+                description=str(spec.get("description") or ""),
+                risk_level=str(spec.get("risk_level") or "high"),
+                workspace_id=workspace_id,
+                run_id=str(spec.get("run_id") or ""),
+                job_id=str(spec.get("job_id") or ""),
+                metadata=dict(spec.get("metadata") or {}),
+                approval_kind=str(spec.get("approval_kind") or "interactive"),
+                requester=requester,
+                requester_id=requester_id,
+                created_at=created_at,
+                expires_at=_expires_at_from_created(created_at, ttl),
+            ))
+
+        with self._lock:
+            if any(req.approval_id in self._pending for req in requests):
+                raise RuntimeError("approval_id_already_pending")
+        from storage.approval_record_store import append_approval_records
+        append_approval_records(
+            [self._record_for(req) for req in requests], path=self._persist_path
         )
         with self._lock:
-            self._pending[approval_id] = req
-        self._append_record(req)
-        _event_bus.publish(ApprovalEvent(
-            kind="created", approval_id=approval_id,
-            session_id=session_id, tool_id=tool_id,
-            workspace_id=workspace_id,
-            payload={
-                "risk_level": risk_level,
-                "description": description,
-                "approval_kind": req.approval_kind,
-                "expires_at": req.expires_at,
-            },
-        ))
-        _record_approval_metric("created", len(self._pending))
-        return req
+            for req in requests:
+                self._pending[req.approval_id] = req
+            pending_count = len(self._pending)
+        for req in requests:
+            _event_bus.publish(ApprovalEvent(
+                kind="created", approval_id=req.approval_id,
+                session_id=req.session_id, tool_id=req.tool_id,
+                workspace_id=req.workspace_id,
+                payload={
+                    "risk_level": req.risk_level,
+                    "description": req.description,
+                    "approval_kind": req.approval_kind,
+                    "expires_at": req.expires_at,
+                },
+            ))
+            _record_approval_metric("created", pending_count)
+        return requests
 
     def resolve(self, approval_id: str, allowed: bool, workspace_id: str,
                 resolver: str = "user", reason: str = "") -> Optional[ApprovalRequest]:
@@ -441,16 +504,29 @@ class ApprovalStore:
                     allowed = False
                     resolver = "system_expired"
                     reason = "approval_ttl_expired"
+                resolved_at = now_iso()
+                persisted = replace(
+                    req,
+                    resolved=True,
+                    allowed=allowed,
+                    resolved_at=resolved_at,
+                    resolver=resolver,
+                    reason=reason,
+                )
+                # A decision is not accepted until its audit row is durable.
+                # Keeping the in-memory request pending lets the caller retry a
+                # transient storage failure instead of losing the approval.
+                self._append_record(persisted, strict=True)
                 req.resolved = True
                 req.allowed = allowed
-                # v3.9.8: resolved_at is ISO-8601 string; was float.
-                req.resolved_at = now_iso()
+                req.resolved_at = resolved_at
                 req.resolver = resolver
                 req.reason = reason
                 req._event.set()
+                self._pending.pop(approval_id, None)
+                pending_count = len(self._pending)
         if req is None:
             return None
-        self._append_record(req)
         self._gc_history()
         _event_bus.publish(ApprovalEvent(
             kind="resolved", approval_id=approval_id,
@@ -458,10 +534,6 @@ class ApprovalStore:
             workspace_id=req.workspace_id,
             allowed=allowed, payload={"resolver": resolver, "reason": reason},
         ))
-        # Pending entries can be freed once resolved — they live on in JSONL.
-        with self._lock:
-            self._pending.pop(approval_id, None)
-            pending_count = len(self._pending)
         metric_status = "approved" if allowed else (
             "expired" if resolver == "system_expired" else "rejected"
         )
@@ -505,41 +577,27 @@ class ApprovalStore:
         Expiry is based solely on each record's durable ``expires_at`` value.
         Polling cannot shorten or invent an approval lifetime.
         """
+        now = datetime.now(timezone.utc)
         with self._lock:
-            now = datetime.now(timezone.utc)
-            stale_ids = []
-            expired_requests: list[ApprovalRequest] = []
-            for aid, req in list(self._pending.items()):
-                if req.resolved:
-                    stale_ids.append(aid)
-                    continue
+            expired_ids: list[tuple[str, str]] = []
+            for aid, req in self._pending.items():
                 try:
                     expires = datetime.fromtimestamp(from_iso(req.expires_at), tz=timezone.utc)
-                    _expire = bool(req.expires_at and now >= expires)
-                except Exception:
-                    _expire = False
-                if _expire:
-                    req.resolved = True
-                    req.allowed = False
-                    req.resolved_at = now_iso()
-                    req.resolver = "system_expired"
-                    req.reason = "approval_ttl_expired"
-                    req._event.set()
-                    self._append_record(req)
-                    _event_bus.publish(ApprovalEvent(
-                        kind="resolved", approval_id=aid,
-                        session_id=req.session_id, tool_id=req.tool_id,
-                        workspace_id=req.workspace_id,
-                        allowed=False, payload={
-                            "resolver": "system_expired",
-                            "reason": "approval_ttl_expired",
-                        },
-                    ))
-                    stale_ids.append(aid)
-                    expired_requests.append(req)
-            for aid in stale_ids:
-                self._pending.pop(aid, None)
+                    expired = bool(req.expires_at and now >= expires)
+                except (TypeError, ValueError):
+                    expired = False
+                if expired:
+                    expired_ids.append((aid, req.workspace_id))
+        for aid, request_workspace_id in expired_ids:
+            self.resolve(
+                aid,
+                False,
+                request_workspace_id,
+                resolver="system_expired",
+                reason="approval_ttl_expired",
+            )
 
+        with self._lock:
             result = []
             for req in self._pending.values():
                 if workspace_id and req.workspace_id != workspace_id:
@@ -548,12 +606,7 @@ class ApprovalStore:
                     continue
                 result.append(self._to_dict(req))
             pending_count = len(self._pending)
-        for expired_req in expired_requests:
-            _expire_bound_continuation(expired_req)
-        if stale_ids:
-            for _ in stale_ids:
-                _record_approval_metric("expired", pending_count)
-        else:
+        if not expired_ids:
             try:
                 from observability.metrics import set_operational_gauge
                 set_operational_gauge("approval_pending", pending_count)

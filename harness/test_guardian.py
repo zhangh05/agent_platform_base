@@ -130,6 +130,79 @@ def test_reload_unresolved_on_startup(tmp_path):
     assert any(p["approval_id"] == req.approval_id for p in pending)
 
 
+def test_reload_does_not_resurrect_resolved_approval(tmp_path):
+    from agent.approval import ApprovalStore
+
+    path = tmp_path / "approvals.jsonl"
+    first = ApprovalStore(persist_path=path)
+    req = first.create(
+        "sess-resolved", "exec.run", {"cmd": "echo"}, workspace_id="ws_reload"
+    )
+    assert first.resolve(req.approval_id, True, workspace_id="ws_reload") is not None
+
+    restarted = ApprovalStore(persist_path=path)
+    assert restarted.get_pending(session_id="sess-resolved", workspace_id="ws_reload") == []
+
+
+def test_create_batch_is_all_or_nothing_on_persistence_failure(tmp_path, monkeypatch):
+    from agent.approval import ApprovalStore, new_approval_id
+    import storage.approval_record_store as records
+
+    store = ApprovalStore(persist_path=tmp_path / "approvals.jsonl")
+    monkeypatch.setattr(
+        records,
+        "append_approval_records",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("disk full")),
+    )
+    specs = [
+        {
+            "approval_id": new_approval_id(),
+            "session_id": "s1",
+            "tool_id": "workspace.file",
+            "arguments": {"action": "delete"},
+            "workspace_id": "ws_batch",
+        },
+        {
+            "approval_id": new_approval_id(),
+            "session_id": "s1",
+            "tool_id": "exec.run",
+            "arguments": {"action": "execute"},
+            "workspace_id": "ws_batch",
+        },
+    ]
+    try:
+        store.create_batch(specs)
+    except OSError:
+        pass
+    else:
+        raise AssertionError("batch persistence failure must be raised")
+    assert store.get_pending(workspace_id="ws_batch") == []
+
+
+def test_resolve_persistence_failure_keeps_approval_retryable(tmp_path, monkeypatch):
+    import storage.approval_record_store as records
+    from agent.approval import ApprovalStore
+
+    store = ApprovalStore(persist_path=tmp_path / "approvals.jsonl")
+    req = store.create(
+        "s1", "workspace.file", {"action": "delete"}, workspace_id="ws_retry"
+    )
+    monkeypatch.setattr(
+        records,
+        "append_approval_record",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("disk full")),
+    )
+    try:
+        store.resolve(req.approval_id, True, workspace_id="ws_retry")
+    except OSError:
+        pass
+    else:
+        raise AssertionError("decision persistence failure must be raised")
+    pending = store.get_pending_request(req.approval_id, "ws_retry")
+    assert pending is not None
+    assert pending.resolved is False
+
+
 # ─────────────────────────────── 4. Sub-agent run record ───────────────────────────────
 
 

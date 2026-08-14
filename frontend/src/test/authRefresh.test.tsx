@@ -86,6 +86,26 @@ describe("authenticated refresh", () => {
     expect(logout.closest(".app-actions")).not.toBeNull();
   });
 
+  it("enters the workbench for API-token auth even when password login is disabled", async () => {
+    vi.spyOn(authApi, "status").mockResolvedValue({
+      ok: true,
+      login_enabled: false,
+      authenticated: true,
+      username: "api-token",
+      role: "owner",
+      platform_admin: true,
+      workspace_ids: ["default"],
+      home_workspace_id: "default",
+      auth_type: "api_token",
+    });
+
+    render(<App />);
+
+    expect(await screen.findByTestId("nav-group-workbench")).toBeInTheDocument();
+    expect(screen.queryByText("登录工作台")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "退出登录" })).not.toBeInTheDocument();
+  });
+
   it("remounts the route stage so every page switch gets a transition", async () => {
     render(<App />);
 

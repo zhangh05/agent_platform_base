@@ -118,6 +118,7 @@ export interface AuthStatus {
   identity_enabled?: boolean;
   oidc_enabled?: boolean;
   platform_admin?: boolean;
+  auth_type?: "api_token" | "session" | "none";
 }
 
 export const authApi = {
@@ -1008,6 +1009,49 @@ export const approvalApi = {
       url,
     });
   },
+};
+
+export type ApprovalContinuationSummary = {
+  continuation_id: string;
+  workspace_id: string;
+  session_id: string;
+  parent_run_id: string;
+  status: string;
+  execution_phase?: string;
+  created_at: string;
+  updated_at: string;
+  heartbeat_at?: string;
+  stalled_at?: string;
+  stall_reason?: string;
+  error?: string;
+  approval_count: number;
+  decision_count: number;
+};
+
+export const approvalContinuationsApi = {
+  list: (workspaceId: string, signal?: AbortSignal) =>
+    apiRequest<{
+      ok: boolean;
+      continuations: ApprovalContinuationSummary[];
+      count: number;
+      counts: Record<string, number>;
+      maintenance: { stalled: number; expired: number; deleted: number };
+    }>({
+      method: "GET",
+      url: "/admin/approval-continuations",
+      params: { workspace_id: workspaceId },
+    }, signal),
+
+  closeStalled: (workspaceId: string, continuationId: string, reason: string) =>
+    apiRequest<{ ok: boolean; continuation_id: string; status: string }>({
+      method: "POST",
+      url: `/admin/approval-continuations/${encodeURIComponent(continuationId)}/close`,
+      data: {
+        workspace_id: workspaceId,
+        reason,
+        confirmation: `CLOSE ${continuationId}`,
+      },
+    }),
 };
 
 /** Open the Guardian SSE stream. The caller must close the returned connection. */

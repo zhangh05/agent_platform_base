@@ -24,6 +24,10 @@ const ADMIN_PASSWORD = crypto
   .createHash("sha256")
   .update(`${REPO_ROOT}:${BACKEND_PORT}:${FRONTEND_PORT}:e2e-admin`)
   .digest("base64url");
+const API_TOKEN = crypto
+  .createHash("sha256")
+  .update(`${REPO_ROOT}:${BACKEND_PORT}:${FRONTEND_PORT}:e2e-api-token`)
+  .digest("hex");
 const PYTHON_BIN = process.env.E2E_PYTHON_BIN ?? path.join(REPO_ROOT, ".venv", "bin", "python3");
 
 fs.writeFileSync(STORAGE_MARKER, STORAGE_TOKEN, { encoding: "utf8", flag: "wx" });
@@ -48,6 +52,7 @@ process.env.E2E_FRONTEND_URL = FRONTEND_URL;
 process.env.E2E_STORAGE_ROOT = STORAGE_ROOT;
 process.env.E2E_STORAGE_TOKEN = STORAGE_TOKEN;
 process.env.E2E_ADMIN_PASSWORD = ADMIN_PASSWORD;
+process.env.E2E_API_TOKEN = API_TOKEN;
 
 const commonEnv = {
   ...process.env,
@@ -55,6 +60,8 @@ const commonEnv = {
   AGENT_PLATFORM_RUNTIME_BIND_HOST: "127.0.0.1",
   AGENT_PLATFORM_TRUSTED_LOCAL_PYTHON_EXECUTION: "true",
   AGENT_PLATFORM_IDENTITY_ENABLED: "true",
+  AGENT_PLATFORM_AUTH_ENABLED: "true",
+  AGENT_PLATFORM_API_TOKEN: API_TOKEN,
   AGENT_PLATFORM_LOGIN_ENABLED: "true",
   AGENT_PLATFORM_LOGIN_USERNAME: "E2EAdmin",
   AGENT_PLATFORM_LOGIN_PASSWORD: ADMIN_PASSWORD,

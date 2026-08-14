@@ -470,61 +470,70 @@ def _build_approval_handler(
     """Persist an ordinary Agent approval continuation without blocking a worker."""
 
     async def _handle(ctx, gate: dict[str, Any]) -> dict[str, Any]:
-        from agent.runtime.approval_continuation import create_continuation
+        from agent.approval import new_approval_id
+        from agent.runtime.approval_continuation import (
+            create_continuation,
+            delete_continuation,
+            new_continuation_id,
+        )
 
         store = get_approval_store(workspace_id)
-        approval_ids: list[str] = []
         tool_calls = [dict(item) for item in list(gate.get("tool_calls") or []) if isinstance(item, dict)]
         if not tool_calls:
             raise RuntimeError("approval continuation requires exact tool calls")
-        # The record is first created with temporary ids, then rebound after
-        # ApprovalStore has generated the durable public approval ids.
-        placeholder_ids = [f"pending_{index}" for index in range(max(1, len(gate.get("approval_details") or [])))]
+        details = list(gate.get("approval_details") or [])
+        item_count = max(1, len(details))
+        approval_ids = [new_approval_id() for _ in range(item_count)]
+        continuation_id = new_continuation_id()
         continuation_id = create_continuation(
             workspace_id=workspace_id,
             session_id=session_id,
             parent_run_id=run_id,
             user_input=str(ctx.user_input or ""),
             tool_calls=tool_calls,
-            approval_ids=placeholder_ids,
+            approval_ids=approval_ids,
             approved_node_ids=list(gate.get("approval_nodes") or []),
+            continuation_id=continuation_id,
         )
-        details = list(gate.get("approval_details") or [])
-        for detail in details:
+        specs: list[dict[str, Any]] = []
+        for approval_id, detail in zip(approval_ids, details):
             tool_id = str(detail.get("tool") or "unknown")
             reason = str(detail.get("risk_reason") or "高危操作需要确认")
             command = str(detail.get("command") or "")
             description = f"{reason}: {tool_id}"
             if command:
                 description += f" → {command[:120]}"
-            req = store.create(
-                session_id=session_id,
-                tool_id=tool_id,
-                arguments=detail,
-                description=description,
-                risk_level=str(gate.get("risk_level") or "high"),
-                workspace_id=workspace_id,
-                run_id=run_id,
-                metadata={"continuation_id": continuation_id},
-            )
-            approval_ids.append(req.approval_id)
+            specs.append({
+                "approval_id": approval_id,
+                "session_id": session_id,
+                "tool_id": tool_id,
+                "arguments": detail,
+                "description": description,
+                "risk_level": str(gate.get("risk_level") or "high"),
+                "workspace_id": workspace_id,
+                "run_id": run_id,
+                "metadata": {"continuation_id": continuation_id},
+            })
 
         if not details:
             nodes = list(gate.get("approval_nodes") or [])
-            req = store.create(
-                session_id=session_id,
-                tool_id=", ".join(nodes) or "unknown",
-                arguments={"nodes": nodes},
-                description=str(gate.get("message") or "高危操作需要确认"),
-                risk_level=str(gate.get("risk_level") or "high"),
-                workspace_id=workspace_id,
-                run_id=run_id,
-                metadata={"continuation_id": continuation_id},
-            )
-            approval_ids.append(req.approval_id)
+            specs.append({
+                "approval_id": approval_ids[0],
+                "session_id": session_id,
+                "tool_id": ", ".join(nodes) or "unknown",
+                "arguments": {"nodes": nodes},
+                "description": str(gate.get("message") or "高危操作需要确认"),
+                "risk_level": str(gate.get("risk_level") or "high"),
+                "workspace_id": workspace_id,
+                "run_id": run_id,
+                "metadata": {"continuation_id": continuation_id},
+            })
 
-        from agent.runtime.approval_continuation import bind_approvals
-        bind_approvals(workspace_id, continuation_id, approval_ids)
+        try:
+            store.create_batch(specs)
+        except Exception:
+            delete_continuation(workspace_id, continuation_id)
+            raise
         event = {
             "approval_ids": approval_ids,
             "continuation_id": continuation_id,

@@ -38,6 +38,20 @@ describe("Diagnostics page", () => {
       prompts: [{ prompt_id: "p1", description: "测试提示词", version: "1" }],
       retention: { policy: { runs_max_age_days: 7 } },
       archive: { policy: { traces_max_age_days: 7 } },
+      continuations: {
+        counts: { stalled: 1, pending: 0, running: 0, failed: 0 },
+        continuations: [{
+          continuation_id: "cont_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          workspace_id: "default",
+          session_id: "session-1",
+          parent_run_id: "run-1",
+          status: "stalled",
+          created_at: "2026-07-22T00:00:00.000Z",
+          updated_at: "2026-07-22T00:01:00.000Z",
+          approval_count: 1,
+          decision_count: 1,
+        }],
+      },
     }));
 
     render(
@@ -53,5 +67,7 @@ describe("Diagnostics page", () => {
     expect(screen.getByText("运行记录（run-1）含本机绝对路径")).toBeInTheDocument();
     expect(screen.getByText("● 全部正常")).toBeInTheDocument();
     expect(screen.getByText("智能体核心")).toBeInTheDocument();
+    expect(screen.getByText("1 项待人工核对")).toBeInTheDocument();
+    expect(screen.getByText(/心跳失联，执行结果未知/)).toBeInTheDocument();
   });
 });

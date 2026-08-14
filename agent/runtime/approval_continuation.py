@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
+import threading
+import time
 import uuid
 from datetime import datetime, timezone
 from typing import Any
@@ -17,6 +20,9 @@ from storage.secret_store import delete_secret, get_secret, set_secret
 
 _ID_RE = re.compile(r"^cont_[0-9a-f]{32}$")
 _SCHEMA = "agent.approval_continuation.v1"
+_TERMINAL_STATUSES = frozenset({"completed", "failed", "rejected", "expired"})
+_MAINTENANCE_LOCK = threading.Lock()
+_LAST_MAINTENANCE: dict[str, float] = {}
 
 
 def _now_iso() -> str:
@@ -35,6 +41,29 @@ def _canonical(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
 
 
+def new_continuation_id() -> str:
+    return f"cont_{uuid.uuid4().hex}"
+
+
+def _bounded_env_seconds(name: str, default: int, minimum: int, maximum: int) -> int:
+    try:
+        value = int(os.environ.get(name, "") or default)
+    except ValueError:
+        value = default
+    return max(minimum, min(value, maximum))
+
+
+def continuation_stall_seconds() -> int:
+    return _bounded_env_seconds(
+        "AGENT_PLATFORM_CONTINUATION_STALL_SECONDS", 900, 60, 7 * 24 * 60 * 60
+    )
+
+
+def continuation_retention_seconds() -> int:
+    days = _bounded_env_seconds("AGENT_PLATFORM_CONTINUATION_RETENTION_DAYS", 30, 1, 3650)
+    return days * 24 * 60 * 60
+
+
 def create_continuation(
     *,
     workspace_id: str,
@@ -44,10 +73,14 @@ def create_continuation(
     tool_calls: list[dict[str, Any]],
     approval_ids: list[str],
     approved_node_ids: list[str] | None = None,
+    continuation_id: str = "",
 ) -> str:
     if not tool_calls or not approval_ids:
         raise ValueError("continuation_requires_tool_calls_and_approvals")
-    continuation_id = f"cont_{uuid.uuid4().hex}"
+    maintain_continuations(workspace_id)
+    continuation_id = continuation_id or new_continuation_id()
+    if not _ID_RE.fullmatch(continuation_id):
+        raise ValueError("invalid_continuation_id")
     call_ids = [str(item.get("id") or "") for item in tool_calls]
     approved_ids = list(dict.fromkeys(approved_node_ids or call_ids))
     if not approved_ids or any(node_id not in call_ids for node_id in approved_ids):
@@ -88,20 +121,18 @@ def create_continuation(
     return continuation_id
 
 
-def bind_approvals(
-    workspace_id: str,
-    continuation_id: str,
-    approval_ids: list[str],
-) -> None:
-    """Bind approval ids after their records have been created."""
+def delete_continuation(workspace_id: str, continuation_id: str) -> bool:
+    """Compensate a failed aggregate creation before approvals are published."""
     path = _path(workspace_id, continuation_id)
     with FileLock(path.with_suffix(".lock")):
+        if not path.is_file():
+            return False
         record = _read_unlocked(path)
-        if record.get("status") != "pending":
-            raise RuntimeError("continuation_not_pending")
-        record["approval_ids"] = list(dict.fromkeys(approval_ids))
-        record["updated_at"] = _now_iso()
-        atomic_write_json(path, record)
+        if record.get("status") != "pending" or record.get("decisions"):
+            raise RuntimeError("continuation_already_active")
+        delete_secret(str(record.get("payload_ref") or ""))
+        path.unlink()
+        return True
 
 
 def record_decision_and_claim(
@@ -113,7 +144,7 @@ def record_decision_and_claim(
 ) -> tuple[dict[str, Any], ApprovedToolContinuation | None, dict[str, Any] | None]:
     """Record one decision and atomically claim the continuation when ready.
 
-    A continuation moves from ``pending`` to ``running`` exactly once. A
+    A continuation has a single owner claim from ``pending`` to ``running``. A
     process crash after that claim fails closed: it is never automatically
     replayed, avoiding duplicate mutations.
     """
@@ -154,6 +185,8 @@ def record_decision_and_claim(
         _validate_payload(record, payload)
         record["status"] = "running"
         record["claimed_at"] = _now_iso()
+        record["heartbeat_at"] = record["claimed_at"]
+        record["execution_phase"] = "claimed"
         record["updated_at"] = _now_iso()
         atomic_write_json(path, record)
         grant = ApprovedToolContinuation(
@@ -174,14 +207,160 @@ def finish_continuation(
     path = _path(workspace_id, continuation_id)
     with FileLock(path.with_suffix(".lock")):
         record = _read_unlocked(path)
-        if record.get("status") == "running":
+        if record.get("status") in {"running", "stalled"}:
             record["status"] = "failed" if error else "completed"
+            record["execution_phase"] = "finished"
             record["completed_run_id"] = completed_run_id
             record["error"] = str(error or "")[:500]
             record["updated_at"] = _now_iso()
             atomic_write_json(path, record)
             delete_secret(str(record.get("payload_ref") or ""))
         return dict(record)
+
+
+def mark_continuation_dispatching(workspace_id: str, continuation_id: str) -> dict[str, Any]:
+    path = _path(workspace_id, continuation_id)
+    with FileLock(path.with_suffix(".lock")):
+        record = _read_unlocked(path)
+        if record.get("status") != "running":
+            raise RuntimeError("continuation_not_running")
+        now = _now_iso()
+        record["execution_phase"] = "dispatching"
+        record["dispatch_started_at"] = now
+        record["heartbeat_at"] = now
+        record["updated_at"] = now
+        atomic_write_json(path, record)
+        return dict(record)
+
+
+def heartbeat_continuation(workspace_id: str, continuation_id: str) -> bool:
+    path = _path(workspace_id, continuation_id)
+    with FileLock(path.with_suffix(".lock")):
+        record = _read_unlocked(path)
+        if record.get("status") not in {"running", "stalled"}:
+            return False
+        now = _now_iso()
+        if record.get("status") == "stalled":
+            # A live owner heartbeat proves the original execution is still
+            # active; this never creates a new execution or replays a tool.
+            record["status"] = "running"
+            record.pop("stalled_at", None)
+            record.pop("stall_reason", None)
+        record["heartbeat_at"] = now
+        record["updated_at"] = now
+        atomic_write_json(path, record)
+        return True
+
+
+def maintain_continuations(workspace_id: str, *, force: bool = False) -> dict[str, int]:
+    """Mark stale work and enforce expiry/retention without replaying tools."""
+    now_epoch = time.time()
+    with _MAINTENANCE_LOCK:
+        previous = _LAST_MAINTENANCE.get(workspace_id, 0.0)
+        if not force and now_epoch - previous < 60:
+            return {"stalled": 0, "expired": 0, "deleted": 0}
+        _LAST_MAINTENANCE[workspace_id] = now_epoch
+
+    from agent.approval import approval_ttl_seconds
+    from storage.records import list_json_records
+
+    counters = {"stalled": 0, "expired": 0, "deleted": 0}
+    records = list_json_records(workspace_id, ("approvals", "continuations"), limit=5000)
+    for snapshot in records:
+        continuation_id = str(snapshot.get("continuation_id") or "")
+        if not _ID_RE.fullmatch(continuation_id):
+            continue
+        path = _path(workspace_id, continuation_id)
+        with FileLock(path.with_suffix(".lock")):
+            if not path.is_file():
+                continue
+            record = _read_unlocked(path)
+            status = str(record.get("status") or "")
+            updated_age = _age_seconds(record.get("updated_at"), now_epoch)
+            if status == "pending" and _age_seconds(record.get("created_at"), now_epoch) >= approval_ttl_seconds():
+                record["status"] = "expired"
+                record["error"] = "approval_ttl_expired"
+                record["updated_at"] = _now_iso()
+                atomic_write_json(path, record)
+                delete_secret(str(record.get("payload_ref") or ""))
+                counters["expired"] += 1
+            elif status == "running":
+                heartbeat_age = _age_seconds(
+                    record.get("heartbeat_at") or record.get("claimed_at") or record.get("updated_at"),
+                    now_epoch,
+                )
+                if heartbeat_age >= continuation_stall_seconds():
+                    record["status"] = "stalled"
+                    record["stalled_at"] = _now_iso()
+                    record["stall_reason"] = "execution_heartbeat_expired"
+                    record["updated_at"] = record["stalled_at"]
+                    atomic_write_json(path, record)
+                    counters["stalled"] += 1
+            elif status in _TERMINAL_STATUSES and updated_age >= continuation_retention_seconds():
+                delete_secret(str(record.get("payload_ref") or ""))
+                path.unlink()
+                counters["deleted"] += 1
+    return counters
+
+
+def list_continuations(
+    workspace_id: str, *, status: str = "", limit: int = 100
+) -> list[dict[str, Any]]:
+    maintain_continuations(workspace_id)
+    from storage.records import list_json_records
+
+    records = list_json_records(
+        workspace_id, ("approvals", "continuations"), limit=5000
+    )
+    public: list[dict[str, Any]] = []
+    for record in records:
+        if status and str(record.get("status") or "") != status:
+            continue
+        approval_ids = list(record.get("approval_ids") or [])
+        decisions = dict(record.get("decisions") or {})
+        public.append({
+            key: record.get(key)
+            for key in (
+                "continuation_id", "workspace_id", "session_id", "parent_run_id",
+                "status", "execution_phase", "created_at", "updated_at", "claimed_at",
+                "dispatch_started_at", "heartbeat_at", "stalled_at", "stall_reason",
+                "completed_run_id", "error",
+            )
+            if record.get(key) not in (None, "")
+        } | {
+            "approval_count": len(approval_ids),
+            "decision_count": len(decisions),
+        })
+    return public[: min(max(limit, 1), 5000)]
+
+
+def close_stalled_continuation(
+    workspace_id: str, continuation_id: str, *, reason: str
+) -> dict[str, Any]:
+    """Close an unknown-outcome execution after explicit operator review."""
+    path = _path(workspace_id, continuation_id)
+    with FileLock(path.with_suffix(".lock")):
+        record = _read_unlocked(path)
+        if record.get("status") != "stalled":
+            raise RuntimeError("continuation_not_stalled")
+        record["status"] = "failed"
+        record["execution_phase"] = "operator_closed"
+        record["error"] = f"operator_closed:{str(reason or 'no_reason')[:400]}"
+        record["updated_at"] = _now_iso()
+        atomic_write_json(path, record)
+        delete_secret(str(record.get("payload_ref") or ""))
+        return dict(record)
+
+
+def _age_seconds(raw: Any, now_epoch: float) -> float:
+    try:
+        text = str(raw or "").replace("Z", "+00:00")
+        parsed = datetime.fromisoformat(text)
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return max(0.0, now_epoch - parsed.timestamp())
+    except (TypeError, ValueError):
+        return float("inf")
 
 
 def _read_unlocked(path) -> dict[str, Any]:

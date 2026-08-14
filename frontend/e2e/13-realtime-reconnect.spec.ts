@@ -54,3 +54,31 @@ test("13. realtime streams authenticate and reconnect within the isolated worksp
   expect(denied).toBe("unauthorized");
   await anonymous.close();
 });
+
+test("13b. API-token SSE uses an Authorization header and a credential-free URL", async ({ browser }) => {
+  const apiToken = process.env.E2E_API_TOKEN ?? "";
+  expect(apiToken).not.toBe("");
+  const context = await browser.newContext({ storageState: { cookies: [], origins: [] } });
+  await context.addInitScript((token) => {
+    window.localStorage.setItem("NA_API_TOKEN", token);
+  }, apiToken);
+  const tokenPage = await context.newPage();
+  const streamRequest = tokenPage.waitForRequest(
+    (request) => request.url().includes("/api/agent/approvals/sse"),
+  );
+  await tokenPage.goto("/workbench");
+  await tokenPage.evaluate(async () => {
+    const modulePath = "/src/api/sse.ts";
+    const transport = await import(/* @vite-ignore */ modulePath) as {
+      openSSE: (path: string) => { close(): void };
+    };
+    const connection = transport.openSSE("/agent/approvals/sse?workspace_id=default");
+    window.setTimeout(() => connection.close(), 1_000);
+  });
+  const request = await streamRequest;
+
+  expect(request.url()).not.toContain("access_token");
+  expect(request.url()).not.toContain(apiToken);
+  expect(request.headers()["authorization"]).toBe(`Bearer ${apiToken}`);
+  await context.close();
+});

@@ -30,6 +30,20 @@ def append_approval_record(record: dict[str, Any], *, path: Path | None = None) 
     return append_jsonl_path(path or approval_log_path(), record)
 
 
+def append_approval_records(
+    records: list[dict[str, Any]], *, path: Path | None = None
+) -> list[dict[str, Any]]:
+    """Append one approval batch as a single atomic JSONL transaction."""
+    payloads = [dict(record) for record in records]
+    if not payloads:
+        return []
+
+    def _append(rows):
+        return [*rows, *payloads], payloads
+
+    return mutate_jsonl_path(path or approval_log_path(), _append)
+
+
 def read_approval_records(*, path: Path | None = None) -> list[dict[str, Any]]:
     return read_jsonl_path(path or approval_log_path())
 

@@ -14,7 +14,10 @@ describe("authenticated SSE transport", () => {
     const body = new ReadableStream<Uint8Array>({
       start(controller) { streamController = controller; },
     });
-    const fetchMock = vi.fn().mockResolvedValue(new Response(body, { status: 200 }));
+    const fetchMock = vi.fn().mockResolvedValue(new Response(body, {
+      status: 200,
+      headers: { "Content-Type": "text/event-stream" },
+    }));
     vi.stubGlobal("fetch", fetchMock);
 
     const connection = openSSE("/agent/sse/stream/session-1?workspace_id=default");
@@ -39,7 +42,10 @@ describe("authenticated SSE transport", () => {
         controller.enqueue(encoder.encode("id: 42\nevent: turn_completed\ndata: first\ndata: second\n\n"));
       },
     });
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(body, { status: 200 })));
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(body, {
+      status: 200,
+      headers: { "Content-Type": "text/event-stream" },
+    })));
     const connection = openSSE("/agent/sse/stream/session-1?workspace_id=default");
     const received = new Promise<MessageEvent<string>>((resolve) => {
       connection.addEventListener("turn_completed", (event) => resolve(event as MessageEvent<string>));
@@ -49,5 +55,78 @@ describe("authenticated SSE transport", () => {
     expect(event.data).toBe("first\nsecond");
     expect(event.lastEventId).toBe("42");
     connection.close();
+  });
+
+  it("stops reconnecting when a static API token is rejected", async () => {
+    vi.useFakeTimers();
+    window.localStorage.setItem("NA_API_TOKEN", "expired-token");
+    const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 401 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const connection = openSSE("/agent/approvals/sse?workspace_id=default");
+    const error = new Promise<Event>((resolve) => { connection.onerror = resolve; });
+    await error;
+    await vi.advanceTimersByTimeAsync(60_000);
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    connection.close();
+    vi.useRealTimers();
+  });
+
+  it("rejects a non-SSE response instead of buffering an HTML error page", async () => {
+    vi.useFakeTimers();
+    window.localStorage.setItem("NA_API_TOKEN", "token");
+    const fetchMock = vi.fn().mockResolvedValue(new Response("<html>proxy error</html>", {
+      status: 200,
+      headers: { "Content-Type": "text/html" },
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const connection = openSSE("/agent/sse/stream/session-1?workspace_id=default");
+    const error = new Promise<Event>((resolve) => { connection.onerror = resolve; });
+    await error;
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    connection.close();
+    vi.useRealTimers();
+  });
+
+  it("reconnects with the last event id and the server retry interval", async () => {
+    vi.useFakeTimers();
+    window.localStorage.setItem("NA_API_TOKEN", "token");
+    const encoder = new TextEncoder();
+    const first = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(encoder.encode("id: 99\nretry: 250\ndata: first\n\n"));
+        controller.close();
+      },
+    });
+    let secondController!: ReadableStreamDefaultController<Uint8Array>;
+    const second = new ReadableStream<Uint8Array>({
+      start(controller) { secondController = controller; },
+    });
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(first, {
+        status: 200,
+        headers: { "Content-Type": "text/event-stream" },
+      }))
+      .mockResolvedValueOnce(new Response(second, {
+        status: 200,
+        headers: { "Content-Type": "text/event-stream" },
+      }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const connection = openSSE("/agent/sse/stream/session-1?workspace_id=default");
+    const received = new Promise<MessageEvent<string>>((resolve) => {
+      connection.onmessage = resolve;
+    });
+    expect((await received).data).toBe("first");
+    await vi.advanceTimersByTimeAsync(250);
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const options = fetchMock.mock.calls[1][1] as RequestInit;
+    expect((options.headers as Record<string, string>)["Last-Event-ID"]).toBe("99");
+    connection.close();
+    secondController.close();
+    vi.useRealTimers();
   });
 });

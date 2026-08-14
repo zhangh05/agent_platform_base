@@ -101,7 +101,9 @@ QueryLoop 不要求模型预先猜测完整工作流。模型可发起普通单�
 
 ```text
 tool policy requires approval
-  -> persist encrypted exact-call continuation + pending approvals
+  -> preallocate final approval ids
+  -> persist encrypted exact-call continuation bound to final ids
+  -> atomically persist the complete pending-approval batch, then publish it
   -> return immediately without occupying a runtime/HTTP worker
   -> user approve/reject
   -> atomically claim once
@@ -113,6 +115,11 @@ tool policy requires approval
 metadata 中的同名 JSON 不能形成授权。多个审批全部通过后才能抢占执行，重复 resolve 不会
 重复执行；进程若在执行抢占后异常退出，状态保持 `running` 并禁止自动重放破坏性操作。
 待审批轮只持久化用户消息，恢复成功后只补最终助手消息，避免把“等待审批”写成对话结论。
+
+审批创建不存在 placeholder 绑定窗口：整批审批持久化失败时 continuation 会补偿删除，
+审批只有在 durable batch 成功后才进入内存和 SSE。执行抢占后记录 `dispatching` 与 heartbeat；
+失联记录转为 `stalled` 供管理员核对，但不自动重放结果未知的工具调用。管理员只能显式关闭
+已核对的 stalled 记录，恢复执行必须由新的用户任务重新经过 QueryLoop、风险和审批边界。
 
 ## Memory Governance
 

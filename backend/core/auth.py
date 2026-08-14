@@ -247,9 +247,11 @@ def current_request_actor() -> dict | None:
 
 
 def handle_auth_status():
-    authenticated = is_current_session_authenticated()
-    platform_admin = False
-    if authenticated and _is_identity_enabled():
+    api_token_authenticated = _request_has_valid_api_token()
+    session_authenticated = is_current_session_authenticated()
+    authenticated = session_authenticated or api_token_authenticated
+    platform_admin = api_token_authenticated
+    if session_authenticated and _is_identity_enabled():
         try:
             from backend.core.identity import get_user
             current = get_user(str(flask.session.get("agent_platform_user") or ""))
@@ -260,14 +262,27 @@ def handle_auth_status():
         "ok": True,
         "login_enabled": _is_login_enabled() or _is_identity_enabled(),
         "authenticated": authenticated,
-        "username": flask.session.get("agent_platform_user") if authenticated else "",
-        "role": flask.session.get("agent_platform_role", "") if authenticated else "",
-        "organization_id": flask.session.get("agent_platform_org", "") if authenticated else "",
-        "workspace_ids": list(flask.session.get("agent_platform_workspaces") or []) if authenticated else [],
-        "home_workspace_id": flask.session.get("agent_platform_home_workspace", "") if authenticated else "",
+        "username": "api-token" if api_token_authenticated else (
+            flask.session.get("agent_platform_user") if session_authenticated else ""
+        ),
+        "role": "owner" if api_token_authenticated else (
+            flask.session.get("agent_platform_role", "") if session_authenticated else ""
+        ),
+        "organization_id": "default" if api_token_authenticated else (
+            flask.session.get("agent_platform_org", "") if session_authenticated else ""
+        ),
+        "workspace_ids": ["default"] if api_token_authenticated else (
+            list(flask.session.get("agent_platform_workspaces") or []) if session_authenticated else []
+        ),
+        "home_workspace_id": "default" if api_token_authenticated else (
+            flask.session.get("agent_platform_home_workspace", "") if session_authenticated else ""
+        ),
         "identity_enabled": _is_identity_enabled(),
         "oidc_enabled": os.environ.get("AGENT_PLATFORM_OIDC_ENABLED", "false").strip().lower() in {"1", "true", "yes", "on"},
         "platform_admin": platform_admin,
+        "auth_type": "api_token" if api_token_authenticated else (
+            "session" if session_authenticated else "none"
+        ),
     })
 
 
@@ -449,12 +464,16 @@ def register_auth_middleware(app: flask.Flask) -> None:
             if is_public_path(path):
                 return None
             session_authenticated = is_current_session_authenticated()
-            if session_authenticated or _request_has_valid_api_token():
+            api_token_authenticated = _request_has_valid_api_token()
+            if session_authenticated or api_token_authenticated:
                 if session_authenticated:
                     from storage.principal import set_storage_principal
                     flask.g._storage_principal_token = set_storage_principal(
                         str(flask.session.get("agent_platform_user") or "")
                     )
+                elif api_token_authenticated:
+                    from storage.principal import set_storage_principal
+                    flask.g._storage_principal_token = set_storage_principal("api-token")
                 denied = _authorize_identity_request()
                 return denied
             logger.warning("auth_denied: path=%s reason=no_login_session", path)
@@ -485,6 +504,8 @@ def register_auth_middleware(app: flask.Flask) -> None:
             return _unauthorized_response("Invalid API token")
 
         # Token valid — proceed
+        from storage.principal import set_storage_principal
+        flask.g._storage_principal_token = set_storage_principal("api-token")
         return None
 
     # Register teardown to clean up any auth state if needed
