@@ -232,13 +232,18 @@
 .chat-bubble.user {
   padding: 13px 16px;
   color: var(--text);
-  background: #e9f5f5;
-  border: 1px solid #d5ecec;
+  /* Keep user input perceptibly distinct from the neutral assistant reply. */
+  background: #eff9f1;
+  border: 1px solid #d5ebda;
   border-radius: 14px 14px 5px 14px;
   box-shadow: none;
   font-size: 14px;
   font-weight: 620;
   line-height: 1.65;
+}
+[data-theme="dark"] .chat-bubble.user {
+  background: rgba(107, 183, 128, 0.16);
+  border-color: rgba(120, 204, 145, 0.34);
 }
 
 .markdown-body {
