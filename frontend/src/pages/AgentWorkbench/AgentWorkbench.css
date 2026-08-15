@@ -110,7 +110,11 @@
   position: relative;
   min-height: 0;
   overflow: hidden;
-  background: var(--surface);
+  /* Neutral page surface: distinct from both sides of the conversation. */
+  background: #f4f7f5;
+}
+[data-theme="dark"] .wb-chat {
+  background: #111914;
 }
 
 .wb-chat-list {
@@ -219,22 +223,29 @@
 .chat-bubble.assistant,
 .message-row:hover .chat-bubble.assistant {
   width: 100%;
-  padding: 0;
+  padding: 18px 20px;
   color: var(--text-2);
-  background: transparent;
-  border: 0;
-  border-radius: 0;
-  box-shadow: none;
+  /* LLM responses occupy their own green-white content plane. */
+  background: #e6f5ea;
+  border: 1px solid #b9ddc3;
+  border-radius: 12px;
+  box-shadow: 0 5px 16px rgba(40, 86, 55, 0.05);
   font-size: 14px;
   line-height: 1.78;
+}
+[data-theme="dark"] .chat-bubble.assistant,
+[data-theme="dark"] .message-row:hover .chat-bubble.assistant {
+  background: rgba(94, 160, 111, 0.20);
+  border-color: rgba(137, 204, 154, 0.40);
+  box-shadow: none;
 }
 
 .chat-bubble.user {
   padding: 13px 16px;
   color: var(--text);
-  /* Keep user input perceptibly distinct from the neutral assistant reply. */
-  background: #dcf5e3;
-  border: 1px solid #9dceb0;
+  /* User input stays the lightest green plane in the conversation. */
+  background: #f1fbf4;
+  border: 1px solid #d7ebdc;
   border-radius: 14px 14px 5px 14px;
   box-shadow: none;
   font-size: 14px;
@@ -242,8 +253,8 @@
   line-height: 1.65;
 }
 [data-theme="dark"] .chat-bubble.user {
-  background: rgba(93, 177, 117, 0.26);
-  border-color: rgba(120, 204, 145, 0.48);
+  background: rgba(117, 192, 138, 0.12);
+  border-color: rgba(137, 204, 154, 0.30);
 }
 
 .markdown-body {
