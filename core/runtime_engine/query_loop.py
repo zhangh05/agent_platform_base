@@ -36,6 +36,15 @@ from .models import (
     ToolResult,
 )
 from .tracking import extract_tracking_payload, normalize_tracking_payload
+from .stage_events import (
+    EXECUTION_COMPLETED,
+    EXECUTION_STARTED,
+    MODEL_COMPLETED,
+    MODEL_STARTED,
+    PLANNER_COMPLETED,
+    RESPONSE_COMPLETED,
+    RESPONSE_STARTED,
+)
 from .context_budget import (
     RuntimeContextBudget,
     estimate_json_tokens,
@@ -1257,6 +1266,31 @@ class QueryLoop:
         )
         self._llm_call_count = 0
 
+    def _emit_stage(
+        self,
+        stage: str,
+        t_turn_started: float,
+        *,
+        stage_started_at: float | None = None,
+        **extra: Any,
+    ) -> None:
+        """Emit a semantic QueryLoop boundary with monotonic timing fields."""
+        if self._emitter is None:
+            return
+        try:
+            now = time.monotonic()
+            turn_elapsed_ms = int((now - t_turn_started) * 1000)
+            stage_elapsed_ms = int((now - (stage_started_at or t_turn_started)) * 1000)
+            self._emitter.emit(stage, {
+                "stage": stage,
+                "elapsed_ms": turn_elapsed_ms,
+                "turn_elapsed_ms": turn_elapsed_ms,
+                "stage_elapsed_ms": stage_elapsed_ms,
+                **extra,
+            })
+        except Exception:
+            _LOG.debug("stream stage emit failed: %s", stage, exc_info=True)
+
     async def run(
         self,
         ctx: StatelessContext,
@@ -1278,6 +1312,7 @@ class QueryLoop:
         execution_duration_ms = 0.0
         output_truncated = False
         output_truncation_reason = ""
+        planner_completed_emitted = False
 
         initialize_evidence_ledger(ctx.extras)
 
@@ -1511,7 +1546,33 @@ class QueryLoop:
                 )
 
             # Call LLM (with streaming for tool exec)
+            # Emit at the actual provider boundary. A planner result is complete
+            # when its first model call returns, not when the whole loop exits.
+            _, stream_scope, _ = self._llm_call_mode(messages, ctx)
+            model_started_at = time.monotonic()
+            response_stage_started_at = None
+            self._emit_stage(
+                MODEL_STARTED, t_start, stage_started_at=model_started_at,
+                iteration=iterations, stream_scope=stream_scope,
+            )
+            if stream_scope == "response":
+                response_stage_started_at = model_started_at
+                self._emit_stage(
+                    RESPONSE_STARTED, t_start, stage_started_at=response_stage_started_at,
+                    iteration=iterations,
+                )
             response = await self._call_llm(messages, ctx)
+            self._emit_stage(
+                MODEL_COMPLETED, t_start, stage_started_at=model_started_at,
+                iteration=iterations, stream_scope=stream_scope,
+                ok=bool(response is not None and not response.error),
+            )
+            if not planner_completed_emitted:
+                self._emit_stage(
+                    PLANNER_COMPLETED, t_start, stage_started_at=t_start,
+                    iteration=iterations,
+                )
+                planner_completed_emitted = True
             if response is not None and (response.metadata or {}).get("output_truncated"):
                 output_truncated = True
                 output_truncation_reason = str(
@@ -1744,6 +1805,10 @@ class QueryLoop:
 
                 # Execute tools (parallel read-only, serial writes)
                 execution_started = time.monotonic()
+                self._emit_stage(
+                    EXECUTION_STARTED, t_start, stage_started_at=execution_started,
+                    iteration=iterations, tool_calls=len(tool_calls),
+                )
                 budget.begin_execution()
                 try:
                     results = await self._executor.execute(tool_calls, ctx=ctx, budget=budget)
@@ -1763,6 +1828,12 @@ class QueryLoop:
                 if polled_results:
                     all_results.extend(polled_results)
                     results = results + polled_results
+
+                self._emit_stage(
+                    EXECUTION_COMPLETED, t_start, stage_started_at=execution_started,
+                    iteration=iterations, tool_calls=len(results),
+                    failed_tool_calls=sum(1 for result in results if not result.ok),
+                )
 
                 registered_evidence_ids = register_tool_evidence(ctx.extras, results)
                 document_images = [
@@ -1918,6 +1989,12 @@ class QueryLoop:
                 continue
 
             # No tool calls → final response
+            if response_stage_started_at is None:
+                response_stage_started_at = model_started_at
+                self._emit_stage(
+                    RESPONSE_STARTED, t_start, stage_started_at=response_stage_started_at,
+                    iteration=iterations,
+                )
             final_text = response.content or ""
             if not final_text.strip():
                 if all_results and iterations < max_iterations:
@@ -1961,6 +2038,10 @@ class QueryLoop:
                     "blocking": False,
                 }
             elapsed = (time.monotonic() - t_start) * 1000
+            self._emit_stage(
+                RESPONSE_COMPLETED, t_start, stage_started_at=response_stage_started_at,
+                iteration=iterations,
+            )
 
             return finish(
                 final_response=final_text,

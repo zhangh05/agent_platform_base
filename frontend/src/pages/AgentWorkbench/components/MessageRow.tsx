@@ -140,9 +140,17 @@ export const MessageRow = memo(function MessageRow({ m, idx: _idx, total: _total
                 </span>
                 <span className="text-sm wb-progress-text">
                   {m.progressText}
+                  {m.stageElapsedMs != null && m.stageElapsedMs > 0 ? (
+                    <span className="muted wb-progress-elapsed">
+                      {" · 阶段 "}
+                      {m.stageElapsedMs >= 1000
+                        ? (m.stageElapsedMs / 1000).toFixed(1) + "s"
+                        : m.stageElapsedMs + "ms"}
+                    </span>
+                  ) : null}
                   {m.progressElapsedMs != null && m.progressElapsedMs > 0 ? (
                     <span className="muted wb-progress-elapsed">
-                      ({m.progressElapsedMs >= 1000
+                      {" · 本轮 ("}{m.progressElapsedMs >= 1000
                         ? `${(m.progressElapsedMs / 1000).toFixed(1)}s`
                         : `${m.progressElapsedMs}ms`})
                     </span>
@@ -196,6 +204,7 @@ export const MessageRow = memo(function MessageRow({ m, idx: _idx, total: _total
     && prev.m.result === next.m.result
     && prev.m.progressText === next.m.progressText
     && prev.m.progressElapsedMs === next.m.progressElapsedMs
+    && prev.m.stageElapsedMs === next.m.stageElapsedMs
     && prev.idx === next.idx
     && prev.total === next.total
     && prev.lastUserInput === next.lastUserInput;

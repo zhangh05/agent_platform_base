@@ -28,6 +28,8 @@ Frontend expected matchers (frontend AgentWorkbench):
 # Stage events — type string sent on the realtime channel
 PLANNER_STARTED = "planner_started"
 PLANNER_COMPLETED = "planner_completed"
+MODEL_STARTED = "model_started"
+MODEL_COMPLETED = "model_completed"
 GRAPH_COMPILED = "graph_compiled"
 STRUCTURAL_VALIDATED = "structural_validated"
 SEMANTIC_VALIDATED = "semantic_validated"
@@ -58,7 +60,9 @@ HEARTBEAT = "heartbeat"
 STAGE_LABELS: dict[str, str] = {
     TURN_STARTED: "轮次开始",
     PLANNER_STARTED: "正在分析任务…",
-    PLANNER_COMPLETED: "已规划执行图",
+    PLANNER_COMPLETED: "分析完成",
+    MODEL_STARTED: "正在调用模型…",
+    MODEL_COMPLETED: "模型调用完成",
     GRAPH_COMPILED: "构建执行图…",
     STRUCTURAL_VALIDATED: "图结构校验通过",
     SEMANTIC_VALIDATED: "语义校验通过",

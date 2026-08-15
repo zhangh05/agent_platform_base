@@ -35,6 +35,8 @@ const TOKEN_FLUSH_MS = 200;
 const STAGE_LABELS: Record<string, string> = {
   turn_started:        "开始处理",
   planner_started:     "正在分析任务…",
+  model_started:       "正在调用模型…",
+  model_completed:     "模型调用完成",
   planner_completed:   "已规划执行图",
   graph_compiled:      "构建执行图…",
   structural_validated:"图结构校验通过",
@@ -308,13 +310,18 @@ export function useChatStream(
                 }
                 if (STAGE_LABELS[stageName]) {
                   const label = STAGE_LABELS[stageName];
-                  const elapsedRaw = msg.data?.elapsed_ms;
-                  const elapsedNum = typeof elapsedRaw === "number"
-                    ? elapsedRaw
-                    : parseInt(String(elapsedRaw || "0"), 10) || 0;
+                  const turnElapsedRaw = msg.data?.turn_elapsed_ms ?? msg.data?.elapsed_ms;
+                  const stageElapsedRaw = msg.data?.stage_elapsed_ms ?? turnElapsedRaw;
+                  const toElapsedMs = (value: unknown) => typeof value === "number"
+                    ? value
+                    : parseInt(String(value || "0"), 10) || 0;
                   useWorkbenchStore.getState().updateAssistant(
                     streamingMsgId,
-                    { progressText: label, progressElapsedMs: elapsedNum },
+                    {
+                      progressText: label,
+                      progressElapsedMs: toElapsedMs(turnElapsedRaw),
+                      stageElapsedMs: toElapsedMs(stageElapsedRaw),
+                    },
                     scratch,
                   );
                 }

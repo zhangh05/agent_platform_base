@@ -123,10 +123,13 @@ class SSOTRuntimeEngine:
                 return
             self._emitter = StreamEmitter()
         try:
-            elapsed_ms = int((time.monotonic() - t_start) * 1000)
+            turn_elapsed_ms = int((time.monotonic() - t_start) * 1000)
             payload = {
                 "stage": stage,
-                "elapsed_ms": elapsed_ms,
+                # elapsed_ms remains as a migration alias for older consumers.
+                "elapsed_ms": turn_elapsed_ms,
+                "turn_elapsed_ms": turn_elapsed_ms,
+                "stage_elapsed_ms": 0,
                 **extra,
             }
             self._emitter.emit(stage, payload)
@@ -146,10 +149,11 @@ class SSOTRuntimeEngine:
                     if self._emitter is None:
                         return
                     try:
-                        elapsed_ms = int((time.monotonic() - t_total) * 1000)
+                        turn_elapsed_ms = int((time.monotonic() - t_total) * 1000)
                         self._emitter.emit(HEARTBEAT, {
                             "stage": "alive",
-                            "elapsed_ms": elapsed_ms,
+                            "elapsed_ms": turn_elapsed_ms,
+                            "turn_elapsed_ms": turn_elapsed_ms,
                         })
                     except Exception:
                         pass
@@ -329,11 +333,6 @@ class SSOTRuntimeEngine:
             )
             loop_result = await query_loop.run(ctx, budget, metrics)
 
-            self._emit_stage(PLANNER_COMPLETED, t_total,
-                             iterations=loop_result.iterations)
-            self._emit_stage(EXECUTION_COMPLETED, t_total,
-                             tool_calls=loop_result.total_tool_calls)
-
             for r in loop_result.tool_results:
                 node_results[r.call_id] = ToolResult(
                         node_id=r.call_id,
@@ -368,6 +367,13 @@ class SSOTRuntimeEngine:
                     loop_result.metrics.get("execution_duration_ms", 0.0),
                     node_results,
                     loop_result.metrics.get("max_parallel_width", 0),
+            )
+            self._emit_stage(
+                TURN_COMPLETED,
+                t_total,
+                iterations=loop_result.iterations,
+                tool_calls=loop_result.total_tool_calls,
+                ok=not bool(errors),
             )
             await self._stop_heartbeat()
 
