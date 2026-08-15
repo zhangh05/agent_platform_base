@@ -3,7 +3,8 @@ FROM ghcr.io/astral-sh/uv:0.8.14 AS uv
 
 FROM python:3.12-slim AS runtime
 
-ARG PYTHON_PACKAGE_INDEX_URL=https://pypi.org/simple
+# 默认使用服务器已验证的腾讯云 PyPI 镜像；需要官方源时可通过 --build-arg 显式覆盖。
+ARG PYTHON_PACKAGE_INDEX_URL=https://mirrors.cloud.tencent.com/pypi/simple
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
