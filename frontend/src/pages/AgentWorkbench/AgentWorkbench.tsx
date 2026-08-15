@@ -1,4 +1,4 @@
-import React, { lazy, memo, Suspense, useState, useRef, useEffect, useCallback, useMemo } from "react";
+import React, { lazy, Suspense, useState, useRef, useEffect, useCallback, useMemo } from "react";
 import { jobsApi, sessionsApi, settingsApi, sseApi } from "../../api";
 import { getApiAccessToken, realtimeEndpoint } from "../../api/client";
 import type { SSEConnection } from "../../api/sse";
