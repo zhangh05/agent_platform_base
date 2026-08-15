@@ -15,28 +15,44 @@
  *  - localStorage key: "lzcore_workbench"
  */
 import { create } from "zustand";
-import { createJSONStorage, persist } from "zustand/middleware";
-import type { StateStorage } from "zustand/middleware";
+import { persist } from "zustand/middleware";
+import type { PersistStorage, StorageValue } from "zustand/middleware";
 import type { AgentResult, SessionMessage, MessageStatus, InlineToolCall, RuntimeEvent } from "../types";
 import { sanitizeAssistantText } from "../utils/displayText";
 import { runtimeAuditApi } from "../api";
 import { scopedLocalStorageKey } from "../utils/userScope";
 
-// ── Debounced localStorage — batched writes to avoid UI stutter ──
-function debouncedStorage(key: string, delayMs = 300): StateStorage {
+// ── Idle JSON persistence ──
+// createJSONStorage serializes the complete persisted state before a storage
+// adapter can debounce its write. During streaming this repeatedly serializes
+// every cached session. Keep the structured snapshot pending and stringify only
+// after the update stream has been quiet for a short interval.
+function idleJsonStorage<T>(key: string, delayMs = 500): PersistStorage<T> {
   let timer: ReturnType<typeof setTimeout> | null = null;
+  let pending: { targetKey: string; value: StorageValue<T> } | null = null;
+  const flush = () => {
+    timer = null;
+    const next = pending;
+    pending = null;
+    if (!next) return;
+    try { localStorage.setItem(next.targetKey, JSON.stringify(next.value)); } catch {}
+  };
   return {
-    getItem: () => localStorage.getItem(scopedLocalStorageKey(key)),
-    setItem: (_: string, value: string) => {
+    getItem: () => {
+      try {
+        const raw = localStorage.getItem(scopedLocalStorageKey(key));
+        return raw ? JSON.parse(raw) as StorageValue<T> : null;
+      } catch { return null; }
+    },
+    setItem: (_name, value) => {
+      pending = { targetKey: scopedLocalStorageKey(key), value };
       if (timer) clearTimeout(timer);
-      const targetKey = scopedLocalStorageKey(key);
-      timer = setTimeout(() => {
-        try { localStorage.setItem(targetKey, value); } catch {}
-        timer = null;
-      }, delayMs);
+      timer = setTimeout(flush, delayMs);
     },
     removeItem: () => {
       if (timer) clearTimeout(timer);
+      timer = null;
+      pending = null;
       try { localStorage.removeItem(scopedLocalStorageKey(key)); } catch {}
     },
   };
@@ -341,11 +357,11 @@ export const useWorkbenchStore = create<WorkbenchState>()(
           }
           if (!changed) return s;
           const updated = { ...existing, ...patch };
-          const next = capHistory(
-            { ...s.bySession, [sid]: [...cur.slice(0, idx), updated, ...cur.slice(idx + 1)] },
-            sid,
-          );
-          return { bySession: next };
+          // Updating an existing message cannot increase history cardinality;
+          // reserve capHistory (which scans every cached session) for append and merge paths.
+          return {
+            bySession: { ...s.bySession, [sid]: [...cur.slice(0, idx), updated, ...cur.slice(idx + 1)] },
+          };
         });
       },
 
@@ -665,7 +681,7 @@ export const useWorkbenchStore = create<WorkbenchState>()(
     {
       name: "lzcore_workbench",
       version: 3,
-      storage: createJSONStorage(() => debouncedStorage("lzcore_workbench")),
+      storage: idleJsonStorage<Partial<WorkbenchState>>("lzcore_workbench"),
       // v3: drop `results` from persistence — Timeline derives runs from
       // bySession now, so we only need to persist bySession + lastUserInput.
       migrate: (persisted: unknown, _version: number) => {

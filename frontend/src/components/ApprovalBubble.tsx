@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef, useCallback } from "react";
+import { memo, useEffect, useState, useRef, useCallback } from "react";
 import { useSessionStore } from "../stores/session";
 import { approvalApi, openApprovalStream } from "../api";
 import type { SSEConnection } from "../api/sse";
@@ -30,7 +30,7 @@ interface PendingApproval {
  * fallback. The backend-provided expires_at value is authoritative; the
  * browser never turns a display timer into an approval decision.
  */
-export function ApprovalBubble({ onResolved }: { onResolved?: (decision: "approve" | "reject") => void }) {
+export const ApprovalBubble = memo(function ApprovalBubble({ onResolved }: { onResolved?: (decision: "approve" | "reject") => void }) {
   const { currentSessionId, currentWorkspaceId } = useSessionStore();
   const [pending, setPending] = useState<PendingApproval | null>(null);
   const [secondsLeft, setSecondsLeft] = useState(0);
@@ -233,4 +233,4 @@ export function ApprovalBubble({ onResolved }: { onResolved?: (decision: "approv
       </div>
     </div>
   );
-}
+});

@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { useWorkbenchStore } from "../stores/workbench";
 
 describe("workbench backend message merge", () => {
@@ -212,4 +212,26 @@ describe("workbench backend message merge", () => {
     ]);
     expect(state.bySession["sess-new"][1].run_id).toBe("turn-new");
   });
+  it("defers full history serialization until streaming updates become idle", () => {
+    vi.useFakeTimers();
+    const write = vi.spyOn(Storage.prototype, "setItem");
+    const store = useWorkbenchStore.getState();
+    const assistantId = store.appendAssistantStreaming("sess-persist");
+    for (const text of ["一", "一二", "一二三"]) {
+      store.updateAssistant(assistantId, { text }, "sess-persist");
+    }
+    expect(write).not.toHaveBeenCalledWith(
+      expect.stringContaining("lzcore_workbench"), expect.any(String),
+    );
+    vi.advanceTimersByTime(499);
+    expect(write).not.toHaveBeenCalledWith(
+      expect.stringContaining("lzcore_workbench"), expect.any(String),
+    );
+    vi.advanceTimersByTime(1);
+    expect(write).toHaveBeenCalledWith(
+      expect.stringContaining("lzcore_workbench"), expect.any(String),
+    );
+    vi.useRealTimers();
+  });
+
 });
