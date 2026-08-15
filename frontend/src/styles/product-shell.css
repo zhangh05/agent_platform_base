@@ -402,3 +402,55 @@
   border-color: var(--line);
   outline: none;
 }
+
+/* Low-frequency build and governance actions stay reachable without competing
+   with the core product areas in the persistent navigation. */
+.app-nav-advanced {
+  position: relative;
+  display: inline-flex;
+  align-self: stretch;
+  align-items: center;
+}
+.app-nav-advanced > summary {
+  list-style: none;
+  cursor: pointer;
+}
+.app-nav-advanced > summary::-webkit-details-marker { display: none; }
+.app-nav-advanced.active > .app-nav-item,
+.app-nav-advanced > summary:hover,
+.app-nav-advanced > summary:focus-visible {
+  color: var(--text);
+  background: transparent;
+  outline: none;
+}
+.app-nav-advanced.active > .app-nav-item::after {
+  position: absolute;
+  right: 10px;
+  bottom: 0;
+  left: 10px;
+  height: 2px;
+  content: "";
+  background: var(--accent-2);
+  border-radius: 3px 3px 0 0;
+}
+.app-nav-advanced > .app-nav-menu { pointer-events: none; }
+.app-nav-advanced[open] > .app-nav-menu {
+  visibility: visible;
+  pointer-events: auto;
+  opacity: 1;
+  transform: translateY(0);
+}
+.mobile-nav-advanced {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line-2);
+}
+.mobile-nav-section-label {
+  display: block;
+  padding: 0 10px 6px;
+  color: var(--text-4);
+  font-size: var(--fs-11);
+  font-weight: 700;
+  letter-spacing: .05em;
+  text-transform: uppercase;
+}

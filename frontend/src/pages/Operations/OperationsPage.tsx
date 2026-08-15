@@ -7,7 +7,7 @@
  *          运行记录中点击某 run → 内联展开 trace / 事件时间线 / 失败原因
  */
 import { useEffect, useRef, useState, useCallback, useMemo } from "react";
-import { useSearchParams } from "../../router";
+import { Link, useSearchParams } from "../../router";
 import { jobsApi, workspacesApi, sessionExtApi, runtimeAuditApi } from "../../api";
 import { useSessionStore } from "../../stores/session";
 import { APP_EVENTS } from "../../utils/appEvents";
@@ -144,6 +144,7 @@ export function OperationsPage() {
   const toast = useToastStore((s) => s.show);
   const wsId = currentWorkspaceId;
   const [searchParams] = useSearchParams();
+  const auditView = searchParams.get("view") === "audit";
 
   const [jobs, setJobs] = useState<JobItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -382,7 +383,7 @@ export function OperationsPage() {
   if (!loading && !error && jobs.length === 0) {
     return (
       <div className="page operations-page">
-        <OperationsPageHeader count={0} onRefresh={loadJobs} />
+        <OperationsPageHeader count={0} onRefresh={loadJobs} auditView={auditView} />
         <div className="page-body">
           <div className="hero">
             <div className="hero-mark operations-hero-mark">
@@ -402,7 +403,7 @@ export function OperationsPage() {
   // ── Main ──
   return (
     <div className="page operations-page">
-      <OperationsPageHeader count={jobs.length} onRefresh={loadJobs} />
+      <OperationsPageHeader count={jobs.length} onRefresh={loadJobs} auditView={auditView} />
 
       {error && (
         <div className="operations-alert">
@@ -507,15 +508,18 @@ export function OperationsPage() {
    Sub-components
    ═══════════════════════════════════════════════════════ */
 
-function OperationsPageHeader({ count, onRefresh }: { count: number; onRefresh: () => void }) {
+function OperationsPageHeader({ count, onRefresh, auditView }: { count: number; onRefresh: () => void; auditView: boolean }) {
   return (
     <PageHeader
-      title="任务记录"
-      subtitle="查看任务进度、执行记录和详细过程"
+      title={auditView ? "任务中心 · 执行审计" : "任务中心"}
+      subtitle={auditView ? "查看任务处理证据、执行记录和详细过程" : "查看任务进度、执行记录和详细过程"}
     >
       {count > 0 && (
         <div className="status-pill"><span className="dot accent" />{count} 项</div>
       )}
+      <Link className="btn sm" to={auditView ? "/runs" : "/runs?view=audit"} viewTransition>
+        {auditView ? "返回任务列表" : "审计视图"}
+      </Link>
       <Button size="sm" variant="ghost" onClick={onRefresh} title="刷新"><IconRefresh size={14} /></Button>
     </PageHeader>
   );

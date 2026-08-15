@@ -1,6 +1,6 @@
 import { BrowserRouter, Link, Navigate, NavLink, useLocation } from "../router";
 import { Suspense, memo, useCallback, useEffect, useMemo, useState } from "react";
-import type { FormEvent, ReactNode } from "react";
+import type { FormEvent, MouseEvent, ReactNode } from "react";
 import { ErrorBoundary } from "../components/ErrorBoundary";
 import { SkeletonList, SkeletonTable } from "../components/common";
 import { AppLayout } from "../layouts/AppLayout";
@@ -15,12 +15,13 @@ import { ACTIVE_USER_KEY, scopedLocalStorageKey, setActiveUserScope, setActiveWo
 import {
   IconChevronLeft,
   IconChevronRight,
+  IconLayers,
   IconMoon,
   IconSun,
   IconMenu,
 } from "../components/Icon";
 import { NAV_ITEMS, buildNavGroups } from "../config/nav";
-import type { NavGroup } from "../config/nav";
+import type { NavGroup, NavItem } from "../config/nav";
 import { ExtensionRegistryProvider, useExtensionRegistry } from "../extensions/registry";
 import {
   TaskWorkbench,
@@ -32,7 +33,6 @@ import {
   DataCenter,
   MemoryPage,
   ReviewCenter,
-  RuntimeAudit,
   ExtensionCenter,
   WorkflowStudio,
   UserManagement,
@@ -128,12 +128,51 @@ const NavGroupItem = memo(function NavGroupItem({ group, currentPath }: { group:
   );
 });
 
+const AdvancedNav = memo(function AdvancedNav({ items, currentPath }: { items: NavItem[]; currentPath: string }) {
+  if (items.length === 0) return null;
+  const active = items.some((item) => item.to === currentPath);
+  const closeMenu = (event: MouseEvent<HTMLAnchorElement>) => {
+    event.currentTarget.closest("details")?.removeAttribute("open");
+  };
+  return (
+    <details className={"app-nav-advanced" + (active ? " active" : "")}>
+      <summary className="app-nav-item app-nav-advanced-trigger" aria-label="打开高级功能">
+        <IconLayers size={14} />
+        <span>高级</span>
+      </summary>
+      <div className="app-nav-menu" role="menu" aria-label="高级功能">
+        <div className="app-nav-menu-head">
+          <strong>高级功能</strong>
+          <span>低频治理、编排与平台管理操作</span>
+        </div>
+        {items.map((item) => {
+          const Icon = item.Icon;
+          return (
+            <NavLink
+              key={item.to}
+              to={item.to}
+              data-testid={item.testid}
+              className={({ isActive }) => "app-nav-menu-item" + (isActive ? " active" : "")}
+              onMouseEnter={() => preloadRoute(item.to)}
+              onFocus={() => preloadRoute(item.to)}
+              onClick={closeMenu}
+              viewTransition
+              role="menuitem"
+            >
+              <Icon size={14} />
+              <span>{item.label}</span>
+            </NavLink>
+          );
+        })}
+      </div>
+    </details>
+  );
+});
 /** Per-route skeleton shown while a lazily-loaded page chunk is fetched, so
  *  navigation feels instant instead of flashing an empty spinner. */
 const SKELETON_BY_PATH: Record<string, "list" | "table"> = {
   "/workbench": "list",
   "/runs": "list",
-  "/audit": "table",
   "/reviews": "list",
   "/knowledge": "list",
   "/data": "table",
@@ -167,7 +206,7 @@ function AppRoutes({ canManageUsers }: { canManageUsers: boolean }) {
     "/diagnostics": <ErrorBoundary><Diagnostics /></ErrorBoundary>,
     "/settings": <ErrorBoundary><Settings /></ErrorBoundary>,
     "/runs": <ErrorBoundary><OperationsPage /></ErrorBoundary>,
-    "/audit": <ErrorBoundary><RuntimeAudit /></ErrorBoundary>,
+    "/audit": <Navigate to="/runs?view=audit" replace />,
     "/reviews": <ErrorBoundary><ReviewCenter /></ErrorBoundary>,
     "/extensions": <ErrorBoundary><ExtensionCenter /></ErrorBoundary>,
     "/workflows": <ErrorBoundary><WorkflowStudio /></ErrorBoundary>,
@@ -297,7 +336,9 @@ function AppShell({ canLogout, onLogout, session }: { canLogout: boolean; onLogo
   const location = useLocation();
   const extensionRegistry = useExtensionRegistry();
   const canManageUsers = session?.platform_admin === true;
-  const navigationItems = [...NAV_ITEMS.filter((item) => !item.adminOnly || canManageUsers), ...extensionRegistry.navItems];
+  const availableNavigationItems = [...NAV_ITEMS.filter((item) => !item.adminOnly || canManageUsers), ...extensionRegistry.navItems];
+  const navigationItems = availableNavigationItems.filter((item) => !item.advanced);
+  const advancedNavigationItems = availableNavigationItems.filter((item) => item.advanced);
   const navigationGroups = useMemo(() => buildNavGroups(navigationItems), [navigationItems]);
 
   useEffect(() => {
@@ -357,6 +398,7 @@ function AppShell({ canLogout, onLogout, session }: { canLogout: boolean; onLogo
 
         <nav className="app-nav" aria-label="主导航">
           {navigationGroups.map((group) => <NavGroupItem key={group.id} group={group} currentPath={location.pathname} />)}
+          <AdvancedNav items={advancedNavigationItems} currentPath={location.pathname} />
         </nav>
 
         <div className="app-actions" aria-label="页面操作">
@@ -400,7 +442,7 @@ function AppShell({ canLogout, onLogout, session }: { canLogout: boolean; onLogo
         {/* AppLayout renders the persistent sidebar + main grid once; the
             Suspense boundary keeps it visible while a route's chunk loads,
             so navigation never tears down the shell. */}
-        <AppLayout navigationItems={navigationItems}>
+        <AppLayout navigationItems={navigationItems} advancedNavigationItems={advancedNavigationItems}>
           <AppRoutes canManageUsers={canManageUsers} />
         </AppLayout>
       </div>

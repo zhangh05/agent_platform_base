@@ -9,6 +9,7 @@ import type { NavItem } from "../config/nav";
 interface AppLayoutProps {
   children: ReactNode;
   navigationItems: NavItem[];
+  advancedNavigationItems: NavItem[];
 }
 
 const MobileNavItem = memo(function MobileNavItem({ to, label, testid, Icon }: NavItem) {
@@ -41,7 +42,7 @@ const MobileNavItem = memo(function MobileNavItem({ to, label, testid, Icon }: N
  *
  * v3.9: Inspector panel removed — diagnostics moved inline to Timeline.
  */
-export function AppLayout({ children, navigationItems }: AppLayoutProps) {
+export function AppLayout({ children, navigationItems, advancedNavigationItems }: AppLayoutProps) {
   const sidebarOpen = useUIStore((s) => s.sidebarOpen);
   const mobileNavOpen = useUIStore((s) => s.mobileNavOpen);
   const setMobileNavOpen = useUIStore((s) => s.setMobileNavOpen);
@@ -141,6 +142,14 @@ export function AppLayout({ children, navigationItems }: AppLayoutProps) {
             <nav className="mobile-nav" aria-label="页面导航">
               {navigationItems.map((item) => <MobileNavItem key={item.to} {...item} />)}
             </nav>
+            {advancedNavigationItems.length > 0 ? (
+              <section className="mobile-nav-advanced" aria-label="高级功能">
+                <span className="mobile-nav-section-label">高级功能</span>
+                <nav className="mobile-nav" aria-label="高级页面导航">
+                  {advancedNavigationItems.map((item) => <MobileNavItem key={item.to} {...item} />)}
+                </nav>
+              </section>
+            ) : null}
             <Sidebar />
           </div>
         )}

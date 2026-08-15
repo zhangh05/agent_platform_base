@@ -85,4 +85,10 @@ describe("OperationsPage", () => {
       expect(getRequests().some((req) => req.url === "/runs/run-missing")).toBe(true);
     });
   });
+  it("renders the audit query as a task-center evidence view", async () => {
+    enqueue("/jobs", { status: 200, data: { jobs: [] } });
+    render(<MemoryRouter initialEntries={["/runs?view=audit"]}><OperationsPage /></MemoryRouter>);
+    expect(await screen.findByText("任务中心 · 执行审计")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "返回任务列表" })).toHaveAttribute("href", "/runs");
+  });
 });

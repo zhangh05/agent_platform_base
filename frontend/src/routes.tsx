@@ -51,9 +51,6 @@ export const MemoryPage = lazyWithPreload(() =>
 export const ReviewCenter = lazyWithPreload(() =>
   import("./pages/ReviewCenter/ReviewCenter").then((m) => ({ default: m.ReviewCenter })),
 );
-export const RuntimeAudit = lazyWithPreload(() =>
-  import("./pages/RuntimeAudit/RuntimeAudit").then((m) => ({ default: m.RuntimeAudit })),
-);
 export const ExtensionCenter = lazyWithPreload(() =>
   import("./pages/ExtensionCenter/ExtensionCenter").then((m) => ({ default: m.ExtensionCenter })),
 );
@@ -73,7 +70,6 @@ const PRELOAD: Record<string, () => PageModule> = {
   "/diagnostics": Diagnostics.preload,
   "/settings": Settings.preload,
   "/runs": OperationsPage.preload,
-  "/audit": RuntimeAudit.preload,
   "/reviews": ReviewCenter.preload,
   "/extensions": ExtensionCenter.preload,
   "/workflows": WorkflowStudio.preload,
