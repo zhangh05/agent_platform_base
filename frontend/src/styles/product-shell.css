@@ -345,3 +345,20 @@
   .app-sidebar { width: min(310px, 86vw); }
   .sidebar-content { padding-top: 12px; }
 }
+
+/* An open session menu must outrank following sidebar panels.  Elevating the
+   owning panel (not only the popup) prevents transformed/interactive run rows
+   from painting above or intercepting the session lifecycle actions. */
+.sidebar-session-panel:has(.session-menu[open]) {
+  position: relative;
+  z-index: 24;
+}
+
+.sidebar-session-panel:has(.session-menu[open]) .session-item:has(.session-menu[open]) {
+  z-index: 1;
+}
+
+.sidebar-runs-panel {
+  position: relative;
+  z-index: 0;
+}
