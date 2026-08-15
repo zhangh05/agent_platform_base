@@ -146,7 +146,7 @@
 }
 
 .app-sidebar {
-  background: #f8f9f9;
+  background: var(--surface-2);
   border-right-color: var(--line-2);
 }
 
