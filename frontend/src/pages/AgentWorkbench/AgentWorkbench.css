@@ -687,7 +687,7 @@
 
 /* Right-hand realtime status can collapse to a narrow, always-recoverable rail. */
 .wb-shell.is-progress-collapsed {
-  grid-template-columns: minmax(0, 1fr) 46px;
+  grid-template-columns: minmax(0, 1fr) 40px;
 }
 .task-progress-collapse {
   display: inline-flex;
