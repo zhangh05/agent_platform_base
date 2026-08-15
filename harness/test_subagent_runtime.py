@@ -375,3 +375,61 @@ def test_tracking_exposes_only_latest_poll_but_keeps_full_events(monkeypatch):
     assert exposed[0].call_id == "spawn-1_track_3"
     assert exposed[0].output["tracking_poll_count"] == 3
     assert len(ctx.extras["tracking_events"]) == 4
+
+
+def test_agent_spawn_defaults_to_tracked_background(monkeypatch):
+    import core.tools.general_tools.agent_tools as agent_tools
+    from core.tools.schemas import ToolInvocation
+
+    captured = {}
+
+    def fake_run(**kwargs):
+        captured.update(kwargs)
+        return {
+            "ok": True,
+            "status": "running",
+            "subtask_id": "sub-default-background",
+            "profile_id": "research_agent",
+        }
+
+    monkeypatch.setattr(agent_tools, "_run_durable_subagent", fake_run)
+    result = agent_tools.handle_agent_spawn(ToolInvocation(
+        tool_id="agent.manage",
+        workspace_id="default",
+        session_id="session-default-background",
+        arguments={"action": "spawn", "instruction": "查询天气并返回可验证结果"},
+    ))
+
+    assert result["ok"] is True
+    assert captured["background"] is True
+
+
+def test_agent_spawn_honors_explicit_foreground(monkeypatch):
+    import core.tools.general_tools.agent_tools as agent_tools
+    from core.tools.schemas import ToolInvocation
+
+    captured = {}
+
+    def fake_run(**kwargs):
+        captured.update(kwargs)
+        return {
+            "ok": True,
+            "status": "succeeded",
+            "subtask_id": "sub-explicit-foreground",
+            "profile_id": "research_agent",
+        }
+
+    monkeypatch.setattr(agent_tools, "_run_durable_subagent", fake_run)
+    result = agent_tools.handle_agent_spawn(ToolInvocation(
+        tool_id="agent.manage",
+        workspace_id="default",
+        session_id="session-explicit-foreground",
+        arguments={
+            "action": "spawn",
+            "instruction": "执行需要同步完成的前台研究",
+            "background": False,
+        },
+    ))
+
+    assert result["ok"] is True
+    assert captured["background"] is False

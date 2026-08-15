@@ -128,7 +128,7 @@ BUILTIN_CONTRACTS: dict[str, ToolContract] = {
         side_effect="read",
         risk_level="low",
         idempotent=True,
-        timeout_seconds=30,
+        timeout_seconds=120,
         concurrency_group="subagent",
     ),
     "system.manage": ToolContract(

@@ -118,7 +118,7 @@ def _spawn_agent(inv: ToolInvocation, profile_id: str, default_max_turns: int = 
         max_turns = int(args.get("max_turns", 0) or 0)
     except (TypeError, ValueError):
         return _error_inv(inv, "max_turns must be an integer")
-    background = bool(args.get("background", False))
+    background = args.get("background") is not False
 
     if not instruction:
         return _error_inv(inv, "instruction is required")
