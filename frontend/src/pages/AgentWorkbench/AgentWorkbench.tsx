@@ -610,7 +610,7 @@ export function TaskWorkbench() {
               onChange={(event) => handleInputChange(event.target.value)}
               onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); onSend(); } }}
               disabled={!currentSessionId || turnRunning}
-              rows={2}
+              rows={1}
               data-testid="chat-input"
               spellCheck={false}
             />
