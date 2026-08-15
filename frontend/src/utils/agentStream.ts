@@ -24,6 +24,15 @@ function _isPlaceholder(text: string): boolean {
   return PLACEHOLDER_PATTERNS.some((p) => t.includes(p));
 }
 
+/**
+ * HTTP fallback is safe only before a turn frame has been submitted to the
+ * WebSocket. After submission, transport failure has an ambiguous outcome:
+ * the server may already be executing the same client_request_id.
+ */
+export function canFallbackToHttp(wsTurnSubmitted: boolean): boolean {
+  return !wsTurnSubmitted;
+}
+
 export function beginModelStep(_previous: string = ""): AgentStreamState {
   return { draft: "" };
 }

@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { beginModelStep, discardToolCallDraft, finalizeStreamText } from "../utils/agentStream";
+import { beginModelStep, canFallbackToHttp, discardToolCallDraft, finalizeStreamText } from "../utils/agentStream";
 
 describe("agent stream text", () => {
+  it("allows HTTP fallback only before a WebSocket turn frame is submitted", () => {
+    expect(canFallbackToHttp(false)).toBe(true);
+    expect(canFallbackToHttp(true)).toBe(false);
+  });
   it("discards text emitted by a model step that becomes a tool call", () => {
     const state = beginModelStep("旧内容");
     state.draft += "3";

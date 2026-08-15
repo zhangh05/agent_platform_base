@@ -20,7 +20,7 @@ import { useSessionStore } from "../stores/session";
 import { isApiError } from "../types";
 import type { AgentResult, ToolCallResult, InlineToolCall } from "../types";
 import { sanitizeAssistantText, toolLabel, filterStreamingThink, type ThinkFilterState } from "../utils/displayText";
-import { beginModelStep, discardToolCallDraft, finalizeStreamText } from "../utils/agentStream";
+import { beginModelStep, canFallbackToHttp, discardToolCallDraft, finalizeStreamText } from "../utils/agentStream";
 import { agentResultFromWsDone } from "../utils/wsResult";
 import { notifyRunCompleted } from "../utils/appEvents";
 import { createStreamActivityWatchdog, STREAM_IDLE_TIMEOUT_MS } from "../utils/streamActivity";
@@ -191,6 +191,7 @@ export function useChatStream(
     const wsUrl = realtimeEndpoint("/ws/agent");
     abortRef.current = new AbortController();
 
+    let wsTurnSubmitted = false;
     try {
       const socket = new WebSocket(wsUrl);
       msgWsRef.current = socket;
@@ -210,6 +211,7 @@ export function useChatStream(
       });
       await wsReady;
 
+      wsTurnSubmitted = true;
       socket.send(JSON.stringify({
         type: "message",
         user_input: fullText,
@@ -474,8 +476,16 @@ export function useChatStream(
       }
       return;
     } catch {
-      // WebSocket failed, fall back to HTTP.
       if (msgWsRef.current) { try { msgWsRef.current.close(); } catch { /* noop */ } }
+      if (!canFallbackToHttp(wsTurnSubmitted)) {
+        const interruption = "实时连接在请求提交后中断；为避免重复执行，未自动重放。可等待会话任务恢复或手动重试。";
+        useWorkbenchStore.getState().updateAssistant(streamingMsgId, {
+          status: "error", text: interruption, error: interruption,
+        }, effectiveSessionId);
+        onInterruption?.(interruption);
+        return;
+      }
+      // No turn frame was submitted, so HTTP is a safe initial transport fallback.
       if (!workspaceId) return;
       try {
         const res = await agentApi.run({
@@ -492,7 +502,7 @@ export function useChatStream(
           onSessionResolved(resolvedSid);
         }
         const tcArray = (res.tool_calls ?? []).map((tc: ToolCallResult) => ({
-          tool_id: tc.tool_id, tool_name: toolLabel(tc.tool_id), ok: tc.ok,
+          call_id: tc.call_id, tool_id: tc.tool_id, tool_name: toolLabel(tc.tool_id), ok: tc.ok,
           summary: tc.summary, duration_ms: tc.duration_ms ?? undefined,
           errors: tc.errors, artifacts: tc.artifacts,
           orchestration: (tc.metadata?.orchestration || undefined) as InlineToolCall["orchestration"],
