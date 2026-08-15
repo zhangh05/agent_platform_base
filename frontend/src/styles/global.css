@@ -9199,7 +9199,7 @@ summary:focus-visible,
 
 /* ─── 2026 operations-console refinement ─────────────────────────────── */
 .wb-shell {
-  grid-template-rows: 62px auto 42px minmax(0, 1fr) auto;
+  grid-template-rows: minmax(0, 1fr);
   background: var(--bg);
   border: 1px solid var(--line-2);
   border-radius: 14px;
