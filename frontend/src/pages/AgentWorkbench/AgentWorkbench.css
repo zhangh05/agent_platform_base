@@ -1,6 +1,6 @@
 .wb-shell {
   display: grid !important;
-  grid-template-columns: minmax(0, 1fr) clamp(300px, 20vw, 340px);
+  grid-template-columns: minmax(0, 1fr) clamp(272px, 18vw, 310px);
   grid-template-rows: minmax(0, 1fr);
   height: 100%;
   min-height: 0;
@@ -10,7 +10,7 @@
 
 .wb-conversation-column {
   display: grid;
-  grid-template-rows: 68px minmax(0, 1fr) auto auto;
+  grid-template-rows: 64px minmax(0, 1fr) auto auto;
   min-width: 0;
   min-height: 0;
   overflow: hidden;
@@ -24,7 +24,7 @@
   justify-content: space-between;
   gap: 20px;
   min-width: 0;
-  padding: 0 26px;
+  padding: 0 clamp(20px, 2.2vw, 30px);
   background: var(--surface);
   border-bottom: 1px solid var(--line-2);
 }
@@ -120,7 +120,7 @@
 .wb-chat-list {
   height: 100%;
   min-height: 0;
-  padding: 32px clamp(26px, 3vw, 42px) 40px;
+  padding: 26px clamp(22px, 3vw, 48px) 28px;
   overflow-y: auto;
   scroll-behavior: auto;
 }
@@ -185,6 +185,13 @@
   border-color: color-mix(in srgb, var(--accent) 32%, var(--line));
 }
 
+/* Keep the reading column centered while the conversation shell stays fluid. */
+.wb-chat-list > .message-row {
+  max-width: 900px;
+  margin-right: auto;
+  margin-left: auto;
+}
+
 .message-row {
   gap: 12px;
   margin-bottom: 30px;
@@ -196,8 +203,8 @@
 
 .message-stack,
 .message-row.assistant .message-stack {
-  width: min(760px, calc(100% - 44px));
-  max-width: min(760px, calc(100% - 44px));
+  width: min(820px, calc(100% - 44px));
+  max-width: min(820px, calc(100% - 44px));
 }
 
 .message-row.user .message-stack {
@@ -287,7 +294,7 @@
   display: flex;
   align-items: center;
   gap: 10px;
-  width: min(760px, calc(100% - 44px));
+  width: min(820px, calc(100% - 44px));
   margin-left: 42px;
   padding: 14px 16px;
   color: var(--text-3);
@@ -309,7 +316,7 @@
 }
 
 .wb-input-bar {
-  padding: 10px 16px 8px;
+  padding: 8px clamp(16px, 2.2vw, 30px) 7px;
   background: var(--surface);
   border-top: 1px solid var(--line-2);
 }
@@ -318,8 +325,8 @@
   display: grid;
   grid-template-rows: minmax(38px, auto) 34px;
   width: 100%;
-  max-width: none;
-  min-height: 82px;
+  max-width: 900px;
+  min-height: 76px;
   margin: 0 auto;
   padding: 8px 10px 6px;
   overflow: hidden;
@@ -408,14 +415,14 @@
   display: flex;
   justify-content: space-between;
   gap: 16px;
-  max-width: none;
+  max-width: 900px;
   margin: 6px auto 0;
   color: var(--text-4);
   font-size: 10px;
 }
 
 .wb-attachments {
-  max-width: none;
+  max-width: 900px;
   margin: 0 auto 8px;
 }
 
@@ -438,8 +445,8 @@
   align-items: flex-start;
   justify-content: space-between;
   gap: 18px;
-  min-height: 76px;
-  padding: 18px 18px 16px;
+  min-height: 68px;
+  padding: 15px 16px 13px;
   border-bottom: 1px solid var(--line-2);
 }
 
@@ -454,7 +461,7 @@
 
 .task-progress-header h2 {
   color: var(--text);
-  font-size: 17px;
+  font-size: 16px;
   font-weight: 760;
 }
 
@@ -478,14 +485,14 @@
 
 .task-phase-list {
   min-height: 0;
-  padding: 18px 18px 22px;
+  padding: 14px 16px 18px;
   overflow-y: auto;
 }
 
 .task-phase {
   display: grid;
   grid-template-columns: 34px minmax(0, 1fr);
-  min-height: 84px;
+  min-height: 76px;
 }
 
 .task-phase-rail {
@@ -639,7 +646,7 @@
 .task-progress-footer {
   display: grid;
   gap: 10px;
-  padding: 14px 18px 16px;
+  padding: 12px 16px 14px;
   color: var(--text-4);
   border-top: 1px solid var(--line-2);
   font-size: 10px;
@@ -659,7 +666,7 @@
 }
 
 @media (max-width: 1180px) {
-  .wb-shell { grid-template-columns: minmax(0, 1fr) 300px; }
+  .wb-shell { grid-template-columns: minmax(0, 1fr) 280px; }
   .wb-header { padding-inline: 18px; }
   .wb-header-status { display: none; }
   .task-progress-header, .task-phase-list, .task-progress-footer { padding-inline: 16px; }
@@ -687,7 +694,7 @@
 
 /* Right-hand realtime status can collapse to a narrow, always-recoverable rail. */
 .wb-shell.is-progress-collapsed {
-  grid-template-columns: minmax(0, 1fr) 40px;
+  grid-template-columns: minmax(0, 1fr) 36px;
 }
 .task-progress-collapse {
   display: inline-flex;
@@ -733,7 +740,7 @@
 .task-progress-panel.is-collapsed .task-progress-collapse {
   flex-direction: column;
   width: 34px;
-  min-height: 76px;
+  min-height: 68px;
   padding: 8px 3px;
 }
 .task-progress-panel.is-collapsed .task-progress-collapse > span:last-child {
