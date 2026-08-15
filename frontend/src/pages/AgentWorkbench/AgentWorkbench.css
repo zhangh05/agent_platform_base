@@ -120,7 +120,7 @@
 .wb-chat-list {
   height: 100%;
   min-height: 0;
-  padding: 32px clamp(26px, 3vw, 42px) 40px;
+  padding: 32px 14px 40px;
   overflow-y: auto;
   scroll-behavior: auto;
 }
@@ -669,7 +669,7 @@
   .wb-shell { grid-template-columns: minmax(0, 1fr); }
   .task-progress-panel { display: none; }
   .wb-conversation-column { border-right: 0; }
-  .wb-chat-list { padding-inline: 18px; }
+  .wb-chat-list { padding-inline: 12px; }
   .wb-header { gap: 10px; }
   .wb-mode-btn { padding-inline: 8px; }
   .wb-mode-btn span { display: none; }
