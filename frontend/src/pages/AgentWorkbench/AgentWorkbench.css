@@ -226,8 +226,8 @@
   padding: 18px 20px;
   color: var(--text-2);
   /* LLM responses occupy their own green-white content plane. */
-  background: #e6f5ea;
-  border: 1px solid #b9ddc3;
+  background: #f3faf5;
+  border: 1px solid #d2e7d8;
   border-radius: 12px;
   box-shadow: 0 5px 16px rgba(40, 86, 55, 0.05);
   font-size: 14px;
@@ -235,8 +235,8 @@
 }
 [data-theme="dark"] .chat-bubble.assistant,
 [data-theme="dark"] .message-row:hover .chat-bubble.assistant {
-  background: rgba(94, 160, 111, 0.20);
-  border-color: rgba(137, 204, 154, 0.40);
+  background: rgba(94, 160, 111, 0.15);
+  border-color: rgba(137, 204, 154, 0.32);
   box-shadow: none;
 }
 
