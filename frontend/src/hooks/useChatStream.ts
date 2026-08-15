@@ -24,40 +24,13 @@ import { beginModelStep, discardToolCallDraft, finalizeStreamText } from "../uti
 import { agentResultFromWsDone } from "../utils/wsResult";
 import { notifyRunCompleted } from "../utils/appEvents";
 import { createStreamActivityWatchdog, STREAM_IDLE_TIMEOUT_MS } from "../utils/streamActivity";
+import { progressPatchForStreamStage } from "../utils/streamStage";
 
 const WS_TIMEOUT_MS = 3000;
 // Rendering Markdown is substantially more expensive than receiving tokens.
 // Five text-node updates per second looks fluid and leaves enough main-thread
 // time for input, navigation and scrolling during long responses.
 const TOKEN_FLUSH_MS = 200;
-
-// Stage label table mirrors core.runtime_engine/stage_events.py
-const STAGE_LABELS: Record<string, string> = {
-  turn_started:        "开始处理",
-  planner_started:     "正在分析任务…",
-  model_started:       "正在调用模型…",
-  model_completed:     "模型调用完成",
-  planner_completed:   "已规划执行图",
-  graph_compiled:      "构建执行图…",
-  structural_validated:"图结构校验通过",
-  semantic_validated:  "语义校验通过",
-  semantic_invalid:    "语义校验发现问题",
-  pre_repair_started:  "自动修复阶段…",
-  pre_repair_completed:"已自动修复",
-  risk_assessed:       "风险评估完成",
-  budget_ok:           "预算检查通过",
-  execution_started:   "开始执行工具…",
-  execution_completed: "工具执行完成",
-  orchestration_planned: "已生成动态执行计划",
-  orchestration_layer_started: "正在执行协同步骤…",
-  orchestration_layer_completed: "协同步骤执行完成",
-  repair_attempt:      "重试节点",
-  merge_completed:     "汇总执行结果",
-  response_started:    "整理回复…",
-  response_completed:  "回复已就绪",
-  turn_completed:      "处理完成",
-  heartbeat:           "仍在处理…",
-};
 
 export type ChatStreamAttachment = {
   file_id: string;
@@ -308,20 +281,11 @@ export function useChatStream(
                   streamedText = "";
                   useWorkbenchStore.getState().updateAssistant(streamingMsgId, { text: "" }, scratch);
                 }
-                if (STAGE_LABELS[stageName]) {
-                  const label = STAGE_LABELS[stageName];
-                  const turnElapsedRaw = msg.data?.turn_elapsed_ms ?? msg.data?.elapsed_ms;
-                  const stageElapsedRaw = msg.data?.stage_elapsed_ms ?? turnElapsedRaw;
-                  const toElapsedMs = (value: unknown) => typeof value === "number"
-                    ? value
-                    : parseInt(String(value || "0"), 10) || 0;
+                const progressPatch = progressPatchForStreamStage(stageName, msg.data);
+                if (progressPatch) {
                   useWorkbenchStore.getState().updateAssistant(
                     streamingMsgId,
-                    {
-                      progressText: label,
-                      progressElapsedMs: toElapsedMs(turnElapsedRaw),
-                      stageElapsedMs: toElapsedMs(stageElapsedRaw),
-                    },
+                    progressPatch,
                     scratch,
                   );
                 }
