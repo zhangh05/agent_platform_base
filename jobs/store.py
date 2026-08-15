@@ -4,6 +4,7 @@
 import json, shutil
 import logging
 from typing import Optional
+from contextlib import nullcontext
 
 from jobs.schemas import JobRecord, JobEvent
 from jobs.redaction import (
@@ -211,32 +212,37 @@ def get_next_queued_job() -> Optional[JobRecord]:
 
 
 def reconcile_running_jobs(finished_at: str, started_before: str) -> int:
-    """Mark jobs left running by a previous backend process as failed."""
+    """Mark pre-start running jobs failed across legacy and user-scoped storage."""
+    from storage.principal import known_storage_principals, storage_principal
     from storage.workspace_store import list_workspace_ids
 
     reconciled = 0
-    for ws_id in list_workspace_ids():
-        jobs_dir = _workspace_path(ws_id) / "jobs"
-        if not jobs_dir.is_dir():
-            continue
-        for path in jobs_dir.glob("*/*.json"):
-            if path.name != f"{path.parent.name}.json":
-                continue
-            try:
-                data = json.loads(path.read_text(encoding="utf-8"))
-            except (OSError, json.JSONDecodeError):
-                continue
-            if data.get("status") != "running":
-                continue
-            if str(data.get("updated_at") or "") >= started_before:
-                continue
-            result = update_job(ws_id, str(data.get("job_id") or path.parent.name), {
-                "status": "failed",
-                "finished_at": finished_at,
-                "error": "backend_restart_during_job",
-            })
-            if result:
-                reconciled += 1
+    principals = ["", *known_storage_principals()]
+    for username in principals:
+        context = storage_principal(username) if username else nullcontext()
+        with context:
+            for ws_id in list_workspace_ids():
+                jobs_dir = _workspace_path(ws_id) / "jobs"
+                if not jobs_dir.is_dir():
+                    continue
+                for path in jobs_dir.glob("*/*.json"):
+                    if path.name != f"{path.parent.name}.json":
+                        continue
+                    try:
+                        data = json.loads(path.read_text(encoding="utf-8"))
+                    except (OSError, json.JSONDecodeError):
+                        continue
+                    if data.get("status") != "running":
+                        continue
+                    if str(data.get("updated_at") or "") >= started_before:
+                        continue
+                    result = update_job(ws_id, str(data.get("job_id") or path.parent.name), {
+                        "status": "failed",
+                        "finished_at": finished_at,
+                        "error": "backend_restart_during_job",
+                    })
+                    if result:
+                        reconciled += 1
     return reconciled
 
 

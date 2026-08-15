@@ -1,16 +1,18 @@
 // src/routes.tsx
 //
-// Route-level code splitting. Every page is loaded through `React.lazy`
-// so the initial bundle ships only the app shell + the React vendor —
-// each page becomes its own chunk fetched on demand. This is the single
-// biggest win for first paint / TTI and keeps navigation light.
-//
+// Route-level code splitting keeps secondary pages in on-demand chunks.
+// The workbench is the default product route and is loaded with the app shell,
+// so a dynamic chunk cannot leave the primary session surface in a Suspense
+// fallback when a navigation or cache handoff is interrupted.
+
 // `lazyWithPreload` also exposes each page's import promise as `.preload`,
 // so the shell can warm a page's chunk on nav hover/focus (see App.tsx and
 // AppLayout.tsx). By the time the user clicks, the chunk is usually already
 // in cache and the route swaps instantly.
 
 import { lazy, type ComponentType, type LazyExoticComponent } from "react";
+import { TaskWorkbench } from "./pages/AgentWorkbench/AgentWorkbench";
+export { TaskWorkbench };
 
 type AnyComp = ComponentType<any>;
 type PageModule = Promise<{ default: AnyComp }>;
@@ -25,9 +27,6 @@ function lazyWithPreload(
   return Comp;
 }
 
-export const TaskWorkbench = lazyWithPreload(() =>
-  import("./pages/AgentWorkbench/AgentWorkbench").then((m) => ({ default: m.TaskWorkbench })),
-);
 export const CapabilityCenter = lazyWithPreload(() =>
   import("./pages/CapabilityCenter/CapabilityCenter").then((m) => ({ default: m.CapabilityCenter })),
 );
@@ -66,7 +65,7 @@ export const UserManagement = lazyWithPreload(() =>
 );
 // Path → preload thunk. Keys match `NAV_ITEMS.to` plus the secondary routes.
 const PRELOAD: Record<string, () => PageModule> = {
-  "/workbench": TaskWorkbench.preload,
+  "/workbench": () => Promise.resolve({ default: TaskWorkbench }),
   "/knowledge": KnowledgeLibrary.preload,
   "/data": DataCenter.preload,
   "/memory": MemoryPage.preload,
