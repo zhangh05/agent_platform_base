@@ -41,7 +41,7 @@ function normalizeAssistantMarkdown(text: string): string {
  */
 function stripThinkTags(text: string): string {
   // Unified regex matches both <think> and <thinking> (case-insensitive)
-  const re = /<\/?(?:think|thinking)\b[^>]*>/gi;
+  const re = /<\/?(?:think|thinking|reasoning)\b[^>]*>/gi;
   let depth = 0;
   let start = -1;
   const parts: string[] = [];
@@ -69,75 +69,57 @@ function stripThinkTags(text: string): string {
   return parts.join('');
 }
 
+export type ThinkFilterState = 'idle' | 'open' | 'done';
+type ThinkFilterRuntimeState = { mode: ThinkFilterState; pending?: string };
+
+const THINK_TAG = /<\/?(?:think|thinking|reasoning)\b[^>]*>/i;
+const THINK_TAG_PREFIXES = ['<think', '<thinking', '<reasoning', '</think', '</thinking', '</reasoning'];
+
+function trailingThinkTagPrefix(source: string): string {
+  const start = source.lastIndexOf('<');
+  if (start < 0) return '';
+  const suffix = source.slice(start);
+  const normalized = suffix.toLowerCase();
+  if (THINK_TAG_PREFIXES.some((prefix) => prefix.startsWith(normalized))) {
+    return suffix;
+  }
+  return /^<\/?(?:think|thinking|reasoning)\b[^>]*$/i.test(suffix) ? suffix : '';
+}
+
 /**
  * Streaming-time think tag filter.
  *
- * Unlike stripThinkTags (final text post-processing), this handles
- * partial/mid-stream tags. It maintains a state machine across
- * successive token chunks:
- *
- *   IDLE → OPEN  on <think> or <thinking>
- *   OPEN → DONE  on </think> or </thinking>
- *   DONE → IDLE  next token after close
- *
- * Returns the visible text for this chunk.
+ * Provider chunks are arbitrary byte/token boundaries, so an opening or closing
+ * think tag can be split across several chunks. Keep an incomplete tag suffix in
+ * state until it can be classified; never expose a potential reasoning marker.
  */
-export type ThinkFilterState = 'idle' | 'open' | 'done';
-
 export function filterStreamingThink(
   chunk: string,
-  state: { mode: ThinkFilterState },
+  state: ThinkFilterRuntimeState,
 ): string {
   if (!chunk) return '';
 
-  const re = /<\/?(?:think|thinking)\b[^>]*>/gi;
-  const tags: Array<{ index: number; len: number; isClose: boolean }> = [];
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(chunk)) !== null) {
-    tags.push({
-      index: m.index,
-      len: m[0].length,
-      isClose: m[0].toLowerCase().startsWith('</'),
-    });
-  }
-
-  if (tags.length === 0) {
-    // No tags in this chunk — pass through only if not inside think block
-    if (state.mode === 'open') return '';
-    if (state.mode === 'done') {
-      state.mode = 'idle';
-    }
-    return chunk;
-  }
-
-  // Has tags — handle state transitions
+  if (state.mode === 'done') state.mode = 'idle';
+  let source = `${state.pending || ''}${chunk}`;
+  state.pending = '';
   let visible = '';
-  let pos = 0;
 
-  for (const tag of tags) {
-    if (!tag.isClose) {
-      // Opening tag: material before it is visible, then enter think mode
-      if (state.mode === 'idle' || state.mode === 'done') {
-        visible += chunk.slice(pos, tag.index);
-        state.mode = 'open';
-      }
-    } else {
-      // Closing tag: exit think mode, material after it is visible
-      if (state.mode === 'open') {
-        state.mode = 'done';
-        pos = tag.index + tag.len;
-      }
+  while (source) {
+    const tag = THINK_TAG.exec(source);
+    if (tag) {
+      const before = source.slice(0, tag.index);
+      if (state.mode !== 'open') visible += before;
+      state.mode = tag[0].toLowerCase().startsWith('</') ? 'idle' : 'open';
+      source = source.slice(tag.index + tag[0].length);
+      continue;
     }
-  }
 
-  // Remaining text after last tag
-  if (state.mode === 'done') {
-    visible += chunk.slice(pos);
-    state.mode = 'idle';
-  } else if (state.mode === 'idle') {
-    visible += chunk.slice(pos);
+    const pending = trailingThinkTagPrefix(source);
+    const stable = source.slice(0, source.length - pending.length);
+    if (state.mode !== 'open') visible += stable;
+    state.pending = pending;
+    break;
   }
-  // if mode === 'open', remaining text is inside think block — discard
 
   return visible;
 }
