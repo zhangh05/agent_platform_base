@@ -233,8 +233,8 @@
   padding: 13px 16px;
   color: var(--text);
   /* Keep user input perceptibly distinct from the neutral assistant reply. */
-  background: #eff9f1;
-  border: 1px solid #d5ebda;
+  background: #dcf5e3;
+  border: 1px solid #9dceb0;
   border-radius: 14px 14px 5px 14px;
   box-shadow: none;
   font-size: 14px;
@@ -242,8 +242,8 @@
   line-height: 1.65;
 }
 [data-theme="dark"] .chat-bubble.user {
-  background: rgba(107, 183, 128, 0.16);
-  border-color: rgba(120, 204, 145, 0.34);
+  background: rgba(93, 177, 117, 0.26);
+  border-color: rgba(120, 204, 145, 0.48);
 }
 
 .markdown-body {
