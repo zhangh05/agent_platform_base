@@ -175,3 +175,40 @@ def test_finished_live_turn_snapshot_is_refreshable(monkeypatch):
     assert active["status"] == "succeeded"
     assert active["run_id"] == "run_1"
     assert patches[-1]["progress"]["percent"] == 100
+
+
+def test_cancelled_turn_is_not_reactivated_or_marked_succeeded(monkeypatch):
+    import jobs.lifecycle as lifecycle
+    calls = []
+    rec = type("Rec", (), {"cancel_requested": True})()
+    monkeypatch.setattr(lifecycle, "_find_or_create_job", lambda *_args: "job_1")
+    monkeypatch.setattr(lifecycle, "get_job", lambda *_args: rec)
+    monkeypatch.setattr(lifecycle, "_ensure_running", lambda *_args: calls.append("running"))
+    monkeypatch.setattr(lifecycle, "_merge_run_id", lambda *_args: calls.append("merged"))
+    monkeypatch.setattr(lifecycle, "_finish_turn", lambda *_args, **kwargs: calls.append(("finished", kwargs["cancelled"])))
+
+    lifecycle.attach_run_to_session_job("default", "session_1", "run_1", run_ok=True)
+
+    assert calls == ["merged", ("finished", True)]
+
+
+def test_cancelled_snapshot_marks_active_turn_and_job_cancelled(monkeypatch):
+    import jobs.lifecycle as lifecycle
+    rec = type("Rec", (), {
+        "cancel_requested": True,
+        "metadata": {"active_turn": {"status": "running", "events": [], "tool_calls": []}},
+    })()
+    patches = []
+    cancelled = []
+    monkeypatch.setattr(lifecycle, "get_job", lambda *_args: rec)
+    monkeypatch.setattr(lifecycle, "update_job", lambda _ws, _job, patch: patches.append(patch))
+    monkeypatch.setattr(lifecycle, "mark_cancelled", lambda ws, job, message: cancelled.append((ws, job, message)))
+    monkeypatch.setattr(lifecycle, "_broadcast_job", lambda *_args, **_kwargs: None)
+
+    lifecycle.finish_session_turn_snapshot("default", "job_1", "session_1", ok=True)
+
+    active = patches[-1]["metadata"]["active_turn"]
+    assert active["status"] == "cancelled"
+    assert active["stage"] == "turn_cancelled"
+    assert patches[-1]["progress"]["message"] == "已取消"
+    assert cancelled == [("default", "job_1", "Agent turn cancelled")]

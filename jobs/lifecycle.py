@@ -13,7 +13,7 @@ import logging
 from typing import Any
 
 from jobs.store import get_job, update_job, list_jobs
-from jobs.manager import create_job, mark_failed, mark_running, mark_succeeded, update_progress
+from jobs.manager import create_job, mark_cancelled, mark_failed, mark_running, mark_succeeded, update_progress
 from storage.time_utils import now_iso
 
 _log = logging.getLogger("jobs.lifecycle")
@@ -217,17 +217,21 @@ def finish_session_turn_snapshot(
     rec = get_job(ws_id, job_id)
     if not rec:
         return
+    cancelled = bool(getattr(rec, "cancel_requested", False))
     metadata = dict(rec.metadata or {})
     active = dict(metadata.get("active_turn") or {})
+    terminal_status = "cancelled" if cancelled else ("succeeded" if ok else "failed")
+    terminal_stage = "turn_cancelled" if cancelled else ("turn_completed" if ok else "turn_failed")
+    terminal_label = "已取消" if cancelled else ("形成建议" if ok else "处理失败")
     active.update({
-        "status": "succeeded" if ok else "failed",
-        "stage": "turn_completed" if ok else "turn_failed",
-        "stage_label": "形成建议" if ok else "处理失败",
+        "status": terminal_status,
+        "stage": terminal_stage,
+        "stage_label": terminal_label,
         "updated_at": now_iso(),
         "finished_at": now_iso(),
         "run_id": str(run_id or ""),
         "trace_id": str(trace_id or ""),
-        "error": str(error or "")[:240],
+        "error": ("任务已取消。" if cancelled else str(error or ""))[:240],
     })
     metadata["active_turn"] = active
     update_job(ws_id, job_id, {
@@ -236,11 +240,16 @@ def finish_session_turn_snapshot(
             "current": 4,
             "total": 4,
             "percent": 100,
-            "message": "处理完成" if ok else "处理失败",
-            "current_step": "形成建议" if ok else "处理失败",
+            "message": terminal_label,
+            "current_step": terminal_label,
             "updated_at": now_iso(),
         },
     })
+    if cancelled:
+        try:
+            mark_cancelled(ws_id, job_id, "Agent turn cancelled")
+        except (TypeError, ValueError):
+            _log.exception("job cancellation finalization failed job=%s", job_id)
     _broadcast_job(job_id, ws_id, session_id)
 
 
@@ -264,9 +273,17 @@ def attach_run_to_session_job(
     if not job_id:
         return None
 
-    _ensure_running(ws_id, job_id)
+    rec = get_job(ws_id, job_id)
+    cancelled = bool(getattr(rec, "cancel_requested", False))
+    # A cancellation belongs to this completed turn. Never reactivate the
+    # reusable session job merely to attach its run record.
+    if not cancelled:
+        _ensure_running(ws_id, job_id)
     _merge_run_id(ws_id, job_id, session_id, run_id, tool_call_count)
-    _finish_turn(ws_id, job_id, session_id, run_id, run_ok=run_ok, error=error)
+    _finish_turn(
+        ws_id, job_id, session_id, run_id,
+        run_ok=run_ok, error=error, cancelled=cancelled,
+    )
     return job_id
 
 
@@ -278,6 +295,7 @@ def _finish_turn(
     *,
     run_ok: bool,
     error: str = "",
+    cancelled: bool = False,
 ) -> None:
     """Close the current turn while retaining one reusable job per session.
 
@@ -286,7 +304,9 @@ def _finish_turn(
     succeeded/failed here; the next user message reactivates the same job.
     """
     try:
-        if run_ok:
+        if cancelled:
+            mark_cancelled(ws_id, job_id, "Agent turn cancelled")
+        elif run_ok:
             mark_succeeded(ws_id, job_id, result_summary={"latest_run_id": run_id})
         else:
             mark_failed(
