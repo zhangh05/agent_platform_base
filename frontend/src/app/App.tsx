@@ -37,7 +37,6 @@ import {
   WorkflowStudio,
   UserManagement,
   preloadRoute,
-  preloadAppRoutes,
 } from "../routes";
 
 function formatVersion(version: string): string {
@@ -324,18 +323,15 @@ function AppShell({ canLogout, onLogout, session }: { canLogout: boolean; onLogo
     setMobileNavOpen(false);
   }, [location.pathname, setMobileNavOpen]);
 
+  // Route chunks are warmed only from navigation intent (hover, focus, touch).
+  // Do not bulk-preload the console shortly after login: it competes with input,
+  // WebSocket streaming and the first operational request on constrained links.
+
   useEffect(() => {
     if (!session?.username || !currentWorkspaceId) return;
     setActiveWorkspaceScope(currentWorkspaceId);
     void useWorkbenchStore.persist.rehydrate();
   }, [session?.username, currentWorkspaceId]);
-
-  useEffect(() => {
-    const timer = window.setTimeout(() => {
-      void preloadAppRoutes(location.pathname, navigationItems.map((item) => item.to));
-    }, 700);
-    return () => window.clearTimeout(timer);
-  }, [canManageUsers]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <div className="app-shell">

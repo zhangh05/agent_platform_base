@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, useCallback } from "react";
+import React, { lazy, memo, Suspense, useState, useRef, useEffect, useCallback, useMemo } from "react";
 import { jobsApi, sessionsApi, settingsApi, sseApi } from "../../api";
 import { getApiAccessToken, realtimeEndpoint } from "../../api/client";
 import type { SSEConnection } from "../../api/sse";
@@ -9,7 +9,6 @@ import { humanFailure } from "../../utils/humanizeError";
 import "./WorkbenchHighlight";
 import { IconAlert, IconAttachment, IconChat, IconChevronDown, IconClose, IconDocument, IconHistory, IconRefresh, IconSend, IconStop } from "../../components/Icon";
 import { ApprovalBubble } from "../../components/ApprovalBubble";
-import { RuntimeEventTimeline } from "../../components/RuntimeEventTimeline";
 import "../../components/RuntimeEventTimeline.css";
 import "./AgentWorkbench.css";
 import { formatFileSize } from "../../utils/format";
@@ -19,6 +18,8 @@ import { scopedLocalStorageKey } from "../../utils/userScope";
 import { useWorkbenchSend, type PendingAttachment } from "../../hooks/useWorkbenchSend";
 import { useActiveTurn } from "../../hooks/useActiveTurn";
 import { TaskProgressPanel } from "./components/TaskProgressPanel";
+
+const RuntimeEventTimeline = lazy(() => import("../../components/RuntimeEventTimeline").then((m) => ({ default: m.RuntimeEventTimeline })));
 
 /* ── View mode ── */
 type ViewMode = "chat" | "timeline";
@@ -39,6 +40,8 @@ const AUTO_SEND_DELAY_MS = 500;
 const WS_RECONNECT_BASE_MS = 1000;
 // Cap on the exponential reconnect delay.
 const WS_RECONNECT_MAX_MS = 5000;
+// Keep typing on the React path; synchronous localStorage writes are deferred.
+const DRAFT_WRITE_DEBOUNCE_MS = 180;
 
 /* ── safe storage wrappers ── */
 function safeGetLocal(key: string): string | null {
@@ -220,21 +223,44 @@ export function TaskWorkbench() {
       systemWsRef.current = null;
     };
   }, [currentWorkspaceId]);
-
-  // Input draft persistence: save to localStorage debounced, restore on mount
-  const draftKey = scopedLocalStorageKey(`draft-${currentSessionId ?? "_scratch"}`);
+  // Input remains fully controlled; persistence is batched so keypresses never
+  // synchronously serialize to localStorage on the browser main thread.
+  const draftKey = scopedLocalStorageKey("draft-" + (currentSessionId ?? "_scratch"));
+  const draftWriteTimerRef = useRef<number | null>(null);
+  const pendingDraftWriteRef = useRef<{ key: string; value: string } | null>(null);
+  const flushDraftWrite = useCallback(() => {
+    if (draftWriteTimerRef.current !== null) {
+      window.clearTimeout(draftWriteTimerRef.current);
+      draftWriteTimerRef.current = null;
+    }
+    const pending = pendingDraftWriteRef.current;
+    pendingDraftWriteRef.current = null;
+    if (pending) safeSetLocal(pending.key, pending.value);
+  }, []);
+  const scheduleDraftWrite = useCallback((key: string, value: string) => {
+    pendingDraftWriteRef.current = { key, value };
+    if (draftWriteTimerRef.current !== null) window.clearTimeout(draftWriteTimerRef.current);
+    draftWriteTimerRef.current = window.setTimeout(flushDraftWrite, DRAFT_WRITE_DEBOUNCE_MS);
+  }, [flushDraftWrite]);
   useEffect(() => {
     const saved = safeGetLocal(draftKey);
-    if (saved) setInput(saved);
-  }, [currentSessionId]);  // eslint-disable-line
-
+    setInput(saved ?? "");
+    return () => flushDraftWrite();
+  }, [draftKey, flushDraftWrite]);
+  useEffect(() => () => flushDraftWrite(), [flushDraftWrite]);
   const handleInputChange = useCallback((val: string) => {
     setInput(val);
-    safeSetLocal(draftKey, val);
-  }, [draftKey]);
-
-  // Clear draft after successful send
+    scheduleDraftWrite(draftKey, val);
+  }, [draftKey, scheduleDraftWrite]);
+  // Clear draft after successful send and cancel a pending stale write.
   const clearDraft = useCallback(() => {
+    if (pendingDraftWriteRef.current?.key === draftKey) {
+      pendingDraftWriteRef.current = null;
+      if (draftWriteTimerRef.current !== null) {
+        window.clearTimeout(draftWriteTimerRef.current);
+        draftWriteTimerRef.current = null;
+      }
+    }
     safeRemoveLocal(draftKey);
   }, [draftKey]);
 
@@ -255,6 +281,21 @@ export function TaskWorkbench() {
   });
 
   const latestAssistant = [...visibleHistory].reverse().find((message) => message.role === "assistant");
+  // The progress panel consumes stages, tool calls and terminal result, not the
+  // accumulated token text. Keep its prop stable while plain streaming text updates.
+  const progressAssistant = useMemo<ChatMsg | undefined>(() => {
+    if (!latestAssistant) return undefined;
+    const { id, role, status, created_at, runtimeEvents, toolCalls, result } = latestAssistant;
+    return { id, role, text: "", status, created_at, runtimeEvents, toolCalls, result };
+  }, [
+    latestAssistant?.id, latestAssistant?.status, latestAssistant?.created_at,
+    latestAssistant?.runtimeEvents, latestAssistant?.toolCalls, latestAssistant?.result,
+  ]);
+  const handleShowTimeline = useCallback(() => setViewMode("timeline"), []);
+  const handleToggleProgressPanel = useCallback(() => {
+    setProgressPanelCollapsed((value) => !value);
+  }, []);
+
   const latestUser = [...visibleHistory].reverse().find((message) => message.role === "user");
   const sessionTitle = latestUser?.text.trim().split("\n")[0].slice(0, 32) || "新会话";
   const terminalJobRef = useRef<string>("");
@@ -497,7 +538,9 @@ export function TaskWorkbench() {
 
         <div className="wb-chat" data-testid="chat-stream">
           {viewMode === "timeline" ? (
-            <RuntimeEventTimeline messages={visibleHistory} />
+            <Suspense fallback={<div className="wb-timeline-loading" role="status">正在加载时间线…</div>}>
+              <RuntimeEventTimeline messages={visibleHistory} />
+            </Suspense>
           ) : visibleHistory.length === 0 && !turnRunning ? (
             <div className="wb-empty" data-testid="workbench-empty">
               <span className="wb-empty-kicker">开始一次可靠的智能运维任务</span>
@@ -593,11 +636,11 @@ export function TaskWorkbench() {
       </section>
 
       <TaskProgressPanel
-        latestAssistant={latestAssistant}
+        latestAssistant={progressAssistant}
         snapshot={durableTurn}
-        onShowTimeline={() => setViewMode("timeline")}
+        onShowTimeline={handleShowTimeline}
         collapsed={progressPanelCollapsed}
-        onToggleCollapsed={() => setProgressPanelCollapsed((value) => !value)}
+        onToggleCollapsed={handleToggleProgressPanel}
       />
 
       {/* ── Inline approval bubble for high-risk tools ── */}
