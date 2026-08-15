@@ -1,15 +1,15 @@
 /* Enterprise console system: shared primitives for non-workbench pages. */
 :root {
-  --console-canvas: #f3f5f5;
-  --console-surface: #ffffff;
-  --console-muted: #f8f9f9;
-  --console-border: #d8e0e0;
-  --console-border-soft: #e5ebeb;
-  --console-ink: #152026;
-  --console-muted-ink: #66777d;
-  --console-action: #0f5f63;
-  --console-action-strong: #08474b;
-  --console-action-soft: #e6f0ef;
+  --console-canvas: var(--bg);
+  --console-surface: var(--surface);
+  --console-muted: var(--surface-2);
+  --console-border: var(--line);
+  --console-border-soft: var(--line-2);
+  --console-ink: var(--text);
+  --console-muted-ink: var(--text-3);
+  --console-action: var(--accent);
+  --console-action-strong: var(--accent-2);
+  --console-action-soft: var(--accent-soft);
   --r-4: 4px;
   --r-6: 6px;
   --r-8: 8px;
@@ -17,16 +17,16 @@
 }
 
 :root[data-theme="dark"] {
-  --console-canvas: #101619;
-  --console-surface: #151d20;
-  --console-muted: #182126;
-  --console-border: #2c393e;
-  --console-border-soft: #243035;
-  --console-ink: #e7eef0;
-  --console-muted-ink: #9aabb0;
-  --console-action: #6aaeb0;
-  --console-action-strong: #8ac3c4;
-  --console-action-soft: #173235;
+  --console-canvas: var(--bg);
+  --console-surface: var(--surface);
+  --console-muted: var(--surface-2);
+  --console-border: var(--line);
+  --console-border-soft: var(--line-2);
+  --console-ink: var(--text);
+  --console-muted-ink: var(--text-3);
+  --console-action: var(--accent);
+  --console-action-strong: var(--accent-2);
+  --console-action-soft: var(--accent-soft);
 }
 
 .page { background: var(--console-canvas); }
@@ -97,8 +97,8 @@ select.input:hover { border-color: var(--text-4); }
 .input:focus-visible,
 textarea.input:focus-visible,
 select.input:focus-visible {
-  border-color: var(--console-action);
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--console-action) 16%, transparent);
+  border-color: var(--focus-ring);
+  box-shadow: 0 0 0 3px var(--focus-ring-shadow);
 }
 
 .ui-filter-bar {
@@ -122,11 +122,14 @@ select.input:focus-visible {
   border-bottom-color: var(--console-border-soft);
   font-size: 11px;
   font-weight: 680;
-  letter-spacing:   letter-spacing:   letterght: 42px;
+  letter-spacing: 0.025em;
+}
+.tbl td {
+  height: 42px;
   color: var(--console-ink);
   border-bottom-color: var(--console-border-soft);
 }
-.tbl tbody tr:hover { background: color-mix(in srgb, var(--console-action) 4%, var(--console-surface)); }
+.tbl tbody tr:hover { background: var(--surface-hover); }
 
 .split-shell > aside { background: var(--console-muted); border-right-color: var(--console-border-soft); }
 .split-detail,

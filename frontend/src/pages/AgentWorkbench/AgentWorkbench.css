@@ -102,7 +102,7 @@
 .wb-mode-btn.active,
 .wb-export-btn:hover {
   color: var(--accent-2);
-  background: var(--accent-soft);
+  background: var(--surface-hover);
   border-color: transparent;
 }
 
@@ -113,9 +113,7 @@
   /* Neutral page surface: distinct from both sides of the conversation. */
   background: var(--bg);
 }
-[data-theme="dark"] .wb-chat {
-  background: #111914;
-}
+[data-theme="dark"] .wb-chat { background: var(--bg); }
 
 .wb-chat-list {
   height: 100%;
@@ -181,7 +179,7 @@
 
 .wb-input-chip:hover {
   color: var(--accent-2);
-  background: var(--accent-soft);
+  background: var(--surface-hover);
   border-color: color-mix(in srgb, var(--accent) 32%, var(--line));
 }
 
@@ -210,13 +208,13 @@
   height: 30px;
   margin-top: 2px;
   color: var(--accent-2);
-  background: var(--accent-soft);
+  background: var(--surface-hover);
   border: 0;
   font-size: 11px;
 }
 
 .message-avatar.agent {
-  color: #fff;
+  color: var(--accent-text);
   background: var(--accent);
 }
 
@@ -225,37 +223,29 @@
   width: 100%;
   padding: 18px 20px;
   color: var(--text-2);
-  /* LLM responses occupy their own green-white content plane. */
-  background: #fbfdfc;
-  border: 1px solid #e5ede7;
+  /* Assistant content stays neutral; color is reserved for state and action. */
+  background: var(--message-assistant);
+  border: 1px solid var(--message-assistant-border);
   border-radius: 12px;
-  box-shadow: 0 5px 16px rgba(40, 86, 55, 0.05);
+  box-shadow: none;
   font-size: 14px;
   line-height: 1.78;
 }
-[data-theme="dark"] .chat-bubble.assistant,
-[data-theme="dark"] .message-row:hover .chat-bubble.assistant {
-  background: rgba(94, 160, 111, 0.09);
-  border-color: rgba(137, 204, 154, 0.20);
-  box-shadow: none;
-}
+
 
 .chat-bubble.user {
   padding: 13px 16px;
   color: var(--text);
-  /* User input stays the lightest green plane in the conversation. */
-  background: #eef5f2;
-  border: 1px solid #d5e4df;
+  /* User input gets the only tinted conversation plane. */
+  background: var(--message-user);
+  border: 1px solid var(--message-user-border);
   border-radius: 14px 14px 5px 14px;
   box-shadow: none;
   font-size: 14px;
   font-weight: 620;
   line-height: 1.65;
 }
-[data-theme="dark"] .chat-bubble.user {
-  background: rgba(117, 192, 138, 0.12);
-  border-color: rgba(137, 204, 154, 0.30);
-}
+
 
 .markdown-body {
   font-size: 14px;
@@ -323,15 +313,15 @@
   margin: 0 auto;
   padding: 6px 10px 5px;
   overflow: hidden;
-  background: var(--surface);
+  background: var(--field);
   border: 1px solid var(--line);
   border-radius: 13px;
-  box-shadow: 0 12px 36px rgba(26, 43, 54, 0.07);
+  box-shadow: var(--shadow-composer);
 }
 
 .wb-input-row:focus-within {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 13%, transparent), 0 12px 36px rgba(26, 43, 54, 0.07);
+  border-color: var(--focus-ring);
+  box-shadow: 0 0 0 3px var(--focus-ring-shadow), var(--shadow-composer);
 }
 
 .wb-input {
@@ -372,7 +362,7 @@
 
 .wb-attach-btn:hover:not(:disabled) {
   color: var(--accent-2);
-  background: var(--accent-soft);
+  background: var(--surface-hover);
 }
 
 .wb-stop {
@@ -388,7 +378,7 @@
   align-items: center;
   justify-content: center;
   margin: 0 0 0 auto;
-  color: #fff;
+  color: var(--accent-text);
   background: var(--accent);
   border: 0;
   border-radius: 9px;
@@ -522,7 +512,7 @@
 }
 
 .task-phase.active .task-phase-index {
-  color: #fff;
+  color: var(--accent-text);
   background: var(--accent);
   border-color: var(--accent);
   box-shadow: 0 0 0 5px color-mix(in srgb, var(--accent) 10%, transparent);
@@ -598,7 +588,7 @@
   height: 32px;
   place-items: center;
   color: var(--accent);
-  background: var(--accent-soft);
+  background: var(--surface-hover);
   border-radius: 8px;
 }
 

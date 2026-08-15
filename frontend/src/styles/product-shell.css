@@ -1,21 +1,38 @@
 /* Selected visual direction: calm, evidence-led operations workspace. */
 
-:root {
+:root:not([data-theme="dark"]) {
   --h-header: 60px;
   --w-sidebar: 208px;
-  --accent: #0f5f63;
-  --accent-2: #08474b;
-  --accent-soft: #e6f0ef;
-  --bg: #f3f5f5;
-  --surface-2: #f8f9f9;
-  --surface-3: #eef2f2;
-  --line: #d8e0e0;
-  --line-2: #e5ebeb;
-  --text: #152026;
-  --text-2: #34444a;
-  --text-3: #66777d;
-  --text-4: #94a1a6;
-  --ok: #167563;
+  --surface-hover: #f0f5f3;
+  --surface-selected: #e4efec;
+  --field: #fcfdfc;
+  --focus-ring: #0f7778;
+  --focus-ring-shadow: rgba(15, 119, 120, 0.18);
+  --ok-soft: #e4f3ed;
+  --warn: #a76d16;
+  --warn-soft: #fbf1de;
+  --danger: #bd3d48;
+  --danger-soft: #f9e9eb;
+  --info: #2c6e88;
+  --info-soft: #e5f0f5;
+  --message-assistant: #fcfdfc;
+  --message-assistant-border: #e3ebe8;
+  --message-user: #eaf3f0;
+  --message-user-border: #d2e3dc;
+  --shadow-composer: 0 10px 28px rgba(28, 48, 48, 0.06);
+  --accent: #0f6568;
+  --accent-2: #084e51;
+  --accent-soft: #e3efed;
+  --bg: #f4f6f5;
+  --surface-2: #f8faf9;
+  --surface-3: #eef2f1;
+  --line: #d8e1df;
+  --line-2: #e6ecea;
+  --text: #172326;
+  --text-2: #334348;
+  --text-3: #65767a;
+  --text-4: #93a1a3;
+  --ok: #16735f;
 }
 
 .app-header {
