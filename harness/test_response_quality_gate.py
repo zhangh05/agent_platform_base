@@ -93,16 +93,12 @@ def test_quality_gate_accepts_reference_returned_by_tool():
     assert issues == []
 
 
-def test_query_loop_corrects_rejected_final_answer_before_returning():
+def test_query_loop_observes_corrupt_text_without_replacing_final_answer():
     calls: list[dict] = []
-    answers = iter([
-        "已查询几个主要城市，天气有雷暴伴小冰�。",
-        "本次查询范围仅覆盖上海、南京，并非全部城市；如需完整范围需先明确城市清单。",
-    ])
 
     def llm_mock(**kwargs):
         calls.append(kwargs)
-        return next(answers)
+        return "已查询几个主要城市，天气有雷暴伴小冰�。"
 
     engine = SSOTRuntimeEngine(
         config=SSOTRuntimeConfig(),
@@ -113,18 +109,20 @@ def test_query_loop_corrects_rejected_final_answer_before_returning():
     result = asyncio.run(engine.run(user_input="全部", workspace_id="test"))
 
     assert result.success
-    assert "并非全部城市" in result.final_response
-    assert "�" not in result.final_response
-    assert len(calls) == 2
-    assert "RUNTIME RESPONSE QUALITY CORRECTION" in calls[1].get("user", "")
+    assert "�" in result.final_response
+    assert len(calls) == 1
+    observation = result.metadata["response_quality_observation"]
+    assert "CORRUPT_UNICODE" in observation["codes"]
+    assert observation["correction_attempts"] == 0
+    assert observation["blocking"] is False
 
 
-def test_query_loop_never_persists_bad_text_after_correction_budget():
+def test_query_loop_observes_unverified_claim_without_hiding_reply():
     calls: list[dict] = []
 
     def llm_mock(**kwargs):
         calls.append(kwargs)
-        return "仍然是损坏字符�"
+        return "配置已成功部署。"
 
     engine = SSOTRuntimeEngine(
         config=SSOTRuntimeConfig(),
@@ -132,9 +130,14 @@ def test_query_loop_never_persists_bad_text_after_correction_budget():
         tool_runtime=mock.MagicMock(),
     )
 
-    result = asyncio.run(engine.run(user_input="解释结果", workspace_id="test"))
+    result = asyncio.run(engine.run(user_input="部署配置", workspace_id="test"))
 
-    assert result.success is False
-    assert "response_quality_failed" in result.errors
-    assert "�" not in result.final_response
-    assert len(calls) == 3
+    assert result.success is True
+    assert "response_quality_failed" not in result.errors
+    assert result.final_response == "配置已成功部署。"
+    assert len(calls) == 1
+    assert result.metadata["response_quality_observation"] == {
+        "codes": ["UNVERIFIED_ACTION_COMPLETION"],
+        "correction_attempts": 0,
+        "blocking": False,
+    }

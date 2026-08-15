@@ -1938,10 +1938,7 @@ class QueryLoop:
             else:
                 final_text = final_text.strip()
 
-            from .response_quality import (
-                build_response_quality_nudge,
-                validate_response_quality,
-            )
+            from .response_quality import validate_response_quality
             quality_issues = validate_response_quality(
                 final_text,
                 user_input=ctx.user_input,
@@ -1949,45 +1946,20 @@ class QueryLoop:
                 evidence=evidence_summary(ctx.extras),
                 known_reference_ids=(ctx.request_id, ctx.session_id, ctx.workspace_id),
             )
-            if (
-                quality_issues
-                and response_quality_attempts < MAX_RESPONSE_QUALITY_CORRECTION_ROUNDS
-                and iterations < max_iterations
-            ):
-                response_quality_attempts += 1
-                ctx.extras.setdefault("response_quality_events", []).append({
-                    "attempt": response_quality_attempts,
-                    "issues": [issue.code for issue in quality_issues],
-                })
-                messages.append(LLMMessage(role="assistant", content=final_text))
-                messages.append(LLMMessage(
-                    role="user",
-                    content=build_response_quality_nudge(quality_issues),
-                ))
-                continue
+            quality_observation = {}
             if quality_issues:
+                quality_codes = [issue.code for issue in quality_issues]
                 ctx.extras.setdefault("response_quality_events", []).append({
-                    "attempt": response_quality_attempts,
-                    "issues": [issue.code for issue in quality_issues],
-                    "exhausted": True,
+                    "attempt": 0,
+                    "issues": quality_codes,
+                    "observed": True,
+                    "blocking": False,
                 })
-                safe_fallback = (
-                    self._build_tool_result_fallback(ctx, all_results)
-                    if all_results
-                    else "本次回复未通过文本质量检查，已停止展示不可靠内容。请重试该请求。"
-                )
-                return finish(
-                    final_response=safe_fallback,
-                    tool_results=all_results,
-                    iterations=iterations,
-                    total_tool_calls=len(all_results),
-                    llm_calls=llm_calls,
-                    error="response_quality_failed",
-                    metrics={
-                        "response_quality_corrections": response_quality_attempts,
-                        "response_quality_issues": [issue.code for issue in quality_issues],
-                    },
-                )
+                quality_observation = {
+                    "codes": quality_codes,
+                    "correction_attempts": 0,
+                    "blocking": False,
+                }
             elapsed = (time.monotonic() - t_start) * 1000
 
             return finish(
@@ -2010,6 +1982,7 @@ class QueryLoop:
                     "output_truncated": output_truncated,
                     "output_truncation_reason": output_truncation_reason,
                     "response_quality_corrections": response_quality_attempts,
+                    "response_quality_observation": quality_observation,
                 },
             )
 
