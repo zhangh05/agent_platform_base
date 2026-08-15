@@ -38,7 +38,7 @@ export function CapabilityCenter() {
   const plannerVisibleCount = catalog.state.kind === "success" ? (catalog.state.data.planner_visible_count ?? 0) : 0;
 
   return (
-    <div className="page" data-testid="page-capabilities">
+    <div className="page capability-center" data-testid="page-capabilities">
       <div className="page-header cc-page-header">
         <div>
           <h1>能力中心</h1>

@@ -148,7 +148,7 @@ export function MemoryPage() {
   // ── Empty state ──
   if (!loading && !err && display.length === 0) {
     return (
-      <div className="page">
+      <div className="page memory-page">
         <PageHeader title="长期记忆" subtitle="管理系统记住的偏好、事实、案例和操作方法">
           <button className="btn sm" onClick={() => setShowCreate(!showCreate)}>
             <IconPlus size={14} /> 新建记忆
@@ -186,7 +186,7 @@ export function MemoryPage() {
   }
 
   return (
-    <div className="page">
+    <div className="page memory-page">
       <PageHeader title="长期记忆" subtitle="管理系统记住的偏好、事实、案例和操作方法">
         <button className="btn sm" onClick={() => setShowCreate(!showCreate)}>
           <IconPlus size={14} /> 新建

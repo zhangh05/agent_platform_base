@@ -130,7 +130,7 @@ export function RuntimeAudit() {
   };
 
   return (
-    <div className="page" data-testid="page-audit">
+    <div className="page runtime-audit" data-testid="page-audit">
       <div className="page-header">
         <div>
           <h1>执行详情</h1>

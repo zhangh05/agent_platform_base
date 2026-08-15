@@ -381,7 +381,7 @@ export function OperationsPage() {
   // ── Empty state ──
   if (!loading && !error && jobs.length === 0) {
     return (
-      <div className="page">
+      <div className="page operations-page">
         <OperationsPageHeader count={0} onRefresh={loadJobs} />
         <div className="page-body">
           <div className="hero">
@@ -401,7 +401,7 @@ export function OperationsPage() {
 
   // ── Main ──
   return (
-    <div className="page">
+    <div className="page operations-page">
       <OperationsPageHeader count={jobs.length} onRefresh={loadJobs} />
 
       {error && (

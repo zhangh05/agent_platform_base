@@ -370,7 +370,7 @@ export function KnowledgeLibrary() {
   ];
 
   return (
-    <div className="page" data-testid="page-knowledge">
+    <div className="page knowledge-library" data-testid="page-knowledge">
       <PageHeader
         title="知识库"
         subtitle={`管理和搜索已导入的文档 · 当前范围：${

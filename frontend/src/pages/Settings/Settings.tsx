@@ -323,7 +323,7 @@ export function Settings() {
 
   if (loading) {
     return (
-      <div className="page" data-testid="page-settings">
+      <div className="page settings-page" data-testid="page-settings">
         <PageHeader />
         <div className="page-body"><LoadingState skeleton="list" /></div>
       </div>
@@ -332,7 +332,7 @@ export function Settings() {
 
   if (error) {
     return (
-      <div className="page" data-testid="page-settings">
+      <div className="page settings-page" data-testid="page-settings">
         <PageHeader />
         <div className="page-body">
           <div className="card card-danger-border settings-error-text">{error}</div>
@@ -343,7 +343,7 @@ export function Settings() {
 
   if (!draft) {
     return (
-      <div className="page" data-testid="page-settings">
+      <div className="page settings-page" data-testid="page-settings">
         <PageHeader />
         <div className="page-body"><EmptyState text="未读取到模型服务配置" /></div>
       </div>
@@ -351,7 +351,7 @@ export function Settings() {
   }
 
   return (
-    <div className="page" data-testid="page-settings">
+    <div className="page settings-page" data-testid="page-settings">
       <PageHeader activeId={activeId} />
       <div className="page-body no-pad">
         <details className="settings-help">

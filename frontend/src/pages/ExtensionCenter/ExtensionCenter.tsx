@@ -60,7 +60,7 @@ export function ExtensionCenter() {
   }
 
   return (
-    <div className="page">
+    <div className="page extension-center">
       <header className="page-header ui-page-header">
         <div><h1>扩展管理 <span>Extension Center</span></h1><p className="subtitle">统一查看扩展版本、权限、运行状态、签名包和工作区迁移。</p></div>
         <div className="extension-header-actions"><label className={`btn primary ${busy === "publish" ? "disabled" : ""}`}>发布签名包<input type="file" accept=".apx" hidden disabled={busy === "publish"} onChange={(event) => { void publish(event.target.files?.[0]); event.target.value = ""; }} /></label><button className="btn secondary" onClick={() => void load()}>刷新</button></div>

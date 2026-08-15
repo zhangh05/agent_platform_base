@@ -88,7 +88,7 @@ export function ReviewCenter() {
   }
 
   return (
-    <div className="page" data-testid="page-reviews">
+    <div className="page review-center" data-testid="page-reviews">
       <PageHeader
         title="人工复核"
         subtitle={<>记录人工判断和备注，<strong>不</strong>修改原始任务产出</>}

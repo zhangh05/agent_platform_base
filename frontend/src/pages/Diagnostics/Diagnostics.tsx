@@ -344,7 +344,7 @@ export function Diagnostics() {
      ══════════════════════════════════════════ */
 
   return (
-    <div className="page" data-testid="page-diagnostics">
+    <div className="page diagnostics-page" data-testid="page-diagnostics">
       <PageHeader
         title="系统状态"
         subtitle={
