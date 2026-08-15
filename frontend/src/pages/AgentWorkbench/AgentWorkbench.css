@@ -745,18 +745,26 @@
 }
 
 /* Session controls are collapsible so the chat remains the dominant surface. */
+.wb-header { position: relative; }
 .wb-header-collapse {
+  position: absolute;
+  z-index: 4;
+  left: 50%;
+  bottom: -12px;
   display: inline-flex;
-  height: 28px;
+  width: 28px;
+  height: 21px;
   align-items: center;
-  gap: 5px;
-  padding: 0 8px;
-  color: var(--text-3);
-  background: transparent;
+  justify-content: center;
+  padding: 0;
+  color: var(--text-4);
+  background: var(--surface);
   border: 1px solid var(--line-2);
-  border-radius: 5px;
-  font-size: 11px;
-  font-weight: 650;
+  border-top: 0;
+  border-radius: 0 0 7px 7px;
+  cursor: pointer;
+  box-shadow: 0 2px 4px color-mix(in srgb, var(--text) 6%, transparent);
+  transform: translateX(-50%);
 }
 .wb-header-collapse:hover,
 .wb-header-collapse:focus-visible {
@@ -765,7 +773,7 @@
   border-color: var(--line);
   outline: none;
 }
-.wb-header-collapse svg { transition: transform 160ms ease; }
+.wb-header-collapse svg { transform: rotate(180deg); transition: transform 160ms ease; }
 .wb-shell.is-header-collapsed .wb-conversation-column {
   grid-template-rows: 36px minmax(0, 1fr) auto auto;
 }
@@ -779,8 +787,9 @@
 .wb-shell.is-header-collapsed .wb-export-btn {
   display: none;
 }
-.wb-shell.is-header-collapsed .wb-header-collapse svg { transform: rotate(180deg); }
-.wb-shell.is-header-collapsed .wb-header-collapse span { display: inline; }
+.wb-shell.is-header-collapsed .wb-header-collapse svg { transform: rotate(0deg); }
+.wb-header-collapse span,
+.wb-shell.is-header-collapsed .wb-header-collapse span { display: none; }
 
 /* Workbench visual hierarchy follows the graphite console palette. */
 .wb-chat { background: var(--bg); }
