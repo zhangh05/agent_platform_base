@@ -31,8 +31,12 @@ function belongsToSession(job: JobItem, sessionId: string): boolean {
 export function useActiveTurn(workspaceId: string | null, sessionId: string | null) {
   const [job, setJob] = useState<JobItem | null>(null);
   const mountedRef = useRef(true);
+  // A boolean mounted flag cannot distinguish a prior session request from
+  // the current session after React has mounted the next effect.
+  const refreshEpochRef = useRef(0);
 
   const refresh = useCallback(async () => {
+    const refreshEpoch = ++refreshEpochRef.current;
     if (!workspaceId || !sessionId) {
       setJob(null);
       return null;
@@ -40,7 +44,9 @@ export function useActiveTurn(workspaceId: string | null, sessionId: string | nu
     try {
       const response = await jobsApi.list(workspaceId);
       const match = (response.jobs || []).find((item) => belongsToSession(item, sessionId)) || null;
-      if (mountedRef.current) setJob(match);
+      if (mountedRef.current && refreshEpoch === refreshEpochRef.current) {
+        setJob(match);
+      }
       return match;
     } catch {
       return null;
@@ -50,7 +56,10 @@ export function useActiveTurn(workspaceId: string | null, sessionId: string | nu
   useEffect(() => {
     mountedRef.current = true;
     void refresh();
-    return () => { mountedRef.current = false; };
+    return () => {
+      mountedRef.current = false;
+      refreshEpochRef.current += 1;
+    };
   }, [refresh]);
 
   useEffect(() => {

@@ -63,6 +63,52 @@ _active_ws_lock = threading.Lock()
 _active_turns: dict[tuple[str, str, str], threading.Event] = {}
 _active_turns_lock = threading.Lock()
 
+# Durable job updates are supplementary to the dedicated per-turn message
+# WebSocket. Never let a slow dashboard listener synchronously stall the
+# runtime callback that is producing tokens and stages.
+_broadcast_pending: dict[str, tuple[str, str, str]] = {}
+_broadcast_cv = threading.Condition()
+_broadcast_worker_started = False
+
+
+def _deliver_broadcast(username: str, workspace_id: str, payload: str) -> None:
+    dead: list[str] = []
+    with _active_ws_lock:
+        recipients = [
+            (key, ws) for key, (owner, ws_id, ws) in _active_ws_connections.items()
+            if ws_id == workspace_id and owner == username
+        ]
+    for key, ws in recipients:
+        try:
+            ws.send(payload)
+        except Exception:
+            dead.append(key)
+    if dead:
+        with _active_ws_lock:
+            for key in dead:
+                _active_ws_connections.pop(key, None)
+
+
+def _broadcast_worker() -> None:
+    while True:
+        with _broadcast_cv:
+            while not _broadcast_pending:
+                _broadcast_cv.wait()
+            _, (username, workspace_id, payload) = _broadcast_pending.popitem()
+        _deliver_broadcast(username, workspace_id, payload)
+
+
+def _enqueue_broadcast(username: str, workspace_id: str, coalesce_key: str, payload: str) -> None:
+    global _broadcast_worker_started
+    with _broadcast_cv:
+        # Coalesce repeated lifecycle projections for the same durable object;
+        # the newest snapshot is authoritative and prevents an unbounded queue.
+        _broadcast_pending[coalesce_key] = (username, workspace_id, payload)
+        if not _broadcast_worker_started:
+            threading.Thread(target=_broadcast_worker, name="lzcore-ws-broadcast", daemon=True).start()
+            _broadcast_worker_started = True
+        _broadcast_cv.notify()
+
 
 def request_active_turn_cancel(username: str, workspace_id: str, job_id: str) -> bool:
     """Signal the in-process runtime worker owned by this user/workspace."""
@@ -85,20 +131,8 @@ def broadcast_ws_event(event: dict) -> None:
     from storage.principal import current_storage_principal
     username = current_storage_principal()
     payload = json.dumps({"type": "event", "name": event["name"], "data": event.get("data", {})}, ensure_ascii=True, default=str)
-    dead: list[str] = []
-    with _active_ws_lock:
-        recipients = [
-            (key, ws) for key, (owner, ws_id, ws) in _active_ws_connections.items()
-            if ws_id == workspace_id and owner == username
-        ]
-    for key, ws in recipients:
-        try:
-            ws.send(payload)
-        except Exception:
-            dead.append(key)
-    for key in dead:
-        with _active_ws_lock:
-            _active_ws_connections.pop(key, None)
+    durable_id = str(data.get("job_id") or data.get("session_id") or event.get("name") or "event")
+    _enqueue_broadcast(username, workspace_id, f"{username}:{workspace_id}:{durable_id}", payload)
 
 
 def register_ws_routes(app):
