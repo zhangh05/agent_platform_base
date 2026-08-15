@@ -684,3 +684,62 @@
   .message-row.assistant .message-stack { max-width: calc(100% - 38px); width: calc(100% - 38px); }
   .wb-composer-meta span:last-child { display: none; }
 }
+
+/* Right-hand realtime status can collapse to a narrow, always-recoverable rail. */
+.wb-shell.is-progress-collapsed {
+  grid-template-columns: minmax(0, 1fr) 46px;
+}
+.task-progress-collapse {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  flex: 0 0 auto;
+  min-height: 28px;
+  padding: 0 7px;
+  color: var(--text-3);
+  border: 1px solid var(--line-2);
+  background: var(--surface);
+  font-size: 10px;
+  font-weight: 700;
+}
+.task-progress-collapse:hover,
+.task-progress-collapse:focus-visible {
+  color: var(--accent);
+  border-color: var(--accent);
+  outline: none;
+}
+.task-progress-collapse .task-progress-summary {
+  display: inline-flex;
+  padding: 0;
+}
+.task-progress-panel.is-collapsed {
+  grid-template-rows: 1fr;
+  background: #fbfcfc;
+}
+.task-progress-panel.is-collapsed .task-progress-header {
+  align-items: flex-start;
+  justify-content: center;
+  min-height: 0;
+  padding: 10px 0;
+  border-bottom: 0;
+}
+.task-progress-panel.is-collapsed .task-progress-header > div,
+.task-progress-panel.is-collapsed .task-progress-header > .task-progress-summary,
+.task-progress-panel.is-collapsed .task-phase-list,
+.task-progress-panel.is-collapsed .task-progress-footer {
+  display: none;
+}
+.task-progress-panel.is-collapsed .task-progress-collapse {
+  flex-direction: column;
+  width: 34px;
+  min-height: 76px;
+  padding: 8px 3px;
+}
+.task-progress-panel.is-collapsed .task-progress-collapse > span:last-child {
+  writing-mode: vertical-rl;
+  letter-spacing: 0.08em;
+}
+@media (max-width: 900px) {
+  .wb-shell.is-progress-collapsed { grid-template-columns: minmax(0, 1fr); }
+}

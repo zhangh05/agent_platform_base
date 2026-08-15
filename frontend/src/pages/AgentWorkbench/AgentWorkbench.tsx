@@ -72,6 +72,7 @@ export function TaskWorkbench() {
   const mergeFromBackend = useWorkbenchStore((s) => s.mergeFromBackend);
 
   const [viewMode, setViewMode] = useState<ViewMode>("chat");
+  const [progressPanelCollapsed, setProgressPanelCollapsed] = useState(false);
   const [input, setInput] = useState("");
   const [attachments, setAttachments] = useState<PendingAttachment[]>([]);
 
@@ -452,7 +453,7 @@ export function TaskWorkbench() {
   ]);
 
   return (
-    <div className="wb-shell">
+    <div className={progressPanelCollapsed ? "wb-shell is-progress-collapsed" : "wb-shell"}>
       <section className="wb-conversation-column">
         <header className="wb-header">
           <div className="wb-header-context">
@@ -591,7 +592,13 @@ export function TaskWorkbench() {
         </div>
       </section>
 
-      <TaskProgressPanel latestAssistant={latestAssistant} snapshot={durableTurn} onShowTimeline={() => setViewMode("timeline")} />
+      <TaskProgressPanel
+        latestAssistant={latestAssistant}
+        snapshot={durableTurn}
+        onShowTimeline={() => setViewMode("timeline")}
+        collapsed={progressPanelCollapsed}
+        onToggleCollapsed={() => setProgressPanelCollapsed((value) => !value)}
+      />
 
       {/* ── Inline approval bubble for high-risk tools ── */}
       <ApprovalBubble />

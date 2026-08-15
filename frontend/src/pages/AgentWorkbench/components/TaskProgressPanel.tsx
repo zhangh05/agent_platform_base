@@ -1,13 +1,15 @@
 import { memo } from "react";
 import type { ActiveTurnSnapshot } from "../../../types";
 import type { ChatMsg } from "../../../stores/workbench";
-import { IconBolt, IconCheck, IconClock, IconDocument, IconProbe, IconShield } from "../../../components/Icon";
+import { IconBolt, IconCheck, IconChevronLeft, IconChevronRight, IconClock, IconDocument, IconProbe, IconShield } from "../../../components/Icon";
 import { buildTaskProgress } from "../../../utils/taskProgress";
 
 type Props = {
   latestAssistant?: ChatMsg;
   snapshot?: ActiveTurnSnapshot;
   onShowTimeline: () => void;
+  collapsed: boolean;
+  onToggleCollapsed: () => void;
 };
 
 function statusText(status: string, evidenceCount: number): string {
@@ -24,12 +26,12 @@ function EvidenceIcon({ title }: { title: string }) {
   return <IconDocument size={15} />;
 }
 
-export const TaskProgressPanel = memo(function TaskProgressPanel({ latestAssistant, snapshot, onShowTimeline }: Props) {
+export const TaskProgressPanel = memo(function TaskProgressPanel({ latestAssistant, snapshot, onShowTimeline, collapsed, onToggleCollapsed }: Props) {
   const model = buildTaskProgress(latestAssistant, snapshot);
   const visibleEvidence = model.evidence.slice(0, 6);
 
   return (
-    <aside className="task-progress-panel" aria-label="任务进度" data-testid="task-progress-panel">
+    <aside className={collapsed ? "task-progress-panel is-collapsed" : "task-progress-panel"} aria-label="任务进度" data-testid="task-progress-panel">
       <header className="task-progress-header">
         <div>
           <span className="task-progress-kicker">实时状态</span>
@@ -39,6 +41,18 @@ export const TaskProgressPanel = memo(function TaskProgressPanel({ latestAssista
           <span className="status-dot" />
           {statusText(model.status, model.evidence.filter((item) => item.status === "done").length)}
         </span>
+        <button
+          className="task-progress-collapse"
+          type="button"
+          onClick={onToggleCollapsed}
+          aria-expanded={!collapsed}
+          aria-label={collapsed ? "展开实时状态" : "收起实时状态"}
+          title={collapsed ? "展开实时状态" : "收起实时状态"}
+        >
+          <span className={"task-progress-summary " + model.status} aria-hidden="true"><span className="status-dot" /></span>
+          {collapsed ? <IconChevronLeft size={16} /> : <IconChevronRight size={16} />}
+          <span>{collapsed ? "展开" : "收起"}</span>
+        </button>
       </header>
 
       <div className="task-phase-list">
