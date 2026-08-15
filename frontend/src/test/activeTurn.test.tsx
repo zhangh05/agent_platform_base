@@ -43,4 +43,28 @@ describe("useActiveTurn", () => {
     await act(async () => { first.resolve({ jobs: [job("job-a", "session-a")] }); });
     await waitFor(() => expect(result.current.job?.job_id).toBe("job-b"));
   });
+  it("does not let a stale polling response overwrite a newer WebSocket terminal snapshot", async () => {
+    const stale = deferred<{ jobs: ReturnType<typeof job>[] }>();
+    list.mockImplementationOnce(() => stale.promise);
+
+    const { result } = renderHook(() => useActiveTurn("ws-1", "session-a"));
+
+    await act(async () => {
+      window.dispatchEvent(new CustomEvent("ws-event", {
+        detail: {
+          name: "job_updated",
+          data: {
+            job_id: "job-a",
+            workspace_id: "ws-1",
+            session_id: "session-a",
+            status: "succeeded",
+          },
+        },
+      }));
+    });
+    await waitFor(() => expect(result.current.job?.status).toBe("succeeded"));
+
+    await act(async () => { stale.resolve({ jobs: [job("job-a", "session-a")] }); });
+    await waitFor(() => expect(result.current.job?.status).toBe("succeeded"));
+  });
 });

@@ -69,6 +69,10 @@ export function useActiveTurn(workspaceId: string | null, sessionId: string | nu
       if (detail?.name !== "job_updated") return;
       const data = detail.data || {};
       if (data.workspace_id !== workspaceId || data.session_id !== sessionId) return;
+      // A WebSocket projection is newer than any already-dispatched list request.
+      // Invalidate those responses so a stale running snapshot cannot resurrect
+      // the turn after its terminal broadcast.
+      refreshEpochRef.current += 1;
       setJob((current) => ({
         ...(current || {
           job_id: String(data.job_id || ""),

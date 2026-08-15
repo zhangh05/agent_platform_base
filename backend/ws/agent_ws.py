@@ -380,6 +380,11 @@ def _run_agent_thread(
     from agent.runtime.stream_emitter import StreamEmitter
 
     stats_lock = threading.Lock()
+    # `asyncio.to_thread()` propagates ContextVars. A provider call that has
+    # timed out can therefore retain this callback after the turn emits done.
+    emission_lock = threading.Lock()
+    emissions_open = threading.Event()
+    emissions_open.set()
     transport_closed = transport_closed or threading.Event()
 
     def enqueue_live(event: dict | None) -> bool:
@@ -399,10 +404,17 @@ def _run_agent_thread(
         return False
 
     def put_terminal(event) -> None:
-        enqueue_live(event)
+        # Serialize terminal delivery with provider callbacks and permanently
+        # reject callbacks copied into a late `asyncio.to_thread()` worker.
+        with emission_lock:
+            emissions_open.clear()
+            enqueue_live(event)
 
     def realtime_callback(event):
+        emission_lock.acquire()
         try:
+            if not emissions_open.is_set():
+                return
             with stats_lock:
                 stats["live_events"] = int(stats.get("live_events", 0)) + 1
                 seq = int(stats.get("event_seq", 0)) + 1
@@ -452,6 +464,8 @@ def _run_agent_thread(
                 })
         except Exception:
             _log.warning("realtime_callback event push failed seq=%s", stats.get("event_seq"), exc_info=True)
+        finally:
+            emission_lock.release()
 
     from storage.principal import storage_principal
     job_id = ""
