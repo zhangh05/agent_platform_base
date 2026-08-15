@@ -113,7 +113,7 @@ export const MessageRow = memo(function MessageRow({ m, idx: _idx, total: _total
         {m.status === "streaming" && m.toolCalls && m.toolCalls.length > 0 && (
           <div className="tool-calls-inline">
             {m.toolCalls.map((tc: InlineToolCall, tci: number) => (
-              <span key={`${tc.tool_id}-${tci}`} className={`live-tool-chip ${tc.status || "running"}`}>
+              <span key={tc.call_id || `${tc.tool_id}-${tci}`} className={`live-tool-chip ${tc.status || "running"}`}>
                 <span className={`live-tool-dot ${tc.status || "running"}`} />
                 {tc.tool_name || toolLabel(tc.tool_id)}
                 {tc.summary && <span className="live-tool-summary">{tc.summary.slice(0, 40)}</span>}
@@ -125,7 +125,7 @@ export const MessageRow = memo(function MessageRow({ m, idx: _idx, total: _total
         {m.status !== "streaming" && m.toolCalls && m.toolCalls.length > 0 && (
           <div className="tool-calls-inline">
             {m.toolCalls.map((tc: InlineToolCall, tci: number) => (
-              <InlineToolCallCard key={`${tc.tool_id}-${tci}`} toolCall={tc} seq={tci + 1} />
+              <InlineToolCallCard key={tc.call_id || `${tc.tool_id}-${tci}`} toolCall={tc} seq={tci + 1} />
             ))}
           </div>
         )}

@@ -242,6 +242,9 @@ def register_ws_routes(app):
                 event_queue = queue.Queue(maxsize=1000)
                 error_holder = {"error": None}
                 stats = {"live_events": 0}
+                # A detached browser must not block the durable turn, while an
+                # attached slow browser receives every frame through backpressure.
+                transport_closed = threading.Event()
 
                 active_cancel_event = threading.Event()
                 thread = threading.Thread(
@@ -249,7 +252,7 @@ def register_ws_routes(app):
                     args=(
                         user_input, session_id, workspace_id, metadata,
                         event_queue, error_holder, stats, active_cancel_event,
-                        authenticated_username,
+                        authenticated_username, transport_closed,
                     ),
                     daemon=True,
                 )
@@ -279,6 +282,7 @@ def register_ws_routes(app):
                                     # A browser refresh only detaches the viewer.
                                     # The durable turn continues and can be recovered
                                     # through the session job snapshot after reconnect.
+                                    transport_closed.set()
                                     return
                                 next_heartbeat_at = now + _WS_HEARTBEAT_INTERVAL_SECONDS
                             continue
@@ -292,6 +296,7 @@ def register_ws_routes(app):
                     except Exception:
                         # Do not cancel business execution merely because the
                         # transport disappeared (refresh, sleep, network flap).
+                        transport_closed.set()
                         return
 
                 if error_holder["error"]:
@@ -335,38 +340,41 @@ def _ws_workspace_allowed(username: str, role: str, allowed: list[str], workspac
 
 def _run_agent_thread(
     user_input, session_id, workspace_id, metadata, event_queue, error_holder,
-    stats, cancel_event=None, username="",
+    stats, cancel_event=None, username="", transport_closed=None,
 ):
     """Run agent in background thread through the shared AgentApp contract."""
     from agent.runtime.stream_emitter import StreamEmitter
 
+    stats_lock = threading.Lock()
+    transport_closed = transport_closed or threading.Event()
+
+    def enqueue_live(event: dict | None) -> bool:
+        """Apply transport backpressure without sacrificing durable execution.
+
+        While the browser remains attached, every token, stage and terminal frame
+        waits for queue capacity rather than being silently dropped. Once the
+        receiver marks the connection detached, producer callbacks return
+        immediately and the Agent turn keeps running for durable recovery.
+        """
+        while not transport_closed.is_set():
+            try:
+                event_queue.put(event, timeout=0.25)
+                return True
+            except queue.Full:
+                continue
+        return False
+
     def put_terminal(event) -> None:
-        """Publish a terminal frame without leaving the worker blocked forever."""
-        try:
-            event_queue.put(event, timeout=0.5)
-            return
-        except queue.Full:
-            pass
-        try:
-            event_queue.get_nowait()
-        except queue.Empty:
-            pass
-        try:
-            event_queue.put_nowait(event)
-        except queue.Full:
-            _log.error("WS terminal event dropped after queue recovery")
+        enqueue_live(event)
 
     def realtime_callback(event):
         try:
-            live_count = int(stats.get("live_events", 0)) + 1
-            stats["live_events"] = live_count
-            seq = int(stats.get("event_seq", 0)) + 1
-            stats["event_seq"] = seq
+            with stats_lock:
+                stats["live_events"] = int(stats.get("live_events", 0)) + 1
+                seq = int(stats.get("event_seq", 0)) + 1
+                stats["event_seq"] = seq
             if isinstance(event, dict) and event.get("type") == "token":
-                try:
-                    event_queue.put({"type": "token", "content": event.get("content", ""), "seq": seq}, timeout=0.2)
-                except queue.Full:
-                    pass
+                enqueue_live({"type": "token", "content": event.get("content", ""), "seq": seq})
             else:
                 name = event.get("type", event.get("name", "event")) if isinstance(event, dict) else "event"
                 data = event
@@ -402,12 +410,12 @@ def _run_agent_thread(
                         )
                     except Exception:
                         _log.exception("unable to persist live stage job=%s stage=%s", job_id_for_event, name)
-                event_queue.put({
+                enqueue_live({
                     "type": "event",
                     "name": name,
                     "data": data,
                     "seq": seq,
-                }, timeout=0.2)
+                })
         except Exception:
             _log.warning("realtime_callback event push failed seq=%s", stats.get("event_seq"), exc_info=True)
 
@@ -490,10 +498,8 @@ def _run_agent_thread(
         # older runtime paths still produce observable progress data.
         if int(stats.get("live_events", 0)) == 0:
             for ev in result_payload.get("events", []):
-                try:
-                    event_queue.put({"type": "event", "name": ev.get("type", "event"), "data": ev}, timeout=0.5)
-                except queue.Full:
-                    pass
+                if not enqueue_live({"type": "event", "name": ev.get("type", "event"), "data": ev}):
+                    break
 
         tool_calls = result_payload.get("tool_calls", [])
         tool_calls_count = len(tool_calls) or len([
@@ -555,9 +561,4 @@ def _run_agent_thread(
                 principal_scope.__exit__(None, None, None)
             except Exception:
                 pass
-        try:
-            event_queue.put(None, timeout=0.2)
-        except queue.Full:
-            # The receiver also exits once the worker is no longer alive and
-            # the queue drains, so a saturated queue does not require blocking.
-            pass
+        enqueue_live(None)

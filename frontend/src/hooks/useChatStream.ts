@@ -24,7 +24,7 @@ import { beginModelStep, discardToolCallDraft, finalizeStreamText } from "../uti
 import { agentResultFromWsDone } from "../utils/wsResult";
 import { notifyRunCompleted } from "../utils/appEvents";
 import { createStreamActivityWatchdog, STREAM_IDLE_TIMEOUT_MS } from "../utils/streamActivity";
-import { progressPatchForStreamStage } from "../utils/streamStage";
+import { progressPatchForStreamStage, stageElapsedSince } from "../utils/streamStage";
 
 const WS_TIMEOUT_MS = 3000;
 // Rendering Markdown is substantially more expensive than receiving tokens.
@@ -86,12 +86,20 @@ export function useChatStream(
   const sending = useWorkbenchStore((s) => s.sending);
   const abortRef = useRef<AbortController | null>(null);
   const msgWsRef = useRef<WebSocket | null>(null);
+  // Refs make start/stop atomic across React render scheduling.
+  const sendInFlightRef = useRef(false);
+  const stopRequestedRef = useRef(false);
+  const activeClientRequestIdRef = useRef("");
 
   // Stable refs so the send function identity is stable across renders.
   const paramsRef = useRef(params);
   paramsRef.current = params;
   const callbacksRef = useRef(callbacks);
   callbacksRef.current = callbacks;
+
+  const requestCancel = (jobId: string, workspaceId: string) => {
+    void jobsApi.cancel(jobId, workspaceId).catch(() => {});
+  };
 
   const stopStream = (): void => {
     const currentSessionId = paramsRef.current.sessionId;
@@ -102,15 +110,32 @@ export function useChatStream(
     const activeJobId = [...currentMessages].reverse().find(
       (message) => message.role === "assistant" && message.status === "streaming" && message.activeJobId,
     )?.activeJobId;
+    stopRequestedRef.current = true;
     if (activeJobId && workspaceId) {
-      void jobsApi.cancel(activeJobId, workspaceId).catch(() => {});
+      requestCancel(activeJobId, workspaceId);
+    } else if (workspaceId && activeClientRequestIdRef.current) {
+      // The job is created asynchronously. Resolve it by the client request id
+      // instead of closing the socket and silently leaving the turn running.
+      const clientRequestId = activeClientRequestIdRef.current;
+      void (async () => {
+        for (let attempt = 0; attempt < 6 && stopRequestedRef.current; attempt += 1) {
+          try {
+            const jobs = await jobsApi.list(workspaceId);
+            const job = (jobs.jobs || []).find((item) =>
+              item.status === "running"
+              && item.metadata?.active_turn?.client_request_id === clientRequestId,
+            );
+            if (job?.job_id) {
+              requestCancel(job.job_id, workspaceId);
+              return;
+            }
+          } catch { /* best effort: the durable job state remains authoritative */ }
+          await new Promise((resolve) => window.setTimeout(resolve, 150));
+        }
+      })();
     }
-    if (abortRef.current) { abortRef.current.abort(); abortRef.current = null; }
-    if (msgWsRef.current) {
-      try { msgWsRef.current.close(); } catch { /* noop */ }
-      msgWsRef.current = null;
-    }
-    useWorkbenchStore.getState().setSending(false);
+    // Keep the message socket open: the canonical cancellation path can then
+    // deliver its real terminal outcome rather than being rendered as a network failure.
   };
 
   // A route change must not leave an in-flight socket or global sending state
@@ -132,7 +157,7 @@ export function useChatStream(
     const { text, attachments, turnMetadata: metadataOverride = {} } = args;
     const ws = paramsRef.current;
     if (!ws.workspaceId) return;
-    if (sending) return;
+    if (sending || sendInFlightRef.current) return;
     const activeSessionId = ws.sessionId;
     const effectiveSessionId = args.effectiveSessionId ?? activeSessionId;
     // Sessions are explicit UI/runtime scope. Never recreate the retired
@@ -141,6 +166,9 @@ export function useChatStream(
 
     const hasImages = attachments.some((a) => a.mime_type.startsWith("image/"));
     if (hasImages && ws.llmHealth.visionSupported === false) return;
+
+    sendInFlightRef.current = true;
+    stopRequestedRef.current = false;
 
     // Reads that decide where a turn belongs must use the current render's
     // session snapshot, not a value captured by an earlier send callback.
@@ -157,6 +185,7 @@ export function useChatStream(
       ? crypto.randomUUID()
       : `request-${Date.now()}-${Math.random().toString(16).slice(2)}`;
     const turnMetadata = { ...metadataOverride, client_request_id: clientRequestId };
+    activeClientRequestIdRef.current = clientRequestId;
 
     // Try WebSocket streaming first, fall back to HTTP.
     const wsUrl = realtimeEndpoint("/ws/agent");
@@ -172,6 +201,7 @@ export function useChatStream(
       let streamState = beginModelStep();
       let streamedText = "";
       let resolvedSid: string = activeSessionId || "";
+      let stageStartedAt: number | null = null;
 
       const wsReady: Promise<void> = new Promise((resolve, reject) => {
         const timer = setTimeout(() => { reject(new Error("ws_timeout")); }, WS_TIMEOUT_MS);
@@ -229,8 +259,9 @@ export function useChatStream(
 
         const watchdog = createStreamActivityWatchdog({
           onTick: (elapsedMs) => {
+            const stageElapsedMs = stageElapsedSince(stageStartedAt);
             useWorkbenchStore.getState().updateAssistant(
-              streamingMsgId, { progressElapsedMs: elapsedMs }, scratch,
+              streamingMsgId, { progressElapsedMs: elapsedMs, stageElapsedMs }, scratch,
             );
           },
           onTimeout: () => {
@@ -283,28 +314,34 @@ export function useChatStream(
                 }
                 const progressPatch = progressPatchForStreamStage(stageName, msg.data);
                 if (progressPatch) {
+                  const stageElapsedMs = progressPatch.stageElapsedMs ?? 0;
+                  stageStartedAt = Date.now() - stageElapsedMs;
                   useWorkbenchStore.getState().updateAssistant(
                     streamingMsgId,
                     progressPatch,
                     scratch,
                   );
                 }
+                if (stopRequestedRef.current && msg.data?.job_id && workspaceId) {
+                  requestCancel(String(msg.data.job_id), workspaceId);
+                }
                 if (stageName === "tool_call" || stageName === "tool_result") {
                   streamingResult.tool_calls_count = (streamingResult.tool_calls_count || 0) + 1;
                   const tid = msg.data?.tool_id || msg.data?.name || "";
-                  if (tid) {
+                  const callId = String(msg.data?.call_id || msg.data?.node_id || tid || "");
+                  if (tid && callId) {
                     const storeState = useWorkbenchStore.getState();
                     const curr = storeState.bySession[scratch]?.find((m) => m.id === streamingMsgId);
                     const prevCalls = (curr?.toolCalls || []) as InlineToolCall[];
                     if (stageName === "tool_result") {
                       const ok = msg.data?.ok ?? msg.data?.status === "ok";
                       const nextCalls = prevCalls.map((t) =>
-                        t.tool_id === tid ? { ...t, status: ok ? "done" : "fail", ok, summary: msg.data?.summary } : t,
+                        t.call_id === callId ? { ...t, status: ok ? "done" : "fail", ok, summary: msg.data?.summary } : t,
                       );
                       storeState.updateAssistant(streamingMsgId, { toolCalls: nextCalls }, scratch);
-                    } else if (!prevCalls.find((t) => t.tool_id === tid)) {
+                    } else if (!prevCalls.find((t) => t.call_id === callId)) {
                       storeState.updateAssistant(streamingMsgId, {
-                        toolCalls: [...prevCalls, { tool_id: tid, tool_name: toolLabel(tid), ok: false, status: "running" }],
+                        toolCalls: [...prevCalls, { call_id: callId, tool_id: tid, tool_name: toolLabel(tid), ok: false, status: "running" }],
                       }, scratch);
                     }
                   }
@@ -319,6 +356,9 @@ export function useChatStream(
               }
               case "done": {
                 terminalFrameReceived = true;
+                // The final token batch can arrive less than TOKEN_FLUSH_MS before done.
+                // Fold it into the draft before choosing between draft and final_response.
+                flushTokenBuffer();
                 resolvedSid = msg.session_id || activeSessionId || "";
                 streamedText = finalizeStreamText(streamState.draft, msg.final_response || "");
                 streamingResult.session_id = msg.session_id;
@@ -399,6 +439,7 @@ export function useChatStream(
       const cleanText = sanitizeAssistantText(wsResult.final_response);
       const cleanResult = { ...wsResult, final_response: sanitizeAssistantText(wsResult.final_response ?? "") };
       const toolCalls: InlineToolCall[] = (cleanResult.tool_calls ?? []).map((tc) => ({
+        call_id: tc.call_id,
         tool_id: tc.tool_id,
         tool_name: toolLabel(tc.tool_id),
         ok: tc.ok,
@@ -492,6 +533,9 @@ export function useChatStream(
       }
     } finally {
       msgWsRef.current = null;
+      activeClientRequestIdRef.current = "";
+      stopRequestedRef.current = false;
+      sendInFlightRef.current = false;
       useWorkbenchStore.getState().setSending(false);
     }
   }, [sending, workspaceId, onSessionResolved, onResult, onInterruption]);

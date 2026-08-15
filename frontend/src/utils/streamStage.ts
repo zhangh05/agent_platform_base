@@ -44,6 +44,11 @@ function toElapsedMs(value: unknown): number | undefined {
 }
 
 /** Heartbeats update the watchdog elsewhere; only real stages can alter UI progress. */
+/** Return a monotonic-looking client-side duration for the active real stage. */
+export function stageElapsedSince(startedAt: number | null, now = Date.now()): number | undefined {
+  return startedAt === null ? undefined : Math.max(0, now - startedAt);
+}
+
 export function progressPatchForStreamStage(
   stageName: string,
   payload?: StreamStagePayload,

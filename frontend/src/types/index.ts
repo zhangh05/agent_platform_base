@@ -893,6 +893,8 @@ export type ContentPart =
 
 /** Inline tool call data for structured rendering within messages */
 export interface InlineToolCall {
+  /** Provider/node invocation identity; tool_id is not unique within a turn. */
+  call_id?: string;
   tool_id: string;
   tool_name: string;
   ok: boolean;
