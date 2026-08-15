@@ -111,7 +111,7 @@
   min-height: 0;
   overflow: hidden;
   /* Neutral page surface: distinct from both sides of the conversation. */
-  background: #f4f7f5;
+  background: var(--bg);
 }
 [data-theme="dark"] .wb-chat {
   background: #111914;
@@ -244,8 +244,8 @@
   padding: 13px 16px;
   color: var(--text);
   /* User input stays the lightest green plane in the conversation. */
-  background: #f1fbf4;
-  border: 1px solid #d7ebdc;
+  background: #eef5f2;
+  border: 1px solid #d5e4df;
   border-radius: 14px 14px 5px 14px;
   box-shadow: none;
   font-size: 14px;
@@ -430,7 +430,7 @@
   min-width: 0;
   min-height: 0;
   overflow: hidden;
-  background: #fbfcfc;
+  background: var(--surface-2);
 }
 
 .task-progress-header {
@@ -715,7 +715,7 @@
 }
 .task-progress-panel.is-collapsed {
   grid-template-rows: 1fr;
-  background: #fbfcfc;
+  background: var(--surface-2);
 }
 .task-progress-panel.is-collapsed .task-progress-header {
   align-items: flex-start;
@@ -742,4 +742,52 @@
 }
 @media (max-width: 900px) {
   .wb-shell.is-progress-collapsed { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* Session controls are collapsible so the chat remains the dominant surface. */
+.wb-header-collapse {
+  display: inline-flex;
+  height: 28px;
+  align-items: center;
+  gap: 5px;
+  padding: 0 8px;
+  color: var(--text-3);
+  background: transparent;
+  border: 1px solid var(--line-2);
+  border-radius: 5px;
+  font-size: 11px;
+  font-weight: 650;
+}
+.wb-header-collapse:hover,
+.wb-header-collapse:focus-visible {
+  color: var(--text);
+  background: var(--surface-3);
+  border-color: var(--line);
+  outline: none;
+}
+.wb-header-collapse svg { transition: transform 160ms ease; }
+.wb-shell.is-header-collapsed .wb-conversation-column {
+  grid-template-rows: 36px minmax(0, 1fr) auto auto;
+}
+.wb-shell.is-header-collapsed .wb-header {
+  justify-content: flex-end;
+  padding: 0 14px;
+}
+.wb-shell.is-header-collapsed .wb-header-context,
+.wb-shell.is-header-collapsed .wb-header-status,
+.wb-shell.is-header-collapsed .wb-mode-btn,
+.wb-shell.is-header-collapsed .wb-export-btn {
+  display: none;
+}
+.wb-shell.is-header-collapsed .wb-header-collapse svg { transform: rotate(180deg); }
+.wb-shell.is-header-collapsed .wb-header-collapse span { display: inline; }
+
+/* Workbench visual hierarchy follows the graphite console palette. */
+.wb-chat { background: var(--bg); }
+.task-progress-panel,
+.task-progress-panel.is-collapsed { background: var(--surface-2); }
+.chat-bubble.assistant,
+.message-row:hover .chat-bubble.assistant {
+  box-shadow: none;
+  border-color: var(--line-2);
 }

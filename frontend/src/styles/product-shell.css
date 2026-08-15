@@ -1,34 +1,34 @@
 /* Selected visual direction: calm, evidence-led operations workspace. */
 
 :root {
-  --h-header: 68px;
+  --h-header: 60px;
   --w-sidebar: 208px;
-  --accent: #087b82;
-  --accent-2: #075e65;
-  --accent-soft: #e8f5f5;
-  --bg: #f7f9fa;
-  --surface-2: #fafcfc;
-  --surface-3: #f1f5f5;
-  --line: #dbe3e6;
-  --line-2: #e8edef;
-  --text: #18212b;
-  --text-2: #344250;
-  --text-3: #6e7b88;
-  --text-4: #9aa5af;
-  --ok: #149b72;
+  --accent: #0f5f63;
+  --accent-2: #08474b;
+  --accent-soft: #e6f0ef;
+  --bg: #f3f5f5;
+  --surface-2: #f8f9f9;
+  --surface-3: #eef2f2;
+  --line: #d8e0e0;
+  --line-2: #e5ebeb;
+  --text: #152026;
+  --text-2: #34444a;
+  --text-3: #66777d;
+  --text-4: #94a1a6;
+  --ok: #167563;
 }
 
 .app-header {
-  gap: 26px;
-  padding: 0 24px;
-  background: color-mix(in srgb, var(--surface) 96%, transparent);
+  gap: 18px;
+  padding: 0 22px;
+  background: var(--surface);
   border-bottom-color: var(--line-2);
-  box-shadow: 0 1px 0 rgba(20, 34, 45, 0.025);
+  box-shadow: none;
 }
 
 .brand {
-  min-width: 180px;
-  max-width: 200px;
+  min-width: 168px;
+  max-width: 180px;
 }
 
 .brand-text > span {
@@ -44,7 +44,7 @@
 .app-nav {
   display: flex;
   align-self: stretch;
-  gap: 8px;
+  gap: 4px;
   background: transparent;
   border: 0;
   border-radius: 0;
@@ -59,12 +59,12 @@
   position: relative;
   display: inline-flex;
   align-items: center;
-  gap: 8px;
+  gap: 7px;
   min-height: 100%;
-  padding: 0 12px;
+  padding: 0 10px;
   color: var(--text-3);
-  font-size: 14px;
-  font-weight: 650;
+  font-size: 13px;
+  font-weight: 620;
 }
 
 .app-nav-item:hover,
@@ -77,12 +77,12 @@
 .app-nav-item.active::after,
 .app-nav-group.active > .app-nav-item::after {
   position: absolute;
-  right: 12px;
+  right: 10px;
   bottom: 0;
-  left: 12px;
-  height: 3px;
+  left: 10px;
+  height: 2px;
   content: "";
-  background: var(--accent);
+  background: var(--accent-2);
   border-radius: 3px 3px 0 0;
 }
 
@@ -103,10 +103,10 @@
 .collapse-btn,
 .theme-toggle,
 .nav-toggle {
-  width: 36px;
-  height: 36px;
+  width: 32px;
+  height: 32px;
   color: var(--text-3);
-  border-radius: 9px;
+  border-radius: 6px;
 }
 
 .collapse-btn:hover,
@@ -117,19 +117,19 @@
 }
 
 .logout-btn {
-  min-width: 62px;
-  height: 36px;
-  padding: 0 14px;
-  color: var(--accent-2);
-  background: var(--accent-soft);
-  border: 0;
-  border-radius: 18px;
-  font-size: 13px;
-  font-weight: 720;
+  min-width: 56px;
+  height: 32px;
+  padding: 0 10px;
+  color: var(--text-3);
+  background: var(--surface);
+  border: 1px solid var(--line-2);
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 650;
 }
 
 .app-sidebar {
-  background: #fbfcfc;
+  background: #f8f9f9;
   border-right-color: var(--line-2);
 }
 
@@ -361,4 +361,27 @@
 .sidebar-runs-panel {
   position: relative;
   z-index: 0;
+}
+
+/* Dense graphite console treatment: icons carry hierarchy without decorative color. */
+.app-nav-item > svg,
+.collapse-btn > svg,
+.theme-toggle > svg,
+.nav-toggle > svg {
+  opacity: 0.72;
+  stroke-width: 1.65;
+}
+.app-nav-item.active > svg,
+.app-nav-item:hover > svg,
+.collapse-btn:hover > svg,
+.theme-toggle:hover > svg,
+.nav-toggle:hover > svg {
+  opacity: 1;
+}
+.logout-btn:hover,
+.logout-btn:focus-visible {
+  color: var(--text);
+  background: var(--surface-3);
+  border-color: var(--line);
+  outline: none;
 }

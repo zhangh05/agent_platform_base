@@ -78,6 +78,8 @@ export function TaskWorkbench() {
   const [progressPanelCollapsed, setProgressPanelCollapsed] = useState(false);
   const [input, setInput] = useState("");
   const [attachments, setAttachments] = useState<PendingAttachment[]>([]);
+  const [headerCollapsed, setHeaderCollapsed] = useState(false);
+
 
   // ── Scroll architecture (v4.1) ──
   // A plain scroll container is enough for the capped chat history and avoids
@@ -494,14 +496,25 @@ export function TaskWorkbench() {
   ]);
 
   return (
-    <div className={progressPanelCollapsed ? "wb-shell is-progress-collapsed" : "wb-shell"}>
+    <div className={["wb-shell", progressPanelCollapsed ? "is-progress-collapsed" : "", headerCollapsed ? "is-header-collapsed" : ""].filter(Boolean).join(" ")}>
       <section className="wb-conversation-column">
-        <header className="wb-header">
+        <header className="wb-header" id="workbench-session-header">
           <div className="wb-header-context">
             <span className="wb-header-kicker">{viewMode === "chat" ? "当前会话" : "运行记录"}</span>
             <h1 title={sessionTitle}>{viewMode === "chat" ? sessionTitle : "完整时间线"}</h1>
           </div>
           <div className="wb-header-actions">
+            <button
+              type="button"
+              className="wb-header-collapse"
+              aria-label={headerCollapsed ? "展开会话栏" : "收起会话栏"}
+              aria-controls="workbench-session-header"
+              aria-expanded={!headerCollapsed}
+              onClick={() => setHeaderCollapsed((collapsed) => !collapsed)}
+              data-testid="btn-toggle-session-header"
+            >
+              <IconChevronDown size={14} /><span>{headerCollapsed ? "展开" : "收起"}</span>
+            </button>
             <span className="wb-header-status">
               <span className={"dot " + (llmHealth.connected ? (llmHealth.recentFailure ? "warn" : "ok") : "err")} />
               {llmStatusLabel}
