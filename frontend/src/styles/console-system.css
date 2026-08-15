@@ -1,0 +1,320 @@
+/* Enterprise console system: shared primitives for non-workbench pages. */
+:root {
+  --console-canvas: #f3f5f5;
+  --console-surface: #ffffff;
+  --console-muted: #f8f9f9;
+  --console-border: #d8e0e0;
+  --console-border-soft: #e5ebeb;
+  --console-ink: #152026;
+  --console-muted-ink: #66777d;
+  --console-action: #0f5f63;
+  --console-action-strong: #08474b;
+  --console-action-soft: #e6f0ef;
+  --r-4: 4px;
+  --r-6: 6px;
+  --r-8: 8px;
+  --shadow-card: none;
+}
+
+:root[data-theme="dark"] {
+  --console-canvas: #101619;
+  --console-surface: #151d20;
+  --console-muted: #182126;
+  --console-border: #2c393e;
+  --console-border-soft: #243035;
+  --console-ink: #e7eef0;
+  --console-muted-ink: #9aabb0;
+  --console-action: #6aaeb0;
+  --console-action-strong: #8ac3c4;
+  --console-action-soft: #173235;
+}
+
+.page { background: var(--console-canvas); }
+.page-header,
+.page-header.ui-page-header {
+  min-height: 66px;
+  padding: 14px 24px 12px;
+  gap: 16px;
+  background: var(--console-surface);
+  border-bottom-color: var(--console-border-soft);
+}
+.page-header h1 {
+  margin-bottom: 2px;
+  color: var(--console-ink);
+  font-size: 20px;
+  font-weight: 720;
+  letter-spacing: -0.018em;
+}
+.page-header h1 span,
+.page-header .subtitle { color: var(--console-muted-ink) !important; }
+.page-header .subtitle { font-size: 12px; }
+.page-body { padding: 18px 24px 24px; }
+
+.btn {
+  height: 34px;
+  padding: 0 11px;
+  color: var(--text-2);
+  background: var(--console-surface);
+  border-color: var(--console-border);
+  border-radius: var(--r-6);
+  box-shadow: none;
+  font-size: 12px;
+  font-weight: 650;
+}
+.btn:hover:not(:disabled) {
+  color: var(--console-ink);
+  background: var(--console-muted);
+  border-color: var(--text-4);
+}
+.btn.primary {
+  color: #fff;
+  background: var(--console-action);
+  border-color: var(--console-action);
+}
+.btn.primary:hover:not(:disabled) {
+  background: var(--console-action-strong);
+  border-color: var(--console-action-strong);
+}
+.btn.ghost {
+  border-color: transparent;
+  background: transparent;
+}
+.btn.sm { height: 28px; border-radius: var(--r-4); }
+
+.input,
+textarea.input,
+select.input {
+  height: 34px;
+  color: var(--console-ink);
+  background: var(--console-surface);
+  border-color: var(--console-border);
+  border-radius: var(--r-6);
+  box-shadow: none;
+}
+.input:hover,
+textarea.input:hover,
+select.input:hover { border-color: var(--text-4); }
+.input:focus-visible,
+textarea.input:focus-visible,
+select.input:focus-visible {
+  border-color: var(--console-action);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--console-action) 16%, transparent);
+}
+
+.ui-filter-bar {
+  gap: 8px;
+  padding: 8px 10px;
+  margin-bottom: 12px;
+  background: var(--console-muted);
+  border-color: var(--console-border-soft);
+  border-radius: var(--r-6);
+}
+.data-table-scroll {
+  background: var(--console-surface);
+  border: 1px solid var(--console-border-soft);
+  border-radius: var(--r-6);
+}
+.tbl { background: var(--console-surface); }
+.tbl th {
+  height: 36px;
+  color: var(--console-muted-ink);
+  background: var(--console-muted);
+  border-bottom-color: var(--console-border-soft);
+  font-size: 11px;
+  font-weight: 680;
+  letter-spacing:   letter-spacing:   letterght: 42px;
+  color: var(--console-ink);
+  border-bottom-color: var(--console-border-soft);
+}
+.tbl tbody tr:hover { background: color-mix(in srgb, var(--console-action) 4%, var(--console-surface)); }
+
+.split-shell > aside { background: var(--console-muted); border-right-color: var(--console-border-soft); }
+.split-detail,
+.ui-detail-panel { padding: 18px 20px; background: var(--console-surface); }
+.ui-detail-panel-head { padding-bottom: 12px; margin-bottom: 14px; border-bottom: 1px solid var(--console-border-soft); }
+.ui-detail-panel-title { color: var(--console-ink); font-size: 16px; }
+.ui-detail-panel-subtitle { color: var(--console-muted-ink); }
+
+.status-pill {
+  height: 24px;
+  padding: 0 8px;
+  color: var(--console-muted-ink);
+  background: transparent;
+  border-color: var(--console-border-soft);
+  border-radius: var(--r-4);
+  font-size: 10px;
+}
+.empty { min-height: 150px; padding: 28px 18px; }
+.empty-icon {
+  width: 34px;
+  height: 34px;
+  margin-bottom: 10px;
+  color: var(--console-muted-ink);
+  background: transparent;
+  border-color: var(--console-border-soft);
+  border-radius: var(--r-6);
+}
+.empty-text { color: var(--console-ink); font-size: 13px; }
+.empty-hint { color: var(--console-muted-ink); }
+
+@media (max-width: 900px) {
+  .page-header,
+  .page-header.ui-page-header { min-height: 60px; padding: 12px 16px 10px; }
+  .page-body { padding: 14px 16px 18px; }
+}
+
+/* Data-list model: directory, filter, evidence table, then detail. */
+.data-center-tabs,
+.data-center > .ui-filter-bar:not(.data-center-tabs) {
+  padding: 8px 24px;
+  background: var(--console-surface);
+  border-bottom-color: var(--console-border-soft);
+}
+.data-overview,
+.data-center > .data-lifecycle-grid,
+.data-center > .data-relations-grid { padding: 18px 24px 24px; }
+.data-summary-panel,
+.data-main-panel,
+.data-governance-panel {
+  background: var(--console-surface);
+  border-color: var(--console-border-soft);
+  border-radius: var(--r-6);
+  box-shadow: none;
+}
+.data-summary-head,
+.data-panel-head { min-height: 42px; padding: 10px 14px; border-bottom-color: var(--console-border-soft); }
+.data-split { grid-template-columns: clamp(280px, 28%, 360px) minmax(0, 1fr); }
+.data-list { background: var(--console-muted); }
+.data-list-item,
+.data-recent-row {
+  border-radius: var(--r-4);
+  box-shadow: none;
+}
+.data-list-item:hover,
+.data-list-item.selected { background: var(--console-action-soft); }
+
+/* Operations model: normal activity is quiet; only exceptions acquire semantic color. */
+.operations-split > aside,
+.ra-list-pane { background: var(--console-muted); }
+.job-card,
+.ra-event-card,
+.ra-event-card-static {
+  border: 1px solid var(--console-border-soft);
+  border-radius: var(--r-4);
+  box-shadow: none;
+}
+.job-card { margin: 0 8px 4px; background: transparent; }
+.job-card:hover { background: var(--console-surface); border-color: var(--console-border); }
+.job-card.selected { background: var(--console-action-soft); border-color: color-mix(in srgb, var(--console-action) 34%, var(--console-border)); }
+.job-card.selected::before { width: 2px; background: var(--console-action); }
+.job-card-head { min-height: 28px; }
+.job-card-meta,
+.ra-event-meta,
+.ra-event-summary { color: var(--console-muted-ink); font-size: 11px; }
+.ra-event-card,
+.ra-event-card-static { padding: 10px 12px; background: var(--console-surface); }
+.ra-event-card:hover,
+.ra-event-card-static:hover { border-color: var(--console-border); }
+.ra-event-detail { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--console-border-soft); }
+.ra-hero-sm { padding: 38px; }
+
+/* Shared observation strips: dense summaries should read as one instrument panel. */
+.stat-grid {
+  gap: 0;
+  padding: 0;
+  margin-bottom: 14px;
+  background: var(--console-surface);
+  border-color: var(--console-border-soft);
+  border-radius: var(--r-6);
+}
+.stat-card { min-height: 64px; padding: 12px 16px; }
+.stat-card + .stat-card { border-left: 1px solid var(--console-border-soft); }
+.stat-value { color: var(--console-ink); font-size: 20px; }
+.stat-label { color: var(--console-muted-ink); }
+
+/* Governance model: object list, structured editor, and explicit risk boundary. */
+.user-access-layout,
+.workflow-layout {
+  background: var(--console-surface);
+  border: 1px solid var(--console-border-soft);
+  border-radius: var(--r-6);
+  overflow: hidden;
+}
+.user-access-list,
+.workflow-list { background: var(--console-muted); border-right-color: var(--console-border-soft); }
+.user-access-list-title,
+.workflow-list-title {
+  min-height: 42px;
+  padding: 10px 12px;
+  color: var(--console-muted-ink);
+  border-bottom-color: var(--console-border-soft);
+  font-size: 11px;
+  letter-spacing: 0.025em;
+}
+.user-access-list button,
+.workflow-list button {
+  min-height: 38px;
+  margin: 2px 6px;
+  border-radius: var(--r-4);
+}
+.user-access-list button.selected,
+.workflow-list button.selected { color: var(--console-ink); background: var(--console-action-soft); }
+.user-access-editor,
+.workflow-editor { padding: 18px 20px; background: var(--console-surface); }
+.user-access-editor-head,
+.workflow-editor-head { padding-bottom: 12px; border-bottom-color: var(--console-border-soft); }
+.user-access-editor-head > div > span,
+.workflow-editor-head > div > span { color: var(--console-action); }
+.user-access-section,
+.workflow-section { padding: 16px 0; border-bottom-color: var(--console-border-soft); }
+.user-role-options label,
+.user-workspace-options label {
+  padding: 10px;
+  border-color: var(--console-border-soft);
+  border-radius: var(--r-4);
+  background: transparent;
+}
+.user-role-options label.selected,
+.user-workspace-options label.selected {
+  border-color: color-mix(in srgb, var(--console-action) 44%, var(--console-border));
+  background: var(--console-action-soft);
+}
+.user-access-actions,
+.workflow-editor-actions { padding-top: 14px; }
+.user-access-denied { border-color: var(--console-border-soft); border-radius: var(--r-6); box-shadow: none; }
+
+/* Builder model: the canvas/editor dominates; peripheral summaries stay instrumental. */
+.workflow-summary,
+.user-access-summary {
+  gap: 0;
+  margin-bottom: 14px;
+  background: var(--console-surface);
+  border: 1px solid var(--console-border-soft);
+  border-radius: var(--r-6);
+}
+.workflow-summary > *,
+.user-access-summary > * {
+  min-height: 58px;
+  padding: 12px 14px;
+  background: transparent;
+  border: 0;
+  border-right: 1px solid var(--console-border-soft);
+  border-radius: 0;
+  box-shadow: none;
+}
+.workflow-summary > *:last-child,
+.user-access-summary > *:last-child { border-right: 0; }
+.workflow-run-box,
+.workflow-node-row { border-color: var(--console-border-soft); border-radius: var(--r-4); box-shadow: none; }
+
+/* Catalog pages remain directories, not marketing card walls. */
+.asset-card,
+.capability-card,
+.extension-card {
+  border-color: var(--console-border-soft);
+  border-radius: var(--r-6);
+  box-shadow: none;
+}
+.asset-card:hover,
+.capability-card:hover,
+.extension-card:hover { border-color: var(--console-border); box-shadow: none; }
