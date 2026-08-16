@@ -140,7 +140,7 @@ class ToolPolicy:
 
             action = str((invocation.arguments or {}).get("action") or "").strip().lower()
             action_contract = action_execution_contract(spec.tool_id, action)
-        except Exception:
+        except ImportError:
             action_contract = {}
 
         # Tool-level manifests supply defaults. A canonical action contract may
