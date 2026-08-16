@@ -444,6 +444,9 @@ class SSOTRuntimeEngine:
             "approval_details": [],
             "command_summary": [],
             "tool_summary": [],
+            # Server-generated cognitive projection; client metadata is never trusted here.
+            "cognitive": {},
+            "cognitive_events": [],
             # v3.13: conversation context
             "conversation_ref": False,
             "conversation_history_used": False,
@@ -455,6 +458,10 @@ class SSOTRuntimeEngine:
         }
         if extra:
             base_meta.update(extra)
+            if isinstance(extra.get("cognitive"), dict):
+                base_meta["cognitive"] = dict(extra["cognitive"])
+            if isinstance(extra.get("cognitive_events"), list):
+                base_meta["cognitive_events"] = list(extra["cognitive_events"])
 
         execution_outcome = str(base_meta.get("execution_outcome") or "complete")
         return SSOTRuntimeResult(

@@ -18,7 +18,7 @@ import { getApiAccessToken, realtimeEndpoint } from "../api/client";
 import { useWorkbenchStore } from "../stores/workbench";
 import { useSessionStore } from "../stores/session";
 import { isApiError } from "../types";
-import type { AgentResult, ToolCallResult, InlineToolCall } from "../types";
+import type { AgentResult, ToolCallResult, InlineToolCall, CognitiveSummary, CognitiveEvent } from "../types";
 import { sanitizeAssistantText, toolLabel, filterStreamingThink, type ThinkFilterState } from "../utils/displayText";
 import { beginModelStep, canFallbackToHttp, discardToolCallDraft, finalizeStreamText } from "../utils/agentStream";
 import { agentResultFromWsDone } from "../utils/wsResult";
@@ -228,7 +228,7 @@ export function useChatStream(
         events?: AgentResult["events"];
         tool_calls_count?: number;
         tool_calls?: ToolCallResult[];
-        metadata?: Record<string, unknown>;
+        metadata?: AgentResult["metadata"];
         errors?: string[];
         warnings?: string[];
         tool_decision?: AgentResult["tool_decision"];
@@ -295,6 +295,32 @@ export function useChatStream(
                   streamingResult.events = [...(streamingResult.events || []), msg.data];
                 }
                 const stageName = msg.name as string;
+                if (stageName.startsWith("cognitive_") && msg.data) {
+                  const rawPayload = msg.data.payload;
+                  const payload = rawPayload && typeof rawPayload === "object"
+                    ? rawPayload as Record<string, unknown>
+                    : {};
+                  const previous: CognitiveSummary = streamingResult.metadata?.cognitive ?? {};
+                  const nextSummary: CognitiveSummary = {
+                    ...previous,
+                    revision: Number(msg.data.state_revision ?? previous.revision ?? 0) || previous.revision,
+                    ...(typeof payload.goal === "string" ? { goal: payload.goal } : {}),
+                    ...(typeof payload.outcome === "string" ? { outcome: payload.outcome } : {}),
+                    ...(typeof payload.visible_summary === "string" ? { visible_summary: payload.visible_summary } : {}),
+                    ...(typeof payload.decision === "string"
+                      ? { decision: { ...previous.decision, decision: payload.decision, visible_summary: String(payload.visible_summary || previous.decision?.visible_summary || "") } }
+                      : {}),
+                  };
+                  const priorEvents = streamingResult.metadata?.cognitive_events ?? [];
+                  const cognitiveEvent = msg.data as CognitiveEvent;
+                  streamingResult.metadata = {
+                    ...(streamingResult.metadata ?? {}),
+                    cognitive: nextSummary,
+                    cognitive_events: priorEvents.some((item) => item.event_id === cognitiveEvent.event_id)
+                      ? priorEvents
+                      : [...priorEvents, cognitiveEvent],
+                  };
+                }
                 if (msg.data && stageName !== "heartbeat") {
                   const storeState = useWorkbenchStore.getState();
                   const currentMessage = storeState.bySession[scratch]?.find((item) => item.id === streamingMsgId);
@@ -369,7 +395,7 @@ export function useChatStream(
                 streamingResult.events = msg.events || streamingResult.events || [];
                 streamingResult.tool_calls_count = msg.tool_calls_count || streamingResult.tool_calls_count;
                 streamingResult.tool_calls = msg.tool_calls || [];
-                streamingResult.metadata = msg.metadata || {};
+                streamingResult.metadata = { ...(streamingResult.metadata ?? {}), ...(msg.metadata || {}) };
                 streamingResult.errors = msg.errors || [];
                 streamingResult.warnings = msg.warnings || [];
                 streamingResult.tool_decision = msg.tool_decision;

@@ -251,6 +251,18 @@ function evBadge(e: RuntimeEvent): "ok" | "err" | "warn" | "info" | "muted" {
 function evTypeLabel(rawType: string, ev: RuntimeEvent): string {
   if (!rawType) return "event";
   const t = rawType.toLowerCase();
+  const cognitiveLabels: Record<string, string> = {
+    cognitive_initialized: "已建立认知状态",
+    cognitive_goal_normalized: "已规范化任务目标",
+    cognitive_plan_selected: "已选择受控执行计划",
+    cognitive_evidence_registered: "已登记有效观察",
+    cognitive_gap_detected: "发现待核对信息",
+    cognitive_decision_made: "已作出受控决策",
+    cognitive_reflection_started: "正在复核回复质量",
+    cognitive_reflection_completed: "回复质量复核完成",
+    cognitive_stop_decided: "已确定下一步或停止条件",
+  };
+  if (cognitiveLabels[t]) return cognitiveLabels[t];
   // Tool call events
   if (t.includes("tool_call_start")) return "工具开始";
   if (t.includes("tool_call_end") || t.includes("tool_call_finish")) return "工具完成";

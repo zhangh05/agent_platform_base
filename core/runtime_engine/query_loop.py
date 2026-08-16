@@ -68,6 +68,8 @@ from .evidence import (
     pending_llm_evidence,
     register_tool_evidence,
 )
+from .cognitive_gate import decide_next_action
+from .cognitive_state import initialize_cognitive_state
 
 
 # ── Prompt Cache ────────────────────────────────────────────────────────────
@@ -1313,6 +1315,17 @@ class QueryLoop:
         output_truncated = False
         output_truncation_reason = ""
         planner_completed_emitted = False
+        cognitive_state = initialize_cognitive_state(
+            turn_id=ctx.request_id,
+            trace_id=str(ctx.extras.get("trace_id") or ctx.request_id),
+            user_input=ctx.user_input,
+            constraints=("SSOT QueryLoop is the only tool execution path",),
+        )
+        ctx.extras["cognitive_state"] = cognitive_state
+        if self._emitter is not None:
+            for event in cognitive_state.events:
+                self._emitter.emit(event["type"], event)
+        cognitive_events_emitted = len(cognitive_state.events)
 
         initialize_evidence_ledger(ctx.extras)
 
@@ -1323,6 +1336,7 @@ class QueryLoop:
 
         def finish(**values) -> QueryLoopResult:
             """Build every exit projection with the same runtime metrics."""
+            nonlocal cognitive_events_emitted
             projected_metrics = {
                 "elapsed_ms": (time.monotonic() - t_start) * 1000,
                 "iterations": iterations,
@@ -1368,12 +1382,39 @@ class QueryLoop:
                     goal_assertions=assertion_result,
                 )
             )
+            cognitive_state.register_tool_results(
+                all_results,
+                evidence=projected_metrics["evidence"] if isinstance(projected_metrics["evidence"], dict) else None,
+            )
+            cognitive_decision = decide_next_action(
+                tool_results=all_results,
+                execution_outcome=projected_metrics["execution_outcome"],
+                goal_assertions=assertion_result,
+                terminal_error=str(values.get("error") or ""),
+            )
+            cognitive_state.set_decision(
+                cognitive_decision.outcome,
+                reason_codes=cognitive_decision.reason_codes,
+                visible_summary=cognitive_decision.visible_summary,
+            )
+            cognitive_state.set_outcome(
+                cognitive_decision.outcome,
+                reason_codes=cognitive_decision.reason_codes,
+                visible_summary=cognitive_decision.visible_summary,
+            )
+            cognitive_state._append("cognitive_stop_decided", cognitive_decision.as_dict())
+            projected_metrics["cognitive"] = cognitive_state.summary()
+            projected_metrics["cognitive_events"] = list(cognitive_state.events)
+            ctx.extras["cognitive_state"] = cognitive_state.as_trace_payload()
+            if self._emitter is not None:
+                for event in cognitive_state.events[cognitive_events_emitted:]:
+                    self._emitter.emit(event["type"], event)
+            cognitive_events_emitted = len(cognitive_state.events)
             values.setdefault("tool_results", all_results)
             values.setdefault("iterations", iterations)
             values.setdefault("total_tool_calls", len(all_results))
             values.setdefault("llm_calls", llm_calls)
             return QueryLoopResult(metrics=projected_metrics, **values)
-
         # A resolved ordinary approval re-enters the same QueryLoop with a
         # server-only typed grant. Revalidate the exact persisted calls, then
         # execute through the canonical executor before asking the LLM to
@@ -1803,6 +1844,20 @@ class QueryLoop:
                 # on the repeated node. Repeated reads in a mixed graph are safe
                 # to observe again; an identical mutation is never replayed.
 
+                cognitive_state.select_plan(
+                    [{"action": tc.name, "purpose": "补充当前任务所需观察"} for tc in tool_calls],
+                    reason="已通过规范化、语义、风险与预算校验的执行计划",
+                )
+                cognitive_state.set_decision(
+                    "execute_tool",
+                    reason_codes=("validated_execution_plan",),
+                    selected_action=",".join(tc.name for tc in tool_calls),
+                    visible_summary="正在执行经过校验的计划步骤",
+                )
+                if self._emitter is not None:
+                    for event in cognitive_state.events[cognitive_events_emitted:]:
+                        self._emitter.emit(event["type"], event)
+                cognitive_events_emitted = len(cognitive_state.events)
                 # Execute tools (parallel read-only, serial writes)
                 execution_started = time.monotonic()
                 self._emit_stage(
@@ -2037,6 +2092,14 @@ class QueryLoop:
                     "correction_attempts": 0,
                     "blocking": False,
                 }
+                cognitive_state.begin_reflection(
+                    quality_codes,
+                    attempt=response_quality_attempts + 1,
+                )
+                cognitive_state.complete_reflection(
+                    resolved=False,
+                    attempt=response_quality_attempts + 1,
+                )
             elapsed = (time.monotonic() - t_start) * 1000
             self._emit_stage(
                 RESPONSE_COMPLETED, t_start, stage_started_at=response_stage_started_at,

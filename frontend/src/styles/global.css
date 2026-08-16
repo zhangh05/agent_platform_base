@@ -9342,3 +9342,9 @@ summary:focus-visible,
 .result-inline-details {
   padding-top: 2px;
 }
+
+/* Server-generated cognitive decision summary in default-collapsed run details. */
+.cognitive-summary { display: flex; align-items: center; gap: 7px; margin: 0 0 10px; padding: 8px 10px; color: var(--text-2); background: color-mix(in srgb, var(--accent-soft) 56%, transparent); border: 1px solid color-mix(in srgb, var(--accent) 20%, var(--line-2)); border-radius: 7px; font-size: var(--fs-11); }
+.cognitive-summary-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cognitive-summary-outcome { flex: 0 0 auto; margin-left: auto; color: var(--text-3); font-size: var(--fs-10); text-transform: capitalize; }
+[data-theme="dark"] .cognitive-summary { background: color-mix(in srgb, var(--accent-soft) 38%, transparent); }

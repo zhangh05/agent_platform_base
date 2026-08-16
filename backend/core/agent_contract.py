@@ -91,6 +91,8 @@ def normalize_agent_result(result: dict, workspace_id: str) -> dict:
     result.setdefault("warnings", [])
     result.setdefault("errors", [])
     result.setdefault("metadata", {})
+    result.setdefault("cognitive", {})
+    result.setdefault("cognitive_events", [])
     result.setdefault("report_artifacts", [])
     result.setdefault("artifact_refs", [])
     result.setdefault("trace_available", bool(result.get("trace_id")))
@@ -102,7 +104,12 @@ def normalize_agent_result(result: dict, workspace_id: str) -> dict:
     result.setdefault("llm", {"enabled": False, "used": False})
     if result.get("trace_id") and not result.get("trace_available"):
         result["trace_available"] = True
-    md = result.get("metadata") or {}
+    md = result.get("metadata") if isinstance(result.get("metadata"), dict) else {}
+    md.setdefault("cognitive", result["cognitive"] if isinstance(result["cognitive"], dict) else {})
+    md.setdefault("cognitive_events", result["cognitive_events"] if isinstance(result["cognitive_events"], list) else [])
+    result["metadata"] = md
+    result["cognitive"] = md["cognitive"]
+    result["cognitive_events"] = md["cognitive_events"]
     if "memory_hits_count" in md and isinstance(md["memory_hits_count"], int):
         result["memory_hits_count"] = md["memory_hits_count"]
     if "knowledge_hits_count" in md and isinstance(md["knowledge_hits_count"], int):

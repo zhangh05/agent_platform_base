@@ -117,6 +117,29 @@ export interface ToolCallResult {
   metadata?: Record<string, unknown>;
 }
 
+export interface CognitiveSummary {
+  schema_version?: string;
+  revision?: number;
+  goal?: string;
+  outcome?: string;
+  known_fact_count?: number;
+  unknown_count?: number;
+  blocking_unknown_count?: number;
+  decision?: {
+    decision?: string;
+    reason_codes?: string[];
+    selected_action?: string;
+    visible_summary?: string;
+  };
+  visible_summary?: string;
+}
+
+export interface CognitiveEvent {
+  event_id: string;
+  type: string;
+  state_revision?: number;
+  payload?: Record<string, unknown>;
+}
 export interface AgentResult {
   ok: boolean;
   final_response: string;
@@ -141,6 +164,9 @@ export interface AgentResult {
   };
   /** v2.1.2: Human-readable reason when no tools called */
   no_tool_reason?: string;
+  /** Server-generated cognitive projection; never sourced from request metadata. */
+  cognitive?: CognitiveSummary;
+  cognitive_events?: CognitiveEvent[];
   metadata: {
     selected_capabilities?: string[];
     visible_tools?: string[];
@@ -153,6 +179,9 @@ export interface AgentResult {
     workspace_id?: string;
     context_sources?: SourceSummary[];
     citations?: Array<Record<string, unknown>>;
+    /** Compact server-generated state; raw reasoning is intentionally absent. */
+    cognitive?: CognitiveSummary;
+    cognitive_events?: CognitiveEvent[];
     retrieval_diagnostics?: Record<string, unknown>;
     /** Runtime action retry summary surfaced from SSOT Runtime. */
     retry_summary?: {

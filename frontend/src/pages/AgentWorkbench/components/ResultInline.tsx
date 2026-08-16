@@ -7,7 +7,7 @@ import { IconBolt } from "../../../components/Icon";
 import { TaskTrackingCard } from "../../../components/TaskTrackingCard";
 import { toolLabel } from "../../../utils/displayText";
 import { isApiError } from "../../../types";
-import type { AgentResult, SourceSummary, ToolCallResult } from "../../../types";
+import type { AgentResult, SourceSummary, ToolCallResult, CognitiveSummary } from "../../../types";
 
 interface ResultInlineProps {
   result: AgentResult | undefined;
@@ -87,6 +87,9 @@ export const ResultInline = memo(function ResultInline({
   const [saving, setSaving] = useState<"" | "memory" | "knowledge">("");
   const [detailsOpen, setDetailsOpen] = useState(false);
   const summaries: SourceSummary[] = (result?.metadata?.context_sources ?? result?.metadata?.source_summary ?? []);
+  const cognitive: CognitiveSummary | undefined = result?.metadata?.cognitive ?? result?.cognitive;
+  const cognitiveSummary = String(cognitive?.visible_summary || cognitive?.decision?.visible_summary || "").trim();
+  const cognitiveOutcome = String(cognitive?.outcome || "").replace(/^stop_/, "").replace(/^continue_/, "");
   const isFailed = Boolean(result && !result.ok);
   const hasFailedTool = ((result?.tool_calls) ?? []).some((tc) => !tc.ok);
   const finalText = (result?.final_response || fallbackText || "").trim();
@@ -220,6 +223,13 @@ export const ResultInline = memo(function ResultInline({
             {unknownOutcome?.error_code && <span>代码：{unknownOutcome.error_code}</span>}
           </div>
           <a className="unknown-outcome-link" href="/runs?view=audit">查看任务审计</a>
+        </section>
+      )}
+      {cognitiveSummary && (
+        <section className="cognitive-summary" data-testid="cognitive-summary">
+          <IconBolt size={10} className="inline-icon-accent" />
+          <span className="cognitive-summary-text">{cognitiveSummary}</span>
+          {cognitiveOutcome && <span className="cognitive-summary-outcome">{cognitiveOutcome.replaceAll("_", " ")}</span>}
         </section>
       )}
       {(contextCompacted || outputTruncated) && (

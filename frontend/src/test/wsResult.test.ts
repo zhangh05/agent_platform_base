@@ -25,6 +25,8 @@ describe("agentResultFromWsDone", () => {
         metadata: {
           visible_tools: ["knowledge.manage"],
           source_count: 1,
+          cognitive: { goal: "分析资料", outcome: "stop_completed", visible_summary: "证据已登记并满足完成条件" },
+          cognitive_events: [{ event_id: "cog-1", type: "cognitive_stop_decided" }],
         },
         tool_decision: { needed: true, selected_tools: ["knowledge.manage"] },
         no_tool_reason: "",
@@ -38,6 +40,8 @@ describe("agentResultFromWsDone", () => {
     expect(result.tool_calls).toHaveLength(1);
     expect(result.metadata.source_count).toBe(1);
     expect(result.tool_decision?.selected_tools).toEqual(["knowledge.manage"]);
+    expect(result.cognitive?.visible_summary).toBe("证据已登记并满足完成条件");
+    expect(result.cognitive_events).toHaveLength(1);
   });
 
   it("never creates an empty assistant message", () => {

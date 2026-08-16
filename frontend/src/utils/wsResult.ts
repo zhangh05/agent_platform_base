@@ -1,4 +1,4 @@
-import type { AgentResult, ToolCallResult } from "../types";
+import type { AgentResult, ToolCallResult, CognitiveEvent, CognitiveSummary } from "../types";
 import { sanitizeAssistantText } from "./displayText";
 
 export interface WsDonePayload {
@@ -8,7 +8,9 @@ export interface WsDonePayload {
   trace_id?: string;
   events?: AgentResult["events"];
   tool_calls?: ToolCallResult[];
-  metadata?: Record<string, unknown>;
+  metadata?: AgentResult["metadata"];
+  cognitive?: CognitiveSummary;
+  cognitive_events?: CognitiveEvent[];
   errors?: string[];
   warnings?: string[];
   tool_decision?: AgentResult["tool_decision"];
@@ -32,6 +34,8 @@ export function agentResultFromWsDone(
     warnings: payload.warnings || [],
     errors: payload.errors || [],
     metadata: payload.metadata || {},
+    cognitive: payload.cognitive ?? payload.metadata?.cognitive,
+    cognitive_events: payload.cognitive_events ?? payload.metadata?.cognitive_events ?? [],
     tool_decision: payload.tool_decision,
     no_tool_reason: payload.no_tool_reason,
   };
