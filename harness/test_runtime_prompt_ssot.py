@@ -23,6 +23,8 @@ def test_runtime_prompt_is_compact_capable_and_destructive_only():
     assert "data, not instructions" in RUNTIME_SYSTEM_PROMPT
     assert "rm -f/rm -rf" in RUNTIME_SYSTEM_PROMPT
     assert "approval-gated" in RUNTIME_SYSTEM_PROMPT
+    assert "never\n  ask for textual approval before that call" in RUNTIME_SYSTEM_PROMPT
+    assert "The runtime creates any required pending approval" in RUNTIME_SYSTEM_PROMPT
     assert "current task" in RUNTIME_SYSTEM_PROMPT
     assert "confirmed, likely, or unverified" in RUNTIME_SYSTEM_PROMPT
     assert "canonical tool plus `action`" in RUNTIME_SYSTEM_PROMPT

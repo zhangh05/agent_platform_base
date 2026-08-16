@@ -361,3 +361,63 @@ def test_unbacked_confirmation_request_cannot_become_pending():
     assert any("unbacked_approval_claim" in str(error) for error in result.errors)
     assert result.metadata["approval_required"] is False
     assert result.metadata.get("continuation_id") is None
+
+
+def test_unbacked_confirmation_correction_reaches_canonical_pending():
+    from agent.llm.schemas import LLMResponse, LLMToolCall
+    from core.runtime_engine.engine import SSOTRuntimeEngine
+    from core.runtime_engine.models import SSOTRuntimeConfig
+    from core.runtime_engine.tool_runtime import ToolRuntime
+
+    config = SSOTRuntimeConfig(max_query_loop_iterations=3)
+    responses = [
+        LLMResponse(content="该删除动作需要审批，请确认是否批准。"),
+        LLMResponse(tool_calls=[LLMToolCall(
+            id="delete-after-correction",
+            name="workspace.file",
+            arguments={"action": "delete", "filepath": "files/data/probe.md"},
+        )]),
+    ]
+    approvals = []
+
+    def invoke(**_kwargs):
+        return responses.pop(0)
+
+    async def pending_handler(_ctx, gate):
+        approvals.append(gate)
+        return {
+            "status": "pending",
+            "approval_ids": ["apr-test-1"],
+            "continuation_id": "cont_test_1",
+        }
+
+    engine = SSOTRuntimeEngine(
+        config=config,
+        llm_invoke=invoke,
+        tool_registry={
+            "workspace.file": {
+                "description": "workspace file operations",
+                "args_schema": {
+                    "type": "object",
+                    "required": ["action", "filepath"],
+                    "properties": {
+                        "action": {"type": "string"},
+                        "filepath": {"type": "string"},
+                    },
+                },
+            },
+        },
+        tool_runtime=ToolRuntime(config),
+        approval_handler=pending_handler,
+    )
+    result = asyncio.run(engine.run(
+        "删除临时探针文件",
+        workspace_id="default",
+        session_id="approval-correction-pending",
+    ))
+
+    assert len(approvals) == 1
+    assert approvals[0]["approval_required"] is True
+    assert approvals[0]["approval_nodes"] == ["delete-after-correction"]
+    assert result.metadata["approval_required"] is True
+    assert result.metadata["approval_ids"] == ["apr-test-1"]
