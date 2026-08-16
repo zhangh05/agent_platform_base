@@ -1490,6 +1490,10 @@ class QueryLoop:
             finally:
                 budget.end_execution()
                 execution_duration_ms += (time.monotonic() - execution_started) * 1000
+            # A server-issued grant is single-use; later model calls must re-enter the normal risk gate.
+            ctx.extras.pop("__approved_tool_continuation", None)
+            ctx.extras.pop("approved_tool_call_keys", None)
+            ctx.extras.pop("approved_tool_call_ids", None)
             all_results.extend(resumed_results)
             for call, result in zip(resumed_calls, resumed_results):
                 completed_call_keys.add(self._completion_key(call, mutation_epoch))
@@ -2703,6 +2707,8 @@ class QueryLoop:
 
         approved_keys = set(ctx.extras.get("approved_tool_call_keys") or [])
         approval_nodes = [node for node in nodes if node.id in risk.approval_nodes]
+        continuation = ctx.extras.get("__approved_tool_continuation")
+        continuation_node_ids = set(getattr(continuation, "approved_node_ids", ()) or ())
         approval_satisfied = bool(approval_nodes) and all(
             self._tool_call_key(LLMToolCall(
                 id=node.id,
@@ -2715,6 +2721,10 @@ class QueryLoop:
             )) in approved_keys
             for node in approval_nodes
         )
+        if continuation_node_ids:
+            approval_satisfied = bool(approval_nodes) and all(
+                node.id in continuation_node_ids for node in approval_nodes
+            )
         if risk.requires_approval and not approval_satisfied:
             repaired_calls = [LLMToolCall(
                 id=n.id,

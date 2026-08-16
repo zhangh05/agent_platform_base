@@ -390,6 +390,7 @@ export function TaskWorkbench() {
         if (closed) return;
         es = sseApi.connect(currentSessionId, currentWorkspaceId);
         es.addEventListener("turn_completed", refreshMessages);
+        es.addEventListener("error", refreshMessages);
         es.onerror = () => { es?.close(); };
       })
       .catch(() => {});
@@ -397,6 +398,7 @@ export function TaskWorkbench() {
       closed = true;
       if (es) {
         es.removeEventListener("turn_completed", refreshMessages);
+        es.removeEventListener("error", refreshMessages);
         es.close();
       }
     };

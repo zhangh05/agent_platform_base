@@ -161,3 +161,38 @@ def test_approval_handler_persists_prior_evidence_in_continuation(monkeypatch, t
         workspace_id="default", continuation_id=result["continuation_id"],
     )
     assert payload["prior_tool_evidence"][0]["output"]["content"] == token
+
+
+def test_approved_delete_grant_executes_without_reentering_approval():
+    from agent.llm.schemas import LLMResponse
+    from core.runtime_engine.engine import SSOTRuntimeEngine
+    from core.runtime_engine.models import ApprovedToolContinuation, SSOTRuntimeConfig
+    from core.runtime_engine.tool_runtime import ToolRuntime
+
+    calls = []
+    runtime = ToolRuntime(SSOTRuntimeConfig(max_query_loop_iterations=2))
+    runtime.register("workspace.file", lambda arguments: calls.append(dict(arguments)) or {"ok": True, "summary": "deleted"})
+
+    engine = SSOTRuntimeEngine(
+        config=SSOTRuntimeConfig(max_query_loop_iterations=2),
+        llm_invoke=lambda **_kwargs: LLMResponse(content="已完成批准的删除操作"),
+        tool_registry={
+            "workspace.file": {"description": "delete", "args_schema": {"type": "object", "required": ["action", "filepath"], "properties": {"action": {"type": "string"}, "filepath": {"type": "string"}}}},
+        },
+        tool_runtime=runtime,
+    )
+    result = asyncio.run(engine.run(
+        "删除临时文件", workspace_id="default", session_id="approved-delete",
+        extras={
+            "__approved_tool_continuation": ApprovedToolContinuation(
+                continuation_id="cont_" + "d" * 32,
+                tool_calls=({"id": "delete-1", "name": "workspace.file", "arguments": {"action": "delete", "filepath": "old.txt"}},),
+                approved_node_ids=("delete-1",),
+            ),
+            "__approval_continuation_resume": True,
+        },
+    ))
+
+    assert result.success is True, result.errors
+    assert calls == [{"action": "delete", "filepath": "old.txt"}]
+    assert result.metadata["approval_required"] is False
