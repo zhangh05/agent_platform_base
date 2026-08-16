@@ -2148,6 +2148,36 @@ class QueryLoop:
             else:
                 final_text = final_text.strip()
 
+            # A model must never turn a prose claim into an approval state.
+            # Only the canonical risk gate may create approval continuation.
+            approval_claim_markers = (
+                "等待您批准", "等待批准", "等待审批", "需要审批后",
+                "批准后将", "approval pending", "awaiting approval",
+            )
+            has_unbacked_approval_claim = (
+                any(marker in final_text.lower() for marker in approval_claim_markers)
+                and not bool(ctx.extras.get("approval_continuation_id"))
+                and not bool(ctx.extras.get("approval_required"))
+            )
+            if has_unbacked_approval_claim:
+                correction_attempts = int(ctx.extras.get("unbacked_approval_claim_attempts") or 0)
+                if correction_attempts < 1 and iterations < max_iterations:
+                    ctx.extras["unbacked_approval_claim_attempts"] = correction_attempts + 1
+                    messages = self._append_turn_nudge(
+                        messages,
+                        "系统校验：当前没有生成真实审批请求，不能声称等待审批。"
+                        "如果确实需要审批，必须发出对应的 canonical 工具调用；否则请直接报告当前结果。",
+                    )
+                    continue
+                return finish(
+                    final_response="模型声称等待审批，但当前没有生成真实审批请求；已安全停止。",
+                    tool_results=all_results,
+                    iterations=iterations,
+                    total_tool_calls=len(all_results),
+                    llm_calls=llm_calls,
+                    error="unbacked_approval_claim",
+                )
+
             from .response_quality import validate_response_quality
             quality_issues = validate_response_quality(
                 final_text,

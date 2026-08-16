@@ -196,3 +196,27 @@ def test_approved_delete_grant_executes_without_reentering_approval():
     assert result.success is True, result.errors
     assert calls == [{"action": "delete", "filepath": "old.txt"}]
     assert result.metadata["approval_required"] is False
+
+
+def test_unbacked_approval_claim_cannot_become_pending():
+    from agent.llm.schemas import LLMResponse
+    from core.runtime_engine.engine import SSOTRuntimeEngine
+    from core.runtime_engine.models import SSOTRuntimeConfig
+    from core.runtime_engine.tool_runtime import ToolRuntime
+
+    engine = SSOTRuntimeEngine(
+        config=SSOTRuntimeConfig(max_query_loop_iterations=3),
+        llm_invoke=lambda **_kwargs: LLMResponse(content="已到达第三阶段，等待您批准删除操作。"),
+        tool_registry={},
+        tool_runtime=ToolRuntime(SSOTRuntimeConfig(max_query_loop_iterations=3)),
+    )
+    result = asyncio.run(engine.run(
+        "删除临时文件并等待审批",
+        workspace_id="default",
+        session_id="unbacked-approval",
+    ))
+
+    assert result.success is False
+    assert any("unbacked_approval_claim" in str(error) for error in result.errors)
+    assert result.metadata["approval_required"] is False
+    assert result.metadata.get("continuation_id") is None
