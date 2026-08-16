@@ -521,6 +521,7 @@ def _build_approval_handler(
             if hasattr(cognitive_state, "as_trace_payload")
             else {}
         )
+        prior_tool_evidence = list(ctx.extras.get("__approval_prior_tool_evidence") or [])
         continuation_id = create_continuation(
             workspace_id=workspace_id,
             session_id=session_id,
@@ -530,6 +531,7 @@ def _build_approval_handler(
             approval_ids=approval_ids,
             approved_node_ids=list(gate.get("approval_nodes") or []),
             cognitive_state=cognitive_snapshot,
+            prior_tool_evidence=prior_tool_evidence,
             continuation_id=continuation_id,
         )
         specs: list[dict[str, Any]] = []

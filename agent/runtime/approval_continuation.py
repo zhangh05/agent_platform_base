@@ -74,6 +74,7 @@ def create_continuation(
     approval_ids: list[str],
     approved_node_ids: list[str] | None = None,
     cognitive_state: dict[str, Any] | None = None,
+    prior_tool_evidence: list[dict[str, Any]] | None = None,
     continuation_id: str = "",
 ) -> str:
     if not tool_calls or not approval_ids:
@@ -96,6 +97,7 @@ def create_continuation(
         "tool_calls": tool_calls,
         "approved_node_ids": approved_ids,
         "cognitive_state": dict(cognitive_state or {}),
+        "prior_tool_evidence": list(prior_tool_evidence or []),
     }
     payload_text = _canonical(payload)
     secret_ref = set_secret(f"approval_continuation_{continuation_id}", payload_text)

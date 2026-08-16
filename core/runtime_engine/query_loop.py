@@ -61,6 +61,7 @@ from .prompt_contract import (
     build_runtime_system_prompt,
     build_turn_message,
 )
+from .approval_evidence import project_approval_resume_evidence, render_approval_resume_evidence
 from .evidence import (
     evidence_summary,
     initialize_evidence_ledger,
@@ -1350,6 +1351,12 @@ class QueryLoop:
 
         # Build initial messages (cacheable prefix)
         messages = self._build_initial(ctx)
+        if isinstance(ctx.extras.get("__approved_tool_continuation"), ApprovedToolContinuation):
+            prior_evidence = render_approval_resume_evidence(
+                ctx.extras.get("__approval_prior_tool_evidence")
+            )
+            if prior_evidence:
+                messages.append(LLMMessage(role="user", content=prior_evidence))
 
         max_iterations = getattr(self._config, "max_query_loop_iterations", 20)
 
@@ -1740,6 +1747,7 @@ class QueryLoop:
                             "risk_level": gate.get("risk_level", "high"),
                             "approval_nodes": list(gate.get("approval_nodes") or []),
                         })
+                    ctx.extras["__approval_prior_tool_evidence"] = project_approval_resume_evidence(all_results)
                     gate_for_approval = {
                         **gate,
                         "tool_calls": [
