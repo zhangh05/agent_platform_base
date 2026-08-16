@@ -65,7 +65,9 @@ class SSOTRuntimeEngine:
         self._config = config or SSOTRuntimeConfig()
         self._llm_invoke = llm_invoke or self._noop_llm
         self._tool_registry = tool_registry or {}
-        self._tool_runtime = tool_runtime or ToolRuntime(self._config)
+        if tool_runtime is None:
+            raise ValueError("SSOTRuntimeEngine requires an explicitly wired ToolRuntime")
+        self._tool_runtime = tool_runtime
         # Optional emitter — when provided, every stage boundary pushes a
         # tiny status message so the frontend can show progress instead
         # of staring at "思考中…" for 12 seconds on cold-start.

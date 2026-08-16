@@ -384,6 +384,21 @@ export const capabilitiesApi = {
 export const toolsApi = {
   catalog: (signal?: AbortSignal): Promise<ToolCatalogResponse> =>
     apiRequest<ToolCatalogResponse>({ method: "GET", url: "/tools/catalog" }, signal),
+  dryRun: (data: { tool_id: string; params: Record<string, unknown>; workspace_id: string }) =>
+    apiRequest<{ ok: boolean; requires_approval?: boolean }>({
+      method: "POST",
+      url: "/tools/dry-run",
+      params: { workspace_id: data.workspace_id },
+      data: { tool_id: data.tool_id, arguments: data.params },
+    }),
+  permissions: (signal?: AbortSignal) =>
+    apiRequest<{
+      workspace_id: string;
+      tools: ToolPermission[];
+      forbidden_count: number;
+      high_risk_count: number;
+      approval_required_count: number;
+    }>({ method: "GET", url: "/tools/permissions" }, signal),
 };
 
 export const storageApi = {
@@ -1165,37 +1180,6 @@ export const promptsApi = {
 
   render: (data: { prompt_id: string; variables: Record<string, string> }) =>
     apiRequest<unknown>({ method: "POST", url: "/prompts/render", data }),
-};
-
-export const toolsInvokeApi = {
-  invoke: (data: { tool_id: string; params: Record<string, unknown>; workspace_id: string }) =>
-    apiRequest<{ ok: boolean; result?: unknown }>({
-      method: "POST",
-      url: "/tools/invoke",
-      params: { workspace_id: data.workspace_id },
-      data: { tool_id: data.tool_id, arguments: data.params },
-    }),
-
-  dryRun: (data: { tool_id: string; params: Record<string, unknown>; workspace_id: string }) =>
-    apiRequest<{ ok: boolean; requires_approval?: boolean }>({
-      method: "POST",
-      url: "/tools/dry-run",
-      params: { workspace_id: data.workspace_id },
-      data: { tool_id: data.tool_id, arguments: data.params },
-    }),
-
-  history: (workspace_id: string, signal?: AbortSignal) =>
-    apiRequest<{ records: unknown[]; count: number; workspace_id: string }>(
-      { method: "GET", url: "/tools/history", params: { workspace_id } }, signal),
-
-  permissions: (signal?: AbortSignal) =>
-    apiRequest<{
-      workspace_id: string;
-      tools: ToolPermission[];
-      forbidden_count: number;
-      high_risk_count: number;
-      approval_required_count: number;
-    }>({ method: "GET", url: "/tools/permissions" }, signal),
 };
 
 export const retentionApi = {

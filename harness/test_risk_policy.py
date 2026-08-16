@@ -12,6 +12,7 @@ from unittest import mock
 import pytest
 
 from core.runtime_engine.models import ExecutionNode, SSOTRuntimeConfig
+from core.runtime_engine.tool_runtime import ToolRuntime
 from core.runtime_engine.risk_policy import (
     RiskPolicyEngine,
     _check_destructive_command,
@@ -36,6 +37,7 @@ def _node(idx: str, tool: str, **args) -> ExecutionNode:
 
 def _make_speng(**cfg_overrides):
     from core.runtime_engine.engine import SSOTRuntimeEngine
+    from core.runtime_engine.tool_runtime import ToolRuntime
     cfg_kwargs = {}
     cfg_kwargs.update(cfg_overrides)
     cfg = SSOTRuntimeConfig(**cfg_kwargs)
@@ -43,7 +45,7 @@ def _make_speng(**cfg_overrides):
     def mock_llm(**kw):
         return json.dumps({"nodes": []})
 
-    return SSOTRuntimeEngine(config=cfg, llm_invoke=mock_llm, tool_registry={})
+    return SSOTRuntimeEngine(config=cfg, llm_invoke=mock_llm, tool_registry={}, tool_runtime=ToolRuntime(cfg))
 
 
 # ── Tests: allow (safe to run) ─────────────────────────────────────────
@@ -324,6 +326,7 @@ def test_approval_handler_resumes_exact_call():
             config=config,
             llm_invoke=mock_llm,
             tool_registry=registry,
+            tool_runtime=ToolRuntime(config),
             approval_handler=approve,
         )
         engine.register_tool("exec.run", _mock.AsyncMock(return_value={"ok": True}))
@@ -358,7 +361,7 @@ def test_hard_block_denied_approval():
     }}}
 
     async def _drive():
-        engine = SSOTRuntimeEngine(config=config, llm_invoke=mock_llm, tool_registry=registry)
+        engine = SSOTRuntimeEngine(config=config, llm_invoke=mock_llm, tool_registry=registry, tool_runtime=ToolRuntime(config))
         engine.register_tool("exec.run", _mock.AsyncMock())
 
         result = await engine.run("test")

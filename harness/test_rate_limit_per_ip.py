@@ -90,25 +90,6 @@ class TestSameIPSameEndpointLimit:
         assert data["error"] == "rate_limit_exceeded"
         assert "retry_after_seconds" in data
 
-    def test_exceed_tools_invoke_limit(self, client):
-        """"/api/tools/invoke allows 30 req/min, 31st should 429."""
-        from backend.core.rate_limit import _limiters
-        _limiters.clear()
-
-        for i in range(30):
-            resp = client.post(
-                "/api/tools/invoke",
-                json={"tool_id": "test"},
-                environ_base={"REMOTE_ADDR": "192.168.1.101"},
-            )
-            assert resp.status_code == 200, f"Request {i} should succeed"
-
-        resp = client.post(
-            "/api/tools/invoke",
-            json={"tool_id": "test"},
-            environ_base={"REMOTE_ADDR": "192.168.1.101"},
-        )
-        assert resp.status_code == 429
 
 
 class TestDifferentIPsIndependent:

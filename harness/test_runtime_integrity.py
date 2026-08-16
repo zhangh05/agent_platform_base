@@ -176,14 +176,18 @@ def test_tool_budget_does_not_charge_prior_llm_time():
 
 
 def test_websocket_broadcast_is_workspace_scoped(monkeypatch):
+    from threading import Event
+
     from backend.ws import agent_ws
 
     class Socket:
         def __init__(self):
             self.messages = []
+            self.delivered = Event()
 
         def send(self, payload):
             self.messages.append(payload)
+            self.delivered.set()
 
     one = Socket()
     two = Socket()
@@ -199,5 +203,6 @@ def test_websocket_broadcast_is_workspace_scoped(monkeypatch):
         "name": "run_status",
         "data": {"workspace_id": "ws_one", "run_id": "run-1"},
     })
+    assert one.delivered.wait(timeout=1.0)
     assert len(one.messages) == 1
     assert two.messages == []

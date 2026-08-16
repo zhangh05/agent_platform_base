@@ -139,8 +139,14 @@ def _action_profiles(
 
     profiles = []
     for action in actions:
+        from core.tools.action_requirements import action_execution_contract
+
+        action_contract = action_execution_contract(tool_id, action)
         risk_level = getattr(manifest, "risk_level", "low") if manifest else "low"
         requires_approval = bool(getattr(manifest, "requires_approval", False)) if manifest else False
+        if action_contract:
+            risk_level = action_contract.get("risk_level", risk_level)
+            requires_approval = bool(action_contract.get("requires_approval", requires_approval))
         if policy and ToolInvocation and ToolSpec:
             decision = policy.check(
                 ToolSpec(
@@ -161,12 +167,22 @@ def _action_profiles(
             )
             risk_level = decision.risk_level or risk_level
             requires_approval = bool(decision.requires_approval)
+        action_class = action_contract.get("action_class") or base_permission
+        side_effects = action_contract.get(
+            "side_effects", getattr(manifest, "side_effects", "none") if manifest else "none",
+        )
+        idempotency = action_contract.get(
+            "idempotency", getattr(manifest, "idempotency", "unknown") if manifest else "unknown",
+        )
         profiles.append({
             "action": action,
             "risk_level": risk_level,
             "requires_approval": requires_approval,
-            "permission_action": _action_permission(tool_id, action, base_permission),
-            "read_only": _action_is_read_only(tool_id, action, base_permission),
+            "permission_action": _action_permission(tool_id, action, action_class),
+            "read_only": bool(action_contract.get("read_only", _action_is_read_only(tool_id, action, action_class))),
+            "action_class": action_class,
+            "side_effects": side_effects,
+            "idempotency": idempotency,
         })
     return profiles
 

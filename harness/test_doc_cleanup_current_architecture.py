@@ -54,7 +54,8 @@ def test_docs_have_no_stale_content():
 def test_docs_match_current_stack():
     combined = "\n".join(_read(path) for path in DOCS)
     assert "Python 3.12+" in combined
-    assert "/api/tools/invoke" in combined
+    assert "/api/tools/catalog" in combined
+    assert "/api/tools/invoke" not in combined
     # v3.9.13: tool count is dynamic — assert it appears as a number
     # anywhere in the docs.
     from core.tools.tool_namespace import TOOL_NAMESPACE

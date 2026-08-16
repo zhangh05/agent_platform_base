@@ -89,6 +89,65 @@ ACTION_REQUIRED_ANY: dict[tuple[str, str], tuple[tuple[str, ...], ...]] = {
 }
 
 
+# Action-level execution semantics are shared by planning, authorization and
+# catalog presentation. Tool manifests remain defaults for unlisted actions.
+_READ = {
+    "action_class": "read", "risk_level": "low", "side_effects": "none",
+    "idempotency": "safe_to_retry", "read_only": True,
+}
+_WRITE = {
+    "action_class": "write", "risk_level": "medium", "side_effects": "workspace",
+    "idempotency": "unsafe_to_retry", "read_only": False,
+}
+_EXECUTE = {
+    "action_class": "execute", "risk_level": "medium", "side_effects": "task_state",
+    "idempotency": "unsafe_to_retry", "read_only": False,
+}
+_DELETE = {
+    "action_class": "delete", "risk_level": "high", "side_effects": "workspace",
+    "idempotency": "unsafe_to_retry", "read_only": False,
+    "requires_approval": True, "destructive": True,
+}
+
+
+def _contracts(tool_id: str, actions: tuple[str, ...], contract: dict) -> dict[tuple[str, str], dict]:
+    return {(tool_id, action): dict(contract) for action in actions}
+
+
+ACTION_EXECUTION_CONTRACTS: dict[tuple[str, str], dict] = {}
+ACTION_EXECUTION_CONTRACTS.update(_contracts(
+    "workspace.file",
+    ("list", "read", "read_image", "extract_document", "extract_document_image", "extract_document_images", "glob"),
+    _READ,
+))
+ACTION_EXECUTION_CONTRACTS.update(_contracts("workspace.file", ("write", "write_artifact", "edit", "patch"), _WRITE))
+ACTION_EXECUTION_CONTRACTS.update(_contracts("workspace.file", ("delete",), _DELETE))
+ACTION_EXECUTION_CONTRACTS.update(_contracts("workspace.artifact", ("list", "read"), _READ))
+ACTION_EXECUTION_CONTRACTS.update(_contracts("workspace.artifact", ("save", "tag"), _WRITE))
+ACTION_EXECUTION_CONTRACTS.update(_contracts("workspace.artifact", ("delete",), _DELETE))
+ACTION_EXECUTION_CONTRACTS.update(_contracts("workspace.filestore", ("references",), _READ))
+ACTION_EXECUTION_CONTRACTS.update(_contracts("workspace.filestore", ("import",), _WRITE))
+ACTION_EXECUTION_CONTRACTS.update(_contracts("agent.manage", ("list", "get", "status"), _READ))
+ACTION_EXECUTION_CONTRACTS.update(_contracts("agent.manage", ("spawn", "cancel", "merge"), _EXECUTE))
+ACTION_EXECUTION_CONTRACTS.update(_contracts("knowledge.manage", ("search", "read", "list", "chunk"), _READ))
+ACTION_EXECUTION_CONTRACTS.update(_contracts("knowledge.manage", ("import", "reindex"), _WRITE))
+ACTION_EXECUTION_CONTRACTS.update(_contracts("memory.manage", ("search", "review", "profile_get"), _READ))
+ACTION_EXECUTION_CONTRACTS.update(_contracts("memory.manage", ("create", "update", "confirm", "profile_set"), _WRITE))
+ACTION_EXECUTION_CONTRACTS.update(_contracts("memory.manage", ("delete",), _DELETE))
+ACTION_EXECUTION_CONTRACTS.update(_contracts("report.manage", ("diff", "document"), _READ))
+ACTION_EXECUTION_CONTRACTS.update(_contracts("report.manage", ("save",), _WRITE))
+ACTION_EXECUTION_CONTRACTS.update(_contracts(
+    "system.manage", ("diagnostics", "health", "selfcheck", "tasks", "audit_log", "run_get", "session_get", "session_snapshot"), _READ,
+))
+ACTION_EXECUTION_CONTRACTS.update(_contracts("system.manage", ("session_checkpoint",), _WRITE))
+ACTION_EXECUTION_CONTRACTS.update(_contracts("system.manage", ("session_rewind",), _DELETE))
+
+
+def action_execution_contract(tool_id: str, action: str) -> dict:
+    """Return a copy of the canonical action-level execution contract."""
+    key = (str(tool_id or "").strip(), str(action or "").strip().lower())
+    return dict(ACTION_EXECUTION_CONTRACTS.get(key, {}))
+
 DATA_INPUT_ACTIONS = frozenset({
     "parse", "stats", "distinct", "aggregate", "filter", "sort", "render", "pivot", "join",
 })

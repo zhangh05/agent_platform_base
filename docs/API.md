@@ -31,8 +31,7 @@ Base URL: `http://localhost:8011`
 
 | Method | Path | Purpose |
 | --- | --- | --- |
-| `POST` | `/api/tools/invoke` | 通过 ToolRuntimeClient 调用 canonical tool |
-| `GET` | `/api/tools/history?workspace_id=<ws>` | 工具调用历史 |
+| `GET` | `/api/tools/catalog` | canonical 工具目录与动作级执行契约 |
 | `POST` | `/api/tools/dry-run?workspace_id=<ws>` | 工具 dry-run 元数据 |
 | `GET` | `/api/capabilities` | 能力目录 |
 

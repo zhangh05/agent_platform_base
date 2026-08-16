@@ -201,6 +201,7 @@ def test_engine_metadata_reflects_node_failure():
         config=cfg,
         llm_invoke=mock_llm,
         tool_registry=registry,
+        tool_runtime=ToolRuntime(cfg),
     )
     engine.register_tool("test.tool", failing_handler)
 

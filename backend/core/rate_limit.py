@@ -7,7 +7,6 @@ Thread-safe via threading.Lock.
 Default limits:
   - /api/agent/message: 10 req/min
   - /api/agent/llm/test: 5 req/min
-  - /api/tools/invoke: 30 req/min
   - All other /api/*: 60 req/min
 """
 
@@ -24,7 +23,6 @@ from flask import request, jsonify
 RATE_LIMITS = {
     "/api/agent/message": (10, 60),
     "/api/agent/llm/test": (5, 60),
-    "/api/tools/invoke": (30, 60),
     "/api/agent/approvals/pending": (200, 60),
     "/api/agent/approvals/": (60, 60),
 }

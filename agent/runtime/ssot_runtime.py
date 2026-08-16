@@ -419,6 +419,7 @@ def _build_engine(
     context_budget=None,
 ):
     from core.runtime_engine import SSOTRuntimeConfig, SSOTRuntimeEngine
+    from core.runtime_engine.tool_runtime import ToolRuntime
 
     config = SSOTRuntimeConfig(
         max_global_concurrency=8,
@@ -445,6 +446,7 @@ def _build_engine(
         "config": config,
         "llm_invoke": _invoke_llm_for_ssot_runtime,
         "tool_registry": registry,
+        "tool_runtime": ToolRuntime(config),
     }
     if emitter is not None:
         engine_kwargs["emitter"] = emitter

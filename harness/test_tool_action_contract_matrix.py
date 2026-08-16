@@ -393,3 +393,103 @@ def test_semantic_validator_rejects_public_argument_range_violation():
 
     assert result.valid is False
     assert any(error.code == "ARG_RANGE_INVALID" and "days" in error.message for error in result.errors)
+
+@pytest.mark.parametrize(
+    ("tool_id", "action", "permission", "side_effects", "idempotency", "approval"),
+    [
+        ("workspace.file", "read", "read", "none", "safe_to_retry", False),
+        ("workspace.file", "delete", "write", "workspace", "unsafe_to_retry", True),
+        ("workspace.artifact", "save", "write", "workspace", "unsafe_to_retry", False),
+        ("workspace.artifact", "delete", "write", "workspace", "unsafe_to_retry", True),
+        ("workspace.filestore", "import", "write", "workspace", "unsafe_to_retry", False),
+        ("agent.manage", "spawn", "exec", "task_state", "unsafe_to_retry", False),
+    ],
+)
+def test_action_contracts_drive_catalog_risk_and_side_effects(
+    tool_id, action, permission, side_effects, idempotency, approval,
+):
+    from core.tools.catalog_snapshot import build_action_profiles_for_tool
+
+    entry = CANONICAL_REGISTRY[tool_id]
+    profile = next(
+        item for item in build_action_profiles_for_tool(
+            tool_id,
+            input_schema=entry.input_schema,
+            base_permission=entry.permission_action or "read",
+        )
+        if item["action"] == action
+    )
+    assert profile["permission_action"] == permission
+    assert profile["side_effects"] == side_effects
+    assert profile["idempotency"] == idempotency
+    assert profile["requires_approval"] is approval
+
+
+def test_runtime_routes_do_not_expose_direct_tool_execution():
+    from flask import Flask
+
+    from backend.api.runtime_routes import register_runtime_routes
+
+    app = Flask(__name__)
+    register_runtime_routes(app)
+    response = app.test_client().post(
+        "/api/tools/invoke",
+        json={"tool_id": "workspace.file", "arguments": {"action": "read"}},
+    )
+    assert response.status_code == 404
+
+
+def test_ssot_engine_requires_explicit_runtime_wiring():
+    from core.runtime_engine.engine import SSOTRuntimeEngine
+
+    with pytest.raises(ValueError, match="explicitly wired ToolRuntime"):
+        SSOTRuntimeEngine()
+
+
+def test_pdf_extract_rejects_workspace_escape_and_non_pdf(monkeypatch, tmp_path):
+    from core.tools.general_tools.pdf_tools import handle_pdf_extract_text
+    from core.tools.schemas import ToolInvocation
+
+    root = tmp_path / "workspaces"
+    monkeypatch.setenv("LZCORE_WORKSPACE_ROOT", str(root))
+    target = root / "pdf_contract" / "note.pdf"
+    target.parent.mkdir(parents=True)
+    target.write_bytes(b"not-a-pdf")
+
+    escaped = handle_pdf_extract_text(ToolInvocation(
+        tool_id="workspace.document.pdf.extract_text",
+        workspace_id="pdf_contract",
+        arguments={"filepath": "../../outside.pdf"},
+    ))
+    assert escaped["ok"] is False
+
+    invalid = handle_pdf_extract_text(ToolInvocation(
+        tool_id="workspace.document.pdf.extract_text",
+        workspace_id="pdf_contract",
+        arguments={"filepath": "note.pdf"},
+    ))
+    assert invalid["ok"] is False
+    assert "not a PDF" in invalid["error"]
+
+
+def test_workspace_metadata_is_scoped_and_reports_current_files(monkeypatch, tmp_path):
+    from core.tools.general_tools.file_tools import handle_ws_get_metadata
+    from core.tools.schemas import ToolInvocation
+
+    root = tmp_path / "workspaces"
+    monkeypatch.setenv("LZCORE_WORKSPACE_ROOT", str(root))
+    current_files = root / "metadata_contract" / "files"
+    other_files = root / "other_workspace" / "files"
+    current_files.mkdir(parents=True)
+    other_files.mkdir(parents=True)
+    (current_files / "one.txt").write_text("one", encoding="utf-8")
+    (other_files / "two.txt").write_text("two", encoding="utf-8")
+
+    result = handle_ws_get_metadata(ToolInvocation(
+        tool_id="workspace.metadata.get",
+        workspace_id="metadata_contract",
+        arguments={},
+    ))
+    assert result["ok"] is True
+    assert result["workspace_id"] == "metadata_contract"
+    assert result["artifact_count"] == 1

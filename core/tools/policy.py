@@ -150,6 +150,20 @@ class ToolPolicy:
             effective_idempotency = "unsafe_to_retry"  # P0-12: default unsafe for unknown manifests
             effective_timeout = spec.timeout_seconds or 30
 
+        # Merged canonical tools use a shared action contract so policy and
+        # catalog projections cannot drift on side effects or approval.
+        try:
+            from core.tools.action_requirements import action_execution_contract
+
+            action_contract = action_execution_contract(spec.tool_id, _action(invocation))
+        except Exception:
+            action_contract = {}
+        if action_contract:
+            effective_risk = action_contract.get("risk_level", effective_risk)
+            effective_approval = bool(action_contract.get("requires_approval", effective_approval))
+            effective_destructive = bool(action_contract.get("destructive", effective_destructive))
+            effective_idempotency = action_contract.get("idempotency", effective_idempotency)
+
         # ── 1. Tool exists ──
         if not spec.tool_id:
             return PolicyDecision(

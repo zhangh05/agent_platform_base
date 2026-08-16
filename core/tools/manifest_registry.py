@@ -23,7 +23,7 @@ MANIFESTS: dict[str, CapabilityManifest] = {
         secret_fields=["code", "env_vars", "input_data"],
         output_sensitivity="secret",
         timeout_seconds=120,
-        allowed_callers=["turn_runner", "rest_api", "job_runner", "subagent"],
+        allowed_callers=["turn_runner", "job_runner", "subagent"],
     ),
     "browser.manage": CapabilityManifest(
         tool_id="browser.manage",
@@ -102,7 +102,7 @@ MANIFESTS: dict[str, CapabilityManifest] = {
         risk_level="medium",
         side_effects="external_by_action",
         idempotency="unknown",
-        allowed_callers=["turn_runner", "rest_api", "job_runner", "subagent"],
+        allowed_callers=["turn_runner", "job_runner", "subagent"],
         timeout_seconds=10,
     ),
     "agent.manage": CapabilityManifest(
@@ -114,7 +114,7 @@ MANIFESTS: dict[str, CapabilityManifest] = {
         risk_level="low",
         side_effects="task_state_by_action",
         idempotency="unknown",
-        allowed_callers=["turn_runner", "rest_api", "job_runner"],
+        allowed_callers=["turn_runner", "job_runner"],
         timeout_seconds=30,
     ),
     "system.manage": CapabilityManifest(
@@ -161,7 +161,7 @@ MANIFESTS: dict[str, CapabilityManifest] = {
         risk_level="low",
         reads_artifact=True,
         writes_artifact=True,
-        side_effects="none",
+        side_effects="workspace_by_action",
         idempotency="unsafe_to_retry",
         timeout_seconds=30,
     ),
@@ -172,8 +172,8 @@ MANIFESTS: dict[str, CapabilityManifest] = {
         description="Query file references or import workspace files into FileStore.",
         action_class="read",
         risk_level="low",
-        side_effects="none",
-        idempotency="safe_to_retry",
+        side_effects="workspace_by_action",
+        idempotency="unsafe_to_retry",
         timeout_seconds=20,
     ),
     "workspace.metadata.get": CapabilityManifest(

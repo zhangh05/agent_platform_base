@@ -147,7 +147,6 @@ def test_windows_persistence_never_uses_rename_for_atomic_overwrite():
         ROOT / "storage" / "atomic_io.py",
         ROOT / "storage" / "run_record_store.py",
         ROOT / "storage" / "runtime_state_store.py",
-        ROOT / "storage" / "tool_history_store.py",
         ROOT / "storage" / "provider_config_store.py",
     )
     for path in paths:
