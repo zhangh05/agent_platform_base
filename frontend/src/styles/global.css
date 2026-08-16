@@ -9271,3 +9271,74 @@ summary:focus-visible,
   .diag-section-head { padding: 0 13px; }
   .diag-continuation-alert { align-items: flex-start; flex-direction: column; gap: 9px; }
 }
+
+/* Default-collapsed execution details keep reply surfaces compact without hiding outcome state. */
+.chat-result-inline {
+  width: min(860px, calc(100% - 44px));
+}
+
+.result-inline-disclosure {
+  width: 100%;
+}
+
+.result-inline-disclosure > summary {
+  list-style: none;
+}
+
+.result-inline-disclosure > summary::-webkit-details-marker {
+  display: none;
+}
+
+.result-overview-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-height: 42px;
+  padding: 0 12px;
+  cursor: pointer;
+  user-select: none;
+  background: color-mix(in srgb, var(--surface-2) 80%, transparent);
+  border: 1px solid var(--line-2);
+  border-radius: 8px;
+}
+
+.result-overview-toggle .result-overview {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+}
+
+.result-overview-toggle::after {
+  flex: 0 0 auto;
+  color: var(--text-3);
+  content: "展开";
+  font-size: var(--fs-11);
+  font-weight: 650;
+}
+
+.result-inline-disclosure[open] .result-overview-toggle::after {
+  content: "收起";
+}
+
+.result-overview-toggle:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent) 55%, transparent);
+  outline-offset: 2px;
+}
+
+.result-overview-toggle-label {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+.result-inline-details {
+  padding-top: 2px;
+}

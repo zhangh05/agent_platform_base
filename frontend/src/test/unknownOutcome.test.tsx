@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { ResultInline } from "../pages/AgentWorkbench/components/ResultInline";
 import type { AgentResult } from "../types";
 
@@ -55,5 +55,17 @@ describe("unknown outcome result UI", () => {
     expect(screen.queryByRole("button", { name: "换方案继续" })).not.toBeInTheDocument();
     expect(retryOriginal).not.toHaveBeenCalled();
     expect(retryAlternative).not.toHaveBeenCalled();
+  });
+});
+
+describe("result detail disclosure", () => {
+  it("defaults to collapsed and expands only after an explicit user action", () => {
+    render(<ResultInline result={unknownResult} fallbackText="" />);
+
+    const disclosure = screen.getByTestId("result-inline-disclosure");
+    expect(disclosure).not.toHaveAttribute("open");
+    fireEvent.click(screen.getByLabelText("展开执行详情"));
+    expect(disclosure).toHaveAttribute("open");
+    expect(screen.getByLabelText("收起执行详情")).toBeInTheDocument();
   });
 });

@@ -85,6 +85,7 @@ export const ResultInline = memo(function ResultInline({
   const { currentWorkspaceId } = useSessionStore();
   const toast = useToastStore((s) => s.show);
   const [saving, setSaving] = useState<"" | "memory" | "knowledge">("");
+  const [detailsOpen, setDetailsOpen] = useState(false);
   const summaries: SourceSummary[] = (result?.metadata?.context_sources ?? result?.metadata?.source_summary ?? []);
   const isFailed = Boolean(result && !result.ok);
   const hasFailedTool = ((result?.tool_calls) ?? []).some((tc) => !tc.ok);
@@ -179,6 +180,14 @@ export const ResultInline = memo(function ResultInline({
 
   return (
     <div className="chat-result-inline">
+      <details
+        className="result-inline-disclosure"
+        data-testid="result-inline-disclosure"
+        open={detailsOpen}
+        onToggle={(event) => setDetailsOpen(event.currentTarget.open)}
+      >
+        <summary className="result-overview-toggle" aria-label={detailsOpen ? "收起执行详情" : "展开执行详情"}>
+          <span className="result-overview-toggle-label">{detailsOpen ? "收起执行详情" : "展开执行详情"}</span>
       {result ? (
         <section className="result-overview" aria-label="执行摘要">
           <div className="result-overview-main">
@@ -193,7 +202,11 @@ export const ResultInline = memo(function ResultInline({
             {isUnknownOutcome ? "写入已冻结，等待受控核对" : failedToolCount > 0 ? `${failedToolCount} 项需要跟进` : successToolCount > 0 ? `${successToolCount} 项执行成功` : "可将结论沉淀到记忆或知识库"}
           </span>
         </section>
-      ) : null}
+      ) : (
+        <span className="result-overview-fallback">本轮答复</span>
+      )}
+        </summary>
+        <div className="result-inline-details">
       {isUnknownOutcome && (
         <section className="unknown-outcome-alert" role="alert" data-testid="unknown-outcome-alert">
           <strong>执行结果未知，系统已冻结后续写操作</strong>
@@ -365,6 +378,8 @@ export const ResultInline = memo(function ResultInline({
           </div>
         </details>
       )}
+        </div>
+      </details>
     </div>
   );
 });
