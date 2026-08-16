@@ -3352,13 +3352,6 @@ details.collapse[open] summary::before {
   border-top-right-radius: 5px;
 }
 
-.message-row:hover .chat-bubble.assistant {
-  color: var(--text);
-  border-color: rgba(179, 198, 214, 0.86);
-  box-shadow: 0 8px 22px rgba(26, 42, 58, 0.06);
-  transform: none;
-}
-
 /* ── Markdown content inside assistant chat bubbles ── */
 
 .markdown-body {
@@ -3812,22 +3805,12 @@ details.collapse[open] summary::before {
   border: 1px solid rgba(215, 224, 234, 0.7);
   border-radius: var(--r-6);
   font-size: var(--fs-12);
-  transition:
-    transform var(--dur-2) var(--ease),
-    border-color var(--dur-2) var(--ease),
-    box-shadow var(--dur-2) var(--ease),
-    background var(--dur-2) var(--ease);
+  transition: none;
 }
 
 [data-theme="dark"] .chat-tool-summary {
   background: rgba(20, 27, 36, 0.72);
   border-color: rgba(56, 72, 90, 0.58);
-}
-
-.chat-tool-summary:hover {
-  border-color: var(--line-3);
-  box-shadow: 0 6px 15px rgba(16, 24, 40, 0.045);
-  transform: translate3d(0, -1px, 0);
 }
 
 .action-trace-panel {

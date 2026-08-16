@@ -218,8 +218,7 @@
   background: var(--accent);
 }
 
-.chat-bubble.assistant,
-.message-row:hover .chat-bubble.assistant {
+.chat-bubble.assistant {
   width: 100%;
   padding: 18px 20px;
   color: var(--text-2);
@@ -801,8 +800,7 @@
 .wb-chat { background: var(--bg); }
 .task-progress-panel,
 .task-progress-panel.is-collapsed { background: var(--surface-2); }
-.chat-bubble.assistant,
-.message-row:hover .chat-bubble.assistant {
+.chat-bubble.assistant {
   box-shadow: none;
   border-color: var(--line-2);
 }
