@@ -30,6 +30,7 @@ def decide_next_action(
     goal_assertions: Mapping[str, Any] | None, quality_issues: Iterable[Any] = (),
     pending_approval: bool = False, terminal_error: str = "",
     reflection_attempts: int = 0, max_reflection_attempts: int = 1,
+    blocking_unknowns: int = 0,
 ) -> CognitiveDecision:
     """Choose a safe next state without allowing a model to bypass policy."""
     results = list(tool_results or [])
@@ -40,6 +41,8 @@ def decide_next_action(
         bool(getattr(item, "execution_may_continue", False)) for item in results
     ):
         return CognitiveDecision(STOP_UNKNOWN_OUTCOME, ("unknown_tool_outcome",), "执行结果尚未确定，后续写操作已冻结，需先受控核对。", True)
+    if int(blocking_unknowns or 0) > 0:
+        return CognitiveDecision(STOP_NEEDS_USER_INPUT, ("blocking_evidence_gap",), "存在未解决的阻断性证据缺口，不能将当前结果标记为完成。", True)
     if assertions.get("required") and assertions.get("status") != "passed":
         if assertions.get("status") == "unknown":
             return CognitiveDecision(STOP_NEEDS_USER_INPUT, ("goal_assertion_unknown",), "关键完成条件尚无法确认，需要补充信息或受控核对。", True)

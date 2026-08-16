@@ -355,6 +355,7 @@ class StreamingToolResult:
     latency_ms: float = 0.0
     error_code: str = ""
     execution_may_continue: bool = False
+    summary: str = ""
 
 
 class StreamingToolExecutor:
@@ -1210,10 +1211,11 @@ class StreamingToolExecutor:
             latency_ms=float(result.latency_ms or 0.0),
             error_code=error_code,
             execution_may_continue=may_continue,
+            summary=str(getattr(result, "summary", "") or "")[:220],
         )
 
 
-# ── QueryLoop ────────────────────────────────────────────────────────────────
+# ── QueryLoop) ────────────────────────────────────────────────────────────────
 
 @dataclass
 class QueryLoopResult:
@@ -1399,6 +1401,7 @@ class QueryLoop:
                 execution_outcome=projected_metrics["execution_outcome"],
                 goal_assertions=assertion_result,
                 terminal_error=str(values.get("error") or ""),
+                blocking_unknowns=cognitive_state.summary().get("blocking_unknown_count", 0),
             )
             cognitive_state.set_decision(
                 cognitive_decision.outcome,

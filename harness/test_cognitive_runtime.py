@@ -129,3 +129,37 @@ def test_agent_result_contract_normalizes_cognitive_projection_and_labels():
     assert normalized["metadata"]["cognitive_events"] == []
     assert normalized["cognitive_events"] == []
     assert label_for("cognitive_stop_decided") == "已确定下一步或停止条件"
+
+def test_cognitive_state_marks_conflicting_claims_as_blocking_unknown():
+    from types import SimpleNamespace
+    from core.runtime_engine.cognitive_state import initialize_cognitive_state
+
+    state = initialize_cognitive_state(turn_id="t-conflict", trace_id="x-conflict", user_input="核对设备状态")
+    state.register_tool_results([SimpleNamespace(
+        tool_name="probe", call_id="call-a", ok=True,
+        output={"fact_key": "device.status", "summary": "设备状态为 UP"},
+        summary="设备状态为 UP",
+    )])
+    state.register_tool_results([SimpleNamespace(
+        tool_name="probe", call_id="call-b", ok=True,
+        output={"fact_key": "device.status", "summary": "设备状态为 DOWN"},
+        summary="设备状态为 DOWN",
+    )])
+
+    assert state.summary()["known_fact_count"] == 0
+    assert state.summary()["conflict_count"] == 1
+    assert state.summary()["blocking_unknown_count"] == 1
+    assert state.unknowns[-1]["reason"] == "evidence_conflict"
+
+
+def test_cognitive_gate_does_not_complete_with_blocking_evidence_gap():
+    from core.runtime_engine.cognitive_gate import STOP_NEEDS_USER_INPUT, decide_next_action
+
+    decision = decide_next_action(
+        tool_results=[SimpleNamespace(ok=True, execution_may_continue=False)],
+        execution_outcome="success",
+        goal_assertions={},
+        blocking_unknowns=1,
+    )
+    assert decision.outcome == STOP_NEEDS_USER_INPUT
+    assert decision.terminal is True

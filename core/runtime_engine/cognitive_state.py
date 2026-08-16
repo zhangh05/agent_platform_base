@@ -1,5 +1,6 @@
 """Bounded, versioned request-local cognitive state for QueryLoop."""
 from dataclasses import asdict, dataclass, field
+import json
 from typing import Any, Iterable, Mapping
 
 from .cognitive_events import (
@@ -33,6 +34,7 @@ class CognitiveState:
     decision: dict[str, Any] = field(default_factory=dict)
     quality: dict[str, Any] = field(default_factory=dict)
     safety: dict[str, Any] = field(default_factory=dict)
+    conflicts: list[dict[str, Any]] = field(default_factory=list)
     outcome: str = "running"
     revision: int = 0
     events: list[dict[str, Any]] = field(default_factory=list)
@@ -48,8 +50,10 @@ class CognitiveState:
         self.events = self.events[-MAX_EVENTS:]
         return event
 
-    def add_fact(self, fact: str, *, source: str = "runtime", evidence_id: str = "", verified: bool = True) -> None:
+    def add_fact(self, fact: str, *, source: str = "runtime", evidence_id: str = "", verified: bool = True, claim_key: str = "") -> None:
         record = {"fact": _text(fact), "source": _text(source, 80), "evidence_id": _text(evidence_id, 128), "verified": bool(verified)}
+        if claim_key:
+            record["claim_key"] = _text(claim_key, 120)
         if record["fact"] and record not in self.known_facts:
             self.known_facts = (self.known_facts + [record])[-MAX_FACTS:]
 
@@ -72,22 +76,32 @@ class CognitiveState:
         success = 0
         gaps = 0
         uncertain = 0
+        conflict_count = 0
         for result in observed:
             tool_id = _text(getattr(result, "tool_name", "") or getattr(result, "tool_id", "") or "tool", 120)
-            summary = _text(getattr(result, "summary", "") or getattr(result, "error", ""), 220)
+            output = getattr(result, "output", {})
+            summary = _text(getattr(result, "summary", "") or (output.get("summary") if isinstance(output, Mapping) else "") or (output.get("_hint") if isinstance(output, Mapping) else "") or getattr(result, "error", "") or (json.dumps(output, ensure_ascii=False, sort_keys=True, default=str) if isinstance(output, Mapping) else ""), 220)
             if bool(getattr(result, "execution_may_continue", False)):
                 uncertain += 1
                 self.add_unknown(f"{tool_id} 的写入结果尚未确定", blocking=True, reason="unknown_tool_outcome")
             elif bool(getattr(result, "ok", False)):
                 success += 1
-                self.add_fact(summary or f"{tool_id} 执行成功", source=tool_id, evidence_id=_text(getattr(result, "call_id", ""), 128))
+                claim_key = _text(output.get("fact_key") or output.get("claim_key") or output.get("evidence_key"), 120) if isinstance(output, Mapping) else ""
+                prior = next((item for item in self.known_facts if claim_key and item.get("claim_key") == claim_key and item.get("verified", True)), None)
+                if prior is not None and prior.get("fact") != summary:
+                    prior["verified"] = False
+                    conflict_count += 1
+                    self.conflicts = (self.conflicts + [{"claim_key": claim_key, "previous_fact": _text(prior.get("fact"), 180), "current_fact": summary, "previous_evidence_id": _text(prior.get("evidence_id"), 128), "current_evidence_id": _text(getattr(result, "call_id", ""), 128)}])[-MAX_UNKNOWNS:]
+                    self.add_unknown(f"证据冲突：{claim_key}", blocking=True, reason="evidence_conflict")
+                elif prior is None:
+                    self.add_fact(summary or f"{tool_id} 执行成功", source=tool_id, evidence_id=_text(getattr(result, "call_id", ""), 128), claim_key=claim_key)
             else:
                 gaps += 1
                 self.add_unknown(summary or f"{tool_id} 未成功执行", blocking=False, reason="tool_failure")
         if observed:
-            self._append(COGNITIVE_EVIDENCE_REGISTERED, {"fact_count": success, "unknown_count": gaps + uncertain, "visible_summary": f"已登记 {success} 项有效观察"})
-        if gaps or uncertain:
-            self._append(COGNITIVE_GAP_DETECTED, {"unknown_count": gaps + uncertain, "blocked_by": "unknown_tool_outcome" if uncertain else "tool_failure", "visible_summary": "部分观察尚不足以支持完成结论"})
+            self._append(COGNITIVE_EVIDENCE_REGISTERED, {"fact_count": success - conflict_count, "unknown_count": gaps + uncertain + conflict_count, "conflict_count": conflict_count, "visible_summary": f"已登记 {success} 项有效观察"})
+        if gaps or uncertain or conflict_count:
+            self._append(COGNITIVE_GAP_DETECTED, {"unknown_count": gaps + uncertain + conflict_count, "blocked_by": "unknown_tool_outcome" if uncertain else ("evidence_conflict" if conflict_count else "tool_failure"), "visible_summary": "部分观察尚不足以支持完成结论"})
         if evidence:
             self.quality["evidence"] = dict(evidence)
 
@@ -153,9 +167,10 @@ class CognitiveState:
             "revision": self.revision,
             "goal": self.goal,
             "outcome": self.outcome,
-            "known_fact_count": len(self.known_facts),
+            "known_fact_count": sum(1 for item in self.known_facts if item.get("verified", True)),
             "unknown_count": len(self.unknowns),
             "blocking_unknown_count": sum(1 for item in self.unknowns if item.get("blocking")),
+            "conflict_count": len(self.conflicts),
             "plan": list(self.plan),
             "decision": dict(self.decision),
             "quality": dict(self.quality),
