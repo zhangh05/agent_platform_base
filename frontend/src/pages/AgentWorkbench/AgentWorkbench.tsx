@@ -73,6 +73,61 @@ export function TaskWorkbench() {
   );
   const switchSession = useWorkbenchStore((s) => s.switchSession);
   const mergeFromBackend = useWorkbenchStore((s) => s.mergeFromBackend);
+  const approvalRefreshTimerRef = useRef<number | null>(null);
+
+  useEffect(() => () => {
+    if (approvalRefreshTimerRef.current !== null) {
+      window.clearTimeout(approvalRefreshTimerRef.current);
+      approvalRefreshTimerRef.current = null;
+    }
+  }, []);
+
+  const refreshAfterApproval = useCallback(() => {
+    const sessionId = currentSessionId;
+    const workspaceId = currentWorkspaceId;
+    if (!sessionId || !workspaceId) return;
+
+    if (approvalRefreshTimerRef.current !== null) {
+      window.clearTimeout(approvalRefreshTimerRef.current);
+      approvalRefreshTimerRef.current = null;
+    }
+
+    // Resolve returns before the server-side continuation has finished. The
+    // normal session SSE remains the primary completion signal; this bounded
+    // read-only hydration is its disconnect-safe fallback.
+    const knownAssistantKeys = new Set(
+      (useWorkbenchStore.getState().bySession[sessionId] ?? [])
+        .filter((message) => message.role === "assistant")
+        .map((message) => message.message_id ?? `${message.run_id ?? ""}:${message.created_at}:${message.text}`),
+    );
+    let attempts = 0;
+    const refresh = () => {
+      void sessionsApi.messages(sessionId, workspaceId)
+        .then((res) => {
+          const messages = res.messages ?? [];
+          if (messages.length) mergeFromBackend(sessionId, messages);
+          const receivedContinuationResult = messages.some((message) => {
+            if (message.role !== "assistant") return false;
+            const key = message.message_id ?? `${message.run_id ?? ""}:${message.created_at}:${message.content}`;
+            return !knownAssistantKeys.has(key);
+          });
+          if (receivedContinuationResult || attempts >= 30) {
+            approvalRefreshTimerRef.current = null;
+            return;
+          }
+          approvalRefreshTimerRef.current = window.setTimeout(refresh, 1000);
+        })
+        .catch(() => {
+          if (attempts >= 30) {
+            approvalRefreshTimerRef.current = null;
+            return;
+          }
+          approvalRefreshTimerRef.current = window.setTimeout(refresh, 1000);
+        });
+      attempts += 1;
+    };
+    refresh();
+  }, [currentSessionId, currentWorkspaceId, mergeFromBackend]);
 
   const [viewMode, setViewMode] = useState<ViewMode>("chat");
   const [progressPanelCollapsed, setProgressPanelCollapsed] = useState(false);
@@ -659,7 +714,7 @@ export function TaskWorkbench() {
       />
 
       {/* ── Inline approval bubble for high-risk tools ── */}
-      <ApprovalBubble />
+      <ApprovalBubble onResolved={refreshAfterApproval} />
     </div>
   );
 }

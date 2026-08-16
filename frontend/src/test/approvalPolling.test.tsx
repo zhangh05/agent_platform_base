@@ -71,4 +71,33 @@ describe("approval transport lifecycle", () => {
 
     await act(async () => { finish({ ok: true, approval_id: "approval-1", decision: "approve" }); });
   });
+
+  it("notifies the owner after a successful approval resolution", async () => {
+    vi.spyOn(approvalApi, "pending").mockResolvedValue({
+      ok: true,
+      pending: [{
+        approval_id: "approval-callback",
+        tool_id: "workspace.file",
+        risk_level: "high",
+        arguments_preview: { action: "delete" },
+        created_at: new Date().toISOString(),
+        created_at_iso: new Date().toISOString(),
+        expires_at: new Date(Date.now() + 30 * 60_000).toISOString(),
+        approval_kind: "interactive",
+        requester: "test-user",
+      }],
+      count: 1,
+    });
+    vi.spyOn(approvalApi, "resolve").mockResolvedValue({
+      ok: true,
+      approval_id: "approval-callback",
+      decision: "approve",
+    });
+    const onResolved = vi.fn();
+    render(<ApprovalBubble onResolved={onResolved} />);
+    await act(async () => { await Promise.resolve(); });
+    fireEvent.click(screen.getByRole("button", { name: /允许/ }));
+    await act(async () => { await Promise.resolve(); });
+    expect(onResolved).toHaveBeenCalledWith("approve");
+  });
 });
