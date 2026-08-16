@@ -629,8 +629,8 @@ export function TaskWorkbench() {
             />
             <div className="wb-composer-actions">
               <input ref={fileInputRef} type="file" multiple disabled={!currentSessionId || turnRunning} accept=".txt,.md,.json,.csv,.tsv,.log,.conf,.cfg,.yaml,.yml,.xml,.html,.htm,.pdf,.docx,.xlsx,.pptx,.png,.jpg,.jpeg,.gif,.webp" onChange={(event) => { if (event.target.files) { addFiles(event.target.files); event.target.value = ""; } }} className="wb-file-input" />
-              <button className="wb-attach-btn" onClick={pickFile} disabled={!currentSessionId || turnRunning} title={currentSessionId ? "添加文件" : "请先新建会话"} type="button">
-                <IconAttachment size={16} /><span>添加文件</span>
+              <button className="wb-attach-btn" onClick={pickFile} disabled={!currentSessionId || turnRunning} title={currentSessionId ? "添加文件" : "请先新建会话"} aria-label={currentSessionId ? "添加文件" : "请先新建会话"} type="button">
+                <IconAttachment size={16} aria-hidden="true" />
               </button>
               {turnRunning ? (
                 <button className="wb-stop" onClick={stopActiveTurn} title="停止任务" type="button" data-testid="btn-stop"><IconStop size={14} weight="fill" /><span>停止</span></button>

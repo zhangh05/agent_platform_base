@@ -312,16 +312,22 @@
   min-height: 70px;
   margin: 0 auto;
   padding: 6px 10px 5px;
+  box-sizing: border-box;
   overflow: hidden;
   background: var(--field);
   border: 1px solid var(--line);
   border-radius: 13px;
-  box-shadow: var(--shadow-composer);
+  box-shadow: inset 0 0 0 1px transparent, var(--shadow-composer);
+  transform: none;
+  transition:
+    border-color 140ms ease,
+    box-shadow 140ms ease;
 }
 
 .wb-input-row:focus-within {
   border-color: var(--focus-ring);
-  box-shadow: 0 0 0 3px var(--focus-ring-shadow), var(--shadow-composer);
+  box-shadow: inset 0 0 0 1px var(--focus-ring), var(--shadow-composer);
+  transform: none;
 }
 
 .wb-input {
@@ -347,12 +353,10 @@
 .wb-attach-btn,
 .wb-stop {
   display: inline-flex;
-  width: auto;
-  height: 32px;
   align-items: center;
-  gap: 7px;
+  justify-content: center;
+  height: 32px;
   margin: 0;
-  padding: 0 9px;
   color: var(--text-3);
   background: transparent;
   border: 0;
@@ -360,13 +364,25 @@
   font-size: 12px;
 }
 
+.wb-attach-btn {
+  width: 32px;
+  padding: 0;
+}
+
 .wb-attach-btn:hover:not(:disabled) {
   color: var(--accent-2);
   background: var(--surface-hover);
 }
 
+.wb-attach-btn:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
 .wb-stop {
   margin-left: auto;
+  gap: 7px;
+  padding: 0 9px;
   color: var(--danger);
   background: var(--danger-soft);
 }
