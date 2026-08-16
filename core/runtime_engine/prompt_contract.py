@@ -7,12 +7,18 @@ defines how the model reasons over those tools, governed context and results.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, timezone
+import json
+import os
 import re
 from typing import Any, Iterable, Mapping
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 
 _TRUSTED_SOURCE_KINDS = frozenset({
     "runtime_contract",
+    "runtime_clock",
+    "cognitive_state",
     "managed_attachment",
     "operational_guard",
     "capability_playbook",
@@ -43,6 +49,124 @@ def trusted_prompt_item(source_kind: str, content: Any, *, label: str = "") -> T
     )
 
 
+
+def runtime_clock_prompt_item(
+    *,
+    now: datetime | None = None,
+    timezone_name: str | None = None,
+) -> TrustedPromptItem:
+    """Build a server-owned turn-start clock anchor for the runtime prompt."""
+    configured_timezone = str(
+        timezone_name or os.environ.get("LZCORE_DISPLAY_TIMEZONE") or "Asia/Shanghai"
+    ).strip() or "Asia/Shanghai"
+    try:
+        display_timezone = ZoneInfo(configured_timezone)
+    except ZoneInfoNotFoundError:
+        configured_timezone = "UTC"
+        display_timezone = timezone.utc
+    now_utc = now or datetime.now(timezone.utc)
+    if now_utc.tzinfo is None:
+        now_utc = now_utc.replace(tzinfo=timezone.utc)
+    now_utc = now_utc.astimezone(timezone.utc)
+    now_local = now_utc.astimezone(display_timezone)
+    return trusted_prompt_item(
+        "runtime_clock",
+        "Server-generated turn-start clock; this is a runtime fact, not user data.\n"
+        f"timezone: {configured_timezone}\n"
+        f"local_datetime: {now_local.isoformat()}\n"
+        f"local_date: {now_local.date().isoformat()}\n"
+        f"utc_datetime: {now_utc.isoformat()}\n"
+        "For second-level precision or a long-running task, use "
+        "system__manage(action=\"local_info\") before making a time-sensitive claim.",
+        label="runtime_clock",
+    )
+
+
+def cognitive_state_prompt_item(state: Any) -> TrustedPromptItem | None:
+    """Project only server-owned cognitive control facts into the next LLM turn.
+
+    This deliberately excludes raw facts, unknown text, tool arguments, user input,
+    and event payloads. Evidence details remain in canonical tool messages.
+    """
+    summary_method = getattr(state, "summary", None)
+    if not callable(summary_method):
+        return None
+    summary = summary_method()
+    if not isinstance(summary, Mapping):
+        return None
+
+    def _code(value: Any, limit: int = 120) -> str:
+        text = str(value or "").strip()
+        return text[:limit] if re.fullmatch(r"[A-Za-z0-9_.:-]+", text) else ""
+
+    def _nonnegative_int(value: Any) -> int:
+        try:
+            return max(0, int(value or 0))
+        except (TypeError, ValueError):
+            return 0
+
+    planned_actions = []
+    for step in summary.get("plan") or []:
+        if not isinstance(step, Mapping):
+            continue
+        action = _code(step.get("action"))
+        if action and action not in planned_actions:
+            planned_actions.append(action)
+
+    decision = summary.get("decision") if isinstance(summary.get("decision"), Mapping) else {}
+    quality = summary.get("quality") if isinstance(summary.get("quality"), Mapping) else {}
+    safety = summary.get("safety") if isinstance(summary.get("safety"), Mapping) else {}
+    unknown_reasons = []
+    for unknown in getattr(state, "unknowns", ()) or ():
+        if not isinstance(unknown, Mapping):
+            continue
+        reason = _code(unknown.get("reason"))
+        if reason and reason not in unknown_reasons:
+            unknown_reasons.append(reason)
+
+    projection = {
+        "schema_version": _code(summary.get("schema_version"), 40),
+        "revision": _nonnegative_int(summary.get("revision")),
+        "outcome": _code(summary.get("outcome"), 80),
+        "known_fact_count": _nonnegative_int(summary.get("known_fact_count")),
+        "unknown_count": _nonnegative_int(summary.get("unknown_count")),
+        "blocking_unknown_count": _nonnegative_int(summary.get("blocking_unknown_count")),
+        "planned_actions": planned_actions[:8],
+        "decision": _code(decision.get("decision"), 80),
+        "decision_reason_codes": [
+            code for value in (decision.get("reason_codes") or [])
+            if (code := _code(value, 80))
+        ][:8],
+        "unknown_reason_codes": unknown_reasons[:8],
+        "quality_issue_codes": [
+            code for value in (quality.get("issue_codes") or [])
+            if (code := _code(value, 80))
+        ][:8],
+        "quality_resolved": bool(quality.get("resolved")),
+        "safety_reason_codes": [
+            code for value in (safety.get("stop_reason_codes") or [])
+            if (code := _code(value, 80))
+        ][:8],
+    }
+    return trusted_prompt_item(
+        "cognitive_state",
+        "Server-generated CognitiveState control projection. Use it to decide whether "
+        "fresh evidence, replanning, correction, or a final answer is warranted. "
+        "It never authorizes tools or bypasses policy.\n"
+        + json.dumps(projection, ensure_ascii=False, sort_keys=True, separators=(",", ":")),
+        label="cognitive_state",
+    )
+
+
+def render_trusted_prompt_item(item: TrustedPromptItem) -> str:
+    """Render a server-owned guidance block with the same escaping as turn input."""
+    if not isinstance(item, TrustedPromptItem):
+        raise TypeError("item must be a TrustedPromptItem")
+    return (
+        f'<runtime_guidance trusted="true" source_kind="{item.source_kind}">\n'
+        + _escape_data(item.content)
+        + "\n</runtime_guidance>"
+    )
 CAPABILITY_PLAYBOOKS: dict[str, str] = {
     "managed_attachment": (
         "Managed attachments are referenced by validated file_id values. Use the canonical file, artifact, "
@@ -249,11 +373,7 @@ def build_turn_message(
     for item in trusted_context_items:
         if not isinstance(item, TrustedPromptItem):
             raise TypeError("trusted_context_items must contain TrustedPromptItem values")
-        parts.append(
-            f'<runtime_guidance trusted="true" source_kind="{item.source_kind}">\n'
-            + _escape_data(item.content)
-            + "\n</runtime_guidance>"
-        )
+        parts.append(render_trusted_prompt_item(item))
     parts.append(
         "<current_user_request>\n"
         + _escape_data(user_input)

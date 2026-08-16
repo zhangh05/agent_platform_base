@@ -2160,16 +2160,18 @@ class QueryLoop:
         from .prompt_contract import (
             TrustedPromptItem,
             resolve_capability_playbooks,
+            runtime_clock_prompt_item,
             trusted_prompt_item,
         )
 
         conversation_block = ctx.extras.get("conversation_history_block") or ""
         retrieved_block = ctx.extras.get("retrieved_context_block") or ""
         operational_hint = ctx.extras.get("operational_clarification") or {}
-        trusted_items = [
+        trusted_items = [runtime_clock_prompt_item()]
+        trusted_items.extend([
             item for item in (ctx.extras.get("trusted_prompt_items") or [])
             if isinstance(item, TrustedPromptItem)
-        ]
+        ])
         if isinstance(operational_hint, dict):
             guidance = str(operational_hint.get("guidance") or "").strip()
             if guidance:
@@ -2197,6 +2199,29 @@ class QueryLoop:
                 trusted_context_items=trusted_items,
             )),
         ]
+
+    @staticmethod
+    def _refresh_cognitive_prompt_state(
+        messages: List[LLMMessage],
+        ctx: StatelessContext,
+    ) -> None:
+        """Keep one server-owned CognitiveState projection per LLM round."""
+        from .prompt_contract import cognitive_state_prompt_item, render_trusted_prompt_item
+
+        item = cognitive_state_prompt_item(ctx.extras.get("cognitive_state"))
+        marker = '<runtime_guidance trusted="true" source_kind="cognitive_state">'
+        messages[:] = [
+            message for message in messages
+            if not (message.role == "user" and str(message.content or "").startswith(marker))
+        ]
+        if item is not None:
+            insert_at = next(
+                (index for index, message in enumerate(messages) if message.role == "assistant"),
+                len(messages),
+            )
+            messages.insert(insert_at, LLMMessage(
+                role="user", content=render_trusted_prompt_item(item)
+            ))
 
     @staticmethod
     def _unique_call_ids(
@@ -2237,6 +2262,7 @@ class QueryLoop:
         """
         try:
             system_prompt, stream_scope, stream_to_user = self._llm_call_mode(messages, ctx)
+            self._refresh_cognitive_prompt_state(messages, ctx)
             # Response nudges are an instruction to synthesize now, not a
             # second fast-path or capability downgrade. Every LLM turn keeps
             # the same visible tool surface; the model may still choose a

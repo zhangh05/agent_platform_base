@@ -24,6 +24,7 @@ import { beginModelStep, canFallbackToHttp, discardToolCallDraft, finalizeStream
 import { agentResultFromWsDone } from "../utils/wsResult";
 import { notifyRunCompleted } from "../utils/appEvents";
 import { createStreamActivityWatchdog, STREAM_IDLE_TIMEOUT_MS } from "../utils/streamActivity";
+import { decideStreamFrame } from "../utils/streamSequence";
 import { progressPatchForStreamStage, stageElapsedSince } from "../utils/streamStage";
 
 const WS_TIMEOUT_MS = 3000;
@@ -235,6 +236,7 @@ export function useChatStream(
         no_tool_reason?: string;
       } = {};
       let terminalFrameReceived = false;
+      let lastStreamSequence = 0;
       let interruptionReason = "";
 
       await new Promise<void>((resolve) => {
@@ -281,6 +283,9 @@ export function useChatStream(
           watchdog.touch();
           try {
             const msg = JSON.parse(event.data);
+            const sequenceDecision = decideStreamFrame(msg, lastStreamSequence, terminalFrameReceived);
+            if (!sequenceDecision.accept) return;
+            lastStreamSequence = sequenceDecision.nextSequence;
             switch (msg.type) {
               case "token": {
                 const raw = msg.content || "";
