@@ -102,6 +102,8 @@ class ApprovedToolContinuation:
     continuation_id: str
     tool_calls: tuple[dict[str, Any], ...]
     approved_node_ids: tuple[str, ...]
+    # Server-recorded approval ids; never constructed from caller metadata.
+    approval_ids: tuple[str, ...] = ()
 
 
 @dataclass

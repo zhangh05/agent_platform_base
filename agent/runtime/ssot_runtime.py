@@ -148,6 +148,7 @@ def run_ssot_turn(
             prebuilt_registry=ssot_registry,
             max_query_loop_iterations=metadata_in.get("max_steps"),
             context_budget=runtime_context_budget,
+            approved_tool_grant=metadata_in.get("__approved_tool_continuation"),
         )
         runtime_result = _run_async(
             engine.run(
@@ -430,6 +431,7 @@ def _build_engine(
     prebuilt_registry: dict[str, dict[str, Any]] | None = None,
     max_query_loop_iterations: int | None = None,
     context_budget=None,
+    approved_tool_grant=None,
 ):
     from core.runtime_engine import SSOTRuntimeConfig, SSOTRuntimeEngine
     from core.runtime_engine.tool_runtime import ToolRuntime
@@ -471,6 +473,7 @@ def _build_engine(
     )
     engine = SSOTRuntimeEngine(**engine_kwargs)
     client = _tool_runtime_client()
+    approved_call_grants = _approved_call_grants(approved_tool_grant)
 
     for tool_id in registry:
         engine.register_tool(
@@ -483,6 +486,7 @@ def _build_engine(
                 run_id=run_id,
                 trace_id=trace_id,
                 requested_by=requested_by,
+                approved_call_grants=approved_call_grants,
             ),
             description=registry[tool_id].get("description", ""),
             args_schema=registry[tool_id].get("args_schema", {}),
@@ -674,46 +678,6 @@ def _tool_runtime_client():
     return get_default_tool_runtime_client()
 
 
-def _make_tool_handler(
-    *,
-    client,
-    tool_id: str,
-    workspace_id: str,
-    session_id: str,
-    run_id: str,
-    trace_id: str,
-    requested_by: str,
-):
-    async def _handler(args: dict[str, Any]) -> dict[str, Any]:
-        from core.tools.context import ToolRuntimeContext
-
-        ctx = ToolRuntimeContext(
-            workspace_id=workspace_id,
-            session_id=session_id,
-            run_id=run_id,
-            trace_id=trace_id,
-            requested_by=requested_by,
-            module="ssot_runtime",
-        )
-        args = dict(args or {})
-        # Inject runtime context into args so tool handlers can access
-        # session_id / run_id without relying on ToolInvocation fields
-        result = await asyncio.to_thread(client.invoke, tool_id, args, context=ctx)
-        # ToolExecutor already returns the canonical, redacted payload. Keep it
-        # flat so QueryLoop can consume control fields such as tracking and
-        # content_complete without a second lossy wrapper.
-        payload = dict(result.output or {})
-        payload.setdefault("status", result.status)
-        payload.setdefault("ok", result.status in ("succeeded", "dry_run"))
-        payload.setdefault("summary", result.summary or "")
-        payload.setdefault("artifact_ids", list(result.artifact_ids or []))
-        payload.setdefault("warnings", list(result.warnings or []))
-        payload.setdefault("errors", list(result.errors or []))
-        payload.setdefault("duration_ms", result.duration_ms)
-        payload.setdefault("redacted", bool(result.redacted))
-        return payload
-
-    return _handler
 
 
 def _invoke_llm_for_ssot_runtime(**kwargs):
@@ -1731,3 +1695,86 @@ def _sync_session_history(
             history.append(AssistantMessage(content=final_response))
     except Exception:
         logging.getLogger(__name__).warning("Failed to sync session history", exc_info=True)
+def _approved_call_key(tool_id: str, args: dict[str, Any]) -> str:
+    """Stable private key for an exact server-approved tool call."""
+    import json
+
+    return json.dumps(
+        {"tool_id": str(tool_id), "arguments": dict(args or {})},
+        ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str,
+    )
+
+
+def _approved_call_grants(grant) -> dict[str, list[str]]:
+    """Build single-use approval queues from a typed server grant only."""
+    from core.runtime_engine.models import ApprovedToolContinuation
+
+    if not isinstance(grant, ApprovedToolContinuation):
+        return {}
+    node_ids = tuple(str(value) for value in grant.approved_node_ids)
+    approval_ids = tuple(str(value) for value in grant.approval_ids)
+    if not node_ids or not approval_ids:
+        return {}
+    if len(approval_ids) == 1:
+        node_approval_ids = {node_id: approval_ids[0] for node_id in node_ids}
+    elif len(approval_ids) == len(node_ids):
+        node_approval_ids = dict(zip(node_ids, approval_ids))
+    else:
+        _LOG.warning("ambiguous approval grant continuation=%s", grant.continuation_id)
+        return {}
+    grants: dict[str, list[str]] = {}
+    for call in grant.tool_calls:
+        if not isinstance(call, dict):
+            continue
+        approval_id = node_approval_ids.get(str(call.get("id") or ""))
+        call_tool_id = str(call.get("name") or "").replace("__", ".")
+        call_args = call.get("arguments") if isinstance(call.get("arguments"), dict) else {}
+        if approval_id and call_tool_id:
+            grants.setdefault(_approved_call_key(call_tool_id, call_args), []).append(approval_id)
+    return grants
+
+
+def _make_tool_handler(
+    *,
+    client,
+    tool_id: str,
+    workspace_id: str,
+    session_id: str,
+    run_id: str,
+    trace_id: str,
+    requested_by: str,
+    approved_call_grants: dict[str, list[str]] | None = None,
+):
+    single_use_grants = approved_call_grants if approved_call_grants is not None else {}
+
+    async def _handler(args: dict[str, Any]) -> dict[str, Any]:
+        from core.tools.context import ToolRuntimeContext
+
+        args = dict(args or {})
+        grant_key = _approved_call_key(tool_id, args)
+        approval_queue = single_use_grants.get(grant_key) or []
+        approval_id = approval_queue.pop(0) if approval_queue else None
+        if not approval_queue:
+            single_use_grants.pop(grant_key, None)
+        ctx = ToolRuntimeContext(
+            workspace_id=workspace_id,
+            session_id=session_id,
+            run_id=run_id,
+            trace_id=trace_id,
+            requested_by=requested_by,
+            module="ssot_runtime",
+            approval_id=approval_id,
+        )
+        result = await asyncio.to_thread(client.invoke, tool_id, args, context=ctx)
+        payload = dict(result.output or {})
+        payload.setdefault("status", result.status)
+        payload.setdefault("ok", result.status in ("succeeded", "dry_run"))
+        payload.setdefault("summary", result.summary or "")
+        payload.setdefault("artifact_ids", list(result.artifact_ids or []))
+        payload.setdefault("warnings", list(result.warnings or []))
+        payload.setdefault("errors", list(result.errors or []))
+        payload.setdefault("duration_ms", result.duration_ms)
+        payload.setdefault("redacted", bool(result.redacted))
+        return payload
+
+    return _handler

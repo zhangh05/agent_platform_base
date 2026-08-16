@@ -220,3 +220,118 @@ def test_unbacked_approval_claim_cannot_become_pending():
     assert any("unbacked_approval_claim" in str(error) for error in result.errors)
     assert result.metadata["approval_required"] is False
     assert result.metadata.get("continuation_id") is None
+
+
+def test_claimed_grant_keeps_server_approval_ids(tmp_path, monkeypatch):
+    import agent.runtime.approval_continuation as continuation
+
+    monkeypatch.setenv("LZCORE_MASTER_KEY", "approval-grant-test-master-key-0001")
+    monkeypatch.setattr(
+        continuation,
+        "_path",
+        lambda workspace_id, continuation_id: tmp_path / workspace_id / f"{continuation_id}.json",
+    )
+    continuation_id = continuation.create_continuation(
+        workspace_id="default",
+        session_id="grant-session",
+        parent_run_id="parent-run",
+        user_input="删除临时文件",
+        tool_calls=[{"id": "delete-1", "name": "workspace.file", "arguments": {"action": "delete", "filepath": "old.txt"}}],
+        approval_ids=["apr-server-1"],
+        approved_node_ids=["delete-1"],
+    )
+    continuation.record_decision(
+        workspace_id="default",
+        continuation_id=continuation_id,
+        approval_id="apr-server-1",
+        allowed=True,
+    )
+    _record, grant, _payload = continuation.claim_ready_continuation(
+        workspace_id="default", continuation_id=continuation_id,
+    )
+    assert grant is not None
+    assert grant.approval_ids == ("apr-server-1",)
+
+
+def test_approved_handler_consumes_exact_server_grant_once():
+    from types import SimpleNamespace
+    from core.runtime_engine.models import ApprovedToolContinuation
+    from agent.runtime.ssot_runtime import _approved_call_grants, _make_tool_handler
+
+    observed_approval_ids = []
+
+    class Client:
+        def invoke(self, tool_id, args, *, context):
+            observed_approval_ids.append(context.approval_id)
+            return SimpleNamespace(
+                output={"ok": True}, status="succeeded", summary="deleted",
+                artifact_ids=[], warnings=[], errors=[], duration_ms=1, redacted=True,
+            )
+
+    args = {"action": "delete", "filepath": "old.txt"}
+    grant = ApprovedToolContinuation(
+        continuation_id="cont_" + "e" * 32,
+        tool_calls=({"id": "delete-1", "name": "workspace.file", "arguments": args},),
+        approved_node_ids=("delete-1",),
+        approval_ids=("apr-server-1",),
+    )
+    handler = _make_tool_handler(
+        client=Client(), tool_id="workspace.file", workspace_id="default",
+        session_id="grant-session", run_id="run", trace_id="trace",
+        requested_by="turn_runner", approved_call_grants=_approved_call_grants(grant),
+    )
+    assert asyncio.run(handler(args))["ok"] is True
+    assert asyncio.run(handler(args))["ok"] is True
+    assert observed_approval_ids == ["apr-server-1", None]
+
+
+def test_approved_continuation_injects_approval_id_into_canonical_client(monkeypatch):
+    from types import SimpleNamespace
+    from agent.llm.schemas import LLMResponse
+    import agent.runtime.ssot_runtime as runtime_module
+    from core.runtime_engine.models import ApprovedToolContinuation
+
+    observed_approval_ids = []
+
+    class Client:
+        def invoke(self, tool_id, args, *, context):
+            observed_approval_ids.append(context.approval_id)
+            return SimpleNamespace(
+                output={"ok": True, "summary": "deleted"}, status="succeeded",
+                summary="deleted", artifact_ids=[], warnings=[], errors=[],
+                duration_ms=1, redacted=True,
+            )
+
+    monkeypatch.setattr(runtime_module, "_tool_runtime_client", lambda: Client())
+    args = {"action": "delete", "filepath": "old.txt"}
+    grant = ApprovedToolContinuation(
+        continuation_id="cont_" + "f" * 32,
+        tool_calls=({"id": "delete-1", "name": "workspace.file", "arguments": args},),
+        approved_node_ids=("delete-1",),
+        approval_ids=("apr-server-1",),
+    )
+    registry = {
+        "workspace.file": {
+            "description": "delete managed file",
+            "args_schema": {
+                "type": "object",
+                "required": ["action", "filepath"],
+                "properties": {
+                    "action": {"type": "string"},
+                    "filepath": {"type": "string"},
+                },
+            },
+        },
+    }
+    engine = runtime_module._build_engine(
+        workspace_id="default", session_id="grant-session", run_id="run",
+        trace_id="trace", requested_by="turn_runner", prebuilt_registry=registry,
+        approved_tool_grant=grant,
+    )
+    engine._llm_invoke = lambda **_kwargs: LLMResponse(content="已完成批准操作。")
+    result = asyncio.run(engine.run(
+        "删除临时文件", workspace_id="default", session_id="grant-session",
+        extras={"__approved_tool_continuation": grant, "__approval_continuation_resume": True},
+    ))
+    assert result.success is True, result.errors
+    assert observed_approval_ids == ["apr-server-1"]

@@ -229,6 +229,7 @@ def claim_ready_continuation(
             continuation_id=continuation_id,
             tool_calls=tuple(dict(item) for item in payload["tool_calls"]),
             approved_node_ids=tuple(str(item) for item in payload["approved_node_ids"]),
+            approval_ids=tuple(str(item) for item in record.get("approval_ids") or ()),
         )
         return dict(record), grant, payload
 
