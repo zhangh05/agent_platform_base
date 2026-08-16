@@ -1326,6 +1326,7 @@ class QueryLoop:
             for event in cognitive_state.events:
                 self._emitter.emit(event["type"], event)
         cognitive_events_emitted = len(cognitive_state.events)
+        cognitive_registered_results = 0
 
         initialize_evidence_ledger(ctx.extras)
 
@@ -1336,7 +1337,7 @@ class QueryLoop:
 
         def finish(**values) -> QueryLoopResult:
             """Build every exit projection with the same runtime metrics."""
-            nonlocal cognitive_events_emitted
+            nonlocal cognitive_events_emitted, cognitive_registered_results
             projected_metrics = {
                 "elapsed_ms": (time.monotonic() - t_start) * 1000,
                 "iterations": iterations,
@@ -1382,10 +1383,17 @@ class QueryLoop:
                     goal_assertions=assertion_result,
                 )
             )
-            cognitive_state.register_tool_results(
-                all_results,
-                evidence=projected_metrics["evidence"] if isinstance(projected_metrics["evidence"], dict) else None,
-            )
+            unregistered_cognitive_results = all_results[cognitive_registered_results:]
+            if unregistered_cognitive_results:
+                cognitive_state.register_tool_results(
+                    unregistered_cognitive_results,
+                    evidence=(
+                        projected_metrics["evidence"]
+                        if isinstance(projected_metrics["evidence"], dict)
+                        else None
+                    ),
+                )
+                cognitive_registered_results = len(all_results)
             cognitive_decision = decide_next_action(
                 tool_results=all_results,
                 execution_outcome=projected_metrics["execution_outcome"],
@@ -1891,6 +1899,15 @@ class QueryLoop:
                 )
 
                 registered_evidence_ids = register_tool_evidence(ctx.extras, results)
+                cognitive_state.register_tool_results(
+                    results,
+                    evidence=evidence_summary(ctx.extras),
+                )
+                cognitive_registered_results = len(all_results)
+                if self._emitter is not None:
+                    for event in cognitive_state.events[cognitive_events_emitted:]:
+                        self._emitter.emit(event["type"], event)
+                cognitive_events_emitted = len(cognitive_state.events)
                 document_images = [
                     item for item in pending_llm_evidence(ctx.extras)
                     if item.get("evidence_id") in registered_evidence_ids
