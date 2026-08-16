@@ -381,3 +381,21 @@ def test_approval_store_cache_isolated_by_storage_principal(monkeypatch, tmp_pat
             assert bob.get_pending(workspace_id="team") == []
     finally:
         reset_approval_store_for_tests(remove_persisted=True)
+
+
+def test_approval_sse_emits_snapshot_sync_after_subscription(client, reset_approvals):
+    import json
+
+    response = client.get(
+        "/api/agent/approvals/sse?workspace_id=ws_sse_ready",
+        buffered=False,
+    )
+    iterator = iter(response.response)
+    assert next(iterator) == b": connected\n\n"
+    event = next(iterator).decode("utf-8")
+    assert event.startswith("data: ")
+    payload = json.loads(event.removeprefix("data: ").strip())
+    assert payload["kind"] == "stream_ready"
+    assert payload["workspace_id"] == "ws_sse_ready"
+    assert payload["payload"] == {"snapshot_required": True}
+    response.close()

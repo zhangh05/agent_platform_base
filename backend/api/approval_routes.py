@@ -368,6 +368,7 @@ def register_approval_routes(app) -> None:
             try:
                 # Send an initial comment so the browser opens the stream.
                 yield b": connected\n\n"
+                yield f"data: {json.dumps({"kind": "stream_ready", "approval_id": "", "session_id": "", "workspace_id": ws_id, "tool_id": "", "allowed": False, "payload": {"snapshot_required": True}, "ts": time.time()}, ensure_ascii=False)}\n\n".encode("utf-8")
                 while True:
                     try:
                         evt = q.get(timeout=25.0)

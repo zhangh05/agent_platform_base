@@ -100,4 +100,42 @@ describe("approval transport lifecycle", () => {
     await act(async () => { await Promise.resolve(); });
     expect(onResolved).toHaveBeenCalledWith("approve");
   });
+
+
+  it("starts fallback polling when SSE fails before the first pending request authorizes", async () => {
+    let resolveInitial!: (value: { ok: boolean; pending: never[]; count: number }) => void;
+    const pending = vi.spyOn(approvalApi, "pending")
+      .mockImplementationOnce(() => new Promise((resolve) => { resolveInitial = resolve; }))
+      .mockResolvedValueOnce({
+        ok: true,
+        pending: [{
+          approval_id: "approval-after-sse-failure",
+          tool_id: "workspace.file",
+          risk_level: "high",
+          arguments_preview: { action: "delete", filepath: "files/data/probe.md" },
+          created_at: new Date().toISOString(),
+          created_at_iso: new Date().toISOString(),
+          expires_at: new Date(Date.now() + 30 * 60_000).toISOString(),
+          approval_kind: "interactive",
+          requester: "test-user",
+        }],
+        count: 1,
+      });
+
+    class EarlyFailEventSource extends HealthyEventSource {
+      constructor() {
+        super();
+        queueMicrotask(() => this.onerror?.(new Event("error")));
+      }
+    }
+    vi.stubGlobal("EventSource", EarlyFailEventSource);
+    render(<ApprovalBubble />);
+    await act(async () => { await Promise.resolve(); });
+    await act(async () => { resolveInitial({ ok: true, pending: [], count: 0 }); });
+    await act(async () => { vi.advanceTimersByTime(5_000); await Promise.resolve(); });
+
+    expect(pending).toHaveBeenCalledTimes(2);
+    expect(screen.getByTestId("approval-bubble")).toBeInTheDocument();
+  });
+
 });

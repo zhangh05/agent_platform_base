@@ -58,6 +58,8 @@ export const ApprovalBubble = memo(function ApprovalBubble({ onResolved }: { onR
     let pollTimer: ReturnType<typeof setInterval> | null = null;
     let pollInFlight = false;
     let authorized = false;
+    let streamDegraded = false;
+    let streamSyncRequested = false;
 
     const stopPoll = () => {
       if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
@@ -67,6 +69,13 @@ export const ApprovalBubble = memo(function ApprovalBubble({ onResolved }: { onR
       if (!pollTimer) pollTimer = setInterval(() => { void poll(); }, 5000);
     };
 
+    const requestSnapshot = () => {
+      streamSyncRequested = true;
+      if (!pollInFlight) {
+        streamSyncRequested = false;
+        void poll();
+      }
+    };
     const poll = async () => {
       if (pollInFlight) return;
       pollInFlight = true;
@@ -78,6 +87,7 @@ export const ApprovalBubble = memo(function ApprovalBubble({ onResolved }: { onR
         const data = await approvalApi.pending(currentSessionId, currentWorkspaceId);
         if (cancelled) return;
         authorized = true;
+        if (streamDegraded) startPoll();
         if (data.ok && data.pending?.length > 0) {
           const p = (data.pending as unknown as PendingApproval[]).find((item) => !resolvedIdsRef.current.has(item.approval_id));
           if (!p) {
@@ -102,7 +112,13 @@ export const ApprovalBubble = memo(function ApprovalBubble({ onResolved }: { onR
           : 0;
         if (status === 401) stopPoll();
       }
-      finally { pollInFlight = false; }
+      finally {
+        pollInFlight = false;
+        if (!cancelled && streamSyncRequested) {
+          streamSyncRequested = false;
+          void poll();
+        }
+      }
     };
 
     // Initial check. Healthy SSE events trigger later checks; polling is only
@@ -110,10 +126,10 @@ export const ApprovalBubble = memo(function ApprovalBubble({ onResolved }: { onR
     void poll();
     try {
       es = openApprovalStream(currentWorkspaceId, (event) => {
-        if (!resolvingRef.current && event.session_id === currentSessionId && event.workspace_id === currentWorkspaceId) {
-          void poll();
+        if (!resolvingRef.current && event.workspace_id === currentWorkspaceId && (event.kind === "stream_ready" || event.session_id === currentSessionId)) {
+          requestSnapshot();
         }
-      }, () => { if (authorized) startPoll(); });
+      }, () => { streamDegraded = true; if (authorized) startPoll(); });
     } catch {
       es = null;
     }
