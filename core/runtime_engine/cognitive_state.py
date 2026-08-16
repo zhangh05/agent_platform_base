@@ -182,6 +182,73 @@ class CognitiveState:
         return asdict(self)
 
 
+def restore_cognitive_state(
+    snapshot: Mapping[str, Any] | None,
+    *,
+    turn_id: str,
+    trace_id: str,
+) -> CognitiveState | None:
+    """Rehydrate a bounded server-owned continuation snapshot.
+
+    The continuation store is server-only and encrypted, but this function still
+    rejects malformed state and bounds every collection before it reaches the
+    next prompt projection.
+    """
+    if not isinstance(snapshot, Mapping):
+        return None
+    goal = _text(snapshot.get("goal"))
+    if not goal:
+        return None
+    state = CognitiveState(
+        turn_id=_text(turn_id, 128),
+        trace_id=_text(trace_id, 128),
+        goal=goal,
+        constraints=_texts(snapshot.get("constraints") or [], 8),
+        completion_criteria=_texts(snapshot.get("completion_criteria") or [], 8),
+        outcome=_text(snapshot.get("outcome"), 64) or "running",
+    )
+    for item in list(snapshot.get("known_facts") or [])[:MAX_FACTS]:
+        if isinstance(item, Mapping):
+            state.add_fact(
+                _text(item.get("fact")),
+                source=_text(item.get("source"), 80),
+                evidence_id=_text(item.get("evidence_id"), 128),
+                verified=bool(item.get("verified", True)),
+                claim_key=_text(item.get("claim_key"), 120),
+            )
+    for item in list(snapshot.get("unknowns") or [])[:MAX_UNKNOWNS]:
+        if isinstance(item, Mapping):
+            state.add_unknown(
+                _text(item.get("item")),
+                blocking=bool(item.get("blocking")),
+                reason=_text(item.get("reason"), 160),
+            )
+    state.plan = [
+        {"action": _text(item.get("action"), 120), "purpose": _text(item.get("purpose"), 180)}
+        for item in list(snapshot.get("plan") or [])[:8]
+        if isinstance(item, Mapping) and _text(item.get("action"), 120)
+    ]
+    for name in ("decision", "quality", "safety"):
+        value = snapshot.get(name)
+        if isinstance(value, Mapping):
+            setattr(state, name, dict(value))
+    state.conflicts = [
+        dict(item) for item in list(snapshot.get("conflicts") or [])[:MAX_UNKNOWNS]
+        if isinstance(item, Mapping)
+    ]
+    state.events = [
+        dict(item) for item in list(snapshot.get("events") or [])[-MAX_EVENTS:]
+        if isinstance(item, Mapping)
+    ]
+    revisions = [0]
+    for value in [snapshot.get("revision")] + [event.get("state_revision") for event in state.events]:
+        try:
+            revisions.append(max(0, int(value or 0)))
+        except (TypeError, ValueError):
+            continue
+    state.revision = max(revisions)
+    return state
+
 def initialize_cognitive_state(
     *,
     turn_id: str,

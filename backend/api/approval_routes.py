@@ -71,6 +71,7 @@ def _resume_agent_continuation(workspace_id: str, continuation_id: str, grant, p
                 "__approved_tool_continuation": grant,
                 "__approval_continuation_resume": True,
                 "approval_parent_run_id": str(payload.get("parent_run_id") or ""),
+                "__approval_cognitive_state": dict(payload.get("cognitive_state") or {}),
                 "transport": "approval_resume",
             },
         )

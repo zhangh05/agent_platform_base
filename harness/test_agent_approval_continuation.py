@@ -153,13 +153,21 @@ def test_ordinary_approval_returns_pending_without_waiting(monkeypatch, tmp_path
             raise AssertionError("ordinary approval must never block a runtime worker")
 
     monkeypatch.setattr(runtime, "get_approval_store", lambda _workspace_id: Store())
+    from core.runtime_engine.cognitive_state import initialize_cognitive_state
+
+    cognitive_state = initialize_cognitive_state(
+        turn_id="run-1", trace_id="trace-1", user_input="删除文件",
+    )
+    cognitive_state.add_fact(
+        "审批前已确认文件存在", source="workspace.file", evidence_id="read-1",
+    )
     handler = runtime._build_approval_handler(
         workspace_id="default", session_id="session-1", run_id="run-1",
     )
     result = asyncio.run(handler(
         StatelessContext(
             workspace_id="default", session_id="session-1", request_id="run-1",
-            user_input="删除文件",
+            user_input="删除文件", extras={"cognitive_state": cognitive_state},
         ),
         {
             "risk_level": "high",
@@ -173,8 +181,11 @@ def test_ordinary_approval_returns_pending_without_waiting(monkeypatch, tmp_path
     assert result["approval_ids"][0].startswith("apr_")
     assert created[0]["metadata"]["continuation_id"] == result["continuation_id"]
 
-    from agent.runtime.approval_continuation import list_continuations
+    from agent.runtime.approval_continuation import (
+        claim_ready_continuation, list_continuations, record_decision,
+    )
     from storage.records import workspace_record_file
+
     record = list_continuations("default")[0]
     assert record["approval_count"] == 1
     assert "payload_ref" not in record
@@ -185,7 +196,14 @@ def test_ordinary_approval_returns_pending_without_waiting(monkeypatch, tmp_path
     assert raw["approval_ids"] == result["approval_ids"]
     assert all(not item.startswith("pending_") for item in raw["approval_ids"])
 
-
+    record_decision(
+        workspace_id="default", continuation_id=result["continuation_id"],
+        approval_id=result["approval_ids"][0], allowed=True,
+    )
+    _record, _grant, payload = claim_ready_continuation(
+        workspace_id="default", continuation_id=result["continuation_id"],
+    )
+    assert payload["cognitive_state"]["known_facts"][0]["fact"] == "审批前已确认文件存在"
 def test_approval_batch_failure_compensates_continuation(monkeypatch, tmp_path):
     _storage(monkeypatch, tmp_path)
     import agent.runtime.ssot_runtime as runtime
@@ -526,3 +544,105 @@ def test_reconciler_repairs_durable_guardian_decision_without_dispatch(monkeypat
     )
     assert claimed["status"] == "claimed"
     assert grant is not None
+
+
+def test_continuation_payload_keeps_server_cognitive_snapshot(monkeypatch, tmp_path):
+    _storage(monkeypatch, tmp_path)
+    from types import SimpleNamespace
+    from agent.runtime.approval_continuation import claim_ready_continuation, create_continuation, record_decision
+    from core.runtime_engine.cognitive_state import initialize_cognitive_state
+
+    state = initialize_cognitive_state(turn_id="parent-turn", trace_id="parent-trace", user_input="核对并执行变更")
+    state.register_tool_results([SimpleNamespace(
+        tool_name="probe", call_id="parent-read", ok=True,
+        output={"summary": "父运行已确认配置为 A"}, summary="父运行已确认配置为 A",
+    )])
+    continuation_id = create_continuation(
+        workspace_id="default", session_id="session-1", parent_run_id="parent-run",
+        user_input="核对并执行变更",
+        tool_calls=[{"id": "approved-write", "name": "workspace.file", "arguments": {"action": "write", "filename": "approved.txt", "content": "ok"}}],
+        approval_ids=["approval-1"], cognitive_state=state.as_trace_payload(),
+    )
+    record_decision(workspace_id="default", continuation_id=continuation_id, approval_id="approval-1", allowed=True)
+    _record, _grant, payload = claim_ready_continuation(workspace_id="default", continuation_id=continuation_id)
+    assert payload["cognitive_state"]["known_facts"][0]["fact"] == "父运行已确认配置为 A"
+    assert payload["cognitive_state"]["events"][-1]["type"] == "cognitive_evidence_registered"
+
+
+def test_approved_resume_inherits_cognitive_facts_without_reemitting_parent_events():
+    import asyncio
+    from types import SimpleNamespace
+    from agent.llm.schemas import LLMResponse
+    from core.runtime_engine.engine import SSOTRuntimeEngine
+    from core.runtime_engine.models import ApprovedToolContinuation, SSOTRuntimeConfig
+    from core.runtime_engine.cognitive_state import initialize_cognitive_state
+    from core.runtime_engine.tool_runtime import ToolRuntime
+
+    parent = initialize_cognitive_state(turn_id="parent-turn", trace_id="parent-trace", user_input="先核对再执行")
+    parent.register_tool_results([SimpleNamespace(
+        tool_name="data.manage", call_id="parent-read", ok=True,
+        output={"fact_key": "device.config", "summary": "已确认配置版本为 A"},
+        summary="已确认配置版本为 A",
+    )])
+    parent_event_ids = {event["event_id"] for event in parent.events}
+    captured_messages = []
+
+    class CaptureEmitter:
+        def __init__(self):
+            self.calls = []
+        def emit(self, name, payload):
+            self.calls.append((name, payload))
+
+    emitter = CaptureEmitter()
+    config = SSOTRuntimeConfig(max_query_loop_iterations=2)
+    runtime = ToolRuntime(config)
+    runtime.register("workspace.file", lambda _arguments: {
+        "ok": True,
+        "fact_key": "device.change",
+        "summary": "已执行批准的配置变更",
+    })
+
+    def invoke(**kwargs):
+        captured_messages.append(list(kwargs["messages"]))
+        return LLMResponse(content="批准后的观察已足够。")
+
+    engine = SSOTRuntimeEngine(
+        config=config,
+        llm_invoke=invoke,
+        tool_registry={
+            "workspace.file": {
+                "description": "write file",
+                "args_schema": {
+                    "type": "object",
+                    "required": ["action"],
+                    "properties": {"action": {"type": "string"}},
+                },
+            },
+        },
+        tool_runtime=runtime,
+        emitter=emitter,
+    )
+    result = asyncio.run(engine.run(
+        "先核对再执行", workspace_id="default", session_id="approval-resume",
+        extras={
+            "__approved_tool_continuation": ApprovedToolContinuation(
+                continuation_id="cont_" + "a" * 32,
+                tool_calls=({"id": "approved-write", "name": "workspace.file", "arguments": {"action": "write", "filename": "approved.txt", "content": "ok"}},),
+                approved_node_ids=("approved-write",),
+            ),
+            "__approval_continuation_resume": True,
+            "__approval_cognitive_state": parent.as_trace_payload(),
+        },
+    ))
+
+    assert result.success is True, result.errors
+    assert result.metadata["cognitive"]["known_fact_count"] == 2
+    first_llm_cognitive = next(
+        str(message.content)
+        for message in captured_messages[0]
+        if 'source_kind="cognitive_state"' in str(message.content)
+    )
+    assert '"known_fact_count":2' in first_llm_cognitive
+    emitted_events = [payload for name, payload in emitter.calls if name.startswith("cognitive_")]
+    assert all(event["event_id"] not in parent_event_ids for event in emitted_events)
+    assert sum(event["type"] == "cognitive_evidence_registered" for event in emitted_events) == 1

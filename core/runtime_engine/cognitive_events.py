@@ -20,7 +20,7 @@ COGNITIVE_EVENT_TYPES = frozenset({
 })
 _TEXT_KEYS = frozenset({"decision", "selected_action", "expected_observation", "risk_level", "visible_summary", "outcome", "goal", "blocked_by", "next_action"})
 _LIST_KEYS = frozenset({"reason_codes", "criteria", "quality_issue_codes"})
-_INT_KEYS = frozenset({"fact_count", "unknown_count", "revision", "reflection_attempt"})
+_INT_KEYS = frozenset({"fact_count", "unknown_count", "conflict_count", "revision", "reflection_attempt"})
 
 def _text(value: Any, limit: int = 320) -> str:
     return " ".join(str(value or "").split())[:limit]

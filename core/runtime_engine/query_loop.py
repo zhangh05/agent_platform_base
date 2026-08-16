@@ -69,7 +69,7 @@ from .evidence import (
     register_tool_evidence,
 )
 from .cognitive_gate import decide_next_action
-from .cognitive_state import initialize_cognitive_state
+from .cognitive_state import initialize_cognitive_state, restore_cognitive_state
 
 
 # ── Prompt Cache ────────────────────────────────────────────────────────────
@@ -1317,14 +1317,30 @@ class QueryLoop:
         output_truncated = False
         output_truncation_reason = ""
         planner_completed_emitted = False
-        cognitive_state = initialize_cognitive_state(
+        resumed_cognitive_state = restore_cognitive_state(
+            ctx.extras.get("__approval_cognitive_state"),
+            turn_id=ctx.request_id,
+            trace_id=str(ctx.extras.get("trace_id") or ctx.request_id),
+        ) if isinstance(ctx.extras.get("__approved_tool_continuation"), ApprovedToolContinuation) else None
+        cognitive_state = resumed_cognitive_state or initialize_cognitive_state(
             turn_id=ctx.request_id,
             trace_id=str(ctx.extras.get("trace_id") or ctx.request_id),
             user_input=ctx.user_input,
             constraints=("SSOT QueryLoop is the only tool execution path",),
         )
+        if resumed_cognitive_state is not None:
+            cognitive_state.set_outcome(
+                "running",
+                reason_codes=("approval_resumed",),
+                visible_summary="审批已通过，正在从受控状态继续执行。",
+            )
+            cognitive_state.set_decision(
+                "resume_approved_tool",
+                reason_codes=("approval_resumed",),
+                visible_summary="审批已通过，正在从已登记证据继续。",
+            )
         ctx.extras["cognitive_state"] = cognitive_state
-        if self._emitter is not None:
+        if self._emitter is not None and resumed_cognitive_state is None:
             for event in cognitive_state.events:
                 self._emitter.emit(event["type"], event)
         cognitive_events_emitted = len(cognitive_state.events)
@@ -1476,8 +1492,38 @@ class QueryLoop:
             if polled_results:
                 all_results.extend(polled_results)
                 resumed_results = resumed_results + polled_results
-            register_tool_evidence(ctx.extras, resumed_results)
             messages = self._append_tool_round(messages, resumed_calls, resumed_results)
+            register_tool_evidence(ctx.extras, resumed_results)
+            cognitive_state.register_tool_results(
+                resumed_results,
+                evidence=evidence_summary(ctx.extras),
+            )
+            cognitive_registered_results = len(all_results)
+            if self._emitter is not None:
+                for event in cognitive_state.events[cognitive_events_emitted:]:
+                    self._emitter.emit(event["type"], event)
+            cognitive_events_emitted = len(cognitive_state.events)
+            unknown_outcome = ctx.extras.get("unknown_outcome")
+            if isinstance(unknown_outcome, dict) and unknown_outcome:
+                trigger_tool = str(unknown_outcome.get("tool_id") or "操作")
+                trigger_call = str(unknown_outcome.get("call_id") or "")
+                return finish(
+                    final_response=(
+                        f"工具 {trigger_tool} 的执行结果处于未知状态"
+                        + (f"（调用 {trigger_call}）" if trigger_call else "")
+                        + "。系统已冻结本轮后续写操作，未自动重试、未推定成功或失败。"
+                        "请通过受控 read-back/reconcile 验证实际结果，或由操作员处置。"
+                    ),
+                    tool_results=all_results,
+                    iterations=iterations,
+                    total_tool_calls=len(all_results),
+                    llm_calls=llm_calls,
+                    error="unknown_outcome",
+                    metrics={
+                        "execution_outcome": "unknown",
+                        "unknown_outcome": dict(unknown_outcome),
+                    },
+                )
             if any(not result.ok for result in resumed_results):
                 messages = self._append_turn_nudge(
                     messages, self._build_tool_failure_recovery_nudge(

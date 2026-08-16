@@ -515,6 +515,12 @@ def _build_approval_handler(
         item_count = max(1, len(details))
         approval_ids = [new_approval_id() for _ in range(item_count)]
         continuation_id = new_continuation_id()
+        cognitive_state = ctx.extras.get("cognitive_state")
+        cognitive_snapshot = (
+            cognitive_state.as_trace_payload()
+            if hasattr(cognitive_state, "as_trace_payload")
+            else {}
+        )
         continuation_id = create_continuation(
             workspace_id=workspace_id,
             session_id=session_id,
@@ -523,6 +529,7 @@ def _build_approval_handler(
             tool_calls=tool_calls,
             approval_ids=approval_ids,
             approved_node_ids=list(gate.get("approval_nodes") or []),
+            cognitive_state=cognitive_snapshot,
             continuation_id=continuation_id,
         )
         specs: list[dict[str, Any]] = []
