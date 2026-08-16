@@ -108,3 +108,51 @@ def test_agent_app_ignores_malformed_optional_terminal_facts(monkeypatch, temp_d
     assert result.ok is True
     assert result.metadata["unknown_outcome"] == {}
     assert result.metadata["goal_assertions"] == {}
+
+
+def test_agent_app_projects_server_owned_cognitive_summary_and_events(monkeypatch, temp_dirs):
+    """The SSOT adapter must retain QueryLoop's safe cognitive projection."""
+    from types import SimpleNamespace
+    from agent.app.facade import AgentApp
+
+    cognitive = {
+        "outcome": "stop_completed",
+        "visible_summary": "目标、证据和安全条件已满足，可以生成最终结论。",
+    }
+    cognitive_events = [{
+        "event_id": "cog-terminal",
+        "type": "cognitive_stop_decided",
+        "turn_id": "server-turn",
+        "trace_id": "server-trace",
+        "state_revision": 4,
+        "payload": {},
+    }]
+
+    class FakeEngine:
+        async def run(self, **_kwargs):
+            return SimpleNamespace(
+                success=True,
+                final_response="完成。",
+                node_results={},
+                errors=[],
+                metadata={
+                    "execution_outcome": "complete",
+                    "cognitive": cognitive,
+                    "cognitive_events": cognitive_events,
+                },
+            )
+
+    monkeypatch.setattr(
+        "agent.runtime.ssot_runtime._build_engine",
+        lambda **_kwargs: FakeEngine(),
+    )
+    result = AgentApp().submit_user_message(
+        user_input="检查结果",
+        workspace_id="default",
+        # Request-side metadata must not own the server projection.
+        metadata={"transport": "test", "cognitive": {"outcome": "forged"}},
+    )
+
+    assert result.metadata["cognitive"] == cognitive
+    assert result.metadata["cognitive_events"] == cognitive_events
+    assert result.metadata["cognitive"]["outcome"] != "forged"

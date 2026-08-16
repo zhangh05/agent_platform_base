@@ -253,6 +253,19 @@ def run_ssot_turn(
                 else {}
             ),
             "evidence": dict((runtime_result.metadata or {}).get("evidence") or {}),
+            # Read-only CognitiveState projection from the SSOT QueryLoop.
+            # The adapter mirrors server-owned fields only; request metadata is
+            # never consulted for cognitive state.
+            "cognitive": (
+                dict((runtime_result.metadata or {}).get("cognitive") or {})
+                if isinstance((runtime_result.metadata or {}).get("cognitive"), dict)
+                else {}
+            ),
+            "cognitive_events": (
+                list((runtime_result.metadata or {}).get("cognitive_events") or [])
+                if isinstance((runtime_result.metadata or {}).get("cognitive_events"), list)
+                else []
+            ),
         }
         runtime_errors = list(runtime_result.errors or [])
         failed_tool_count = sum(1 for call in tool_calls if not call.get("ok"))
