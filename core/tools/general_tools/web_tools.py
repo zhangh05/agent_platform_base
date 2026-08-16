@@ -320,7 +320,6 @@ def handle_web_search(inv: ToolInvocation) -> dict:
                 safesearch=safe_search,
                 timelimit=timelimit_map.get(recency),
                 max_results=backend_limit,
-                backend=backends,
             )
         if raw:
             results = _ddgs_to_results(raw, domains, count)

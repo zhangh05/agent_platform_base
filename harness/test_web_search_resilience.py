@@ -221,3 +221,34 @@ def test_web_tool_schema_exposes_source_authority_policy():
     assert "network_vendor" in profile["enum"]
     assert "security_advisory" in profile["enum"]
     assert "search finds candidates" in tool["description"]
+
+
+def test_primary_ddgs_uses_library_default_backend(monkeypatch):
+    import sys
+    import types
+    import core.tools.general_tools.web_tools as web_tools
+    from core.tools.schemas import ToolInvocation
+
+    captured = {}
+
+    class RecordingDDGS:
+        def __init__(self, *args, **kwargs):
+            captured["init"] = kwargs
+        def __enter__(self):
+            return self
+        def __exit__(self, *args):
+            return False
+        def text(self, *args, **kwargs):
+            captured["text"] = kwargs
+            return [{"title": "H3C official", "href": "https://www.h3c.com/docs", "body": "official result"}]
+
+    monkeypatch.setitem(sys.modules, "ddgs", types.SimpleNamespace(DDGS=RecordingDDGS))
+    result = web_tools.handle_web_search(ToolInvocation(
+        tool_id="web.manage",
+        arguments={"action": "search", "query": "H3C official documentation", "count": 3},
+        workspace_id="default",
+    ))
+
+    assert result.get("ok") is True
+    assert result.get("provider") == "ddgs"
+    assert "backend" not in captured["text"]
