@@ -421,3 +421,59 @@ def test_unbacked_confirmation_correction_reaches_canonical_pending():
     assert approvals[0]["approval_nodes"] == ["delete-after-correction"]
     assert result.metadata["approval_required"] is True
     assert result.metadata["approval_ids"] == ["apr-test-1"]
+
+
+def test_verified_write_path_repairs_delete_before_approval():
+    from agent.llm.schemas import LLMResponse, LLMToolCall
+    from core.runtime_engine.engine import SSOTRuntimeEngine
+    from core.runtime_engine.models import SSOTRuntimeConfig
+    from core.runtime_engine.tool_runtime import ToolRuntime
+
+    responses = [
+        LLMResponse(tool_calls=[LLMToolCall(
+            id="write-1",
+            name="workspace.file",
+            arguments={"action": "write", "filename": "approval_probe.md", "content": "probe"},
+        )]),
+        LLMResponse(tool_calls=[LLMToolCall(
+            id="delete-1",
+            name="workspace.file",
+            arguments={"action": "delete"},
+        )]),
+    ]
+    approvals = []
+
+    def invoke(**_kwargs):
+        return responses.pop(0)
+
+    async def pending_handler(_ctx, gate):
+        approvals.append(gate)
+        return {"status": "pending", "approval_ids": ["apr-path-1"], "continuation_id": "cont-path-1"}
+
+    async def runtime_call(args):
+        if args.get("action") == "write":
+            return {"ok": True, "filepath": "files/data/approval_probe.md"}
+        return {"ok": True}
+
+    engine = SSOTRuntimeEngine(
+        config=SSOTRuntimeConfig(max_query_loop_iterations=3),
+        llm_invoke=invoke,
+        tool_registry={"workspace.file": {"description": "workspace file", "args_schema": {
+            "type": "object", "required": ["action"], "properties": {
+                "action": {"type": "string"}, "filename": {"type": "string"},
+                "content": {"type": "string"}, "filepath": {"type": "string"},
+            },
+        }}},
+        tool_runtime=ToolRuntime(SSOTRuntimeConfig(max_query_loop_iterations=3)),
+        approval_handler=pending_handler,
+    )
+    engine.register_tool("workspace.file", runtime_call)
+    result = asyncio.run(engine.run(
+        "先创建 approval_probe.md，再删除刚创建的文件",
+        workspace_id="default", session_id="verified-path-approval",
+    ))
+
+    assert len(approvals) == 1
+    assert approvals[0]["approval_required"] is True
+    assert approvals[0]["tool_calls"][0]["arguments"]["filepath"] == "files/data/approval_probe.md"
+    assert result.metadata["approval_required"] is True

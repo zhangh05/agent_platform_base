@@ -1938,6 +1938,13 @@ class QueryLoop:
                     results = await self._executor.execute(tool_calls, ctx=ctx, budget=budget)
                     all_results.extend(results)
                     for tc, result in zip(tool_calls, results):
+                        ctx.extras.setdefault("tool_call_history", []).append({
+                            "tool": tc.name.replace("__", "."),
+                            "arguments": dict(tc.arguments or {}),
+                            "ok": bool(result.ok),
+                            "output": dict(result.output or {}) if isinstance(result.output, dict) else {},
+                        })
+                    for tc, result in zip(tool_calls, results):
                         completed_call_keys.add(
                             self._completion_key(tc, mutation_epoch)
                         )
@@ -2636,6 +2643,7 @@ class QueryLoop:
         from .risk_policy import RiskPolicyEngine
         from .plan_enrichment import enrich_tool_calls_from_user_request
 
+        self._fill_delete_paths_from_verified_history(ctx, nodes)
         enrichment_events = enrich_tool_calls_from_user_request(nodes, ctx.user_input)
         if enrichment_events:
             ctx.extras.setdefault("plan_enrichment_events", [])
@@ -2797,6 +2805,37 @@ class QueryLoop:
             "approval_required": False,
         }
 
+    @staticmethod
+    def _fill_delete_paths_from_verified_history(ctx: StatelessContext, nodes: list[ExecutionNode]) -> None:
+        """Fill delete filepath only from one unique successful prior write."""
+        history = ctx.extras.get("tool_call_history") or []
+        candidates = {
+            str(item.get("output", {}).get("filepath") or "").strip()
+            for item in history
+            if isinstance(item, dict)
+            and item.get("ok") is True
+            and item.get("tool") == "workspace.file"
+            and str((item.get("arguments") or {}).get("action") or "").lower() in {"write", "write_artifact"}
+            and isinstance(item.get("output"), dict)
+            and str(item.get("output", {}).get("filepath") or "").strip()
+        }
+        if len(candidates) != 1:
+            return
+        filepath = next(iter(candidates))
+        for node in nodes:
+            if (
+                node.tool == "workspace.file"
+                and str(node.args.get("action") or "").lower() == "delete"
+                and not str(node.args.get("filepath") or "").strip()
+            ):
+                node.args["filepath"] = filepath
+                ctx.extras.setdefault("pre_exec_repair_events", []).append({
+                    "node_id": node.id,
+                    "code": "MISSING_REQUIRED_ARG",
+                    "field": "filepath",
+                    "value": filepath,
+                    "source": "verified_prior_workspace_write",
+                })
     @staticmethod
     def _tool_calls_to_nodes(tool_calls: List[LLMToolCall]) -> list[ExecutionNode]:
         from .action_alias import resolve_action_alias
