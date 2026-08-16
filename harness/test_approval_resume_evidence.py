@@ -335,3 +335,29 @@ def test_approved_continuation_injects_approval_id_into_canonical_client(monkeyp
     ))
     assert result.success is True, result.errors
     assert observed_approval_ids == ["apr-server-1"]
+
+
+def test_unbacked_confirmation_request_cannot_become_pending():
+    from agent.llm.schemas import LLMResponse
+    from core.runtime_engine.engine import SSOTRuntimeEngine
+    from core.runtime_engine.models import SSOTRuntimeConfig
+    from core.runtime_engine.tool_runtime import ToolRuntime
+
+    config = SSOTRuntimeConfig(max_query_loop_iterations=3)
+    engine = SSOTRuntimeEngine(
+        config=config,
+        llm_invoke=lambda **_kwargs: LLMResponse(
+            content="该删除动作需要审批，请确认是否批准。",
+        ),
+        tool_registry={},
+        tool_runtime=ToolRuntime(config),
+    )
+    result = asyncio.run(engine.run(
+        "删除临时文件并在需要审批时等待确认",
+        workspace_id="default",
+        session_id="unbacked-confirmation-request",
+    ))
+    assert result.success is False
+    assert any("unbacked_approval_claim" in str(error) for error in result.errors)
+    assert result.metadata["approval_required"] is False
+    assert result.metadata.get("continuation_id") is None

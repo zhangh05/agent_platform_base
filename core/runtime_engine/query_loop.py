@@ -2151,8 +2151,9 @@ class QueryLoop:
             # A model must never turn a prose claim into an approval state.
             # Only the canonical risk gate may create approval continuation.
             approval_claim_markers = (
-                "等待您批准", "等待批准", "等待审批", "需要审批后",
-                "批准后将", "approval pending", "awaiting approval",
+                "等待您批准", "等待批准", "等待审批", "需要审批",
+                "请确认是否批准", "批准后将", "approval pending", "awaiting approval",
+                "requires approval", "confirm approval",
             )
             has_unbacked_approval_claim = (
                 any(marker in final_text.lower() for marker in approval_claim_markers)
