@@ -2807,21 +2807,52 @@ class QueryLoop:
 
     @staticmethod
     def _fill_delete_paths_from_verified_history(ctx: StatelessContext, nodes: list[ExecutionNode]) -> None:
-        """Fill delete filepath only from one unique successful prior write."""
+        """Repair a missing delete filepath only from a uniquely named, verified write.
+
+        A prior write result proves that a path exists, but does not by itself prove
+        that the user intended to delete it.  For a destructive call the user input
+        must explicitly name the same logical filename.  Ambiguous or unnamed
+        requests remain schema-blocked and are returned to the model for correction.
+        """
+        import re
+        from pathlib import PurePosixPath
+
         history = ctx.extras.get("tool_call_history") or []
-        candidates = {
-            str(item.get("output", {}).get("filepath") or "").strip()
-            for item in history
-            if isinstance(item, dict)
-            and item.get("ok") is True
-            and item.get("tool") == "workspace.file"
-            and str((item.get("arguments") or {}).get("action") or "").lower() in {"write", "write_artifact"}
-            and isinstance(item.get("output"), dict)
-            and str(item.get("output", {}).get("filepath") or "").strip()
-        }
-        if len(candidates) != 1:
+        request = str(ctx.user_input or "")
+        candidates: dict[str, set[str]] = {}
+        for item in history:
+            if (
+                not isinstance(item, dict)
+                or item.get("ok") is not True
+                or item.get("tool") != "workspace.file"
+                or str((item.get("arguments") or {}).get("action") or "").lower()
+                not in {"write", "write_artifact"}
+                or not isinstance(item.get("output"), dict)
+            ):
+                continue
+            filepath = str(item["output"].get("filepath") or "").strip()
+            if not filepath:
+                continue
+            aliases = {PurePosixPath(filepath).name}
+            filename = str((item.get("arguments") or {}).get("filename") or "").strip()
+            if filename:
+                aliases.add(PurePosixPath(filename).name)
+            # Managed workspace paths contain an opaque prefix before ``__``.
+            basename = PurePosixPath(filepath).name
+            if "__" in basename:
+                aliases.add(basename.split("__", 1)[1])
+            candidates.setdefault(filepath, set()).update(alias for alias in aliases if alias)
+
+        def _is_explicitly_named(alias: str) -> bool:
+            return bool(re.search(r"(?<![A-Za-z0-9_.-])" + re.escape(alias) + r"(?![A-Za-z0-9_.-])", request))
+
+        matched = [
+            filepath for filepath, aliases in candidates.items()
+            if any(_is_explicitly_named(alias) for alias in aliases)
+        ]
+        if len(matched) != 1:
             return
-        filepath = next(iter(candidates))
+        filepath = matched[0]
         for node in nodes:
             if (
                 node.tool == "workspace.file"
@@ -2834,7 +2865,7 @@ class QueryLoop:
                     "code": "MISSING_REQUIRED_ARG",
                     "field": "filepath",
                     "value": filepath,
-                    "source": "verified_prior_workspace_write",
+                    "source": "verified_prior_workspace_write_named_by_user",
                 })
     @staticmethod
     def _tool_calls_to_nodes(tool_calls: List[LLMToolCall]) -> list[ExecutionNode]:

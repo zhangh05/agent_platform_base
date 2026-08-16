@@ -477,3 +477,55 @@ def test_verified_write_path_repairs_delete_before_approval():
     assert approvals[0]["approval_required"] is True
     assert approvals[0]["tool_calls"][0]["arguments"]["filepath"] == "files/data/approval_probe.md"
     assert result.metadata["approval_required"] is True
+
+
+def test_verified_delete_filepath_repair_requires_explicit_user_filename():
+    from core.runtime_engine.models import ExecutionNode, StatelessContext
+    from core.runtime_engine.query_loop import QueryLoop
+
+    ctx = StatelessContext(
+        workspace_id="default", session_id="safe-path", request_id="run-safe-path",
+        user_input="删除刚才创建的临时文件",
+    )
+    ctx.extras["tool_call_history"] = [{
+        "tool": "workspace.file",
+        "arguments": {"action": "write", "filename": "only_candidate.md"},
+        "output": {"filepath": "files/data/file_x__only_candidate.md"},
+        "ok": True,
+    }]
+    node = ExecutionNode(id="delete-unnamed", tool="workspace.file", args={"action": "delete"})
+
+    QueryLoop._fill_delete_paths_from_verified_history(ctx, [node])
+
+    assert "filepath" not in node.args
+    assert not ctx.extras.get("pre_exec_repair_events")
+
+
+def test_verified_delete_filepath_repair_rejects_ambiguous_named_history():
+    from core.runtime_engine.models import ExecutionNode, StatelessContext
+    from core.runtime_engine.query_loop import QueryLoop
+
+    ctx = StatelessContext(
+        workspace_id="default", session_id="safe-path", request_id="run-safe-path-2",
+        user_input="删除 report.md",
+    )
+    ctx.extras["tool_call_history"] = [
+        {
+            "tool": "workspace.file",
+            "arguments": {"action": "write", "filename": "report.md"},
+            "output": {"filepath": "files/data/file_a__report.md"},
+            "ok": True,
+        },
+        {
+            "tool": "workspace.file",
+            "arguments": {"action": "write", "filename": "report.md"},
+            "output": {"filepath": "files/data/file_b__report.md"},
+            "ok": True,
+        },
+    ]
+    node = ExecutionNode(id="delete-ambiguous", tool="workspace.file", args={"action": "delete"})
+
+    QueryLoop._fill_delete_paths_from_verified_history(ctx, [node])
+
+    assert "filepath" not in node.args
+    assert not ctx.extras.get("pre_exec_repair_events")
