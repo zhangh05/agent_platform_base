@@ -4206,7 +4206,8 @@ details.collapse[open] summary::before {
 
 .wb-input-row:focus-within {
   border-color: var(--accent);
-  box-shadow: 0 0 0 1px rgba(29, 92, 131, 0.18);
+  box-shadow: inset 0 0 0 1px var(--accent);
+  transform: none;
 }
 
 /* ── Attach button ── */
@@ -9234,7 +9235,7 @@ summary:focus-visible,
 .chat-bubble.user { padding: 12px 15px; border-radius: 12px 5px 12px 12px; }
 .wb-input-bar { padding: 10px 16px 8px; background: var(--surface); border-top: 1px solid var(--line-2); }
 .wb-input-row { max-width: none; min-height: 82px; margin: 0 auto; border-radius: 12px; box-shadow: 0 8px 24px color-mix(in srgb, var(--text) 5%, transparent); }
-.wb-input-row:focus-within { box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 14%, transparent), 0 8px 24px color-mix(in srgb, var(--text) 5%, transparent); }
+.wb-input-row:focus-within { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 72%, transparent), 0 8px 24px color-mix(in srgb, var(--text) 5%, transparent); transform: none; }
 .wb-composer-meta { display: flex; justify-content: space-between; gap: 12px; max-width: none; margin: 6px auto 0; color: var(--text-4); font-size: var(--fs-10); }
 .wb-composer-meta span:last-child { color: var(--text-3); text-align: right; }
 .chat-result-inline { padding: 12px 0 2px; }
