@@ -133,11 +133,25 @@ class ToolPolicy:
             except Exception:
                 pass
 
-        # Override ToolSpec fields with manifest values (manifest is authoritative)
+        # Merged canonical tools use this shared contract for the fields that
+        # differ per action. Policy and catalog must consume the same source.
+        try:
+            from core.tools.action_requirements import action_execution_contract
+
+            action = str((invocation.arguments or {}).get("action") or "").strip().lower()
+            action_contract = action_execution_contract(spec.tool_id, action)
+        except Exception:
+            action_contract = {}
+
+        # Tool-level manifests supply defaults. A canonical action contract may
+        # intentionally refine those defaults without being treated as drift.
         if manifest:
-            # If ToolSpec disagrees with manifest, log a warning
-            if spec.risk_level and manifest.risk_level and spec.risk_level != manifest.risk_level:
-                _warn(f"Tool {spec.tool_id}: ToolSpec risk={spec.risk_level} != manifest risk={manifest.risk_level}")
+            expected_risk = action_contract.get("risk_level", manifest.risk_level)
+            if spec.risk_level and expected_risk and spec.risk_level != expected_risk:
+                _warn(
+                    f"Tool {spec.tool_id}: ToolSpec risk={spec.risk_level} "
+                    f"!= canonical risk={expected_risk}"
+                )
             effective_risk = manifest.risk_level or spec.risk_level or "low"
             effective_approval = manifest.requires_approval
             effective_destructive = manifest.destructive
@@ -146,18 +160,10 @@ class ToolPolicy:
         else:
             effective_risk = spec.risk_level or "low"
             effective_approval = spec.requires_approval
-            effective_destructive = spec.destructive if hasattr(spec, 'destructive') else False
+            effective_destructive = spec.destructive if hasattr(spec, "destructive") else False
             effective_idempotency = "unsafe_to_retry"  # P0-12: default unsafe for unknown manifests
             effective_timeout = spec.timeout_seconds or 30
 
-        # Merged canonical tools use a shared action contract so policy and
-        # catalog projections cannot drift on side effects or approval.
-        try:
-            from core.tools.action_requirements import action_execution_contract
-
-            action_contract = action_execution_contract(spec.tool_id, _action(invocation))
-        except Exception:
-            action_contract = {}
         if action_contract:
             effective_risk = action_contract.get("risk_level", effective_risk)
             effective_approval = bool(action_contract.get("requires_approval", effective_approval))

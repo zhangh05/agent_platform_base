@@ -493,3 +493,28 @@ def test_workspace_metadata_is_scoped_and_reports_current_files(monkeypatch, tmp
     assert result["ok"] is True
     assert result["workspace_id"] == "metadata_contract"
     assert result["artifact_count"] == 1
+
+
+def test_action_contract_risk_is_enforced_by_real_policy():
+    from core.tools.canonical_registry import to_tool_specs
+    from core.tools.policy import ToolPolicy
+    from core.tools.schemas import ToolInvocation
+
+    specs = {spec.tool_id: spec for spec, _handler in to_tool_specs()}
+    cases = [
+        ("workspace.filestore", "import", "medium", False),
+        ("workspace.artifact", "save", "medium", False),
+        ("workspace.artifact", "delete", "high", True),
+    ]
+    for tool_id, action, risk_level, requires_approval in cases:
+        decision = ToolPolicy().check(
+            specs[tool_id],
+            ToolInvocation(
+                tool_id=tool_id,
+                workspace_id="default",
+                arguments={"action": action},
+                requested_by="turn_runner",
+            ),
+        )
+        assert decision.risk_level == risk_level
+        assert decision.requires_approval is requires_approval
