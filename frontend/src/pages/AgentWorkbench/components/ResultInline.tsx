@@ -99,7 +99,10 @@ export const ResultInline = memo(function ResultInline({
   const tracking = trackingStats(result);
   const toolCalls = result?.tool_calls ?? [];
   const actionCount = toolCalls.length;
-  const failedToolCount = toolCalls.filter((tc) => !tc.ok).length;
+  const recoveredToolIds = new Set(toolCalls.filter((tc) => tc.ok).map((tc) => tc.tool_id));
+  const failedToolCount = toolCalls.filter(
+    (tc) => !tc.ok && !recoveredToolIds.has(tc.tool_id),
+  ).length;
   const successToolCount = toolCalls.filter((tc) => tc.ok).length;
   const contextCompacted = Boolean(result?.metadata?.context_compacted);
   const outputTruncated = Boolean(result?.metadata?.output_truncated);
@@ -202,7 +205,7 @@ export const ResultInline = memo(function ResultInline({
             </span>
           </div>
           <span className="result-overview-meta">
-            {isUnknownOutcome ? "写入已冻结，等待受控核对" : failedToolCount > 0 ? `${failedToolCount} 项需要跟进` : successToolCount > 0 ? `${successToolCount} 项执行成功` : "可将结论沉淀到记忆或知识库"}
+            {isUnknownOutcome ? "写入已冻结，等待受控核对" : failedToolCount > 0 ? `${failedToolCount} 项需要跟进` : toolCalls.length > successToolCount ? `${successToolCount} 项执行成功，已自动恢复` : successToolCount > 0 ? `${successToolCount} 项执行成功` : "可将结论沉淀到记忆或知识库"}
           </span>
         </section>
       ) : (
