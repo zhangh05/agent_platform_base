@@ -409,6 +409,11 @@ export function useChatStream(
                   streamingMsgId, { progressText: "" }, scratch,
                 );
                 finish();
+                // One WebSocket carries exactly one agent turn. Closing after
+                // the canonical terminal frame releases the backend receive
+                // worker; terminalFrameReceived prevents onclose from replacing
+                // the committed final response with a stale draft.
+                try { socket.close(1000, "turn_completed"); } catch { /* noop */ }
                 break;
               }
               case "error": {
@@ -418,6 +423,7 @@ export function useChatStream(
                   streamingMsgId, { progressText: "" }, scratch,
                 );
                 finish();
+                try { socket.close(1000, "turn_error"); } catch { /* noop */ }
                 break;
               }
             }
