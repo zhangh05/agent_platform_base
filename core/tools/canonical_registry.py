@@ -77,7 +77,15 @@ def _local_glob(inv: ToolInvocation) -> dict:
 
 
 def _local_delete(inv: ToolInvocation) -> dict:
+    """Move a workspace file to trash and synchronize an exact managed record.
+
+    This remains the canonical ``workspace.file`` handler. A managed FileStore
+    payload may have a data-center projection; leaving it active after moving
+    the payload caused stale, unreadable entries. Only one exact active path
+    match is projected; an ambiguous index is rejected before any file move.
+    """
     from core.tools.general_tools.shared import _caller_workspace, _workspace_path
+    from storage import index as file_index
 
     args = inv.arguments or {}
     filepath = str(args.get("filepath") or args.get("path") or "").strip()
@@ -87,6 +95,16 @@ def _local_delete(inv: ToolInvocation) -> dict:
     target = _workspace_path(ws, filepath)
     if not target.exists() or not target.is_file():
         return {"ok": False, "error": "file not found"}
+
+    canonical_path = target.relative_to(_workspace_path(ws)).as_posix()
+    managed_records = [
+        record for record in file_index.read_file_records(ws)
+        if str(record.get("path") or "") == canonical_path
+        and str(record.get("lifecycle") or "active") == "active"
+    ]
+    if len(managed_records) > 1:
+        return {"ok": False, "error": "managed_file_index_ambiguous"}
+
     trash = _workspace_path(ws, ".trash")
     trash.mkdir(parents=True, exist_ok=True)
     dest = trash / target.name
@@ -95,14 +113,51 @@ def _local_delete(inv: ToolInvocation) -> dict:
         dest = trash / f"{target.stem}.{i}{target.suffix}"
         i += 1
     target.rename(dest)
-    return {
+    trash_path = dest.relative_to(_workspace_path(ws)).as_posix()
+
+    managed_file_id = ""
+    if managed_records:
+        from storage.file_store import soft_delete_file
+
+        managed = managed_records[0]
+        managed_file_id = str(managed.get("file_id") or "")
+        if not managed_file_id or not soft_delete_file(ws, managed_file_id):
+            try:
+                dest.rename(target)
+            except OSError:
+                return {
+                    "ok": False,
+                    "error": "managed_file_lifecycle_sync_failed_rollback_failed",
+                }
+            return {"ok": False, "error": "managed_file_lifecycle_sync_failed"}
+        refreshed = next(
+            (record for record in file_index.read_file_records(ws)
+             if str(record.get("file_id") or "") == managed_file_id),
+            {},
+        )
+        metadata = dict(refreshed.get("metadata") or {})
+        metadata.update({
+            "trash_path": trash_path,
+            "deleted_by": "workspace.file",
+            "deleted_run_id": str(inv.run_id or ""),
+            "deleted_session_id": str(inv.session_id or ""),
+        })
+        trash_projection_ok = file_index.update_file_record(
+            ws, managed_file_id, {"metadata": metadata},
+        )
+    else:
+        trash_projection_ok = True
+
+    result = {
         "ok": True,
         "deleted": True,
-        "trash_path": str(dest.relative_to(_workspace_path(ws))),
-        "summary": f"Moved {filepath} to workspace trash.",
+        "trash_path": trash_path,
+        "managed_file_id": managed_file_id,
+        "summary": f"Moved {canonical_path} to workspace trash.",
     }
-
-
+    if not trash_projection_ok:
+        result["warnings"] = ["managed_file_trash_projection_failed"]
+    return result
 def _handle_exec(inv: ToolInvocation) -> dict:
     from core.tools.general_tools.command_tools import (
         handle_command_approved_exec,

@@ -421,11 +421,10 @@ def soft_delete_file(workspace_id: str, file_id: str) -> bool:
         return True
     if rec.get("lifecycle") == "purged":
         return False
-    index.update_file_record(workspace_id, file_id, {
+    return bool(index.update_file_record(workspace_id, file_id, {
         "lifecycle": "soft_deleted",
         "metadata": {**rec.get("metadata", {}), "deleted_at": _now_iso()},
-    })
-    return True
+    }))
 
 
 def purge_file(workspace_id: str, file_id: str) -> bool:
