@@ -113,6 +113,7 @@ class ToolInvocation:
     dry_run: bool = False
     requested_by: str = ""            # e.g. "module:example", "agent:admin"
     approval_id: Optional[str] = None  # Required for high-risk tools
+    approval_run_id: Optional[str] = None  # Parent run bound to the approval
     created_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
 

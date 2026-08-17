@@ -82,6 +82,7 @@ class ToolRuntimeClient:
             dry_run=dry_run,
             requested_by=getattr(context, "requested_by", "") if context else "",
             approval_id=getattr(context, "approval_id", None) if context else None,
+            approval_run_id=getattr(context, "approval_run_id", None) if context else None,
         )
 
         # ── v3.10 Phase 6: Single manifest lookup (caller + existence) ──

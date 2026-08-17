@@ -41,6 +41,10 @@ class ToolRuntimeContext:
     requested_by: str = ""
     dry_run_default: bool = False
     approval_id: Optional[str] = None
+    # Server-owned parent run used only to validate a resolved approval during
+    # an approval continuation. Normal invocations leave this unset and use
+    # run_id as their approval binding.
+    approval_run_id: Optional[str] = None
 
     def as_dict(self) -> dict:
         return {
@@ -56,4 +60,5 @@ class ToolRuntimeContext:
             "requested_by": self.requested_by,
             "dry_run_default": self.dry_run_default,
             "approval_id": self.approval_id,
+            "approval_run_id": self.approval_run_id,
         }

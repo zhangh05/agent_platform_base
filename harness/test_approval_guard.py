@@ -454,10 +454,21 @@ def test_canonical_executor_rejects_resolved_approval_bound_to_different_argumen
         approval_id=request.approval_id,
     ))
 
+    resumed = executor.execute(ToolInvocation(
+        tool_id="test.approval_bound",
+        arguments={"target": "approved.txt"},
+        workspace_id="approval-ws",
+        run_id="continuation-run",
+        approval_run_id="approval-run",
+        requested_by="turn_runner",
+        approval_id=request.approval_id,
+    ))
+
     assert exact.status == "succeeded"
+    assert resumed.status == "succeeded"
     assert mismatched.status == "blocked"
     assert mismatched.output["error"] == "invalid_approval_binding"
-    assert observed == [{"target": "approved.txt"}]
+    assert observed == [{"target": "approved.txt"}, {"target": "approved.txt"}]
 
 def test_resolve_rejects_same_workspace_different_session(client, reset_approvals, monkeypatch):
     TestApprovalIdentityAuthorization._actor(monkeypatch, role="admin")

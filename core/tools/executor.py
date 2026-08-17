@@ -114,7 +114,11 @@ class ToolExecutor:
                     workspace_id=str(invocation.workspace_id or ""),
                     tool_id=invocation.tool_id,
                     arguments=dict(invocation.arguments or {}),
-                    run_id=str(invocation.run_id or ""),
+                    # A continuation executes in a new run, but the durable
+                    # approval is bound to the parent run that created it.
+                    # Keep the current run id for audit; use only the explicit
+                    # server-provided approval binding id for validation.
+                    run_id=str(invocation.approval_run_id or invocation.run_id or ""),
                 )
             except Exception:
                 approval_valid = False

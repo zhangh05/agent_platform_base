@@ -149,6 +149,11 @@ def run_ssot_turn(
             max_query_loop_iterations=metadata_in.get("max_steps"),
             context_budget=runtime_context_budget,
             approved_tool_grant=metadata_in.get("__approved_tool_continuation"),
+            approval_run_id=(
+                str(metadata_in.get("approval_parent_run_id") or "")
+                if metadata_in.get("__approval_continuation_resume")
+                else ""
+            ),
         )
         runtime_result = _run_async(
             engine.run(
@@ -432,6 +437,7 @@ def _build_engine(
     max_query_loop_iterations: int | None = None,
     context_budget=None,
     approved_tool_grant=None,
+    approval_run_id: str = "",
 ):
     from core.runtime_engine import SSOTRuntimeConfig, SSOTRuntimeEngine
     from core.runtime_engine.tool_runtime import ToolRuntime
@@ -484,6 +490,7 @@ def _build_engine(
                 workspace_id=workspace_id,
                 session_id=session_id,
                 run_id=run_id,
+                approval_run_id=approval_run_id or "",
                 trace_id=trace_id,
                 requested_by=requested_by,
                 approved_call_grants=approved_call_grants,
@@ -1755,6 +1762,7 @@ def _make_tool_handler(
     workspace_id: str,
     session_id: str,
     run_id: str,
+    approval_run_id: str = "",
     trace_id: str,
     requested_by: str,
     approved_call_grants: dict[str, list[str]] | None = None,
@@ -1774,6 +1782,7 @@ def _make_tool_handler(
             workspace_id=workspace_id,
             session_id=session_id,
             run_id=run_id,
+            approval_run_id=approval_run_id or None,
             trace_id=trace_id,
             requested_by=requested_by,
             module="ssot_runtime",
