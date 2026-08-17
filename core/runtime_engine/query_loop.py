@@ -1201,7 +1201,10 @@ class StreamingToolExecutor:
             metadata["retry_count"] = result.retry_count
         if metadata:
             output = {**(output or {}), "metadata": metadata}
-        may_continue = bool(metadata.get("execution_may_continue"))
+        may_continue = bool(
+            metadata.get("execution_may_continue")
+            or output.get("execution_may_continue")
+        )
         error_code = str(result.error_code or "")
         return StreamingToolResult(
             tool_name=result.tool,

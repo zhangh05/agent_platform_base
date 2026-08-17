@@ -236,6 +236,26 @@ class ToolRuntime:
         explicit ``ok`` field drives success.
         """
         start = time.monotonic()
+        cancel_check = ctx.extras.get("cancel_check") if ctx is not None else None
+        if callable(cancel_check):
+            try:
+                cancelled_before_start = bool(cancel_check())
+            except Exception:
+                cancelled_before_start = False
+            if cancelled_before_start:
+                return ToolResult(
+                    node_id=node.id,
+                    tool=node.tool,
+                    success=False,
+                    data={"ok": False, "executed": False, "cancelled": True},
+                    error="tool execution cancelled before start",
+                    error_code="TOOL_CANCELLED",
+                    error_code_raw="",
+                    error_code_norm="TOOL_CANCELLED",
+                    latency_ms=(time.monotonic() - start) * 1000,
+                    retry_count=node.retry_count,
+                    metadata={"executed": False, "automatic_retry_allowed": False},
+                )
 
         if node.tool not in self._handlers:
             elapsed = (time.monotonic() - start) * 1000
@@ -266,7 +286,18 @@ class ToolRuntime:
             # Shield the handler task so an asyncio timeout does not pretend
             # that a worker thread was killed. The result is deliberately
             # uncertain and retry policy must not replay it automatically.
-            task = asyncio.create_task(self._invoke_handler(handler, merged_args))
+            from core.tools.context import (
+                bind_runtime_cancel_check,
+                reset_runtime_cancel_check,
+            )
+            cancel_check = ctx.extras.get("cancel_check") if ctx is not None else None
+            cancel_token = bind_runtime_cancel_check(
+                cancel_check if callable(cancel_check) else None
+            )
+            try:
+                task = asyncio.create_task(self._invoke_handler(handler, merged_args))
+            finally:
+                reset_runtime_cancel_check(cancel_token)
             task.add_done_callback(self._consume_detached_result)
             result = await asyncio.wait_for(
                 asyncio.shield(task),

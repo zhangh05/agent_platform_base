@@ -17,8 +17,34 @@ Example usage in a Module service:
     result = client.invoke("workspace.metadata.get", {}, context=ctx)
 """
 
-from dataclasses import dataclass, field
-from typing import Optional
+from contextvars import ContextVar, Token
+from dataclasses import dataclass
+from typing import Callable, Optional
+
+
+_runtime_cancel_check: ContextVar[Optional[Callable[[], bool]]] = ContextVar(
+    "lzcore_runtime_cancel_check", default=None
+)
+
+
+def bind_runtime_cancel_check(
+    cancel_check: Optional[Callable[[], bool]],
+) -> Token:
+    """Bind a server-owned cancellation callback for one tool task.
+
+    The ContextVar is process-local and is deliberately never serialised.
+    ``asyncio.create_task`` and ``asyncio.to_thread`` preserve this binding
+    for the handler invocation without exposing it to model arguments.
+    """
+    return _runtime_cancel_check.set(cancel_check)
+
+
+def reset_runtime_cancel_check(token: Token) -> None:
+    _runtime_cancel_check.reset(token)
+
+
+def get_runtime_cancel_check() -> Optional[Callable[[], bool]]:
+    return _runtime_cancel_check.get()
 
 
 @dataclass
@@ -45,6 +71,9 @@ class ToolRuntimeContext:
     # an approval continuation. Normal invocations leave this unset and use
     # run_id as their approval binding.
     approval_run_id: Optional[str] = None
+    # Server-owned process-local callback. Never serialise or accept this
+    # from model arguments, transport metadata, or durable records.
+    cancel_check: Optional[Callable[[], bool]] = None
 
     def as_dict(self) -> dict:
         return {

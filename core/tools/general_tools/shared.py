@@ -252,14 +252,14 @@ def _shell_argv(command, shell: str = "/bin/bash", os_name: str | None = None):
 
 
 def _run_shell(command: str, cwd: str = None, shell: str = "/bin/bash",
-               env: dict = None, timeout: int = None) -> dict:
+               env: dict = None, timeout: int = None, cancel_check=None) -> dict:
     """Execute a shell command with safety limits + process tree cleanup.
 
     Uses process group isolation (os.setsid on Unix, CREATE_NEW_PROCESS_GROUP
     on Windows) so that on timeout ALL child processes are killed — not just
     the immediate parent.
     """
-    import subprocess, os as _os
+    import subprocess, os as _os, time
     if not command or not command.strip():
         return {"ok": False, "error": "empty command"}
 
@@ -303,7 +303,45 @@ def _run_shell(command: str, cwd: str = None, shell: str = "/bin/bash",
         # on Windows; choose the native shell at this final execution boundary.
         argv = _shell_argv(command, shell=shell, os_name=_os.name)
         proc = subprocess.Popen(argv, **popen_kwargs)
-        stdout, stderr = proc.communicate(timeout=actual_timeout)
+        deadline = time.monotonic() + float(actual_timeout)
+        while True:
+            if callable(cancel_check):
+                try:
+                    cancelled = bool(cancel_check())
+                except Exception:
+                    cancelled = False
+                if cancelled:
+                    from core.tools.general_tools.process_manager import kill_process_tree
+                    try:
+                        kill_process_tree(proc.pid)
+                    except Exception:
+                        pass
+                    try:
+                        stdout, stderr = proc.communicate(timeout=2)
+                    except Exception:
+                        stdout, stderr = "", ""
+                    # The process was already started. Killing its process
+                    # tree cannot prove that no external side effect occurred,
+                    # so the QueryLoop must treat this as an unknown outcome and
+                    # install its existing write fence rather than retrying it.
+                    return {
+                        "ok": False,
+                        "executed": True,
+                        "cancelled": True,
+                        "execution_may_continue": True,
+                        "automatic_retry_allowed": False,
+                        "error_code": "TOOL_CANCELLED_UNCERTAIN",
+                        "error": "command cancelled after start; outcome requires verification",
+                        "process_tree_killed": True,
+                    }
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise subprocess.TimeoutExpired(argv, actual_timeout)
+            try:
+                stdout, stderr = proc.communicate(timeout=min(0.2, remaining))
+                break
+            except subprocess.TimeoutExpired:
+                continue
 
         from core.tools.redaction import redact_tool_output
         stdout = redact_tool_output(stdout or "")[:_SHELL_MAX_OUTPUT]

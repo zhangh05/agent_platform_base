@@ -130,7 +130,13 @@ def handle_command_approved_exec(inv: ToolInvocation) -> dict:
             and not _is_sensitive_env_key(str(k))
         }
 
-    result = _run_shell(command, cwd=cwd, env=env_vars, timeout=timeout)
+    result = _run_shell(
+        command,
+        cwd=cwd,
+        env=env_vars,
+        timeout=timeout,
+        cancel_check=getattr(inv, "cancel_check", None),
+    )
     result.setdefault("working_dir", requested_cwd or ".")
     # Attach safety metadata + description to result
     if safety["warnings"]:

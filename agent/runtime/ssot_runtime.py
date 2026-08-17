@@ -1770,7 +1770,7 @@ def _make_tool_handler(
     single_use_grants = approved_call_grants if approved_call_grants is not None else {}
 
     async def _handler(args: dict[str, Any]) -> dict[str, Any]:
-        from core.tools.context import ToolRuntimeContext
+        from core.tools.context import ToolRuntimeContext, get_runtime_cancel_check
 
         args = dict(args or {})
         grant_key = _approved_call_key(tool_id, args)
@@ -1787,6 +1787,7 @@ def _make_tool_handler(
             requested_by=requested_by,
             module="ssot_runtime",
             approval_id=approval_id,
+            cancel_check=get_runtime_cancel_check(),
         )
         result = await asyncio.to_thread(client.invoke, tool_id, args, context=ctx)
         payload = dict(result.output or {})

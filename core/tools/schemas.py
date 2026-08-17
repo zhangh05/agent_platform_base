@@ -8,7 +8,7 @@ Tool Runtime uses its own data model, not the Agent's skill execution records.
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Optional
+from typing import Callable, Any, Optional
 
 
 # ── Valid enums ──
@@ -114,6 +114,8 @@ class ToolInvocation:
     requested_by: str = ""            # e.g. "module:example", "agent:admin"
     approval_id: Optional[str] = None  # Required for high-risk tools
     approval_run_id: Optional[str] = None  # Parent run bound to the approval
+    # Process-local server callback; never supplied by JSON or persisted.
+    cancel_check: Optional[Callable[[], bool]] = None
     created_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
 
