@@ -694,7 +694,9 @@ export function TaskWorkbench() {
                 <IconAttachment size={16} aria-hidden="true" />
               </button>
               {turnRunning ? (
-                <button className="wb-stop" onClick={stopActiveTurn} title="停止任务" type="button" data-testid="btn-stop"><IconStop size={14} weight="fill" /><span>停止</span></button>
+                <button className="wb-stop" onClick={stopActiveTurn} title="停止当前任务" aria-label="停止当前任务" type="button" data-testid="btn-stop">
+                  <IconStop size={15} weight="fill" aria-hidden="true" />
+                </button>
               ) : (
                 <button className="wb-send" onClick={() => onSend()} disabled={!currentSessionId || (!input.trim() && attachments.length === 0)} data-testid="btn-send" type="button" aria-label="发送" title="Enter 发送">
                   <IconSend size={17} />

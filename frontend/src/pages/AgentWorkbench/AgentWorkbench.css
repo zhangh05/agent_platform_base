@@ -379,13 +379,28 @@
 }
 
 .wb-stop {
+  width: 32px;
+  padding: 0;
   margin-left: auto;
-  gap: 7px;
-  padding: 0 9px;
+  cursor: pointer;
+  flex: 0 0 auto;
   color: var(--danger);
-  background: var(--danger-soft);
+  background: color-mix(in srgb, var(--danger-soft) 78%, transparent);
+  border: 1px solid color-mix(in srgb, var(--danger) 34%, var(--line));
+  border-radius: 9px;
+  box-shadow: none;
+  transition: color 140ms ease, background 140ms ease, border-color 140ms ease, transform 140ms ease;
 }
-
+.wb-stop:hover:not(:disabled) {
+  color: #fff;
+  background: var(--danger);
+  border-color: var(--danger);
+}
+.wb-stop:active:not(:disabled) { transform: scale(0.96); }
+.wb-stop:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
 .wb-send {
   display: inline-flex;
   width: 36px;

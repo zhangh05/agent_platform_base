@@ -5164,18 +5164,6 @@ details.collapse[open] summary::before {
   white-space: pre-wrap; max-height: 300px; overflow: auto;
 }
 
-/* ── Stop button ── */
-.wb-stop {
-  display: inline-flex; align-items: center; justify-content: center;
-  width: 30px; height: 30px; padding: 0; cursor: pointer;
-  flex: 0 0 auto; align-self: center; margin-right: 4px;
-  color: var(--danger); background: var(--danger-soft);
-  border: 1px solid var(--danger);
-  border-radius: var(--r-6);
-  transition: all var(--dur-2);
-}
-.wb-stop:hover { background: var(--danger); color: #fff; }
-.wb-stop:active { transform: scale(0.94); }
 
 /* ── Tool call card animation ── */
 @keyframes tool-call-pulse {
