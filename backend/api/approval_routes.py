@@ -9,110 +9,15 @@ v3.2.0 (Guardian): Expanded the approval API surface.
 
 from __future__ import annotations
 
-import concurrent.futures
 import json
 import logging
 import queue
-import threading
 import time
 from typing import Iterator
 
 from flask import Response, jsonify, request, stream_with_context
 
 _LOG = logging.getLogger(__name__)
-_CONTINUATION_EXECUTOR = concurrent.futures.ThreadPoolExecutor(
-    max_workers=4,
-    thread_name_prefix="approval-continuation",
-)
-
-
-def _resume_agent_continuation(workspace_id: str, continuation_id: str, grant, payload) -> None:
-    """Resume a claimed continuation off the HTTP request thread."""
-    from agent.runtime.approval_continuation import (
-        continuation_stall_seconds,
-        finish_continuation,
-        heartbeat_continuation,
-        mark_continuation_dispatching,
-    )
-    from agent.runtime.session_events import push_error, push_turn_done
-
-    session_id = str(payload.get("session_id") or "")
-    heartbeat_stop = threading.Event()
-    heartbeat_thread = None
-    try:
-        from agent.app.service import get_default_agent_app
-
-        mark_continuation_dispatching(workspace_id, continuation_id)
-
-        def _heartbeat() -> None:
-            interval = max(10.0, min(60.0, continuation_stall_seconds() / 3))
-            while not heartbeat_stop.wait(interval):
-                try:
-                    if not heartbeat_continuation(workspace_id, continuation_id):
-                        return
-                except (FileNotFoundError, OSError, RuntimeError, ValueError):
-                    _LOG.warning(
-                        "approval continuation heartbeat failed continuation=%s",
-                        continuation_id,
-                        exc_info=True,
-                    )
-
-        heartbeat_thread = threading.Thread(
-            target=_heartbeat,
-            name=f"approval-heartbeat-{continuation_id[-8:]}",
-            daemon=True,
-        )
-        heartbeat_thread.start()
-        resumed = get_default_agent_app().submit_user_message(
-            user_input=str(payload.get("user_input") or ""),
-            workspace_id=workspace_id,
-            session_id=session_id,
-            metadata={
-                "__approved_tool_continuation": grant,
-                "__approval_continuation_resume": True,
-                "approval_parent_run_id": str(payload.get("parent_run_id") or ""),
-                "__approval_cognitive_state": dict(payload.get("cognitive_state") or {}),
-                "__approval_prior_tool_evidence": list(payload.get("prior_tool_evidence") or []),
-                "transport": "approval_resume",
-            },
-        )
-        completed = finish_continuation(
-            workspace_id,
-            continuation_id,
-            completed_run_id=str(getattr(resumed, "turn_id", "") or ""),
-            error="" if bool(getattr(resumed, "ok", False)) else "; ".join(
-                list(getattr(resumed, "errors", None) or [])
-            ),
-        )
-        if completed.get("status") == "completed":
-            push_turn_done(
-                session_id,
-                str(getattr(resumed, "turn_id", "") or ""),
-                str(getattr(resumed, "final_response", "") or ""),
-                workspace_id=workspace_id,
-            )
-        else:
-            push_error(
-                session_id,
-                "approval_resume_failed",
-                str(completed.get("error") or "审批后的任务未完成"),
-                workspace_id=workspace_id,
-            )
-    except Exception as exc:  # noqa: BLE001 - background boundary must persist failure
-        _LOG.exception("approval continuation failed continuation=%s", continuation_id)
-        finish_continuation(workspace_id, continuation_id, error=str(exc))
-        push_error(
-            session_id,
-            "approval_resume_failed",
-            "审批后的任务恢复失败，请查看运行记录。",
-            workspace_id=workspace_id,
-        )
-    finally:
-        heartbeat_stop.set()
-        if heartbeat_thread is not None:
-            heartbeat_thread.join(timeout=1.0)
-
-
 def _approval_actor_allowed(pending_req) -> tuple[bool, dict]:
     """Authorize an approval by identity, never by source/proxy address."""
     from backend.core.auth import current_request_actor
@@ -232,10 +137,9 @@ def register_approval_routes(app) -> None:
                     rejected = reject_workflow_run(ws_id, req.run_id, approval_id)
                     runtime_result = {"ok": rejected is not None, "workflow_run": rejected}
             elif meta.get("continuation_id"):
-                from agent.runtime.approval_continuation import (
-                    claim_ready_continuation,
-                    record_decision,
-                )
+                from agent.runtime.approval_continuation import record_decision
+                from agent.runtime.continuation_dispatcher import dispatch_ready_continuation
+
                 continuation_id = str(meta["continuation_id"])
                 record = record_decision(
                     workspace_id=ws_id,
@@ -243,32 +147,19 @@ def register_approval_routes(app) -> None:
                     approval_id=approval_id,
                     allowed=allowed,
                 )
-                grant = None
-                payload = None
-                if record.get("status") == "ready":
-                    record, grant, payload = claim_ready_continuation(
-                        workspace_id=ws_id,
-                        continuation_id=continuation_id,
-                    )
+                dispatch_queued = (
+                    record.get("status") == "ready"
+                    and dispatch_ready_continuation(ws_id, continuation_id)
+                )
                 runtime_result = {
-                    "ok": record.get("status") not in {"failed"},
+                    "ok": record.get("status") not in {"failed"} and (
+                        record.get("status") != "ready" or dispatch_queued
+                    ),
                     "continuation_id": continuation_id,
-                    "continuation_status": record.get("status"),
+                    "continuation_status": "queued" if dispatch_queued else record.get("status"),
                 }
-                if grant is not None and payload is not None:
-                    from storage.principal import bind_storage_principal
-
-                    _CONTINUATION_EXECUTOR.submit(
-                        bind_storage_principal(_resume_agent_continuation),
-                        ws_id,
-                        continuation_id,
-                        grant,
-                        payload,
-                    )
-                    runtime_result.update({
-                        "ok": True,
-                        "continuation_status": "claimed",
-                    })
+                if record.get("status") == "ready" and not dispatch_queued:
+                    runtime_result["error"] = "continuation_dispatch_unavailable"
         except Exception as exc:  # noqa: BLE001 - final HTTP boundary must return a structured failure
             _LOG.warning("resume_after_approval failed approval=%s task=%s ws=%s (non-fatal)",
                          approval_id, task_id or "?", ws_id or "?", exc_info=True)

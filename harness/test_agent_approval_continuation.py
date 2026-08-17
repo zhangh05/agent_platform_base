@@ -502,7 +502,7 @@ def test_decision_is_durable_before_separate_ready_claim(monkeypatch, tmp_path):
     assert duplicate_grant is None
 
 
-def test_reconciler_repairs_durable_guardian_decision_without_dispatch(monkeypatch, tmp_path):
+def test_reconciler_repairs_durable_guardian_decision_and_queues_dispatch(monkeypatch, tmp_path):
     _storage(monkeypatch, tmp_path)
     from agent.approval import get_approval_store, reset_approval_store_for_tests
     from agent.runtime.approval_continuation import (
@@ -510,7 +510,14 @@ def test_reconciler_repairs_durable_guardian_decision_without_dispatch(monkeypat
         create_continuation,
     )
     from agent.runtime.continuation_reconciler import reconcile_workspace
+    import agent.runtime.continuation_dispatcher as dispatcher
 
+    queued = []
+    monkeypatch.setattr(
+        dispatcher,
+        "dispatch_ready_continuation",
+        lambda workspace_id, current_id: queued.append((workspace_id, current_id)) or True,
+    )
     reset_approval_store_for_tests(remove_persisted=True)
     approval_id = "apr_000000000001"
     continuation_id = create_continuation(
@@ -538,6 +545,8 @@ def test_reconciler_repairs_durable_guardian_decision_without_dispatch(monkeypat
     result = reconcile_workspace("default")
     assert result["decision_repaired"] == 1
     assert result["ready"] == 1
+    assert result["dispatch_queued"] == 1
+    assert queued == [("default", continuation_id)]
 
     claimed, grant, _ = claim_ready_continuation(
         workspace_id="default", continuation_id=continuation_id,
@@ -729,3 +738,86 @@ def test_batch_approval_without_risk_details_still_issues_one_exact_grant_per_no
         {"action": "delete", "filepath": "a.txt"},
         {"action": "delete", "filepath": "b.txt"},
     ]
+
+
+def test_reconciler_queues_durably_ready_continuation_after_crash_window(monkeypatch, tmp_path):
+    _storage(monkeypatch, tmp_path)
+    from agent.approval import get_approval_store, reset_approval_store_for_tests
+    from agent.runtime.approval_continuation import create_continuation, list_continuations
+    from agent.runtime.continuation_reconciler import reconcile_workspace
+    import agent.runtime.continuation_dispatcher as dispatcher
+
+    queued = []
+    monkeypatch.setattr(
+        dispatcher,
+        "dispatch_ready_continuation",
+        lambda workspace_id, continuation_id: queued.append((workspace_id, continuation_id)) or True,
+    )
+    reset_approval_store_for_tests(remove_persisted=True)
+    approval_id = "apr_000000000009"
+    continuation_id = create_continuation(
+        workspace_id="default",
+        session_id="session-1",
+        parent_run_id="run-1",
+        user_input="执行已批准变更",
+        tool_calls=[{"id": "call-1", "name": "workspace.file", "arguments": {"action": "write", "filename": "queued.txt", "content": "ok"}}],
+        approval_ids=[approval_id],
+    )
+    store = get_approval_store("default")
+    store.create_batch([{
+        "approval_id": approval_id,
+        "session_id": "session-1",
+        "tool_id": "workspace.file",
+        "arguments": {"action": "write", "filename": "queued.txt", "content": "ok"},
+        "description": "write",
+        "risk_level": "high",
+        "workspace_id": "default",
+        "run_id": "run-1",
+        "metadata": {"continuation_id": continuation_id, "node_id": "call-1"},
+    }])
+    assert store.resolve(approval_id, True, workspace_id="default") is not None
+
+    result = reconcile_workspace("default")
+
+    assert result["decision_repaired"] == 1
+    assert result["dispatch_queued"] == 1
+    assert queued == [("default", continuation_id)]
+    assert list_continuations("default", status="ready")[0]["continuation_id"] == continuation_id
+
+
+def test_dispatch_worker_claims_once_before_any_resume(monkeypatch, tmp_path):
+    _storage(monkeypatch, tmp_path)
+    from agent.runtime.approval_continuation import (
+        create_continuation,
+        list_continuations,
+        record_decision,
+    )
+    import agent.runtime.continuation_dispatcher as dispatcher
+
+    continuation_id = create_continuation(
+        workspace_id="default",
+        session_id="session-1",
+        parent_run_id="run-1",
+        user_input="执行已批准变更",
+        tool_calls=[{"id": "call-1", "name": "workspace.file", "arguments": {"action": "write", "filename": "once.txt", "content": "ok"}}],
+        approval_ids=["apr_dispatch_once"],
+    )
+    record_decision(
+        workspace_id="default",
+        continuation_id=continuation_id,
+        approval_id="apr_dispatch_once",
+        allowed=True,
+    )
+    resumed = []
+    monkeypatch.setattr(
+        dispatcher,
+        "_resume_claimed_continuation",
+        lambda workspace_id, current_id, grant, payload: resumed.append((workspace_id, current_id, grant, payload)),
+    )
+
+    dispatcher._claim_and_resume("default", continuation_id)
+    dispatcher._claim_and_resume("default", continuation_id)
+
+    assert len(resumed) == 1
+    assert resumed[0][0:2] == ("default", continuation_id)
+    assert list_continuations("default", status="claimed")[0]["continuation_id"] == continuation_id

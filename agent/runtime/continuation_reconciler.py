@@ -83,6 +83,15 @@ def reconcile_workspace(workspace_id: str) -> dict[str, int]:
             name: list_continuations(workspace_id, status=name, limit=5000)
             for name in ("pending", "ready", "claimed", "dispatching", "stalled", "expired")
         }
+        # Only durable ready records are safe to retry.  The worker performs
+        # the CAS claim before reaching QueryLoop; active/stalled records are
+        # deliberately never replayed because their tool outcome is unknown.
+        from agent.runtime.continuation_dispatcher import dispatch_ready_continuation
+        dispatch_queued = sum(
+            1
+            for record in public_by_state["ready"]
+            if dispatch_ready_continuation(workspace_id, str(record.get("continuation_id") or ""))
+        )
         states = {name: len(items) for name, items in public_by_state.items()}
         oldest_age = 0.0
         now = datetime.now(timezone.utc)
@@ -99,6 +108,7 @@ def reconcile_workspace(workspace_id: str) -> dict[str, int]:
             **repaired,
             **maintained,
             **states,
+            "dispatch_queued": dispatch_queued,
             "oldest_pending_age_seconds": int(max(0.0, oldest_age)),
         }
     result = _with_leader_lease(workspace_id, _run)
