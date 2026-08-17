@@ -126,12 +126,18 @@ def register_job_routes(app):
         job_id, err = _validated_job_id(job_id)
         if err:
             return err
-        ws, err = _validated_ws_id((request.get_json(silent=True) or {}).get("workspace_id", ""))
+        data = request.get_json(silent=True) or {}
+        ws, err = _validated_ws_id(data.get("workspace_id", ""))
         if err:
             return err
+        expected_client_request_id = str(data.get("client_request_id") or "").strip()
         from jobs.manager import cancel_job
         try:
-            rec = cancel_job(ws, job_id)
+            rec = cancel_job(
+                ws,
+                job_id,
+                expected_client_request_id=expected_client_request_id,
+            )
             try:
                 from backend.ws.agent_ws import request_active_turn_cancel
                 from storage.principal import current_storage_principal
@@ -142,6 +148,8 @@ def register_job_routes(app):
                 pass
             return jsonify({"ok": True, "job": sanitize_job_record_for_api(rec.as_dict())})
         except ValueError as e:
+            if str(e) == "stale_turn":
+                return jsonify({"ok": False, "error": "stale_turn"}), 409
             return jsonify({"ok": False, "error": str(e)}), 400
 
     @app.route("/api/jobs/<job_id>/retry", methods=["POST"])

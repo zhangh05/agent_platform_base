@@ -75,7 +75,7 @@ def enqueue_job(ws_id, job_id) -> JobRecord:
     return result
 
 
-def cancel_job(ws_id, job_id) -> JobRecord:
+def cancel_job(ws_id, job_id, *, expected_client_request_id="") -> JobRecord:
     rec = get_job(ws_id, job_id)
     if not rec: raise ValueError("job not found")
     if rec.status == "queued":
@@ -84,7 +84,19 @@ def cancel_job(ws_id, job_id) -> JobRecord:
                      event_type="job_cancelled", message="Job cancelled from queue"))
         return _transition(ws_id, job_id, "cancelled", "job_cancelled")
     elif rec.status == "running":
-        result = update_job(ws_id, job_id, {"cancel_requested": True})
+        from jobs.store import request_job_cancellation
+        result, applied = request_job_cancellation(
+            ws_id,
+            job_id,
+            expected_client_request_id=expected_client_request_id,
+        )
+        if expected_client_request_id and not applied:
+            current = dict((getattr(result, "metadata", {}) or {}).get("active_turn") or {})
+            actual = str(current.get("client_request_id") or "")
+            if getattr(result, "status", "") == "running" and actual != str(expected_client_request_id):
+                raise ValueError("stale_turn")
+        if not applied:
+            return result or rec
         append_event(ws_id, job_id, JobEvent(job_id=job_id, workspace_id=ws_id,
                      event_type="job_cancel_requested", message="Cancel requested"))
         return result

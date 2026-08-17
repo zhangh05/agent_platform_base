@@ -104,6 +104,33 @@ def update_job(ws_id, job_id, patch: dict) -> Optional[JobRecord]:
     return rec
 
 
+def request_job_cancellation(
+    ws_id: str,
+    job_id: str,
+    *,
+    expected_client_request_id: str = "",
+) -> tuple[Optional[JobRecord], bool]:
+    """Atomically mark only the matching active agent turn for cancellation."""
+    expected = str(expected_client_request_id or "").strip()
+    with FileLock(_job_lock_path(ws_id, job_id)):
+        rec = get_job(ws_id, job_id)
+        if not rec or rec.status != "running":
+            return rec, False
+        active = dict((rec.metadata or {}).get("active_turn") or {})
+        actual = str(active.get("client_request_id") or "").strip()
+        if expected and actual != expected:
+            return rec, False
+        rec.cancel_requested = True
+        rec.updated_at = now_iso()
+        d = _ensure(ws_id, job_id)
+        safe = sanitize_job_record_for_storage(rec.as_dict())
+        atomic_write_json(d / f"{job_id}.json", safe)
+        for key, value in safe.items():
+            if hasattr(rec, key):
+                setattr(rec, key, value)
+    _update_workspace_stats(ws_id)
+    return rec, True
+
 def _session_exists(ws_id, session_id):
     """Check if a session still exists and is not soft-deleted.
     

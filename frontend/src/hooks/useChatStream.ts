@@ -98,8 +98,8 @@ export function useChatStream(
   const callbacksRef = useRef(callbacks);
   callbacksRef.current = callbacks;
 
-  const requestCancel = (jobId: string, workspaceId: string) => {
-    void jobsApi.cancel(jobId, workspaceId).catch(() => {});
+  const requestCancel = (jobId: string, workspaceId: string, clientRequestId = activeClientRequestIdRef.current) => {
+    void jobsApi.cancel(jobId, workspaceId, clientRequestId).catch(() => {});
   };
 
   const stopStream = (): void => {
@@ -127,7 +127,7 @@ export function useChatStream(
               && item.metadata?.active_turn?.client_request_id === clientRequestId,
             );
             if (job?.job_id) {
-              requestCancel(job.job_id, workspaceId);
+              requestCancel(job.job_id, workspaceId, clientRequestId);
               return;
             }
           } catch { /* best effort: the durable job state remains authoritative */ }

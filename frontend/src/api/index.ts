@@ -346,8 +346,12 @@ export const jobsApi = {
     apiRequest<{ ok: boolean; job: JobItem }>({ method: "GET", url: `/jobs/${job_id}`, params: { workspace_id } }, signal),
 
   /** POST /api/jobs/:id/cancel */
-  cancel: (job_id: string, workspace_id: string) =>
-    apiRequest<{ ok: boolean }>({ method: "POST", url: `/jobs/${job_id}/cancel`, data: { workspace_id } }),
+  cancel: (job_id: string, workspace_id: string, client_request_id?: string) =>
+    apiRequest<{ ok: boolean }>({
+      method: "POST",
+      url: `/jobs/${job_id}/cancel`,
+      data: { workspace_id, ...(client_request_id ? { client_request_id } : {}) },
+    }),
 
   /** POST /api/jobs/:id/retry */
   retry: (job_id: string, workspace_id: string) =>

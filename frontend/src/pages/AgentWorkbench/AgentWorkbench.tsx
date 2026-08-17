@@ -377,7 +377,11 @@ export function TaskWorkbench() {
       return;
     }
     if (!activeJob?.job_id || !currentWorkspaceId) return;
-    void jobsApi.cancel(activeJob.job_id, currentWorkspaceId)
+    void jobsApi.cancel(
+      activeJob.job_id,
+      currentWorkspaceId,
+      activeJob.metadata?.active_turn?.client_request_id,
+    )
       .then(() => refreshActiveTurn())
       .catch(() => {});
   }, [activeJob?.job_id, currentWorkspaceId, refreshActiveTurn, sending, stopGeneration]);
