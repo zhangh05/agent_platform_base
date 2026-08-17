@@ -82,3 +82,14 @@ export function finalizeStreamText(streamedText: string, finalResponse: string):
 export function createThinkFilter(): { mode: ThinkFilterState } {
   return { mode: "idle" };
 }
+
+/**
+ * A terminal WebSocket frame may arrive before the canonical assistant message
+ * is readable from session storage. Reconcile only an empty successful UI.
+ */
+export function needsDurableFinalReconciliation(
+  finalText: string,
+  errors: readonly unknown[] = [],
+): boolean {
+  return !finalText.trim() && errors.length === 0;
+}

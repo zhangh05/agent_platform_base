@@ -20,7 +20,7 @@ import { useSessionStore } from "../stores/session";
 import { isApiError } from "../types";
 import type { AgentResult, ToolCallResult, InlineToolCall, CognitiveSummary, CognitiveEvent } from "../types";
 import { sanitizeAssistantText, toolLabel, filterStreamingThink, type ThinkFilterState } from "../utils/displayText";
-import { beginModelStep, canFallbackToHttp, discardToolCallDraft, finalizeStreamText } from "../utils/agentStream";
+import { beginModelStep, canFallbackToHttp, discardToolCallDraft, finalizeStreamText, needsDurableFinalReconciliation } from "../utils/agentStream";
 import { agentResultFromWsDone } from "../utils/wsResult";
 import { notifyRunCompleted } from "../utils/appEvents";
 import { createStreamActivityWatchdog, STREAM_IDLE_TIMEOUT_MS } from "../utils/streamActivity";
@@ -501,9 +501,17 @@ export function useChatStream(
       });
 
       if (resolvedSid && workspaceId) {
-        sessionsApi.messages(resolvedSid, workspaceId)
+        const reconcilePersistedFinal = () => sessionsApi.messages(resolvedSid, workspaceId)
           .then((r) => { if (r.messages?.length) useWorkbenchStore.getState().mergeFromBackend(resolvedSid, r.messages); })
           .catch(() => {});
+        void reconcilePersistedFinal();
+        // `done` can be delivered before durable assistant projection is readable.
+        // A bounded same-session re-read repairs only an otherwise empty success UI.
+        if (needsDurableFinalReconciliation(cleanText, wsResult.errors || [])) {
+          for (const delayMs of [180, 700, 1600]) {
+            window.setTimeout(() => { void reconcilePersistedFinal(); }, delayMs);
+          }
+        }
       }
       return;
     } catch {
