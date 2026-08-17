@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { beginModelStep, canFallbackToHttp, discardToolCallDraft, finalizeStreamText, needsDurableFinalReconciliation } from "../utils/agentStream";
+import { beginModelStep, canFallbackToHttp, discardToolCallDraft, finalizeStreamText, shouldFlushUncommittedStreamDraft } from "../utils/agentStream";
 
 describe("agent stream text", () => {
   it("allows HTTP fallback only before a WebSocket turn frame is submitted", () => {
@@ -21,11 +21,10 @@ describe("agent stream text", () => {
   });
 });
 
-describe("durable final reconciliation", () => {
-  it("re-reads the canonical persisted assistant message only for an empty successful terminal UI", () => {
-    expect(needsDurableFinalReconciliation("", [])).toBe(true);
-    expect(needsDurableFinalReconciliation("  ", [])).toBe(true);
-    expect(needsDurableFinalReconciliation("最终答复", [])).toBe(false);
-    expect(needsDurableFinalReconciliation("", ["provider failure"])).toBe(false);
+describe("terminal stream ownership", () => {
+  it("never flushes an old draft after a done frame has committed the final answer", () => {
+    expect(shouldFlushUncommittedStreamDraft(true, "", "", "正式最终答复")).toBe(false);
+    expect(shouldFlushUncommittedStreamDraft(true, "残留 token", "残留草稿", "正式最终答复")).toBe(false);
+    expect(shouldFlushUncommittedStreamDraft(false, "", "未提交草稿", "")).toBe(true);
   });
 });

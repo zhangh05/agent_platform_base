@@ -83,13 +83,14 @@ export function createThinkFilter(): { mode: ThinkFilterState } {
   return { mode: "idle" };
 }
 
-/**
- * A terminal WebSocket frame may arrive before the canonical assistant message
- * is readable from session storage. Reconcile only an empty successful UI.
- */
-export function needsDurableFinalReconciliation(
-  finalText: string,
-  errors: readonly unknown[] = [],
+
+/** A completed terminal frame owns the final response; late socket close/error
+ * callbacks may flush only an uncommitted, interrupted stream draft. */
+export function shouldFlushUncommittedStreamDraft(
+  terminalFrameReceived: boolean,
+  pendingText: string,
+  draft: string,
+  committedText: string,
 ): boolean {
-  return !finalText.trim() && errors.length === 0;
+  return !terminalFrameReceived && (!!pendingText || draft !== committedText);
 }
