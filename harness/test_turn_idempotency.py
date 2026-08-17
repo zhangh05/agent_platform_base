@@ -205,3 +205,27 @@ def test_permanent_session_delete_removes_turn_request_registry(monkeypatch, tmp
 
     assert delete_session_permanently(session_id, ws_id, True) is True
     assert not registry_dir.exists()
+
+
+
+def test_different_request_id_cannot_replace_running_session_turn(monkeypatch, tmp_path: Path):
+    monkeypatch.setenv("LZCORE_WORKSPACE_ROOT", str(tmp_path))
+    import jobs.lifecycle as lifecycle
+    from storage.session_store import ensure_session
+
+    ws_id = "ws-single-flight"
+    session_id = "session-single-flight"
+    ensure_session(session_id, ws_id)
+    first = lifecycle.claim_session_turn(
+        ws_id, session_id, "first",
+        client_request_id="request-a",
+    )
+    second = lifecycle.claim_session_turn(
+        ws_id, session_id, "second",
+        client_request_id="request-b",
+    )
+
+    assert first.should_execute is True
+    assert second.should_execute is False
+    assert second.status == "conflict"
+    assert second.error == "session_turn_in_progress"

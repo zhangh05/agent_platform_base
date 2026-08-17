@@ -61,6 +61,28 @@ def _write_request_record(path, record: dict[str, Any]) -> None:
     atomic_write_json(path, record)
 
 
+def _running_session_turn_unlocked(ws_id: str, session_id: str) -> SessionTurnClaim | None:
+    """Return the current execution owner for a session, if one exists."""
+    for summary in list_jobs(ws_id=ws_id, limit=500):
+        if str((summary.get("payload") or {}).get("session_id") or "") != session_id:
+            continue
+        job_id = str(summary.get("job_id") or "")
+        rec = get_job(ws_id, job_id)
+        if not rec or rec.status != "running":
+            continue
+        active = dict((rec.metadata or {}).get("active_turn") or {})
+        if str(active.get("status") or "") != "running":
+            continue
+        return SessionTurnClaim(
+            job_id=job_id,
+            should_execute=False,
+            status="conflict",
+            run_id=str(active.get("run_id") or ""),
+            trace_id=str(active.get("trace_id") or ""),
+            error="session_turn_in_progress",
+        )
+    return None
+
 def _claim_session_turn_request(
     ws_id: str,
     session_id: str,
@@ -75,14 +97,18 @@ def _claim_session_turn_request(
     if not session_id:
         return SessionTurnClaim()
     request_id = str(client_request_id or "").strip()
+    from storage.session_store import _session_lock
     if not request_id:
-        return SessionTurnClaim(
-            job_id=_begin_session_turn_unlocked(ws_id, session_id, user_input),
-        )
+        with _session_lock(session_id, ws_id):
+            active = _running_session_turn_unlocked(ws_id, session_id)
+            if active:
+                return active
+            return SessionTurnClaim(
+                job_id=_begin_session_turn_unlocked(ws_id, session_id, user_input),
+            )
     if len(request_id) > 256:
         raise ValueError("client_request_id too long")
 
-    from storage.session_store import _session_lock
 
     with _session_lock(session_id, ws_id):
         path = _request_registry_path(ws_id, session_id, request_id)
@@ -96,6 +122,9 @@ def _claim_session_turn_request(
                 trace_id=str(existing.get("trace_id") or ""),
                 error=str(existing.get("error") or ""),
             )
+        active = _running_session_turn_unlocked(ws_id, session_id)
+        if active:
+            return active
 
         job_id = _begin_session_turn_unlocked(
             ws_id, session_id, user_input, client_request_id=request_id,

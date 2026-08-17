@@ -103,7 +103,7 @@ export function runningIdempotentRedirectJobId(metadata: unknown): string {
   const redirect = record.idempotent_redirect;
   if (record.idempotent !== true || !redirect || typeof redirect !== "object" || Array.isArray(redirect)) return "";
   const details = redirect as Record<string, unknown>;
-  return details.status === "running" && typeof details.job_id === "string"
+  return (details.status === "running" || details.status === "conflict") && typeof details.job_id === "string"
     ? details.job_id
     : "";
 }

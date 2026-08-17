@@ -33,6 +33,10 @@ describe("idempotent redirect handling", () => {
   it("recognizes only server-declared running duplicate redirects", () => {
     expect(runningIdempotentRedirectJobId({
       idempotent: true,
+      idempotent_redirect: { job_id: "job-conflict", status: "conflict" },
+    })).toBe("job-conflict");
+    expect(runningIdempotentRedirectJobId({
+      idempotent: true,
       idempotent_redirect: { job_id: "job-1", status: "running" },
     })).toBe("job-1");
     expect(runningIdempotentRedirectJobId({

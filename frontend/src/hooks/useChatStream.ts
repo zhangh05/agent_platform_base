@@ -475,6 +475,21 @@ export function useChatStream(
       }
 
       const wsResult = agentResultFromWsDone(streamingResult, streamedText, resolvedSid);
+      const redirectedJobId = runningIdempotentRedirectJobId(wsResult.metadata);
+      if (redirectedJobId) {
+        const waiting = "已有会话回合正在处理中，已连接到既有回合。";
+        useWorkbenchStore.getState().updateAssistant(streamingMsgId, {
+          status: "streaming",
+          text: waiting,
+          activeJobId: redirectedJobId,
+        }, resolvedSid);
+        if (resolvedSid && workspaceId) {
+          sessionsApi.messages(resolvedSid, workspaceId)
+            .then((r) => { if (r.messages?.length) useWorkbenchStore.getState().mergeFromBackend(resolvedSid, r.messages); })
+            .catch(() => { /* durable active-turn recovery remains authoritative */ });
+        }
+        return;
+      }
       const cleanText = sanitizeAssistantText(wsResult.final_response);
       const cleanResult = { ...wsResult, final_response: sanitizeAssistantText(wsResult.final_response ?? "") };
       const toolCalls: InlineToolCall[] = (cleanResult.tool_calls ?? []).map((tc) => ({
