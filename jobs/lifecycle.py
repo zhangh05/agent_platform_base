@@ -162,13 +162,15 @@ def finish_claimed_session_turn(
                 ws_id, session_id, request_id[:32],
             )
             return
+        job = get_job(ws_id, job_id) if job_id else None
+        cancelled = bool(getattr(job, "cancel_requested", False)) or str(getattr(job, "status", "")) == "cancelled"
         existing.update({
-            "status": "succeeded" if ok else "failed",
+            "status": "cancelled" if cancelled else ("succeeded" if ok else "failed"),
             "updated_at": now_iso(),
             "finished_at": now_iso(),
             "run_id": str(run_id or ""),
             "trace_id": str(trace_id or ""),
-            "error": str(error or "")[:240],
+            "error": ("任务已取消。" if cancelled else str(error or ""))[:240],
         })
         _write_request_record(path, existing)
 def _broadcast_job(job_id: str, ws_id: str, session_id: str = "") -> None:

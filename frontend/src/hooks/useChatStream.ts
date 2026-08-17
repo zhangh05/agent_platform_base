@@ -20,7 +20,7 @@ import { useSessionStore } from "../stores/session";
 import { isApiError } from "../types";
 import type { AgentResult, ToolCallResult, InlineToolCall, CognitiveSummary, CognitiveEvent } from "../types";
 import { sanitizeAssistantText, toolLabel, filterStreamingThink, type ThinkFilterState } from "../utils/displayText";
-import { beginModelStep, canFallbackToHttp, discardToolCallDraft, finalizeStreamText, shouldFlushUncommittedStreamDraft } from "../utils/agentStream";
+import { beginModelStep, canFallbackToHttp, discardToolCallDraft, finalizeStreamText, runningIdempotentRedirectJobId, shouldFlushUncommittedStreamDraft } from "../utils/agentStream";
 import { agentResultFromWsDone } from "../utils/wsResult";
 import { notifyRunCompleted } from "../utils/appEvents";
 import { createStreamActivityWatchdog, STREAM_IDLE_TIMEOUT_MS } from "../utils/streamActivity";
@@ -532,6 +532,21 @@ export function useChatStream(
           metadata: turnMetadata,
         });
         const resolvedSid = (res.session_id && res.session_id !== "—" ? res.session_id : activeSessionId) ?? undefined;
+        const redirectedJobId = runningIdempotentRedirectJobId(res.metadata);
+        if (redirectedJobId) {
+          const waiting = "同一请求正在处理中，已连接到既有回合。";
+          useWorkbenchStore.getState().updateAssistant(streamingMsgId, {
+            status: "streaming",
+            text: waiting,
+            activeJobId: redirectedJobId,
+          }, resolvedSid);
+          if (resolvedSid && workspaceId) {
+            sessionsApi.messages(resolvedSid, workspaceId)
+              .then((r) => { if (r.messages?.length) useWorkbenchStore.getState().mergeFromBackend(resolvedSid, r.messages); })
+              .catch(() => { /* durable active-turn recovery remains authoritative */ });
+          }
+          return;
+        }
         if (!activeSessionId && resolvedSid) {
           useWorkbenchStore.getState().moveSessionMessages("_scratch", resolvedSid);
           useSessionStore.getState().setCurrentSession(resolvedSid);

@@ -94,3 +94,16 @@ export function shouldFlushUncommittedStreamDraft(
 ): boolean {
   return !terminalFrameReceived && (!!pendingText || draft !== committedText);
 }
+
+/** Return the durable job id only for a server-declared in-progress duplicate.
+ * This is correlation state, not a second execution result. */
+export function runningIdempotentRedirectJobId(metadata: unknown): string {
+  if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) return "";
+  const record = metadata as Record<string, unknown>;
+  const redirect = record.idempotent_redirect;
+  if (record.idempotent !== true || !redirect || typeof redirect !== "object" || Array.isArray(redirect)) return "";
+  const details = redirect as Record<string, unknown>;
+  return details.status === "running" && typeof details.job_id === "string"
+    ? details.job_id
+    : "";
+}

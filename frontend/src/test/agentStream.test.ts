@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { beginModelStep, canFallbackToHttp, discardToolCallDraft, finalizeStreamText, shouldFlushUncommittedStreamDraft } from "../utils/agentStream";
+import { beginModelStep, canFallbackToHttp, discardToolCallDraft, finalizeStreamText, runningIdempotentRedirectJobId, shouldFlushUncommittedStreamDraft } from "../utils/agentStream";
 
 describe("agent stream text", () => {
   it("allows HTTP fallback only before a WebSocket turn frame is submitted", () => {
@@ -26,5 +26,21 @@ describe("terminal stream ownership", () => {
     expect(shouldFlushUncommittedStreamDraft(true, "", "", "正式最终答复")).toBe(false);
     expect(shouldFlushUncommittedStreamDraft(true, "残留 token", "残留草稿", "正式最终答复")).toBe(false);
     expect(shouldFlushUncommittedStreamDraft(false, "", "未提交草稿", "")).toBe(true);
+  });
+});
+
+describe("idempotent redirect handling", () => {
+  it("recognizes only server-declared running duplicate redirects", () => {
+    expect(runningIdempotentRedirectJobId({
+      idempotent: true,
+      idempotent_redirect: { job_id: "job-1", status: "running" },
+    })).toBe("job-1");
+    expect(runningIdempotentRedirectJobId({
+      idempotent: true,
+      idempotent_redirect: { job_id: "job-1", status: "succeeded" },
+    })).toBe("");
+    expect(runningIdempotentRedirectJobId({
+      idempotent_redirect: { job_id: "job-1", status: "running" },
+    })).toBe("");
   });
 });

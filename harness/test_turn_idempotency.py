@@ -153,3 +153,55 @@ def test_client_request_claim_allows_one_cross_process_executor(tmp_path: Path):
     assert sum(1 for should_execute, *_ in claims if should_execute) == 1
     assert all(job_id for _, job_id, _ in claims)
     assert any(status == "running" for should_execute, _job_id, status in claims if not should_execute)
+
+
+def test_cancelled_claim_is_not_misrecorded_as_failed(monkeypatch, tmp_path: Path):
+    monkeypatch.setenv("LZCORE_WORKSPACE_ROOT", str(tmp_path))
+    import jobs.lifecycle as lifecycle
+
+    monkeypatch.setattr(lifecycle, "_begin_session_turn_unlocked", lambda *_args, **_kwargs: "job-cancelled")
+    lifecycle.claim_session_turn(
+        "ws-cancelled", "session-cancelled", "cancel me",
+        client_request_id="request-cancelled",
+    )
+
+    class CancelledJob:
+        cancel_requested = True
+        status = "cancelled"
+
+    monkeypatch.setattr(lifecycle, "get_job", lambda *_args, **_kwargs: CancelledJob())
+    lifecycle.finish_claimed_session_turn(
+        "ws-cancelled", "session-cancelled",
+        client_request_id="request-cancelled",
+        job_id="job-cancelled",
+        ok=False,
+        error="cancelled_by_user",
+    )
+
+    claim = lifecycle.claim_session_turn(
+        "ws-cancelled", "session-cancelled", "retry same request",
+        client_request_id="request-cancelled",
+    )
+    assert claim.should_execute is False
+    assert claim.status == "cancelled"
+    assert claim.error == "任务已取消。"
+
+
+def test_permanent_session_delete_removes_turn_request_registry(monkeypatch, tmp_path: Path):
+    monkeypatch.setenv("LZCORE_WORKSPACE_ROOT", str(tmp_path))
+    import jobs.lifecycle as lifecycle
+    from storage.session_store import delete_session_permanently, ensure_session
+
+    session_id = "session-delete-registry"
+    ws_id = "ws-delete-registry"
+    ensure_session(session_id, ws_id)
+    monkeypatch.setattr(lifecycle, "_begin_session_turn_unlocked", lambda *_args, **_kwargs: "job-delete-registry")
+    lifecycle.claim_session_turn(
+        ws_id, session_id, "delete registry fixture",
+        client_request_id="request-delete-registry",
+    )
+    registry_dir = tmp_path / ws_id / "sys" / "request_registry" / session_id
+    assert registry_dir.is_dir()
+
+    assert delete_session_permanently(session_id, ws_id, True) is True
+    assert not registry_dir.exists()

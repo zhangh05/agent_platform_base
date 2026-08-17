@@ -365,7 +365,8 @@ def delete_session_permanently(
         session = _read_session_unlocked(safe_id, ws_id)
         path = _session_path(safe_id, ws_id)
         msg_dir = _session_dir(ws_id) / safe_id
-        had_data = bool(session or path.is_file() or msg_dir.is_dir())
+        request_registry_dir = _ws_root(ws_id) / "sys" / "request_registry" / safe_id
+        had_data = bool(session or path.is_file() or msg_dir.is_dir() or request_registry_dir.is_dir())
         if not _session_is_tombstoned_unlocked(safe_id, ws_id):
             _mark_session_deleted_unlocked(safe_id, ws_id)
         failures: list[str] = []
@@ -423,7 +424,18 @@ def delete_session_permanently(
                     ws_id,
                     type(exc).__name__,
                 )
-        complete = not path.exists() and not msg_dir.exists()
+        if request_registry_dir.is_dir():
+            try:
+                shutil.rmtree(request_registry_dir)
+            except OSError as exc:
+                failures.append("request_registry_delete_failed")
+                _LOG.warning(
+                    "session_delete_request_registry_failed action=delete session_id=%s workspace_id=%s error_type=%s",
+                    safe_id,
+                    ws_id,
+                    type(exc).__name__,
+                )
+        complete = not path.exists() and not msg_dir.exists() and not request_registry_dir.exists()
         if failures or not complete:
             _LOG.error(
                 "session_hard_delete_incomplete session_id=%s workspace_id=%s failures=%s",
