@@ -16,9 +16,16 @@ from typing import Any
 
 from jobs.store import get_job, update_job, list_jobs
 from jobs.manager import create_job, mark_cancelled, mark_failed, mark_running, mark_succeeded, update_progress
-from storage.time_utils import now_iso
+from storage.time_utils import from_iso, now_iso
 
 _log = logging.getLogger("jobs.lifecycle")
+
+# Idempotency keys only need to survive the retry window. Retaining every
+# terminal request forever makes long-lived sessions grow an unbounded registry.
+# Running records are never evicted before their durable job is reconciled.
+_REQUEST_REGISTRY_TERMINAL_TTL_SECONDS = 7 * 24 * 60 * 60
+_REQUEST_REGISTRY_MAX_TERMINAL_RECORDS = 256
+_REQUEST_REGISTRY_TERMINAL_STATUSES = frozenset({"succeeded", "failed", "cancelled"})
 
 
 @dataclass(frozen=True)
@@ -59,6 +66,103 @@ def _write_request_record(path, record: dict[str, Any]) -> None:
     from storage.atomic_io import atomic_write_json
 
     atomic_write_json(path, record)
+
+
+def _request_record_timestamp(record: dict[str, Any]) -> float | None:
+    """Return the newest usable registry timestamp without trusting input."""
+    for key in ("finished_at", "updated_at", "created_at"):
+        value = str(record.get(key) or "").strip()
+        if not value:
+            continue
+        try:
+            return from_iso(value)
+        except (TypeError, ValueError):
+            continue
+    return None
+
+
+def _reconcile_running_request_record(
+    ws_id: str,
+    request_id: str,
+    record: dict[str, Any],
+) -> bool:
+    """Fold a stranded running claim into its durable job terminal state.
+
+    Backend startup reconciliation can mark an interrupted job failed after its
+    request record was written. This helper only projects that durable state; it
+    never retries or starts an Agent turn.
+    """
+    if str(record.get("status") or "") != "running":
+        return False
+    job_id = str(record.get("job_id") or "")
+    job = get_job(ws_id, job_id) if job_id else None
+    job_status = str(getattr(job, "status", "") or "")
+    cancelled = bool(getattr(job, "cancel_requested", False)) or job_status == "cancelled"
+    active = dict((getattr(job, "metadata", {}) or {}).get("active_turn") or {}) if job else {}
+    active_request_id = str(active.get("client_request_id") or "")
+
+    status = ""
+    error = ""
+    if active_request_id and active_request_id != request_id:
+        # A reusable session job may already describe a later turn; never
+        # project that later terminal outcome onto this older request key.
+        status, error = "failed", "turn_execution_interrupted"
+    elif cancelled:
+        status, error = "cancelled", "任务已取消。"
+    elif job_status == "succeeded":
+        status = "succeeded"
+    elif job_status == "failed":
+        status = "failed"
+        error = str(getattr(job, "error", "") or "backend_restart_during_job")
+
+    if not status:
+        return False
+    record["status"] = status
+    record["updated_at"] = now_iso()
+    record["finished_at"] = str(getattr(job, "finished_at", "") or now_iso())
+    if error:
+        record["error"] = error[:240]
+    return True
+
+
+def _prune_request_registry_unlocked(ws_id: str, session_id: str) -> None:
+    """Bound terminal record retention while the owning session lock is held."""
+    directory = _request_registry_path(ws_id, session_id, "registry-directory").parent
+    if not directory.is_dir():
+        return
+    now = _request_record_timestamp({"updated_at": now_iso()})
+    if now is None:
+        return
+    cutoff = now - _REQUEST_REGISTRY_TERMINAL_TTL_SECONDS
+    terminal: list[tuple[float, Any]] = []
+    for candidate in directory.glob("*.json"):
+        record = _read_request_record(candidate)
+        if not record:
+            try:
+                candidate.unlink()
+            except OSError:
+                _log.warning("unable to remove malformed request registry record path=%s", candidate)
+            continue
+        request_id = str(record.get("client_request_id") or "")
+        if _reconcile_running_request_record(ws_id, request_id, record):
+            _write_request_record(candidate, record)
+        if str(record.get("status") or "") not in _REQUEST_REGISTRY_TERMINAL_STATUSES:
+            continue
+        timestamp = _request_record_timestamp(record)
+        if timestamp is None or timestamp < cutoff:
+            try:
+                candidate.unlink()
+            except OSError:
+                _log.warning("unable to remove expired request registry record path=%s", candidate)
+            continue
+        terminal.append((timestamp, candidate))
+    terminal.sort(key=lambda item: item[0])
+    overflow = len(terminal) - _REQUEST_REGISTRY_MAX_TERMINAL_RECORDS
+    for _timestamp, candidate in terminal[:max(0, overflow)]:
+        try:
+            candidate.unlink()
+        except OSError:
+            _log.warning("unable to remove excess request registry record path=%s", candidate)
 
 
 def _running_session_turn_unlocked(ws_id: str, session_id: str) -> SessionTurnClaim | None:
@@ -111,9 +215,12 @@ def _claim_session_turn_request(
 
 
     with _session_lock(session_id, ws_id):
+        _prune_request_registry_unlocked(ws_id, session_id)
         path = _request_registry_path(ws_id, session_id, request_id)
         existing = _read_request_record(path)
         if existing:
+            if _reconcile_running_request_record(ws_id, request_id, existing):
+                _write_request_record(path, existing)
             return SessionTurnClaim(
                 job_id=str(existing.get("job_id") or ""),
                 should_execute=False,
@@ -181,6 +288,7 @@ def finish_claimed_session_turn(
     from storage.session_store import _session_lock
 
     with _session_lock(session_id, ws_id):
+        _prune_request_registry_unlocked(ws_id, session_id)
         path = _request_registry_path(ws_id, session_id, request_id)
         existing = _read_request_record(path)
         if not existing:
@@ -202,6 +310,7 @@ def finish_claimed_session_turn(
             "error": ("任务已取消。" if cancelled else str(error or ""))[:240],
         })
         _write_request_record(path, existing)
+        _prune_request_registry_unlocked(ws_id, session_id)
 def _broadcast_job(job_id: str, ws_id: str, session_id: str = "") -> None:
     """Push job_updated event with full artifact info to all WebSocket clients."""
     try:

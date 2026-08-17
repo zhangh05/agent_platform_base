@@ -1,4 +1,5 @@
 import multiprocessing
+from datetime import datetime, timedelta, timezone
 import os
 
 from pathlib import Path
@@ -229,3 +230,103 @@ def test_different_request_id_cannot_replace_running_session_turn(monkeypatch, t
     assert second.should_execute is False
     assert second.status == "conflict"
     assert second.error == "session_turn_in_progress"
+
+
+def test_same_request_reconciles_to_failed_after_interrupted_job(monkeypatch, tmp_path: Path):
+    """A backend-startup failure must not leave the idempotency key running."""
+    monkeypatch.setenv("LZCORE_WORKSPACE_ROOT", str(tmp_path))
+    import jobs.lifecycle as lifecycle
+    from jobs.store import update_job
+    from storage.session_store import ensure_session
+
+    ws_id = "ws-restart-reconcile"
+    session_id = "session-restart-reconcile"
+    request_id = "request-restart-reconcile"
+    ensure_session(session_id, ws_id)
+    first = lifecycle.claim_session_turn(
+        ws_id, session_id, "interrupted request", client_request_id=request_id,
+    )
+    assert first.should_execute is True
+    update_job(ws_id, first.job_id, {
+        "status": "failed",
+        "error": "backend_restart_during_job",
+    })
+
+    duplicate = lifecycle.claim_session_turn(
+        ws_id, session_id, "retry after restart", client_request_id=request_id,
+    )
+    assert duplicate.should_execute is False
+    assert duplicate.job_id == first.job_id
+    assert duplicate.status == "failed"
+    assert duplicate.error == "backend_restart_during_job"
+
+    record = lifecycle._read_request_record(
+        lifecycle._request_registry_path(ws_id, session_id, request_id),
+    )
+    assert record["status"] == "failed"
+    assert record["error"] == "backend_restart_during_job"
+    assert record["finished_at"]
+
+
+def test_request_registry_prunes_expired_and_excess_terminal_records(monkeypatch, tmp_path: Path):
+    monkeypatch.setenv("LZCORE_WORKSPACE_ROOT", str(tmp_path))
+    import jobs.lifecycle as lifecycle
+
+    ws_id = "ws-registry-retention"
+    session_id = "session-registry-retention"
+    monkeypatch.setattr(lifecycle, "_REQUEST_REGISTRY_TERMINAL_TTL_SECONDS", 60)
+    monkeypatch.setattr(lifecycle, "_REQUEST_REGISTRY_MAX_TERMINAL_RECORDS", 2)
+
+    now = datetime.now(timezone.utc)
+    records = [
+        ("expired", now - timedelta(seconds=61)),
+        ("oldest-kept", now - timedelta(seconds=3)),
+        ("middle-kept", now - timedelta(seconds=2)),
+        ("newest-kept", now - timedelta(seconds=1)),
+    ]
+    for request_id, timestamp in records:
+        lifecycle._write_request_record(
+            lifecycle._request_registry_path(ws_id, session_id, request_id),
+            {
+                "client_request_id": request_id,
+                "session_id": session_id,
+                "workspace_id": ws_id,
+                "job_id": "",
+                "status": "succeeded",
+                "created_at": timestamp.isoformat(),
+                "updated_at": timestamp.isoformat(),
+                "finished_at": timestamp.isoformat(),
+                "run_id": "",
+                "trace_id": "",
+                "error": "",
+            },
+        )
+
+    lifecycle._prune_request_registry_unlocked(ws_id, session_id)
+    registry_dir = lifecycle._request_registry_path(ws_id, session_id, "probe").parent
+    surviving = {
+        lifecycle._read_request_record(path)["client_request_id"]
+        for path in registry_dir.glob("*.json")
+    }
+    assert surviving == {"middle-kept", "newest-kept"}
+
+
+def test_running_old_request_never_inherits_later_turn_terminal_status(monkeypatch):
+    import jobs.lifecycle as lifecycle
+
+    class LaterTurnJob:
+        status = "succeeded"
+        cancel_requested = False
+        finished_at = "2026-08-17T00:00:00+00:00"
+        error = ""
+        metadata = {"active_turn": {"client_request_id": "later-request"}}
+
+    monkeypatch.setattr(lifecycle, "get_job", lambda *_args, **_kwargs: LaterTurnJob())
+    record = {
+        "job_id": "reused-job",
+        "status": "running",
+        "client_request_id": "old-request",
+    }
+    assert lifecycle._reconcile_running_request_record("ws", "old-request", record) is True
+    assert record["status"] == "failed"
+    assert record["error"] == "turn_execution_interrupted"
