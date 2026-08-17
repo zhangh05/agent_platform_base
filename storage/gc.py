@@ -36,10 +36,18 @@ def find_soft_deleted_files(workspace_id: str) -> list[dict]:
 
 
 def find_missing_file_records(workspace_id: str) -> list[dict]:
-    """Find FileRecords whose physical file is missing from disk."""
+    """Find active FileRecords whose source payload is missing from disk.
+
+    A soft-deleted record may intentionally have its payload in ``.trash`` and
+    a purged/deleted record is not expected to retain its original payload.
+    Those lifecycle states are surfaced by retention views, not as active-data
+    integrity failures.
+    """
     ws = workspace_root(workspace_id)
     missing = []
     for rec in list_files(workspace_id, lifecycle=""):
+        if str(rec.get("lifecycle") or "active") != "active":
+            continue
         path = ws / rec["path"]
         if not path.exists():
             missing.append(rec)

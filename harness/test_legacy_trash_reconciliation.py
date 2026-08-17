@@ -70,3 +70,22 @@ def test_canonical_filestore_reconcile_actions_use_existing_dispatch(monkeypatch
     assert repaired["ok"] is True
     assert repaired["repaired"][0]["file_id"] == record.file_id
     assert get_file_record("test_ws", record.file_id)["lifecycle"] == "soft_deleted"
+
+
+def test_gc_reports_only_active_missing_payloads(monkeypatch, tmp_path):
+    record, _ = _legacy_trashed_record(monkeypatch, tmp_path)
+    from storage.file_store import reconcile_trashed_file_records, write_agent_output
+    from storage.gc import find_missing_file_records
+
+    assert reconcile_trashed_file_records("test_ws", apply=True)["repaired"][0]["file_id"] == record.file_id
+    from storage.paths import workspace_root
+
+    active = write_agent_output(
+        "test_ws", "missing active payload", logical_type="artifact_output",
+        file_kind="text", title="missing-active.txt",
+    )
+    (workspace_root("test_ws") / active.path).unlink()
+
+    missing = find_missing_file_records("test_ws")
+    assert [item["file_id"] for item in missing] == [active.file_id]
+    assert record.file_id not in {item["file_id"] for item in missing}
