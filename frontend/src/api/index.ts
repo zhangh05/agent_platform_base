@@ -981,6 +981,7 @@ export const approvalApi = {
     ok: boolean;
     pending: Array<{
       approval_id: string;
+      session_id: string;
       tool_id: string;
       risk_level: string;
       arguments_preview: Record<string, unknown>;
@@ -999,7 +1000,7 @@ export const approvalApi = {
 
   resolve: (
     approvalId: string,
-    body: { decision: string; workspace_id: string; edited_args?: Record<string, unknown>; feedback?: string; reason?: string },
+    body: { decision: string; workspace_id: string; session_id: string; edited_args?: Record<string, unknown>; feedback?: string; reason?: string },
   ): Promise<{ ok: boolean; approval_id: string; decision: string }> =>
     apiRequest({
       method: "POST",

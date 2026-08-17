@@ -76,11 +76,16 @@ def register_approval_routes(app) -> None:
         ws_id, err = _validated_ws_id(str(data.get("workspace_id", "")))
         if err:
             return err
+        session_id = str(data.get("session_id", "")).strip()
+        if not session_id:
+            return jsonify({"ok": False, "error": "session_id is required"}), 400
         store = get_approval_store(ws_id)
 
         pending_req = store.get_pending_request(approval_id, ws_id)
         if pending_req is None:
             return jsonify({"ok": False, "error": "approval not found or already resolved"}), 404
+        if str(getattr(pending_req, "session_id", "")) != session_id:
+            return jsonify({"ok": False, "error": "approval_session_mismatch"}), 409
         allowed_actor, actor = _approval_actor_allowed(pending_req)
         if not allowed_actor:
             return jsonify({"ok": False, "error": "approval_resolver_forbidden"}), 403

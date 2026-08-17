@@ -44,6 +44,7 @@ describe("approval transport lifecycle", () => {
       ok: true,
       pending: [{
         approval_id: "approval-1",
+        session_id: "session-1",
         tool_id: "exec.run",
         risk_level: "high",
         arguments_preview: {},
@@ -77,6 +78,7 @@ describe("approval transport lifecycle", () => {
       ok: true,
       pending: [{
         approval_id: "approval-callback",
+        session_id: "session-1",
         tool_id: "workspace.file",
         risk_level: "high",
         arguments_preview: { action: "delete" },
@@ -110,6 +112,7 @@ describe("approval transport lifecycle", () => {
         ok: true,
         pending: [{
           approval_id: "approval-after-sse-failure",
+          session_id: "session-1",
           tool_id: "workspace.file",
           risk_level: "high",
           arguments_preview: { action: "delete", filepath: "files/data/probe.md" },
@@ -136,6 +139,42 @@ describe("approval transport lifecycle", () => {
 
     expect(pending).toHaveBeenCalledTimes(2);
     expect(screen.getByTestId("approval-bubble")).toBeInTheDocument();
+  });
+
+  it("clears a previous session approval before it can be resolved", async () => {
+    vi.spyOn(approvalApi, "pending").mockResolvedValue({
+      ok: true,
+      pending: [{
+        approval_id: "approval-session-one",
+        session_id: "session-1",
+        tool_id: "workspace.file",
+        risk_level: "high",
+        arguments_preview: { action: "delete", filepath: "old.txt" },
+        created_at: new Date().toISOString(),
+        created_at_iso: new Date().toISOString(),
+        expires_at: new Date(Date.now() + 30 * 60_000).toISOString(),
+        approval_kind: "interactive",
+        requester: "test-user",
+      }],
+      count: 1,
+    });
+    const resolve = vi.spyOn(approvalApi, "resolve").mockResolvedValue({
+      ok: true,
+      approval_id: "approval-session-one",
+      decision: "approve",
+    });
+
+    render(<ApprovalBubble />);
+    await act(async () => { await Promise.resolve(); });
+    expect(screen.getByTestId("approval-bubble")).toBeInTheDocument();
+
+    await act(async () => {
+      useSessionStore.getState().setCurrentSession("session-2");
+      await Promise.resolve();
+    });
+
+    expect(screen.queryByTestId("approval-bubble")).not.toBeInTheDocument();
+    expect(resolve).not.toHaveBeenCalled();
   });
 
 });

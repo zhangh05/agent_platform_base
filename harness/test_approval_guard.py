@@ -60,7 +60,7 @@ class TestApprovalIdentityAuthorization:
 
         resp = client.post(
             f"/api/agent/approvals/{req.approval_id}/resolve",
-            json={"decision": "approve", "workspace_id": "ws_a", "resolver": "forged"},
+            json={"decision": "approve", "workspace_id": "ws_a", "session_id": "sess-1", "resolver": "forged"},
             environ_base={"REMOTE_ADDR": "203.0.113.10"},
         )
         assert resp.status_code == 200
@@ -99,7 +99,7 @@ class TestApprovalIdentityAuthorization:
 
         resp = client.post(
             f"/api/agent/approvals/{req.approval_id}/resolve",
-            json={"decision": "approve", "workspace_id": "ws_other"},
+            json={"decision": "approve", "workspace_id": "ws_other", "session_id": "sess-scope"},
         )
         assert resp.status_code == 404
         assert store.get_pending(workspace_id="ws_scope")[0]["approval_id"] == req.approval_id
@@ -120,6 +120,7 @@ class TestApprovalIdentityAuthorization:
                 "decision": "respond_with_feedback",
                 "feedback": "改用非破坏性方案",
                 "workspace_id": "ws_feedback",
+                "session_id": "sess-feedback",
             },
         )
         assert resp.status_code == 200
@@ -142,6 +143,7 @@ class TestApprovalIdentityAuthorization:
                 "decision": "edit_args",
                 "edited_args": {"cmd": "ls"},
                 "workspace_id": "ws_edit",
+                "session_id": "sess-edit",
             },
         )
         assert resp.status_code == 400
@@ -161,7 +163,7 @@ class TestApprovalIdentityAuthorization:
 
         resp = client.post(
             f"/api/agent/approvals/{req.approval_id}/resolve",
-            json={"decision": "approve", "workspace_id": "ws_a"},
+            json={"decision": "approve", "workspace_id": "ws_a", "session_id": "sess-2"},
         )
         assert resp.status_code == 403
         assert resp.get_json()["error"] == "approval_resolver_forbidden"
@@ -179,7 +181,7 @@ class TestApprovalIdentityAuthorization:
 
         resp = client.post(
             f"/api/agent/approvals/{req.approval_id}/resolve",
-            json={"decision": "approve", "workspace_id": "ws_a"},
+            json={"decision": "approve", "workspace_id": "ws_a", "session_id": "sess-3"},
         )
         assert resp.status_code == 200
 
@@ -456,3 +458,39 @@ def test_canonical_executor_rejects_resolved_approval_bound_to_different_argumen
     assert mismatched.status == "blocked"
     assert mismatched.output["error"] == "invalid_approval_binding"
     assert observed == [{"target": "approved.txt"}]
+
+def test_resolve_rejects_same_workspace_different_session(client, reset_approvals, monkeypatch):
+    TestApprovalIdentityAuthorization._actor(monkeypatch, role="admin")
+    from agent.approval import get_approval_store
+
+    store = get_approval_store()
+    req = store.create(
+        session_id="session-a",
+        tool_id="workspace.file",
+        arguments={"action": "delete", "filepath": "a.txt"},
+        description="delete a.txt",
+        risk_level="high",
+        workspace_id="shared-workspace",
+    )
+
+    wrong = client.post(
+        f"/api/agent/approvals/{req.approval_id}/resolve",
+        json={
+            "decision": "approve",
+            "workspace_id": "shared-workspace",
+            "session_id": "session-b",
+        },
+    )
+    assert wrong.status_code == 409
+    assert wrong.get_json()["error"] == "approval_session_mismatch"
+    assert store.get_pending(session_id="session-a", workspace_id="shared-workspace")[0]["approval_id"] == req.approval_id
+
+    exact = client.post(
+        f"/api/agent/approvals/{req.approval_id}/resolve",
+        json={
+            "decision": "approve",
+            "workspace_id": "shared-workspace",
+            "session_id": "session-a",
+        },
+    )
+    assert exact.status_code == 200

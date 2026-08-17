@@ -7,6 +7,7 @@ import "./ApprovalBubble.css";
 
 interface PendingApproval {
   approval_id: string;
+  session_id: string;
   tool_id: string;
   description?: string;
   risk_level: string;
@@ -49,6 +50,15 @@ export const ApprovalBubble = memo(function ApprovalBubble({ onResolved }: { onR
     };
   }, []);
 
+  // Session changes synchronously remove the prior session's approval.
+  // The server independently enforces the same binding before it can resolve.
+  useEffect(() => {
+    resolvingRef.current = false;
+    setResolving(false);
+    setPending(null);
+    setSecondsLeft(0);
+  }, [currentSessionId, currentWorkspaceId]);
+
   // SSE gives immediate invalidation; low-frequency polling survives disconnects.
   useEffect(() => {
     if (!currentSessionId || !currentWorkspaceId) return;
@@ -89,7 +99,9 @@ export const ApprovalBubble = memo(function ApprovalBubble({ onResolved }: { onR
         authorized = true;
         if (streamDegraded) startPoll();
         if (data.ok && data.pending?.length > 0) {
-          const p = (data.pending as unknown as PendingApproval[]).find((item) => !resolvedIdsRef.current.has(item.approval_id));
+          const p = (data.pending as unknown as PendingApproval[]).find((item) => (
+            item.session_id === currentSessionId && !resolvedIdsRef.current.has(item.approval_id)
+          ));
           if (!p) {
             if (!resolvingRef.current) {
               setPending(null);
@@ -159,11 +171,15 @@ export const ApprovalBubble = memo(function ApprovalBubble({ onResolved }: { onR
 
   const resolveApproval = useCallback(async (decision: "approve" | "reject") => {
     const p = pending;
-    if (!p || resolvingRef.current) return;
+    if (!p || p.session_id !== currentSessionId || resolvingRef.current) return;
     resolvingRef.current = true;
     setResolving(true);
     try {
-      const res = await approvalApi.resolve(p.approval_id, { decision, workspace_id: currentWorkspaceId });
+      const res = await approvalApi.resolve(p.approval_id, {
+        decision,
+        workspace_id: currentWorkspaceId,
+        session_id: currentSessionId,
+      });
       if (!res.ok) {
         console.warn("[Approval] resolve returned not ok:", res);
         // Keep showing the bubble so user can retry
