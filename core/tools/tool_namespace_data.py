@@ -140,8 +140,8 @@ NS_DATA = [
     ),
     (
         "workspace.filestore", "workspace", "filestore", "multi", "FileStore", "workspace.filestore",
-        "Use to inspect references or import a verified workspace file into content-addressed storage; preserve returned file ids for traceability.",
-        "Do not use as a raw file reader/editor.",
+        "Use to inspect references, import a verified workspace file, or preview and reconcile only hash-verified legacy files moved to workspace trash; preserve returned file ids for traceability.",
+        "Do not use as a raw file reader/editor or reconcile records whose original payload is merely missing without a verified trash match.",
         "workspace.filestore",
     ),
     (

@@ -427,6 +427,91 @@ def soft_delete_file(workspace_id: str, file_id: str) -> bool:
     }))
 
 
+def reconcile_trashed_file_records(
+    workspace_id: str,
+    *,
+    apply: bool = False,
+) -> dict[str, Any]:
+    """Reconcile only provable legacy deletes left active by the old handler.
+
+    The former ``workspace.file delete`` implementation moved a payload to the
+    workspace ``.trash`` directory without changing its FileStore lifecycle.
+    This maintenance routine is deliberately fail-closed: it considers a record
+    repairable only when its indexed payload is absent and a file at the exact
+    ``.trash/<indexed basename>`` path has the indexed non-empty SHA-256 and
+    size. A missing payload alone is never treated as a deletion.
+    """
+    ws = workspace_root(workspace_id)
+    trash = (ws / ".trash").resolve()
+    result: dict[str, Any] = {
+        "workspace_id": workspace_id,
+        "apply": bool(apply),
+        "repairable": [],
+        "repaired": [],
+        "skipped": [],
+    }
+    if not trash.is_dir():
+        return result
+
+    for record in index.read_file_records(workspace_id):
+        if str(record.get("lifecycle") or "active") != "active":
+            continue
+        file_id = str(record.get("file_id") or "")
+        path_value = str(record.get("path") or "")
+        if not file_id or not path_value:
+            continue
+        try:
+            original = _resolve_workspace_relative_path(workspace_id, path_value)
+        except ValueError:
+            continue
+        if original.exists():
+            continue
+
+        candidate = trash / Path(path_value).name
+        try:
+            candidate.resolve().relative_to(trash)
+        except ValueError:
+            result["skipped"].append({"file_id": file_id, "reason": "trash_path_escape"})
+            continue
+        if not candidate.is_file():
+            result["skipped"].append({"file_id": file_id, "reason": "missing_expected_trash_payload"})
+            continue
+
+        expected_sha = str(record.get("sha256") or "")
+        if not expected_sha:
+            result["skipped"].append({"file_id": file_id, "reason": "missing_index_sha256"})
+            continue
+        expected_size = int(record.get("size_bytes") or 0)
+        actual_size = candidate.stat().st_size
+        if expected_size != actual_size:
+            result["skipped"].append({"file_id": file_id, "reason": "trash_size_mismatch"})
+            continue
+        if _sha256_of_file(candidate) != expected_sha:
+            result["skipped"].append({"file_id": file_id, "reason": "trash_sha256_mismatch"})
+            continue
+
+        trash_path = candidate.relative_to(ws).as_posix()
+        item = {"file_id": file_id, "trash_path": trash_path}
+        result["repairable"].append(item)
+        if not apply:
+            continue
+        if not soft_delete_file(workspace_id, file_id):
+            result["skipped"].append({"file_id": file_id, "reason": "lifecycle_update_failed"})
+            continue
+        refreshed = get_file_record(workspace_id, file_id) or {}
+        metadata = dict(refreshed.get("metadata") or {})
+        metadata.update({
+            "trash_path": trash_path,
+            "deleted_by": "workspace.filestore.reconcile_trash",
+            "reconciled_at": _now_iso(),
+            "reconciliation_reason": "verified_legacy_trash_payload",
+        })
+        if not index.update_file_record(workspace_id, file_id, {"metadata": metadata}):
+            item["warning"] = "trash_metadata_update_failed"
+        result["repaired"].append(item)
+    return result
+
+
 def purge_file(workspace_id: str, file_id: str) -> bool:
     """Remove one managed payload and mark its index record purged."""
     rec = get_file_record(workspace_id, file_id)

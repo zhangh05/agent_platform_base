@@ -216,7 +216,7 @@ _CANONICAL_ACTIONS: Final[dict[str, frozenset[str]]] = {
         "list", "read", "save", "tag", "delete",
     }),
     "workspace.filestore": frozenset({
-        "references", "import",
+        "references", "import", "reconcile_trash_preview", "reconcile_trash",
     }),
 }
 

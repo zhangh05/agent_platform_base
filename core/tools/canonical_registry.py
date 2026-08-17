@@ -535,14 +535,22 @@ def _handle_workspace_artifact(inv: ToolInvocation) -> dict:
 
 
 def _handle_workspace_filestore(inv: ToolInvocation) -> dict:
-    from core.tools.general_tools.filestore_tools import handle_file_import_workspace_path, handle_file_references
+    from core.tools.general_tools.filestore_tools import (
+        handle_file_import_workspace_path,
+        handle_file_reconcile_trash,
+        handle_file_references,
+    )
 
     action = _action(inv) or "references"
     if action == "references":
         return handle_file_references(inv, file_id=str((inv.arguments or {}).get("file_id") or ""))
     if action == "import":
         return handle_file_import_workspace_path(inv, filepath=str((inv.arguments or {}).get("filepath") or ""))
-    return _unsupported(inv, "references|import")
+    if action == "reconcile_trash_preview":
+        return handle_file_reconcile_trash(inv, apply=False)
+    if action == "reconcile_trash":
+        return handle_file_reconcile_trash(inv, apply=True)
+    return _unsupported(inv, "references|import|reconcile_trash_preview|reconcile_trash")
 
 
 def _handle_workspace_metadata(inv: ToolInvocation) -> dict:
@@ -747,7 +755,7 @@ _RAW_REGISTRY: list[CanonicalToolEntry] = [
         },
     }),
     _entry("workspace.artifact", _handle_workspace_artifact, {**_COMMON, "action": {"type": "string", "enum": ["list", "read", "save", "tag", "delete"]}, "query": {"type": "string"}, "limit": {"type": "integer", "minimum": 1}, "artifact_id": {"type": "string"}, "content": {"type": "string"}, "title": {"type": "string"}, "status": {"type": "string"}, "tags": {"type": "array", "items": {"type": "string"}}, "artifact_type": {"type": "string"}}, required=["action"], description="Workspace artifact operations."),
-    _entry("workspace.filestore", _handle_workspace_filestore, {**_COMMON, "action": {"type": "string", "enum": ["references", "import"]}, "file_id": {"type": "string"}, "filepath": {"type": "string"}}, required=["action"], description="FileStore references and import."),
+    _entry("workspace.filestore", _handle_workspace_filestore, {**_COMMON, "action": {"type": "string", "enum": ["references", "import", "reconcile_trash_preview", "reconcile_trash"]}, "file_id": {"type": "string"}, "filepath": {"type": "string"}}, required=["action"], description="FileStore references, import, and hash-verified legacy trash reconciliation."),
     _entry("workspace.metadata.get", _handle_workspace_metadata, {"workspace_id": {"type": "string"}}, description="Workspace metadata."),
     _entry("workspace.document.pdf.extract_text", _handle_pdf_extract, {"workspace_id": {"type": "string"}, "filepath": {"type": "string"}, "page_range": {"type": "string"}}, required=["filepath"], description="Extract PDF text."),
 ]

@@ -250,7 +250,7 @@ READ_ONLY_ACTIONS: dict[str, frozenset[str]] = {
     }),
     "workspace.artifact": frozenset({"list", "read"}),
     "workspace.file": frozenset({"list", "read", "read_image", "extract_document", "extract_document_image", "extract_document_images", "glob"}),
-    "workspace.filestore": frozenset({"references"}),
+    "workspace.filestore": frozenset({"references", "reconcile_trash_preview"}),
 }
 
 

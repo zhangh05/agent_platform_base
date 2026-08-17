@@ -338,6 +338,24 @@ def handle_file_write_agent_output(
                size_bytes=rec.size_bytes, sha256=rec.sha256)
 
 
+def handle_file_reconcile_trash(inv, *, apply: bool = False) -> dict[str, Any]:
+    """Preview or repair only hash-verified legacy FileStore trash records."""
+    from storage.events import publish
+    from storage.file_store import reconcile_trashed_file_records
+
+    ws = _caller_workspace(inv)
+    result = reconcile_trashed_file_records(ws, apply=apply)
+    if apply:
+        for item in result.get("repaired") or []:
+            publish(ws, "file", "reconciled", str(item.get("file_id") or ""))
+    summary = (
+        f"Reconciled {len(result.get('repaired') or [])} verified legacy trash record(s)."
+        if apply
+        else f"Found {len(result.get('repairable') or [])} verified legacy trash record(s)."
+    )
+    return _ok("workspace.filestore", summary=summary, **result)
+
+
 def handle_file_import_workspace_path(inv, *, filepath: str = "") -> dict[str, Any]:
     """Import a workspace-managed file into FileStore."""
     from storage.file_store import import_user_upload
