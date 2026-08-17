@@ -646,3 +646,86 @@ def test_approved_resume_inherits_cognitive_facts_without_reemitting_parent_even
     emitted_events = [payload for name, payload in emitter.calls if name.startswith("cognitive_")]
     assert all(event["event_id"] not in parent_event_ids for event in emitted_events)
     assert sum(event["type"] == "cognitive_evidence_registered" for event in emitted_events) == 1
+
+
+def test_batch_approval_binds_each_node_to_its_exact_canonical_call(monkeypatch, tmp_path):
+    _storage(monkeypatch, tmp_path)
+    import agent.runtime.ssot_runtime as runtime
+
+    created = []
+
+    class Store:
+        def create_batch(self, specs):
+            created.extend(specs)
+            return [SimpleNamespace(approval_id=item["approval_id"]) for item in specs]
+
+    monkeypatch.setattr(runtime, "get_approval_store", lambda _workspace_id: Store())
+    handler = runtime._build_approval_handler(
+        workspace_id="default", session_id="session-1", run_id="run-1",
+    )
+    result = asyncio.run(handler(
+        StatelessContext(
+            workspace_id="default", session_id="session-1", request_id="run-1",
+            user_input="删除 old.txt 并清理临时目录",
+        ),
+        {
+            "risk_level": "high",
+            "approval_nodes": ["delete-1", "exec-1"],
+            # Deliberately reversed: binding must use node_id, never zip order.
+            "approval_details": [
+                {"node_id": "exec-1", "tool": "exec.run", "risk_reason": "rm -rf"},
+                {"node_id": "delete-1", "tool": "workspace.file", "risk_reason": "delete"},
+            ],
+            "tool_calls": [
+                {"id": "delete-1", "name": "workspace.file", "arguments": {"action": "delete", "filepath": "old.txt"}},
+                {"id": "exec-1", "name": "exec.run", "arguments": {"command": "rm -rf /tmp/lzcore-probe"}},
+            ],
+        },
+    ))
+
+    assert len(result["approval_ids"]) == 2
+    assert len(created) == 2
+    assert [spec["tool_id"] for spec in created] == ["workspace.file", "exec.run"]
+    assert [spec["arguments"] for spec in created] == [
+        {"action": "delete", "filepath": "old.txt"},
+        {"command": "rm -rf /tmp/lzcore-probe"},
+    ]
+    assert [spec["metadata"]["node_id"] for spec in created] == ["delete-1", "exec-1"]
+
+
+def test_batch_approval_without_risk_details_still_issues_one_exact_grant_per_node(monkeypatch, tmp_path):
+    _storage(monkeypatch, tmp_path)
+    import agent.runtime.ssot_runtime as runtime
+
+    created = []
+
+    class Store:
+        def create_batch(self, specs):
+            created.extend(specs)
+            return [SimpleNamespace(approval_id=item["approval_id"]) for item in specs]
+
+    monkeypatch.setattr(runtime, "get_approval_store", lambda _workspace_id: Store())
+    handler = runtime._build_approval_handler(
+        workspace_id="default", session_id="session-1", run_id="run-1",
+    )
+    result = asyncio.run(handler(
+        StatelessContext(
+            workspace_id="default", session_id="session-1", request_id="run-1",
+            user_input="删除两个文件",
+        ),
+        {
+            "risk_level": "high",
+            "approval_nodes": ["delete-a", "delete-b"],
+            "approval_details": [],
+            "tool_calls": [
+                {"id": "delete-a", "name": "workspace.file", "arguments": {"action": "delete", "filepath": "a.txt"}},
+                {"id": "delete-b", "name": "workspace.file", "arguments": {"action": "delete", "filepath": "b.txt"}},
+            ],
+        },
+    ))
+
+    assert len(result["approval_ids"]) == 2
+    assert [spec["arguments"] for spec in created] == [
+        {"action": "delete", "filepath": "a.txt"},
+        {"action": "delete", "filepath": "b.txt"},
+    ]

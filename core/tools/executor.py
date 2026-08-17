@@ -102,6 +102,46 @@ class ToolExecutor:
                 ),
             )
 
+        if decision.requires_approval and invocation.approval_id:
+            # approval_id is a durable reference, never a bearer capability.
+            # Validate the resolved record at the last canonical execution gate
+            # so a value injected into ToolRuntimeContext cannot authorize a
+            # different workspace, run, tool or argument payload.
+            try:
+                from agent.approval import get_approval_store
+                approval_valid = get_approval_store(str(invocation.workspace_id or "")).validate_resolved_approval(
+                    str(invocation.approval_id),
+                    workspace_id=str(invocation.workspace_id or ""),
+                    tool_id=invocation.tool_id,
+                    arguments=dict(invocation.arguments or {}),
+                    run_id=str(invocation.run_id or ""),
+                )
+            except Exception:
+                approval_valid = False
+            if not approval_valid:
+                return ToolResult(
+                    invocation_id=invocation.invocation_id,
+                    tool_id=invocation.tool_id,
+                    status="blocked",
+                    output={
+                        "ok": False,
+                        "error": "invalid_approval_binding",
+                        "requires_approval": True,
+                        "risk_level": decision.risk_level,
+                    },
+                    summary=f"Approval binding is invalid for {invocation.tool_id}",
+                    errors=["invalid_approval_binding"],
+                    duration_ms=int((time.time() - start_time) * 1000),
+                    redacted=True,
+                    policy_decision=PolicyDecision(
+                        allowed=False,
+                        reason="invalid_approval_binding",
+                        risk_level=decision.risk_level,
+                        blocked_rules=[*decision.blocked_rules, "invalid_approval_binding"],
+                        requires_approval=True,
+                    ),
+                )
+
         # ── 5. Handle dry_run ──
         if invocation.dry_run and spec.dry_run_supported:
             # Tools that support dry_run should implement their own handler logic.

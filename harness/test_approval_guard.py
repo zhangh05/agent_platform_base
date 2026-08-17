@@ -399,3 +399,60 @@ def test_approval_sse_emits_snapshot_sync_after_subscription(client, reset_appro
     assert payload["workspace_id"] == "ws_sse_ready"
     assert payload["payload"] == {"snapshot_required": True}
     response.close()
+def test_canonical_executor_rejects_resolved_approval_bound_to_different_arguments(reset_approvals):
+    from agent.approval import get_approval_store
+    from core.tools.executor import ToolExecutor
+    from core.tools.registry import ToolRegistry
+    from core.tools.schemas import ToolInvocation, ToolSpec
+
+    registry = ToolRegistry()
+    observed = []
+    registry.register_tool(
+        ToolSpec(
+            tool_id="test.approval_bound",
+            name="approval-bound test",
+            description="test-only high-risk action",
+            category="tool",
+            risk_level="high",
+            requires_approval=True,
+            input_schema={"type": "object", "required": ["target"]},
+            permission_action="write",
+        ),
+        lambda invocation: observed.append(invocation.arguments) or {"ok": True},
+    )
+    store = get_approval_store("approval-ws")
+    request = store.create(
+        session_id="approval-session",
+        tool_id="test.approval_bound",
+        arguments={"target": "approved.txt"},
+        description="delete approved.txt",
+        risk_level="high",
+        workspace_id="approval-ws",
+        run_id="approval-run",
+    )
+    assert store.resolve(
+        request.approval_id, allowed=True, workspace_id="approval-ws",
+    ) is not None
+    executor = ToolExecutor(registry)
+
+    exact = executor.execute(ToolInvocation(
+        tool_id="test.approval_bound",
+        arguments={"target": "approved.txt"},
+        workspace_id="approval-ws",
+        run_id="approval-run",
+        requested_by="turn_runner",
+        approval_id=request.approval_id,
+    ))
+    mismatched = executor.execute(ToolInvocation(
+        tool_id="test.approval_bound",
+        arguments={"target": "other.txt"},
+        workspace_id="approval-ws",
+        run_id="approval-run",
+        requested_by="turn_runner",
+        approval_id=request.approval_id,
+    ))
+
+    assert exact.status == "succeeded"
+    assert mismatched.status == "blocked"
+    assert mismatched.output["error"] == "invalid_approval_binding"
+    assert observed == [{"target": "approved.txt"}]

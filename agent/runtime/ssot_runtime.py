@@ -515,9 +515,32 @@ def _build_approval_handler(
         tool_calls = [dict(item) for item in list(gate.get("tool_calls") or []) if isinstance(item, dict)]
         if not tool_calls:
             raise RuntimeError("approval continuation requires exact tool calls")
-        details = list(gate.get("approval_details") or [])
-        item_count = max(1, len(details))
-        approval_ids = [new_approval_id() for _ in range(item_count)]
+        raw_details = list(gate.get("approval_details") or [])
+        approval_nodes = [str(node_id) for node_id in list(gate.get("approval_nodes") or []) if str(node_id)]
+        if not approval_nodes or len(set(approval_nodes)) != len(approval_nodes):
+            raise RuntimeError("approval continuation requires unique approval nodes")
+        calls_by_node_id: dict[str, dict[str, Any]] = {}
+        for call in tool_calls:
+            node_id = str(call.get("id") or "")
+            if node_id:
+                calls_by_node_id[node_id] = call
+        missing_calls = [node_id for node_id in approval_nodes if node_id not in calls_by_node_id]
+        if missing_calls:
+            raise RuntimeError("approval continuation nodes missing exact tool calls: " + ", ".join(missing_calls))
+        details_by_node_id: dict[str, dict[str, Any]] = {}
+        for raw_detail in raw_details:
+            if not isinstance(raw_detail, dict):
+                raise RuntimeError("approval detail must be an object")
+            detail = dict(raw_detail)
+            node_id = str(detail.get("node_id") or "")
+            # Older single-node gates did not carry a node_id.  Do not infer an
+            # ordering for batches: it would bind the wrong user decision.
+            if not node_id and len(approval_nodes) == 1 and len(raw_details) == 1:
+                node_id = approval_nodes[0]
+            if not node_id or node_id not in calls_by_node_id or node_id in details_by_node_id:
+                raise RuntimeError("approval details must map uniquely to approval nodes")
+            details_by_node_id[node_id] = detail
+        approval_ids = [new_approval_id() for _ in approval_nodes]
         continuation_id = new_continuation_id()
         cognitive_state = ctx.extras.get("cognitive_state")
         cognitive_snapshot = (
@@ -533,43 +556,36 @@ def _build_approval_handler(
             user_input=str(ctx.user_input or ""),
             tool_calls=tool_calls,
             approval_ids=approval_ids,
-            approved_node_ids=list(gate.get("approval_nodes") or []),
+            approved_node_ids=approval_nodes,
             cognitive_state=cognitive_snapshot,
             prior_tool_evidence=prior_tool_evidence,
             continuation_id=continuation_id,
         )
         specs: list[dict[str, Any]] = []
-        for approval_id, detail in zip(approval_ids, details):
-            tool_id = str(detail.get("tool") or "unknown")
-            reason = str(detail.get("risk_reason") or "高危操作需要确认")
-            command = str(detail.get("command") or "")
+        for approval_id, node_id in zip(approval_ids, approval_nodes):
+            call = calls_by_node_id[node_id]
+            tool_id = str(call.get("name") or "")
+            arguments = dict(call.get("arguments") or {})
+            if not tool_id:
+                raise RuntimeError(f"approval node {node_id} has no canonical tool id")
+            detail = details_by_node_id.get(node_id, {})
+            reason = str(detail.get("risk_reason") or gate.get("message") or "高危操作需要确认")
+            command = str(arguments.get("command") or detail.get("command") or "")
             description = f"{reason}: {tool_id}"
             if command:
                 description += f" → {command[:120]}"
             specs.append({
                 "approval_id": approval_id,
                 "session_id": session_id,
+                # The durable approval binding is the exact canonical call, not
+                # a lossy risk detail nor a position in a details list.
                 "tool_id": tool_id,
-                "arguments": detail,
+                "arguments": arguments,
                 "description": description,
                 "risk_level": str(gate.get("risk_level") or "high"),
                 "workspace_id": workspace_id,
                 "run_id": run_id,
-                "metadata": {"continuation_id": continuation_id},
-            })
-
-        if not details:
-            nodes = list(gate.get("approval_nodes") or [])
-            specs.append({
-                "approval_id": approval_ids[0],
-                "session_id": session_id,
-                "tool_id": ", ".join(nodes) or "unknown",
-                "arguments": {"nodes": nodes},
-                "description": str(gate.get("message") or "高危操作需要确认"),
-                "risk_level": str(gate.get("risk_level") or "high"),
-                "workspace_id": workspace_id,
-                "run_id": run_id,
-                "metadata": {"continuation_id": continuation_id},
+                "metadata": {"continuation_id": continuation_id, "node_id": node_id},
             })
 
         try:
@@ -1715,13 +1731,11 @@ def _approved_call_grants(grant) -> dict[str, list[str]]:
     approval_ids = tuple(str(value) for value in grant.approval_ids)
     if not node_ids or not approval_ids:
         return {}
-    if len(approval_ids) == 1:
-        node_approval_ids = {node_id: approval_ids[0] for node_id in node_ids}
-    elif len(approval_ids) == len(node_ids):
-        node_approval_ids = dict(zip(node_ids, approval_ids))
-    else:
-        _LOG.warning("ambiguous approval grant continuation=%s", grant.continuation_id)
+    # A persisted approval is never a bearer capability for a batch.  Only
+    # a one-to-one node/id mapping may produce a canonical execution grant.
+    if len(approval_ids) != len(node_ids):
         return {}
+    node_approval_ids = dict(zip(node_ids, approval_ids))
     grants: dict[str, list[str]] = {}
     for call in grant.tool_calls:
         if not isinstance(call, dict):

@@ -529,3 +529,20 @@ def test_verified_delete_filepath_repair_rejects_ambiguous_named_history():
 
     assert "filepath" not in node.args
     assert not ctx.extras.get("pre_exec_repair_events")
+
+
+def test_approved_grants_reject_single_approval_id_for_multiple_nodes():
+    from core.runtime_engine.models import ApprovedToolContinuation
+    from agent.runtime.ssot_runtime import _approved_call_grants
+
+    grant = ApprovedToolContinuation(
+        continuation_id="cont_" + "c" * 32,
+        tool_calls=(
+            {"id": "delete-a", "name": "workspace.file", "arguments": {"action": "delete", "filepath": "a.txt"}},
+            {"id": "delete-b", "name": "workspace.file", "arguments": {"action": "delete", "filepath": "b.txt"}},
+        ),
+        approved_node_ids=("delete-a", "delete-b"),
+        approval_ids=("apr_legacy_single",),
+    )
+
+    assert _approved_call_grants(grant) == {}
