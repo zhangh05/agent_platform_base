@@ -234,4 +234,34 @@ describe("workbench backend message merge", () => {
     vi.useRealTimers();
   });
 
+
+  it("replaces a parent-run approval wait with its terminal continuation result", () => {
+    const store = useWorkbenchStore.getState();
+    store.switchSession("sess-approval");
+    store.mergeFromBackend("sess-approval", [{
+      message_id: "parent-run:user", session_id: "sess-approval", role: "user",
+      content: "删除临时文件", created_at: "2026-08-17T00:00:00Z", run_id: "parent-run",
+    }]);
+    const assistantId = store.appendAssistantStreaming("sess-approval");
+    store.updateAssistant(assistantId, {
+      run_id: "parent-run", status: "ready",
+      text: "该操作正在等待审批，批准后将从当前步骤继续。",
+    }, "sess-approval");
+    store.mergeFromBackend("sess-approval", [
+      {
+        message_id: "parent-run:user", session_id: "sess-approval", role: "user",
+        content: "删除临时文件", created_at: "2026-08-17T00:00:00Z", run_id: "parent-run",
+      },
+      {
+        message_id: "parent-run:assistant", session_id: "sess-approval", role: "assistant",
+        content: "删除已落地。", created_at: "2026-08-17T00:00:01Z", run_id: "parent-run",
+      },
+    ]);
+    expect(useWorkbenchStore.getState().bySession["sess-approval"].map(
+      (message) => `${message.run_id}:${message.role}:${message.text}`,
+    )).toEqual([
+      "parent-run:user:删除临时文件",
+      "parent-run:assistant:删除已落地。",
+    ]);
+  });
 });

@@ -17,6 +17,14 @@ _EXECUTOR = concurrent.futures.ThreadPoolExecutor(
 )
 
 
+def _resume_failure_reason(resumed) -> str:
+    """Return a durable failure reason whenever a resumed turn is not ok."""
+    if bool(getattr(resumed, "ok", False)):
+        return ""
+    errors = [str(value) for value in list(getattr(resumed, "errors", None) or []) if value]
+    return "; ".join(errors) or "approval_resume_unsuccessful"
+
+
 def dispatch_ready_continuation(workspace_id: str, continuation_id: str) -> bool:
     """Queue a ready continuation without consuming its durable claim.
 
@@ -113,14 +121,25 @@ def _resume_claimed_continuation(workspace_id: str, continuation_id: str, grant,
             workspace_id,
             continuation_id,
             completed_run_id=str(getattr(resumed, "turn_id", "") or ""),
-            error="" if bool(getattr(resumed, "ok", False)) else "; ".join(
-                list(getattr(resumed, "errors", None) or [])
-            ),
+            error=_resume_failure_reason(resumed),
         )
-        if completed.get("status") == "completed":
+        parent_run_id = str(payload.get("parent_run_id") or "")
+        from agent.runtime.turn_persistence import project_approved_continuation_result
+        parent_projection = project_approved_continuation_result(
+            workspace_id=workspace_id,
+            session_id=session_id,
+            parent_run_id=parent_run_id,
+            continuation_id=continuation_id,
+            resumed=resumed,
+        )
+        if (
+            completed.get("status") == "completed"
+            and bool(getattr(resumed, "ok", False))
+            and parent_projection
+        ):
             push_turn_done(
                 session_id,
-                str(getattr(resumed, "turn_id", "") or ""),
+                parent_run_id or str(getattr(resumed, "turn_id", "") or ""),
                 str(getattr(resumed, "final_response", "") or ""),
                 workspace_id=workspace_id,
             )
@@ -128,7 +147,7 @@ def _resume_claimed_continuation(workspace_id: str, continuation_id: str, grant,
             push_error(
                 session_id,
                 "approval_resume_failed",
-                str(completed.get("error") or "审批后的任务未完成"),
+                str(completed.get("error") or "approval_parent_projection_failed"),
                 workspace_id=workspace_id,
             )
     except Exception as exc:  # noqa: BLE001 - background boundary must persist failure

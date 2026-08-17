@@ -821,3 +821,95 @@ def test_dispatch_worker_claims_once_before_any_resume(monkeypatch, tmp_path):
     assert len(resumed) == 1
     assert resumed[0][0:2] == ("default", continuation_id)
     assert list_continuations("default", status="claimed")[0]["continuation_id"] == continuation_id
+
+
+def test_approved_continuation_projects_terminal_result_to_parent_turn(monkeypatch, tmp_path):
+    _storage(monkeypatch, tmp_path)
+    from types import SimpleNamespace
+    from agent.runtime.turn_persistence import project_approved_continuation_result
+    from storage.message_store import SessionMessageStore
+    from storage.run_record_store import get_run
+    from storage.records import atomic_save_json
+
+    parent_run_id = "parent-run-1"
+    atomic_save_json("default", ("runs", f"{parent_run_id}.json"), {
+        "run_id": parent_run_id,
+        "session_id": "session-1",
+        "status": "pending",
+        "ok": True,
+        "execution_outcome": "partial",
+        "final_response": "该操作正在等待审批，批准后将从当前步骤继续。",
+    })
+    store = SessionMessageStore(session_id="session-1", ws_id="default")
+    store.write_message(parent_run_id, "user", "删除临时文件", metadata={"created_at": "2026-08-17T00:00:00+00:00"})
+    resumed = SimpleNamespace(
+        ok=True, turn_id="continuation-run-1", final_response="删除已落地。",
+        errors=[], warnings=[], tool_calls=[{"name": "workspace.file", "ok": True}],
+        trace_id="trace-1",
+        metadata={"execution_outcome": "complete", "tool_execution_outcome": "complete"},
+    )
+    assert project_approved_continuation_result(
+        workspace_id="default", session_id="session-1", parent_run_id=parent_run_id,
+        continuation_id="cont_" + "a" * 32, resumed=resumed,
+    )["status"] == "ok"
+    parent = get_run(parent_run_id, "default")
+    assert parent["status"] == "ok"
+    assert parent["execution_outcome"] == "complete"
+    assert parent["final_response"] == "删除已落地。"
+    assert parent["metadata"]["approval_continuation"]["completed_run_id"] == "continuation-run-1"
+    assert [(m["run_id"], m["role"], m["content"]) for m in store.get_messages()] == [
+        (parent_run_id, "user", "删除临时文件"),
+        (parent_run_id, "assistant", "删除已落地。"),
+    ]
+
+
+def test_approval_required_parent_run_projects_pending_not_partial(monkeypatch, tmp_path):
+    _storage(monkeypatch, tmp_path)
+    from agent.runtime.turn_persistence import project_approval_pending_parent
+    from storage.run_record_store import get_run
+    from storage.records import atomic_save_json
+
+    parent_run_id = "parent-run-2"
+    atomic_save_json("default", ("runs", f"{parent_run_id}.json"), {
+        "run_id": parent_run_id, "session_id": "session-1", "status": "partial",
+        "ok": True, "execution_outcome": "partial",
+    })
+    projected = project_approval_pending_parent(
+        workspace_id="default", parent_run_id=parent_run_id,
+        continuation_id="cont_" + "b" * 32,
+    )
+    assert projected["status"] == "pending"
+    assert get_run(parent_run_id, "default")["status"] == "pending"
+
+
+def test_unsuccessful_resume_without_errors_has_fail_closed_reason():
+    from agent.runtime.continuation_dispatcher import _resume_failure_reason
+
+    assert _resume_failure_reason(SimpleNamespace(ok=True, errors=[])) == ""
+    assert _resume_failure_reason(SimpleNamespace(ok=False, errors=[])) == "approval_resume_unsuccessful"
+    assert _resume_failure_reason(SimpleNamespace(ok=False, errors=["tool_failed"])) == "tool_failed"
+
+
+def test_continuation_projection_rejects_parent_run_from_other_session(monkeypatch, tmp_path):
+    _storage(monkeypatch, tmp_path)
+    from agent.runtime.turn_persistence import project_approved_continuation_result
+    from storage.records import atomic_save_json
+    from storage.run_record_store import get_run
+
+    parent_run_id = "other-session-parent"
+    atomic_save_json("default", ("runs", f"{parent_run_id}.json"), {
+        "run_id": parent_run_id, "session_id": "session-other",
+        "status": "pending", "final_response": "等待审批",
+    })
+    projected = project_approved_continuation_result(
+        workspace_id="default", session_id="session-current", parent_run_id=parent_run_id,
+        continuation_id="cont_" + "d" * 32,
+        resumed=SimpleNamespace(
+            ok=True, turn_id="continuation-run", final_response="不应写入其他会话",
+            errors=[], warnings=[], tool_calls=[], trace_id="trace", metadata={},
+        ),
+    )
+    assert projected == {}
+    parent = get_run(parent_run_id, "default")
+    assert parent["status"] == "pending"
+    assert parent["final_response"] == "等待审批"
