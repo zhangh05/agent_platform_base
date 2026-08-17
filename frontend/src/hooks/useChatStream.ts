@@ -177,7 +177,7 @@ export function useChatStream(
 
     // Append the user + streaming placeholder so the page can render immediately.
     const store = useWorkbenchStore.getState();
-    store.appendUser(text, scratch, attachments.length ? attachments : undefined);
+    const userMessageId = store.appendUser(text, scratch, attachments.length ? attachments : undefined);
     const streamingMsgId = store.appendAssistantStreaming(scratch);
     useWorkbenchStore.getState().setSending(true);
 
@@ -477,6 +477,7 @@ export function useChatStream(
       const wsResult = agentResultFromWsDone(streamingResult, streamedText, resolvedSid);
       const redirectedJobId = runningIdempotentRedirectJobId(wsResult.metadata);
       if (redirectedJobId) {
+        store.discardMessages([userMessageId, streamingMsgId], scratch);
         const waiting = "已有会话回合正在处理中，已连接到既有回合。";
         useWorkbenchStore.getState().updateAssistant(streamingMsgId, {
           status: "streaming",

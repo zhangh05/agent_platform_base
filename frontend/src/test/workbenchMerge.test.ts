@@ -264,4 +264,13 @@ describe("workbench backend message merge", () => {
       "parent-run:assistant:删除已落地。",
     ]);
   });
+
+  it("removes local placeholders for a server-rejected turn", () => {
+    const store = useWorkbenchStore.getState();
+    store.switchSession("sess-conflict");
+    const userId = store.appendUser("不应提交的第二回合", "sess-conflict");
+    const assistantId = store.appendAssistantStreaming("sess-conflict");
+    store.discardMessages([userId, assistantId], "sess-conflict");
+    expect(useWorkbenchStore.getState().bySession["sess-conflict"]).toEqual([]);
+  });
 });

@@ -224,9 +224,11 @@ interface WorkbenchState {
 
   switchSession: (session_id: string | null) => void;
   moveSessionMessages: (from_session_id: string, to_session_id: string) => void;
-  appendUser: (text: string, session_id: string | null, attachments?: ChatMsg["attachments"]) => void;
+  appendUser: (text: string, session_id: string | null, attachments?: ChatMsg["attachments"]) => string;
   /** Create a streaming assistant placeholder before response arrives */
   appendAssistantStreaming: (session_id: string | null) => string;
+  /** Remove local-only placeholders when the server did not accept a turn. */
+  discardMessages: (messageIds: string[], session_id?: string) => void;
   /** Update an existing message (streaming→ready/error, append tool calls) */
   updateAssistant: (
     msgId: string,
@@ -320,6 +322,7 @@ export const useWorkbenchStore = create<WorkbenchState>()(
           const next = capHistory({ ...s.bySession, [sid]: [...cur, msg] }, sid);
           return { bySession: next, lastUserInput: text };
         });
+        return msg.id;
       },
 
       appendAssistantStreaming: (session_id) => {
@@ -341,6 +344,17 @@ export const useWorkbenchStore = create<WorkbenchState>()(
         return msgId;
       },
 
+      discardMessages: (messageIds, session_id) => {
+        const ids = new Set(messageIds.filter(Boolean));
+        if (ids.size === 0) return;
+        const sid = session_id ?? get().currentSessionId ?? "_scratch";
+        set((s) => {
+          const cur = s.bySession[sid] ?? [];
+          const next = cur.filter((message) => !ids.has(message.id));
+          if (next.length === cur.length) return s;
+          return { bySession: { ...s.bySession, [sid]: next } };
+        });
+      },
       updateAssistant: (msgId, patch, session_id) => {
         const sid = session_id ?? get().currentSessionId ?? "_scratch";
         set((s) => {
