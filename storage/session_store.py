@@ -534,6 +534,7 @@ def get_session_messages(session_id: str, ws_id: str = "default") -> List[Dict[s
                 "manual_review_count",
                 "trace_id",
                 "llm_metadata",
+                "client_request_id",
             )
             if key in run
         }
@@ -565,8 +566,22 @@ def get_session_messages(session_id: str, ws_id: str = "default") -> List[Dict[s
         return projected
 
     existing_ids = {str(m.get("message_id") or "") for m in messages}
+    existing_client_request_ids = {
+        str((message.get("metadata") or {}).get("client_request_id") or "")
+        for message in messages
+        if message.get("role") == "user"
+    }
     merged = list(messages)
-    merged.extend(m for m in projected if m.get("message_id") not in existing_ids)
+    merged.extend(
+        message for message in projected
+        if message.get("message_id") not in existing_ids
+        and not (
+            message.get("role") == "user"
+            and str((message.get("metadata") or {}).get("client_request_id") or "")
+            and str((message.get("metadata") or {}).get("client_request_id") or "")
+            in existing_client_request_ids
+        )
+    )
     try:
         from storage.message_store import _message_sort_key
         merged.sort(key=_message_sort_key)

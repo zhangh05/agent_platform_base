@@ -263,11 +263,37 @@ def reconcile_running_jobs(finished_at: str, started_before: str) -> int:
                         continue
                     if str(data.get("updated_at") or "") >= started_before:
                         continue
-                    result = update_job(ws_id, str(data.get("job_id") or path.parent.name), {
+                    patch = {
                         "status": "failed",
                         "finished_at": finished_at,
                         "error": "backend_restart_during_job",
-                    })
+                    }
+                    metadata = dict(data.get("metadata") or {})
+                    active_turn = dict(metadata.get("active_turn") or {})
+                    if active_turn.get("status") == "running":
+                        active_turn.update({
+                            "status": "failed",
+                            "stage": "turn_failed",
+                            "stage_label": "处理失败",
+                            "updated_at": finished_at,
+                            "finished_at": finished_at,
+                            "error": "backend_restart_during_job",
+                        })
+                        metadata["active_turn"] = active_turn
+                        patch["metadata"] = metadata
+                        patch["progress"] = {
+                            "current": 4,
+                            "total": 4,
+                            "percent": 100,
+                            "message": "处理失败",
+                            "current_step": "处理失败",
+                            "updated_at": finished_at,
+                        }
+                    result = update_job(
+                        ws_id,
+                        str(data.get("job_id") or path.parent.name),
+                        patch,
+                    )
                     if result:
                         reconciled += 1
     return reconciled

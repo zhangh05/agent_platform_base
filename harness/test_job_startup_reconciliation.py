@@ -18,6 +18,14 @@ def test_startup_reconcile_closes_running_job_in_user_scoped_workspace(monkeypat
             job_type="agent_run",
             status="running",
             updated_at="2024-01-01T00:00:00+00:00",
+            metadata={
+                "active_turn": {
+                    "client_request_id": "request-restart",
+                    "status": "running",
+                    "stage": "turn_started",
+                    "stage_label": "理解问题",
+                },
+            },
         ))
 
     reconciled = reconcile_running_jobs(
@@ -32,3 +40,9 @@ def test_startup_reconcile_closes_running_job_in_user_scoped_workspace(monkeypat
     assert record.status == "failed"
     assert record.finished_at == "2024-01-02T00:00:00+00:00"
     assert record.error == "backend_restart_during_job"
+    active = record.metadata["active_turn"]
+    assert active["status"] == "failed"
+    assert active["stage"] == "turn_failed"
+    assert active["error"] == "backend_restart_during_job"
+    assert record.progress["percent"] == 100
+    assert record.progress["message"] == "处理失败"

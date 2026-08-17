@@ -1,5 +1,6 @@
 """Turn persistence — write run records, messages, and trace events to disk."""
 
+import hashlib
 import json
 import logging
 import re
@@ -13,6 +14,12 @@ from storage.run_record_store import save_trace_record, update_run_record, write
 
 
 _log = logging.getLogger(__name__)
+
+
+def _request_message_run_id(client_request_id: str) -> str:
+    """Mirror the stable provisional message id allocated by turn claiming."""
+    digest = hashlib.sha256(client_request_id.encode("utf-8")).hexdigest()
+    return f"request_{digest}"
 
 
 def persist_run_record(session, turn, result, context) -> None:
@@ -49,6 +56,8 @@ def persist_run_record(session, turn, result, context) -> None:
             result.metadata if result and getattr(result, "metadata", None) else {}
         )
         context_metadata = context.metadata if context and context.metadata else {}
+        op_metadata = dict(getattr(turn.op, "metadata", {}) or {})
+        client_request_id = str(op_metadata.get("client_request_id") or "").strip()
         llm_metadata = dict(context_metadata.get("llm", {}) or {})
         llm_metadata.update(result_metadata.get("llm", {}) or {})
 
@@ -80,6 +89,7 @@ def persist_run_record(session, turn, result, context) -> None:
                 "capability_id": context_metadata.get("capability_id", ""),
                 "memory_written": False,
                 "workspace_updated": False,
+                "client_request_id": client_request_id,
                 "artifact_refs": artifact_refs,
             },
             runtime_mode="ssot_runtime",
@@ -135,9 +145,14 @@ def persist_run_record(session, turn, result, context) -> None:
             )
             if user_input and not is_approval_resume:
                 user_attachments = list((getattr(turn.op, "metadata", {}) or {}).get("attachments") or [])
-                store.write_message(run_id, "user", user_input, metadata={
+                user_message_run_id = (
+                    _request_message_run_id(client_request_id)
+                    if client_request_id else run_id
+                )
+                store.write_message(user_message_run_id, "user", user_input, metadata={
                     "created_at": state.created_at,
                     "intent": state.intent,
+                    "client_request_id": client_request_id,
                     "attachments": user_attachments,
                     "history_state": build_history_state_record(
                         "user", user_input, references=user_attachments,

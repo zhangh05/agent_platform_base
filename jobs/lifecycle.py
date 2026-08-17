@@ -242,6 +242,31 @@ def _claim_session_turn_request(
                 status="unavailable",
                 error="job_unavailable",
             )
+        # Preserve accepted input before AgentApp allocates its run id. The
+        # terminal persistence path reuses this request-derived id, preventing
+        # duplicate user messages after a successful turn.
+        try:
+            from storage.message_store import SessionMessageStore
+            provisional_id = "request_" + hashlib.sha256(
+                request_id.encode("utf-8")
+            ).hexdigest()
+            SessionMessageStore(session_id=session_id, ws_id=ws_id).write_message(
+                provisional_id,
+                "user",
+                user_input,
+                metadata={
+                    "created_at": now_iso(),
+                    "client_request_id": request_id,
+                    "provisional": True,
+                },
+            )
+        except (OSError, RuntimeError, TypeError, ValueError):
+            _log.warning(
+                "unable to persist accepted turn input session=%s request=%s",
+                session_id,
+                request_id[:32],
+                exc_info=True,
+            )
         _write_request_record(path, {
             "client_request_id": request_id,
             "session_id": session_id,

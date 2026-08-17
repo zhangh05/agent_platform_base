@@ -34,6 +34,10 @@ def write_run_record(state: SimpleNamespace, workspace_id: str = "default") -> s
         "workspace_id": ws_id,
         "session_id": getattr(state, "session_id", "") or "",
         "request_id": getattr(state, "request_id", ""),
+        "client_request_id": (
+            str(context.get("client_request_id", "") or "")
+            if isinstance(context, dict) else ""
+        ),
         "created_at": created_at,
         "user_input_summary": redact_text(getattr(state, "user_input", "") or "")[:120],
         "intent": getattr(state, "intent", ""),

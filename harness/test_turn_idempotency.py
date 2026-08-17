@@ -330,3 +330,81 @@ def test_running_old_request_never_inherits_later_turn_terminal_status(monkeypat
     assert lifecycle._reconcile_running_request_record("ws", "old-request", record) is True
     assert record["status"] == "failed"
     assert record["error"] == "turn_execution_interrupted"
+
+
+def test_claim_persists_user_message_before_runtime_completion(monkeypatch, tmp_path: Path):
+    monkeypatch.setenv("LZCORE_WORKSPACE_ROOT", str(tmp_path))
+    import jobs.lifecycle as lifecycle
+    from storage.session_store import ensure_session, get_session_messages
+
+    ws_id = "ws-interrupted-message"
+    session_id = "session-interrupted-message"
+    request_id = "request-interrupted-message"
+    user_input = "服务中断后，这条已接受的输入仍应可恢复。"
+    ensure_session(session_id, ws_id)
+
+    claim = lifecycle.claim_session_turn(
+        ws_id, session_id, user_input, client_request_id=request_id,
+    )
+    assert claim.should_execute is True
+
+    messages = get_session_messages(session_id, ws_id)
+    user_messages = [message for message in messages if message["role"] == "user"]
+    assert len(user_messages) == 1
+    assert user_messages[0]["content"] == user_input
+    assert user_messages[0]["metadata"]["client_request_id"] == request_id
+    assert user_messages[0]["metadata"]["provisional"] is True
+
+
+def test_terminal_turn_reuses_claimed_user_message_without_run_fallback_duplicate(monkeypatch, tmp_path: Path):
+    monkeypatch.setenv("LZCORE_WORKSPACE_ROOT", str(tmp_path))
+    from types import SimpleNamespace
+    from agent.protocol.op import AgentOp
+    from agent.runtime.result import AgentResult
+    from agent.runtime.turn_persistence import persist_run_record
+    from storage.session_store import ensure_session, get_session_messages
+
+    ws_id = "ws-message-dedup"
+    session_id = "session-message-dedup"
+    request_id = "request-message-dedup"
+    user_input = "请在完成后仍只保留一条用户输入。"
+    ensure_session(session_id, ws_id)
+
+    import jobs.lifecycle as lifecycle
+    claim = lifecycle.claim_session_turn(
+        ws_id, session_id, user_input, client_request_id=request_id,
+    )
+    assert claim.should_execute is True
+
+    turn = SimpleNamespace(
+        turn_id="run-message-dedup",
+        op=AgentOp.user_message(
+            user_input=user_input,
+            session_id=session_id,
+            workspace_id=ws_id,
+            metadata={"client_request_id": request_id},
+        ),
+        context={},
+    )
+    session = SimpleNamespace(
+        session_id=session_id,
+        workspace_id=ws_id,
+        is_sub_agent=False,
+    )
+    result = AgentResult(
+        ok=True,
+        final_response="已完成并持久化。",
+        session_id=session_id,
+        turn_id=turn.turn_id,
+        trace_id="trace-message-dedup",
+    )
+    persist_run_record(session, turn, result, SimpleNamespace(metadata={}))
+
+    messages = get_session_messages(session_id, ws_id)
+    user_messages = [message for message in messages if message["role"] == "user"]
+    assistant_messages = [message for message in messages if message["role"] == "assistant"]
+    assert len(user_messages) == 1
+    assert user_messages[0]["content"] == user_input
+    assert user_messages[0]["metadata"]["client_request_id"] == request_id
+    assert len(assistant_messages) == 1
+    assert assistant_messages[0]["content"] == result.final_response
