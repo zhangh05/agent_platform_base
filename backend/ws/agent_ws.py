@@ -470,17 +470,55 @@ def _run_agent_thread(
     from storage.principal import storage_principal
     job_id = ""
     principal_scope = None
+    client_request_id = str((metadata or {}).get("client_request_id") or "")
     try:
         principal_scope = storage_principal(username)
         principal_scope.__enter__()
         try:
-            from jobs.lifecycle import begin_session_turn
-            job_id = str(begin_session_turn(
-                workspace_id,
-                session_id,
-                user_input,
-                client_request_id=str((metadata or {}).get("client_request_id") or ""),
-            ) or "")
+            from jobs.lifecycle import claim_session_turn
+            turn_claim = claim_session_turn(
+                workspace_id, session_id, user_input,
+                client_request_id=client_request_id,
+            )
+            job_id = str(turn_claim.job_id or "")
+            if not turn_claim.should_execute:
+                final_response = ""
+                errors = [turn_claim.error] if turn_claim.error else []
+                if turn_claim.status == "succeeded" and turn_claim.run_id:
+                    from storage.run_record_store import get_run
+                    final_response = str(
+                        get_run(turn_claim.run_id, workspace_id).get(
+                            "final_response_summary", "",
+                        ) or "",
+                    )
+                elif turn_claim.status == "failed" and not errors:
+                    errors = ["同一请求此前处理失败。"]
+                put_terminal({
+                    "type": "done",
+                    "session_id": session_id,
+                    "turn_id": turn_claim.run_id,
+                    "trace_id": turn_claim.trace_id,
+                    "final_response": final_response,
+                    "events": [],
+                    "tool_calls_count": 0,
+                    "tool_calls": [],
+                    "metadata": {
+                        "transport": "websocket",
+                        "idempotent": True,
+                        "idempotent_redirect": {
+                            "job_id": job_id,
+                            "status": turn_claim.status or "running",
+                        },
+                    },
+                    "errors": errors,
+                    "warnings": [],
+                    "tool_decision": {},
+                    "no_tool_reason": "",
+                    "stream_seq": stats.get("event_seq", 0),
+                    "capability": "",
+                    "error_type": "",
+                })
+                return
         except Exception:
             # Runtime execution remains available if the observational job
             # snapshot cannot be written; the failure is logged and never
@@ -514,11 +552,21 @@ def _run_agent_thread(
         effective_session_id = session_id or result_payload.get("session_id", "")
         if effective_session_id:
             try:
-                from jobs.lifecycle import attach_run_to_session_job, finish_session_turn_snapshot
+                from jobs.lifecycle import attach_run_to_session_job, finish_claimed_session_turn, finish_session_turn_snapshot
                 finish_session_turn_snapshot(
                     workspace_id,
                     job_id,
                     effective_session_id,
+                    run_id=result_payload.get("turn_id", ""),
+                    trace_id=result_payload.get("trace_id", ""),
+                    ok=bool(result_payload.get("ok", not result_payload.get("errors"))),
+                    error=str((result_payload.get("errors") or [""])[0]),
+                )
+                finish_claimed_session_turn(
+                    workspace_id,
+                    effective_session_id,
+                    client_request_id=client_request_id,
+                    job_id=job_id,
                     run_id=result_payload.get("turn_id", ""),
                     trace_id=result_payload.get("trace_id", ""),
                     ok=bool(result_payload.get("ok", not result_payload.get("errors"))),
@@ -585,11 +633,19 @@ def _run_agent_thread(
         error_holder["error"] = str(e)[:500]
         if job_id:
             try:
-                from jobs.lifecycle import finish_session_turn_snapshot
+                from jobs.lifecycle import finish_claimed_session_turn, finish_session_turn_snapshot
                 finish_session_turn_snapshot(
                     workspace_id,
                     job_id,
                     session_id,
+                    ok=False,
+                    error=str(e),
+                )
+                finish_claimed_session_turn(
+                    workspace_id,
+                    session_id,
+                    client_request_id=client_request_id,
+                    job_id=job_id,
                     ok=False,
                     error=str(e),
                 )

@@ -51,7 +51,7 @@ _STREAM_CONTRACTS = {
 # deliberately small: runtime-only fields such as runtime_guidance,
 # subagent_profile, history/retrieval blocks, cancellation callbacks and
 # iteration budgets must only be created by server-side code.
-_EXTERNAL_METADATA_KEYS = frozenset({"attachments"})
+_EXTERNAL_METADATA_KEYS = frozenset({"attachments", "client_request_id"})
 
 
 def normalize_metadata(metadata: dict | None, *, transport: str, stream_mode: str) -> dict:

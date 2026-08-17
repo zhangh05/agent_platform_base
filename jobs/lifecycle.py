@@ -9,7 +9,9 @@ Responsibilities:
   3. Append run_id and update progress
 """
 
+import hashlib
 import logging
+from dataclasses import dataclass
 from typing import Any
 
 from jobs.store import get_job, update_job, list_jobs
@@ -19,6 +21,156 @@ from storage.time_utils import now_iso
 _log = logging.getLogger("jobs.lifecycle")
 
 
+@dataclass(frozen=True)
+class SessionTurnClaim:
+    """Durable execution-right result for one client request."""
+
+    job_id: str = ""
+    should_execute: bool = True
+    status: str = ""
+    run_id: str = ""
+    trace_id: str = ""
+    error: str = ""
+
+
+def _request_registry_path(ws_id: str, session_id: str, client_request_id: str):
+    """Map an untrusted client id to a bounded storage-owned record path."""
+    from storage.records import workspace_record_file
+
+    digest = hashlib.sha256(client_request_id.encode("utf-8")).hexdigest()
+    return workspace_record_file(
+        ws_id, "sys", "request_registry", session_id, f"{digest}.json",
+    )
+
+
+def _read_request_record(path) -> dict[str, Any]:
+    if not path.is_file():
+        return {}
+    try:
+        import json
+
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, UnicodeDecodeError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _write_request_record(path, record: dict[str, Any]) -> None:
+    from storage.atomic_io import atomic_write_json
+
+    atomic_write_json(path, record)
+
+
+def _claim_session_turn_request(
+    ws_id: str,
+    session_id: str,
+    user_input: str,
+    client_request_id: str,
+) -> SessionTurnClaim:
+    """Claim exactly one durable execution right for a client request.
+
+    The existing session lock serializes registry lookup and job snapshot
+    creation. Empty client ids deliberately retain legacy behaviour.
+    """
+    if not session_id:
+        return SessionTurnClaim()
+    request_id = str(client_request_id or "").strip()
+    if not request_id:
+        return SessionTurnClaim(
+            job_id=_begin_session_turn_unlocked(ws_id, session_id, user_input),
+        )
+    if len(request_id) > 256:
+        raise ValueError("client_request_id too long")
+
+    from storage.session_store import _session_lock
+
+    with _session_lock(session_id, ws_id):
+        path = _request_registry_path(ws_id, session_id, request_id)
+        existing = _read_request_record(path)
+        if existing:
+            return SessionTurnClaim(
+                job_id=str(existing.get("job_id") or ""),
+                should_execute=False,
+                status=str(existing.get("status") or "running"),
+                run_id=str(existing.get("run_id") or ""),
+                trace_id=str(existing.get("trace_id") or ""),
+                error=str(existing.get("error") or ""),
+            )
+
+        job_id = _begin_session_turn_unlocked(
+            ws_id, session_id, user_input, client_request_id=request_id,
+        )
+        if not job_id:
+            return SessionTurnClaim(
+                should_execute=False,
+                status="unavailable",
+                error="job_unavailable",
+            )
+        _write_request_record(path, {
+            "client_request_id": request_id,
+            "session_id": session_id,
+            "workspace_id": ws_id,
+            "job_id": job_id,
+            "status": "running",
+            "created_at": now_iso(),
+            "updated_at": now_iso(),
+            "run_id": "",
+            "trace_id": "",
+            "error": "",
+        })
+        return SessionTurnClaim(job_id=job_id)
+
+
+def claim_session_turn(
+    ws_id: str,
+    session_id: str,
+    user_input: str,
+    *,
+    client_request_id: str = "",
+) -> SessionTurnClaim:
+    """Common HTTP/WebSocket entry point for claiming a turn."""
+    return _claim_session_turn_request(ws_id, session_id, user_input, client_request_id)
+
+
+
+
+def finish_claimed_session_turn(
+    ws_id: str,
+    session_id: str,
+    *,
+    client_request_id: str = "",
+    job_id: str = "",
+    run_id: str = "",
+    trace_id: str = "",
+    ok: bool,
+    error: str = "",
+) -> None:
+    """Record the terminal state of a claimed request without replaying it."""
+    request_id = str(client_request_id or "").strip()
+    if not session_id or not request_id:
+        return
+    from storage.session_store import _session_lock
+
+    with _session_lock(session_id, ws_id):
+        path = _request_registry_path(ws_id, session_id, request_id)
+        existing = _read_request_record(path)
+        if not existing:
+            return
+        if job_id and str(existing.get("job_id") or "") != str(job_id):
+            _log.warning(
+                "turn claim job mismatch ws=%s session=%s request=%s",
+                ws_id, session_id, request_id[:32],
+            )
+            return
+        existing.update({
+            "status": "succeeded" if ok else "failed",
+            "updated_at": now_iso(),
+            "finished_at": now_iso(),
+            "run_id": str(run_id or ""),
+            "trace_id": str(trace_id or ""),
+            "error": str(error or "")[:240],
+        })
+        _write_request_record(path, existing)
 def _broadcast_job(job_id: str, ws_id: str, session_id: str = "") -> None:
     """Push job_updated event with full artifact info to all WebSocket clients."""
     try:
@@ -68,7 +220,7 @@ _STAGE_PROGRESS: dict[str, tuple[int, str]] = {
 }
 
 
-def begin_session_turn(
+def _begin_session_turn_unlocked(
     ws_id: str,
     session_id: str,
     user_input: str,
@@ -120,6 +272,23 @@ def begin_session_turn(
     return job_id
 
 
+
+
+def begin_session_turn(
+    ws_id: str,
+    session_id: str,
+    user_input: str,
+    *,
+    client_request_id: str = "",
+) -> str | None:
+    """Compatibility wrapper returning only the claimed session job id.
+
+    Execution paths must use :func:`claim_session_turn` and honour its
+    ``should_execute`` result before entering ``AgentApp``.
+    """
+    return claim_session_turn(
+        ws_id, session_id, user_input, client_request_id=client_request_id,
+    ).job_id or None
 def update_session_turn_stage(
     ws_id: str,
     job_id: str,

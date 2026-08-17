@@ -132,3 +132,62 @@ def test_ws_live_tool_summary_is_bounded_without_truncating_done_payload(monkeyp
     done = next(item for item in messages if item.get("type") == "done")
     assert len(live["data"]["summary"]) == 8003
     assert done["final_response"] == long_summary
+
+
+def test_ws_duplicate_client_request_skips_second_agent_execution(monkeypatch):
+    from backend.ws import agent_ws
+    import agent.app.service as service
+    import jobs.lifecycle as lifecycle
+
+    calls = {"count": 0}
+
+    class FakeResult:
+        def to_dict(self):
+            return {
+                "ok": True,
+                "final_response": "first answer",
+                "session_id": "s-idempotent",
+                "turn_id": "run-idempotent",
+                "trace_id": "trace-idempotent",
+                "events": [],
+                "tool_calls": [],
+                "metadata": {},
+                "warnings": [],
+                "errors": [],
+            }
+
+    class FakeApp:
+        def submit_user_message(self, **_kwargs):
+            calls["count"] += 1
+            return FakeResult()
+
+    claims = iter((
+        lifecycle.SessionTurnClaim(job_id="job-idempotent"),
+        lifecycle.SessionTurnClaim(
+            job_id="job-idempotent",
+            should_execute=False,
+            status="running",
+        ),
+    ))
+    monkeypatch.setattr(service, "get_default_agent_app", lambda: FakeApp())
+    monkeypatch.setattr(lifecycle, "claim_session_turn", lambda *_args, **_kwargs: next(claims))
+
+    first_queue = queue.Queue()
+    agent_ws._run_agent_thread(
+        "same request", "s-idempotent", "default",
+        {"client_request_id": "request-idempotent"},
+        first_queue, {"error": None}, {"live_events": 0},
+    )
+    second_queue = queue.Queue()
+    agent_ws._run_agent_thread(
+        "same request", "s-idempotent", "default",
+        {"client_request_id": "request-idempotent"},
+        second_queue, {"error": None}, {"live_events": 0},
+    )
+
+    assert calls["count"] == 1
+    duplicate_done = next(item for item in list(second_queue.queue) if item.get("type") == "done")
+    assert duplicate_done["metadata"]["idempotent"] is True
+    assert duplicate_done["metadata"]["idempotent_redirect"] == {
+        "job_id": "job-idempotent", "status": "running",
+    }

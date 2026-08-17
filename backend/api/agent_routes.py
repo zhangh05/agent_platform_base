@@ -126,6 +126,47 @@ def agent_message():
     from backend.core.agent_contract import normalize_metadata
     metadata = normalize_metadata(metadata, transport="http", stream_mode=stream_mode)
 
+    client_request_id = str(metadata.get("client_request_id") or "").strip()
+    if session_id:
+        try:
+            from jobs.lifecycle import claim_session_turn
+            turn_claim = claim_session_turn(
+                ws_id, session_id, user_input,
+                client_request_id=client_request_id,
+            )
+        except ValueError as exc:
+            return _json_error("BAD_REQUEST", str(exc), 400)
+        except Exception:
+            _log.exception("unable to claim durable HTTP turn session=%s", session_id)
+            return _json_error("TURN_UNAVAILABLE", "unable to claim agent turn", 503)
+        if not turn_claim.should_execute:
+            payload = {
+                "ok": turn_claim.status == "succeeded",
+                "final_response": "",
+                "session_id": session_id,
+                "turn_id": turn_claim.run_id,
+                "trace_id": turn_claim.trace_id,
+                "events": [],
+                "tool_calls": [],
+                "warnings": [],
+                "errors": [turn_claim.error] if turn_claim.error else [],
+                "metadata": {
+                    "transport": "http",
+                    "idempotent": True,
+                    "idempotent_redirect": {
+                        "job_id": turn_claim.job_id,
+                        "status": turn_claim.status or "running",
+                    },
+                },
+            }
+            if turn_claim.status == "succeeded" and turn_claim.run_id:
+                from storage.run_record_store import get_run
+                payload["final_response"] = str(
+                    get_run(turn_claim.run_id, ws_id).get("final_response_summary", "") or "",
+                )
+            if turn_claim.status == "unavailable":
+                return _json_error("TURN_UNAVAILABLE", "unable to claim agent turn", 503)
+            return jsonify(payload), 200 if turn_claim.status == "succeeded" else 202
     try:
         # All intents flow through LLM agentic loop
         from agent.app.service import get_default_agent_app
@@ -161,6 +202,21 @@ def agent_message():
                     effective_session_id, ws_id, user_input)
 
         result_payload.setdefault("metadata", {})["stream_mode"] = stream_mode
+        if session_id and client_request_id:
+            try:
+                from jobs.lifecycle import finish_claimed_session_turn
+                finish_claimed_session_turn(
+                    ws_id,
+                    effective_session_id,
+                    client_request_id=client_request_id,
+                    job_id=turn_claim.job_id,
+                    run_id=result_payload.get("turn_id", ""),
+                    trace_id=result_payload.get("trace_id", ""),
+                    ok=bool(result_payload.get("ok", not result_payload.get("errors"))),
+                    error=str((result_payload.get("errors") or [""])[0]),
+                )
+            except Exception:
+                _log.exception("unable to finalize HTTP turn claim session=%s", effective_session_id)
         if stream and stream_mode == "event_replay":
             warnings = result_payload.setdefault("warnings", [])
             msg = "stream_mode=event_replay: HTTP SSE replays collected events after turn completion; use WebSocket for live events."
@@ -179,6 +235,19 @@ def agent_message():
     except Exception as e:
         _log.exception("agent_message failed")
         err_msg = str(e)[:500]
+        if session_id and client_request_id:
+            try:
+                from jobs.lifecycle import finish_claimed_session_turn
+                finish_claimed_session_turn(
+                    ws_id,
+                    session_id,
+                    client_request_id=client_request_id,
+                    job_id=turn_claim.job_id,
+                    ok=False,
+                    error=str(e),
+                )
+            except Exception:
+                _log.exception("unable to record failed HTTP turn claim session=%s", session_id)
         return _json_error(
             "INTERNAL_ERROR",
             "agent execution failed",
