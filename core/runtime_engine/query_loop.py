@@ -1316,12 +1316,28 @@ class QueryLoop:
         response_quality_attempts = 0
         completed_call_keys: set[str] = set()
         trusted_task_state = ctx.extras.get("__trusted_task_state_contract")
+        replan_required = False
+        failed_replan_call_keys: set[str] = set()
         if isinstance(trusted_task_state, dict):
             completed_call_keys.update(
                 str(item)[:640]
                 for item in (trusted_task_state.get("completed_mutation_keys") or [])
                 if isinstance(item, str) and str(item).strip()
             )
+            replan_required = (
+                str(trusted_task_state.get("status") or "") == "replan_required"
+                or str(trusted_task_state.get("recovery_status") or "") == "replan_required"
+            )
+            failed_replan_call_keys.update(
+                str(item)[:640]
+                for item in (trusted_task_state.get("failed_replan_call_keys") or [])
+                if isinstance(item, str) and str(item).strip()
+            )
+        pending_mutation_keys = set(
+            str(item)[:640]
+            for item in ((trusted_task_state or {}).get("pending_mutation_keys") or [])
+            if isinstance(item, str) and str(item).strip()
+        )
         mutation_epoch = 0
         used_call_ids: set[str] = set()
         execution_duration_ms = 0.0
@@ -1905,6 +1921,31 @@ class QueryLoop:
                     candidate_keys[tc.id] = self._completion_key(tc, candidate_epoch)
                     if not self._executor._is_read_only_call(tc):
                         candidate_epoch += 1
+                unknown_mutation_calls = [
+                    tc for tc in tool_calls
+                    if pending_mutation_keys and not self._executor._is_read_only_call(tc)
+                ]
+                if unknown_mutation_calls:
+                    return finish(
+                        final_response=(
+                            "存在中断时未确认结果的副作用操作；系统已冻结新的写操作，"
+                            "请先通过只读核验确认其实际结果。"
+                        ),
+                        error="task_state_unknown_mutation_outcome",
+                        metrics={"execution_outcome": "unknown"},
+                    )
+                repeated_replan_calls = [
+                    tc for tc in tool_calls
+                    if replan_required and candidate_keys[tc.id] in failed_replan_call_keys
+                ]
+                if repeated_replan_calls:
+                    return finish(
+                        final_response=(
+                            "任务处于重规划状态；系统拒绝重放前一轮已失败的相同工具步骤。"
+                            "请改用不同且通过策略校验的替代观察或恢复步骤。"
+                        ),
+                        error="replan_repeated_failed_call",
+                    )
                 repeated_calls = [
                     tc for tc in tool_calls
                     if candidate_keys[tc.id] in completed_call_keys
@@ -1941,6 +1982,25 @@ class QueryLoop:
                     for event in cognitive_state.events[cognitive_events_emitted:]:
                         self._emitter.emit(event["type"], event)
                 cognitive_events_emitted = len(cognitive_state.events)
+                # Persist server-derived call intent before a side effect can
+                # begin. A checkpoint failure is fail-closed: no tool runs.
+                checkpoint = ctx.extras.get("__task_state_execution_checkpoint")
+                if callable(checkpoint):
+                    prepared_manifest = [
+                        {
+                            "tool_id": str(call.name or "")[:160],
+                            "call_key": self._tool_call_key(call)[:640],
+                            "side_effecting": not self._executor._is_read_only_call(call),
+                        }
+                        for call in tool_calls
+                    ]
+                    try:
+                        checkpoint("prepared", prepared_manifest)
+                    except Exception:
+                        return finish(
+                            final_response="任务状态检查点未能写入，系统未执行工具。",
+                            error="task_state_checkpoint_failed",
+                        )
                 # Execute tools (parallel read-only, serial writes)
                 execution_started = time.monotonic()
                 self._emit_stage(
@@ -1952,6 +2012,15 @@ class QueryLoop:
                     results = await self._executor.execute(tool_calls, ctx=ctx, budget=budget)
                     all_results.extend(results)
                     self._record_task_state_execution_manifest(ctx, tool_calls, results)
+                    if callable(checkpoint):
+                        settled_manifest = list(ctx.extras.get("task_state_execution_manifest") or [])[-len(results):]
+                        try:
+                            checkpoint("settled", settled_manifest)
+                        except Exception:
+                            return finish(
+                                final_response="工具已返回，但任务状态结果检查点未能写入；系统停止，结果不得视为完成。",
+                                error="task_state_checkpoint_failed",
+                            )
                     for tc, result in zip(tool_calls, results):
                         ctx.extras.setdefault("tool_call_history", []).append({
                             "tool": tc.name.replace("__", "."),

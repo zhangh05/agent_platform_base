@@ -349,6 +349,30 @@ def create_app():
                 exc_info=True,
             )
         try:
+            from agent.runtime.task_state import reconcile_active_task_states
+            from backend.core.identity import get_user
+            from storage.principal import known_storage_principals, storage_principal
+            from storage.workspace_store import list_workspace_ids
+            reconciled_task_states = {}
+            all_workspace_ids = list_workspace_ids(include_system=False)
+            for principal in known_storage_principals() or [""]:
+                identity = get_user(principal)
+                workspace_ids = list(identity.get("workspace_ids") or []) if isinstance(identity, dict) else all_workspace_ids
+                with storage_principal(principal):
+                    for workspace_id in sorted(set(workspace_ids)):
+                        reconciled_task_states[workspace_id] = reconcile_active_task_states(workspace_id)
+            if any(int(value.get("interrupted") or 0) for value in reconciled_task_states.values()):
+                import logging as _task_state_log
+                _task_state_log.getLogger(__name__).warning(
+                    "[task state startup] marked in-flight tasks interrupted: %s",
+                    reconciled_task_states,
+                )
+        except Exception as exc:
+            import logging as _task_state_log
+            _task_state_log.getLogger(__name__).warning(
+                "[task state startup] reconcile failed: %s", exc, exc_info=True,
+            )
+        try:
             from agent.runtime.continuation_reconciler import (
                 reconcile_all_workspaces,
                 start_continuation_reconciler,

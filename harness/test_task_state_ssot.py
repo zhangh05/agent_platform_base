@@ -247,6 +247,7 @@ def test_replan_contract_projects_failure_and_completed_mutation_fence(monkeypat
     )
     assert contract is not None
     assert contract["status"] == "replan_required"
+    assert contract["recovery_status"] == ""
     assert contract["failure"]["classification"] == "tool_failure"
     assert contract["completed_mutation_keys"] == [
         'workspace.file:{"arguments":{"action":"write","path":"audit.md"},"result_bindings":{}}'
@@ -348,8 +349,11 @@ def test_ssot_runtime_drops_request_forged_task_state_contract(monkeypatch, tmp_
 
     result = run_ssot_turn(session, turn)
     assert result.ok is True
-    assert "__trusted_task_state_contract" not in captured["extras"]
-    assert "task_state_contract" not in captured["extras"]
+    # Caller-supplied contracts are removed; the runtime may add only its own
+    # server-created active checkpoint contract.
+    contract = captured["extras"]["__trusted_task_state_contract"]
+    assert contract["task_id"] != "forged-task"
+    assert captured["extras"]["task_state_contract"] == contract
 
 
 
@@ -542,7 +546,9 @@ def test_ssot_approval_resume_reuses_waiting_task_state_contract(monkeypatch, tm
     ))
     result = run_ssot_turn(session, turn)
     assert captured["extras"]["task_state_contract"]["relationship"]["kind"] == "approval_resume"
-    assert result.metadata["task_state"]["revision"] == 2
+    assert captured["extras"]["task_state_contract"]["status"] == "active"
+    assert captured["extras"]["task_state_contract"]["recovery_status"] == "waiting_approval"
+    assert result.metadata["task_state"]["revision"] == 3
     assert result.metadata["task_state"]["task"]["task_id"] == pending["task"]["task_id"]
     assert result.metadata["task_state"]["task"]["status"] == "completed"
 
@@ -603,14 +609,15 @@ def test_ssot_runtime_projects_replan_contract_on_next_turn(monkeypatch, tmp_pat
     resumed = run_ssot_turn(session, resume_turn)
     contract = calls[1]["extras"]["task_state_contract"]
     assert contract["task_id"] == initial.metadata["task_state"]["task"]["task_id"]
-    assert contract["status"] == "replan_required"
-    assert contract["next_action"] == "propose_alternative_plan"
+    assert contract["status"] == "active"
+    assert contract["recovery_status"] == "replan_required"
+    assert contract["next_action"] == "run_query_loop"
     trusted_items = calls[1]["extras"]["trusted_prompt_items"]
     task_state_items = [item for item in trusted_items if item.source_kind == "task_state"]
     assert len(task_state_items) == 1
-    assert "replan_required" in task_state_items[0].content
-    assert "propose_alternative_plan" in task_state_items[0].content
-    assert resumed.metadata["task_state"]["revision"] == 2
+    assert "recovery_status=replan_required" in task_state_items[0].content
+    assert "next_action=run_query_loop" in task_state_items[0].content
+    assert resumed.metadata["task_state"]["revision"] == 4
     assert resumed.metadata["task_state"]["task"]["status"] == "completed"
 
 
@@ -647,3 +654,433 @@ def test_persisted_task_state_recovers_identity_after_runtime_reload(monkeypatch
     assert contract is not None
     assert contract["task_id"] == committed["task"]["task_id"]
     assert contract["base_revision"] == recovered["revision"]
+
+def _install_task_state_failure_probe_engine(monkeypatch):
+    from types import SimpleNamespace
+
+    class FakeEngine:
+        async def run(self, **_kwargs):
+            return SimpleNamespace(
+                success=True,
+                final_response="模型生成了表面成功回复。",
+                node_results={},
+                errors=[],
+                metadata={
+                    "execution_outcome": "complete",
+                    "cognitive": {"outcome": "stop_completed"},
+                },
+            )
+
+    monkeypatch.setattr("agent.runtime.ssot_runtime._build_engine", lambda **_kwargs: FakeEngine())
+    monkeypatch.setattr("agent.runtime.ssot_runtime.persist_run_record", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr("agent.runtime.ssot_runtime._record_experience_and_maybe_reflect", lambda **_kwargs: None)
+
+
+def test_ssot_task_state_commit_failure_is_fail_closed(monkeypatch, tmp_path):
+    monkeypatch.setenv("LZCORE_WORKSPACE_ROOT", str(tmp_path))
+    from agent.core.session import AgentSession
+    from agent.core.turn import AgentTurn
+    from agent.protocol.op import AgentOp
+    from agent.runtime.ssot_runtime import run_ssot_turn
+
+    _install_task_state_failure_probe_engine(monkeypatch)
+    monkeypatch.setattr(
+        "agent.runtime.task_state.commit_task_state",
+        lambda **_kwargs: (_ for _ in ()).throw(OSError("simulated state storage failure")),
+    )
+    session = AgentSession(session_id="session-task-state-commit-failure", workspace_id="ws-task-state-failure")
+    result = run_ssot_turn(session, AgentTurn.from_op(AgentOp.user_message(
+        user_input="检索一份官方资料。",
+        session_id=session.session_id,
+        workspace_id=session.workspace_id,
+    )))
+
+    assert result.ok is False
+    assert result.error_type == "task_state_commit_failed"
+    assert "task_state_commit_failed" in result.errors
+    assert result.metadata["task_state_persistence"]["stage"] == "commit"
+
+
+def test_ssot_task_state_resolution_failure_is_fail_closed(monkeypatch, tmp_path):
+    monkeypatch.setenv("LZCORE_WORKSPACE_ROOT", str(tmp_path))
+    from agent.core.session import AgentSession
+    from agent.core.turn import AgentTurn
+    from agent.protocol.op import AgentOp
+    from agent.runtime.ssot_runtime import run_ssot_turn
+
+    called = []
+    _install_task_state_failure_probe_engine(monkeypatch)
+    monkeypatch.setattr("agent.runtime.ssot_runtime._build_engine", lambda **_kwargs: called.append(True))
+    monkeypatch.setattr(
+        "agent.runtime.task_state.resolve_task_state",
+        lambda **_kwargs: (_ for _ in ()).throw(OSError("simulated state read failure")),
+    )
+    session = AgentSession(session_id="session-task-state-resolution-failure", workspace_id="ws-task-state-failure")
+    result = run_ssot_turn(session, AgentTurn.from_op(AgentOp.user_message(
+        user_input="继续，补充验证。",
+        session_id=session.session_id,
+        workspace_id=session.workspace_id,
+    )))
+
+    assert result.ok is False
+    assert result.error_type == "task_state_resolution_failed"
+    assert "task_state_resolution_failed" in result.errors
+    assert result.metadata["task_state_persistence"]["stage"] == "resolution"
+    assert called == []
+
+def test_replan_contract_persists_failed_call_keys_and_queryloop_rejects_replay(monkeypatch, tmp_path):
+    import asyncio
+    from agent.llm.schemas import LLMResponse, LLMToolCall
+    from agent.runtime.task_state import commit_task_state, resolve_task_state
+    from core.runtime_engine.engine import SSOTRuntimeEngine
+    from core.runtime_engine.models import SSOTRuntimeConfig
+    from core.runtime_engine.query_loop import QueryLoop
+    from core.runtime_engine.tool_runtime import ToolRuntime
+
+    monkeypatch.setenv("LZCORE_WORKSPACE_ROOT", str(tmp_path))
+    call = LLMToolCall(
+        id="failed-replay",
+        name="workspace.file",
+        arguments={"action": "write", "filename": "state.txt", "content": "ready"},
+    )
+    config = SSOTRuntimeConfig(max_query_loop_iterations=2)
+    runtime = ToolRuntime(config)
+    invoked = []
+    runtime.register("workspace.file", lambda arguments: invoked.append(dict(arguments)) or {"ok": True})
+    registry = {
+        "workspace.file": {
+            "description": "files",
+            "args_schema": {
+                "type": "object",
+                "required": ["action"],
+                "properties": {
+                    "action": {"type": "string", "enum": ["write"]},
+                    "filename": {"type": "string"},
+                    "content": {"type": "string"},
+                },
+            },
+        },
+    }
+    call_key = QueryLoop(config, registry, runtime)._completion_key(call, 0)
+    first = commit_task_state(
+        workspace_id="ws-replan-fence",
+        session_id="session-replan-fence",
+        run_id="run-one",
+        user_input="写入状态文件。",
+        final_response="首次调用失败。",
+        run_ok=False,
+        runtime_metadata={
+            **_metadata(execution_outcome="partial", decision="continue_replan"),
+            "task_state_execution_manifest": [
+                {"tool_id": "workspace.file", "call_key": call_key, "side_effecting": True, "ok": False}
+            ],
+        },
+        tool_calls=[_tool(call_id="failed-replay", ok=False, tool_id="workspace.file")],
+    )
+    assert first is not None
+    contract = resolve_task_state(
+        workspace_id="ws-replan-fence",
+        session_id="session-replan-fence",
+        user_input="继续，换一种方式恢复。",
+        messages=[
+            {"role": "user", "content": "写入状态文件。", "run_id": "run-one"},
+            {"role": "assistant", "content": "首次调用失败。", "run_id": "run-one"},
+        ],
+    )
+    assert contract is not None
+    assert contract["status"] == "replan_required"
+    assert contract["failed_replan_call_keys"] == [call_key]
+
+    engine = SSOTRuntimeEngine(
+        config=config,
+        llm_invoke=lambda **_kwargs: LLMResponse(tool_calls=[call]),
+        tool_registry=registry,
+        tool_runtime=runtime,
+    )
+    result = asyncio.run(engine.run(
+        "继续，换一种方式恢复。",
+        workspace_id="ws-replan-fence",
+        session_id="session-replan-fence",
+        extras={"__trusted_task_state_contract": contract},
+    ))
+    assert invoked == []
+    assert result.success is False
+    assert "replan_repeated_failed_call" in result.errors
+    assert result.metadata["cognitive"]["outcome"] == "continue_replan"
+
+def test_task_state_maps_server_cancel_fact_to_cancelled(monkeypatch, tmp_path):
+    monkeypatch.setenv("LZCORE_WORKSPACE_ROOT", str(tmp_path))
+    from agent.runtime.task_state import commit_task_state, list_task_events
+
+    snapshot = commit_task_state(
+        workspace_id="ws-task-cancelled",
+        session_id="session-task-cancelled",
+        run_id="run-cancelled",
+        user_input="执行前停止任务。",
+        final_response="任务已取消。",
+        run_ok=False,
+        runtime_metadata={
+            **_metadata(execution_outcome="failed", decision="stop_failed"),
+            "runtime_errors": ["cancelled_by_user"],
+        },
+        tool_calls=[],
+    )
+    assert snapshot is not None
+    assert snapshot["task"]["status"] == "cancelled"
+    assert snapshot["task"]["next_action"] == "cancelled_by_user"
+    assert list_task_events("ws-task-cancelled", "session-task-cancelled")[-1]["event_type"] == "task_cancelled"
+
+def test_begin_task_state_creates_active_checkpoint_and_terminal_commit_advances_revision(monkeypatch, tmp_path):
+    monkeypatch.setenv("LZCORE_WORKSPACE_ROOT", str(tmp_path))
+    from agent.runtime.task_state import begin_task_state, commit_task_state, list_task_events
+
+    active = begin_task_state(
+        workspace_id="ws-active-checkpoint",
+        session_id="session-active-checkpoint",
+        run_id="run-active",
+        user_input="检索两份官方资料。",
+    )
+    assert active is not None
+    assert active["status"] == "active"
+    assert active["base_revision"] == 1
+    terminal = commit_task_state(
+        workspace_id="ws-active-checkpoint",
+        session_id="session-active-checkpoint",
+        run_id="run-active",
+        user_input="检索两份官方资料。",
+        final_response="已完成。",
+        run_ok=True,
+        runtime_metadata=_metadata(),
+        tool_calls=[],
+        continuation_contract=active,
+    )
+    assert terminal is not None
+    assert terminal["revision"] == 2
+    assert terminal["task"]["status"] == "completed"
+    assert [item["event_type"] for item in list_task_events("ws-active-checkpoint", "session-active-checkpoint")] == ["task_started", "task_completed"]
+
+
+def test_startup_reconciliation_interrupts_active_task_and_explicit_resume_recovers_contract(monkeypatch, tmp_path):
+    monkeypatch.setenv("LZCORE_WORKSPACE_ROOT", str(tmp_path))
+    from agent.runtime.task_state import begin_task_state, reconcile_active_task_states, resolve_task_state
+
+    active = begin_task_state(
+        workspace_id="ws-interrupt-recovery",
+        session_id="session-interrupt-recovery",
+        run_id="run-interrupt",
+        user_input="检索两份官方资料。",
+    )
+    assert active is not None
+    outcome = reconcile_active_task_states("ws-interrupt-recovery")
+    assert outcome["interrupted"] == 1
+    recovered = resolve_task_state(
+        workspace_id="ws-interrupt-recovery",
+        session_id="session-interrupt-recovery",
+        user_input="继续",
+        messages=[{"role": "user", "content": "检索两份官方资料。", "run_id": "run-interrupt"}],
+    )
+    assert recovered is not None
+    assert recovered["status"] == "interrupted"
+    assert recovered["source_run_id"] == "run-interrupt"
+
+
+def test_ssot_runtime_persists_active_checkpoint_before_engine_runs(monkeypatch, tmp_path):
+    monkeypatch.setenv("LZCORE_WORKSPACE_ROOT", str(tmp_path))
+    from types import SimpleNamespace
+    from agent.core.session import AgentSession
+    from agent.core.turn import AgentTurn
+    from agent.protocol.op import AgentOp
+    from agent.runtime.task_state import load_task_state
+    from agent.runtime.ssot_runtime import run_ssot_turn
+
+    captured = {}
+    class FakeEngine:
+        async def run(self, **kwargs):
+            captured.update(kwargs)
+            state = load_task_state("ws-runtime-active", "session-runtime-active")
+            assert state["task"]["status"] == "active"
+            assert state["task"]["source_run_id"]
+            return SimpleNamespace(
+                success=True,
+                final_response="已完成。",
+                node_results={},
+                errors=[],
+                metadata={"execution_outcome": "complete", "cognitive": {"outcome": "stop_completed"}},
+            )
+
+    monkeypatch.setattr("agent.runtime.ssot_runtime._build_engine", lambda **_kwargs: FakeEngine())
+    monkeypatch.setattr("agent.runtime.ssot_runtime.persist_run_record", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr("agent.runtime.ssot_runtime._record_experience_and_maybe_reflect", lambda **_kwargs: None)
+    session = AgentSession(session_id="session-runtime-active", workspace_id="ws-runtime-active")
+    result = run_ssot_turn(session, AgentTurn.from_op(AgentOp.user_message(
+        user_input="检索两份官方资料。",
+        session_id=session.session_id,
+        workspace_id=session.workspace_id,
+    )))
+    assert result.ok is True
+    assert result.metadata["task_state"]["task"]["status"] == "completed"
+    assert captured["extras"]["__trusted_task_state_contract"]["status"] == "active"
+
+def test_task_state_tool_checkpoint_preserves_unknown_mutation_for_restart(monkeypatch, tmp_path):
+    monkeypatch.setenv("LZCORE_WORKSPACE_ROOT", str(tmp_path))
+    from agent.runtime.task_state import (
+        begin_task_state,
+        checkpoint_task_state_execution,
+        reconcile_active_task_states,
+        load_task_state,
+    )
+
+    active = begin_task_state(
+        workspace_id="ws-tool-checkpoint",
+        session_id="session-tool-checkpoint",
+        run_id="run-tool-checkpoint",
+        user_input="写入审计文件。",
+    )
+    assert active is not None
+    prepared = checkpoint_task_state_execution(
+        workspace_id="ws-tool-checkpoint",
+        session_id="session-tool-checkpoint",
+        run_id="run-tool-checkpoint",
+        contract=active,
+        phase="prepared",
+        manifest=[{
+            "tool_id": "workspace.file",
+            "call_key": "workspace.file:write:audit",
+            "side_effecting": True,
+        }],
+    )
+    assert prepared is not None
+    assert prepared["pending_mutation_keys"] == ["workspace.file:write:audit"]
+    outcome = reconcile_active_task_states("ws-tool-checkpoint")
+    assert outcome["interrupted"] == 1
+    recovered = load_task_state("ws-tool-checkpoint", "session-tool-checkpoint")
+    assert recovered["task"]["status"] == "waiting_user"
+    assert recovered["task"]["next_action"] == "resolve_unknown_mutation_outcome"
+
+def test_queryloop_unknown_mutation_checkpoint_freezes_new_writes():
+    import asyncio
+    from agent.llm.schemas import LLMResponse, LLMToolCall
+    from core.runtime_engine.engine import SSOTRuntimeEngine
+    from core.runtime_engine.models import SSOTRuntimeConfig
+    from core.runtime_engine.tool_runtime import ToolRuntime
+
+    call = LLMToolCall(
+        id="unknown-write",
+        name="workspace.file",
+        arguments={"action": "write", "filename": "audit.txt", "content": "new"},
+    )
+    config = SSOTRuntimeConfig(max_query_loop_iterations=2)
+    runtime = ToolRuntime(config)
+    invoked = []
+    runtime.register("workspace.file", lambda arguments: invoked.append(dict(arguments)) or {"ok": True})
+    registry = {
+        "workspace.file": {
+            "description": "files",
+            "args_schema": {
+                "type": "object",
+                "required": ["action"],
+                "properties": {
+                    "action": {"type": "string", "enum": ["write"]},
+                    "filename": {"type": "string"},
+                    "content": {"type": "string"},
+                },
+            },
+        },
+    }
+    engine = SSOTRuntimeEngine(
+        config=config,
+        llm_invoke=lambda **_kwargs: LLMResponse(tool_calls=[call]),
+        tool_registry=registry,
+        tool_runtime=runtime,
+    )
+    result = asyncio.run(engine.run(
+        "继续完成任务。",
+        workspace_id="ws-unknown-mutation",
+        session_id="session-unknown-mutation",
+        extras={
+            "__trusted_task_state_contract": {
+                "task_id": "tsk-unknown",
+                "status": "waiting_user",
+                "pending_mutation_keys": ["workspace.file:write:unknown"],
+            },
+        },
+    ))
+    assert invoked == []
+    assert result.success is False
+    assert "task_state_unknown_mutation_outcome" in result.errors
+
+
+def test_queryloop_checkpoint_failure_prevents_tool_execution():
+    import asyncio
+    from agent.llm.schemas import LLMResponse, LLMToolCall
+    from core.runtime_engine.engine import SSOTRuntimeEngine
+    from core.runtime_engine.models import SSOTRuntimeConfig
+    from core.runtime_engine.tool_runtime import ToolRuntime
+
+    call = LLMToolCall(
+        id="checkpoint-write",
+        name="workspace.file",
+        arguments={"action": "write", "filename": "audit.txt", "content": "new"},
+    )
+    config = SSOTRuntimeConfig(max_query_loop_iterations=2)
+    runtime = ToolRuntime(config)
+    invoked = []
+    runtime.register("workspace.file", lambda arguments: invoked.append(dict(arguments)) or {"ok": True})
+    registry = {
+        "workspace.file": {
+            "description": "files",
+            "args_schema": {
+                "type": "object",
+                "required": ["action"],
+                "properties": {
+                    "action": {"type": "string", "enum": ["write"]},
+                    "filename": {"type": "string"},
+                    "content": {"type": "string"},
+                },
+            },
+        },
+    }
+    engine = SSOTRuntimeEngine(
+        config=config,
+        llm_invoke=lambda **_kwargs: LLMResponse(tool_calls=[call]),
+        tool_registry=registry,
+        tool_runtime=runtime,
+    )
+    result = asyncio.run(engine.run(
+        "写入审计文件。",
+        workspace_id="ws-checkpoint-failure",
+        session_id="session-checkpoint-failure",
+        extras={
+            "__task_state_execution_checkpoint": lambda *_args: (_ for _ in ()).throw(OSError("simulated checkpoint failure")),
+        },
+    ))
+    assert invoked == []
+    assert result.success is False
+    assert "task_state_checkpoint_failed" in result.errors
+
+def test_task_state_commit_failure_does_not_advance_secondary_continuation(monkeypatch, tmp_path):
+    monkeypatch.setenv("LZCORE_WORKSPACE_ROOT", str(tmp_path))
+    from agent.core.session import AgentSession
+    from agent.core.turn import AgentTurn
+    from agent.protocol.op import AgentOp
+    from agent.runtime.ssot_runtime import run_ssot_turn
+
+    _install_task_state_failure_probe_engine(monkeypatch)
+    continuation_calls = []
+    monkeypatch.setattr(
+        "agent.runtime.task_state.commit_task_state",
+        lambda **_kwargs: (_ for _ in ()).throw(OSError("simulated state storage failure")),
+    )
+    monkeypatch.setattr(
+        "agent.runtime.task_continuation.commit_task_continuation",
+        lambda **_kwargs: continuation_calls.append(True) or {},
+    )
+    session = AgentSession(session_id="session-secondary-order", workspace_id="ws-secondary-order")
+    result = run_ssot_turn(session, AgentTurn.from_op(AgentOp.user_message(
+        user_input="检索一份官方资料。",
+        session_id=session.session_id,
+        workspace_id=session.workspace_id,
+    )))
+    assert result.ok is False
+    assert result.error_type == "task_state_commit_failed"
+    assert continuation_calls == []

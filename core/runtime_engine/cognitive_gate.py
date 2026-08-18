@@ -51,6 +51,13 @@ def decide_next_action(
         if reflection_attempts < max(0, int(max_reflection_attempts)):
             return CognitiveDecision(CONTINUE_CORRECT_RESPONSE, ("response_quality_gap",), "回复尚缺少必要支撑，正在进行一次受控纠偏。", False)
         return CognitiveDecision(STOP_FAILED, ("response_quality_budget_exhausted",), "回复质量问题未在允许次数内修正，已安全停止。", True)
+    if terminal_error == "replan_repeated_failed_call":
+        return CognitiveDecision(
+            CONTINUE_REPLAN,
+            ("replan_repeated_failed_call",),
+            "上一轮失败步骤被确定性门禁拒绝重放，需要选择不同的替代恢复步骤。",
+            False,
+        )
     if terminal_error:
         return CognitiveDecision(STOP_FAILED, ("terminal_runtime_error",), "运行时发生无法继续的错误，未误报为完成。", True)
     if any(not bool(getattr(item, "ok", False)) for item in results):

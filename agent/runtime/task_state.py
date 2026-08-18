@@ -18,7 +18,7 @@ from typing import Any, Iterable
 from agent.runtime.task_relation_policy import classify_task_relation
 from storage.atomic_io import atomic_write_json
 from storage.locking import FileLock
-from storage.records import append_jsonl, read_jsonl, workspace_record_file
+from storage.records import append_jsonl, read_jsonl, workspace_record_dir, workspace_record_file
 
 _SCHEMA = "runtime.task_state.v1"
 _EVENT_SCHEMA = "runtime.task_event.v1"
@@ -79,6 +79,222 @@ def list_task_events(workspace_id: str, session_id: str, *, limit: int = 100) ->
     return read_jsonl(workspace_id, _event_parts(session_id))[-max(1, min(int(limit or 100), 500)) :]
 
 
+def begin_task_state(
+    *,
+    workspace_id: str,
+    session_id: str,
+    run_id: str,
+    user_input: str,
+    continuation_contract: dict[str, Any] | None = None,
+) -> dict[str, Any] | None:
+    """Persist a pre-execution checkpoint without running a model or tool.
+
+    The checkpoint records only server-owned lifecycle facts.  Its revision is
+    returned to the caller and becomes the only valid terminal CAS base.  A
+    process restart can therefore mark an in-flight run interrupted instead of
+    guessing whether unfinished tools executed.
+    """
+    if not str(run_id or "").strip():
+        return None
+    path = _state_path(workspace_id, session_id)
+    with FileLock(path.with_suffix(".lock")):
+        previous = _read_unlocked(path)
+        previous_task = previous.get("task") if isinstance(previous.get("task"), dict) else None
+        revision = int(previous.get("revision") or 0)
+        if continuation_contract:
+            if (
+                not previous_task
+                or str(previous_task.get("task_id") or "") != str(continuation_contract.get("task_id") or "")
+                or revision != int(continuation_contract.get("base_revision") or 0)
+            ):
+                return None
+            task = deepcopy(previous_task)
+            task["relationship"] = dict(continuation_contract.get("relationship") or {})
+            task["plan_revision"] = int(task.get("plan_revision") or 0) + 1
+            task["active_from_status"] = str(task.get("status") or "")
+        else:
+            task = _new_task(run_id, user_input)
+        now = _now_iso()
+        task["source_run_id"] = run_id
+        task["last_run_id"] = run_id
+        task["status"] = "active"
+        task["next_action"] = "run_query_loop"
+        task["updated_at"] = now
+        next_revision = revision + 1
+        task["revision"] = next_revision
+        record = {
+            "schema": _SCHEMA,
+            "workspace_id": workspace_id,
+            "session_id": session_id,
+            "revision": next_revision,
+            "task": task,
+            "updated_at": now,
+        }
+        event = {
+            "schema": _EVENT_SCHEMA,
+            "event_id": f"evt_{hashlib.sha256(f'{task.get('task_id', '')}:{next_revision}:{run_id}:started'.encode()).hexdigest()[:20]}",
+            "event_type": "task_started",
+            "task_id": str(task.get("task_id") or ""),
+            "revision": next_revision,
+            "run_id": run_id,
+            "at": now,
+            "status": "active",
+            "relationship": _relationship_kind(task.get("relationship")),
+            "tool_count": 0,
+            "successful_tool_count": 0,
+            "assertion_status": _assertion_status(task.get("assertions")),
+            "next_action": "run_query_loop",
+            "run_ok": False,
+            "execution_outcome": "in_progress",
+        }
+        append_jsonl(workspace_id, _event_parts(session_id), event)
+        atomic_write_json(path, record)
+        return _contract_from_state(record, task, recovery_status=str(task.get("active_from_status") or ""))
+
+
+def checkpoint_task_state_execution(
+    *,
+    workspace_id: str,
+    session_id: str,
+    run_id: str,
+    contract: dict[str, Any],
+    phase: str,
+    manifest: Iterable[dict[str, Any]],
+) -> dict[str, Any] | None:
+    """Persist server-generated tool intent/result facts during one active turn."""
+    if phase not in {"prepared", "settled"}:
+        raise ValueError("invalid_task_state_checkpoint_phase")
+    path = _state_path(workspace_id, session_id)
+    entries = [dict(item) for item in manifest if isinstance(item, dict)]
+    with FileLock(path.with_suffix(".lock")):
+        current = _read_unlocked(path)
+        task = current.get("task") if isinstance(current.get("task"), dict) else None
+        if (
+            not task
+            or str(task.get("task_id") or "") != str(contract.get("task_id") or "")
+            or int(current.get("revision") or 0) != int(contract.get("base_revision") or 0)
+            or str(task.get("status") or "") != "active"
+            or str(task.get("source_run_id") or "") != str(run_id or "")
+        ):
+            return None
+        task = deepcopy(task)
+        pending = _bounded_key_list(task.get("pending_mutation_keys"))
+        if phase == "prepared":
+            for item in entries:
+                if bool(item.get("side_effecting")):
+                    key = _bounded_text(item.get("call_key") or "", 640)
+                    if key:
+                        pending.append(key)
+        else:
+            settled = { _bounded_text(item.get("call_key") or "", 640) for item in entries }
+            pending = [key for key in pending if key not in settled]
+            task["completed_mutation_keys"] = _merge_completed_mutation_keys(
+                _as_list(task.get("completed_mutation_keys")), entries
+            )
+            task["failed_replan_call_keys"] = _merge_failed_replan_call_keys(
+                _as_list(task.get("failed_replan_call_keys")), entries
+            )
+        task["pending_mutation_keys"] = list(dict.fromkeys(pending))[-96:]
+        revision = int(current.get("revision") or 0) + 1
+        now = _now_iso()
+        task["revision"] = revision
+        task["updated_at"] = now
+        record = {
+            "schema": _SCHEMA, "workspace_id": workspace_id, "session_id": session_id,
+            "revision": revision, "task": task, "updated_at": now,
+        }
+        event = {
+            "schema": _EVENT_SCHEMA,
+            "event_id": f"evt_{hashlib.sha256(f'{task.get('task_id', '')}:{revision}:{run_id}:{phase}'.encode()).hexdigest()[:20]}",
+            "event_type": "task_tool_prepared" if phase == "prepared" else "task_tool_settled",
+            "task_id": str(task.get("task_id") or ""), "revision": revision, "run_id": run_id,
+            "at": now, "status": "active", "relationship": _relationship_kind(task.get("relationship")),
+            "tool_count": len(entries), "successful_tool_count": sum(1 for item in entries if bool(item.get("ok"))),
+            "assertion_status": _assertion_status(task.get("assertions")), "next_action": "run_query_loop",
+            "run_ok": False, "execution_outcome": "in_progress",
+        }
+        append_jsonl(workspace_id, _event_parts(session_id), event)
+        atomic_write_json(path, record)
+        return _contract_from_state(record, task, recovery_status=str(task.get("active_from_status") or ""))
+
+
+def _bounded_key_list(value: Any) -> list[str]:
+    return list(dict.fromkeys(
+        _bounded_text(item, 640) for item in _as_list(value)
+        if isinstance(item, str) and _bounded_text(item, 640)
+    ))[-96:]
+
+
+def reconcile_active_task_states(workspace_id: str) -> dict[str, int]:
+    """Mark only durable in-flight TaskStates interrupted after service start.
+
+    This function never dispatches a model or tool.  Explicit user continuation
+    must re-enter AgentApp and QueryLoop, where the normal policy, approval and
+    TaskState CAS fences remain authoritative.
+    """
+    sessions_dir = workspace_record_dir(workspace_id, "sessions", create=False)
+    if not sessions_dir.is_dir():
+        return {"interrupted": 0, "skipped": 0}
+    interrupted = 0
+    skipped = 0
+    for child in sessions_dir.iterdir():
+        if not child.is_dir():
+            continue
+        session_id = child.name
+        try:
+            _validate_session_id(session_id)
+        except ValueError:
+            skipped += 1
+            continue
+        path = _state_path(workspace_id, session_id)
+        with FileLock(path.with_suffix(".lock")):
+            state = _read_unlocked(path)
+            task = state.get("task") if isinstance(state.get("task"), dict) else None
+            if not task or str(task.get("status") or "") != "active":
+                continue
+            now = _now_iso()
+            revision = int(state.get("revision") or 0) + 1
+            task = deepcopy(task)
+            pending_mutations = _bounded_key_list(task.get("pending_mutation_keys"))
+            task["status"] = "waiting_user" if pending_mutations else "interrupted"
+            task["next_action"] = (
+                "resolve_unknown_mutation_outcome" if pending_mutations
+                else "resume_after_service_restart"
+            )
+            task["interrupted_reason"] = "service_restart"
+            task["updated_at"] = now
+            task["revision"] = revision
+            record = {
+                "schema": _SCHEMA,
+                "workspace_id": workspace_id,
+                "session_id": session_id,
+                "revision": revision,
+                "task": task,
+                "updated_at": now,
+            }
+            event = {
+                "schema": _EVENT_SCHEMA,
+                "event_id": f"evt_{hashlib.sha256(f'{task.get('task_id', '')}:{revision}:{task.get('source_run_id', '')}:interrupted'.encode()).hexdigest()[:20]}",
+                "event_type": "task_interrupted",
+                "task_id": str(task.get("task_id") or ""),
+                "revision": revision,
+                "run_id": str(task.get("source_run_id") or ""),
+                "at": now,
+                "status": str(task.get("status") or "interrupted"),
+                "relationship": _relationship_kind(task.get("relationship")),
+                "tool_count": 0,
+                "successful_tool_count": 0,
+                "assertion_status": _assertion_status(task.get("assertions")),
+                "next_action": str(task.get("next_action") or "resume_after_service_restart"),
+                "run_ok": False,
+                "execution_outcome": "unknown" if pending_mutations else "interrupted",
+            }
+            append_jsonl(workspace_id, _event_parts(session_id), event)
+            atomic_write_json(path, record)
+            interrupted += 1
+    return {"interrupted": interrupted, "skipped": skipped}
+
+
 def resolve_task_state(
     *,
     workspace_id: str,
@@ -107,16 +323,41 @@ def resolve_task_state(
         return None
     if not is_approval_resume:
         latest_user, latest_assistant = _latest_complete_exchange(messages)
-        if not latest_user or not latest_assistant:
-            return None
-        if str(latest_assistant.get("run_id") or "") != str(task.get("source_run_id") or ""):
-            return None
+        if str(task.get("status") or "") == "interrupted":
+            # An in-flight checkpoint may legitimately have no assistant half.
+            # Resume only when the last durable user request is exactly the
+            # interrupted run, never from an arbitrary new topic.
+            last_user = next(
+                (
+                    item for item in reversed(list(messages))
+                    if isinstance(item, dict) and str(item.get("role") or "") == "user"
+                ),
+                None,
+            )
+            if not isinstance(last_user, dict) or str(last_user.get("run_id") or "") != str(task.get("source_run_id") or ""):
+                return None
+        else:
+            if not latest_user or not latest_assistant:
+                return None
+            if str(latest_assistant.get("run_id") or "") != str(task.get("source_run_id") or ""):
+                return None
+    return _contract_from_state(state, task, relationship=relation)
+
+
+def _contract_from_state(
+    state: dict[str, Any],
+    task: dict[str, Any],
+    *,
+    recovery_status: str = "",
+    relationship: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     return {
         "schema": _SCHEMA,
         "task_id": str(task.get("task_id") or ""),
         "base_revision": int(state.get("revision") or 0),
-        "relationship": relation,
+        "relationship": dict(relationship if isinstance(relationship, dict) else (task.get("relationship") or {})),
         "status": str(task.get("status") or ""),
+        "recovery_status": str(recovery_status or task.get("active_from_status") or ""),
         "plan_revision": int(task.get("plan_revision") or 0),
         "replan_attempts": int(task.get("replan_attempts") or 0),
         "evidence_count": len(_as_list(task.get("evidence_refs"))),
@@ -126,6 +367,26 @@ def resolve_task_state(
         "source_run_id": str(task.get("source_run_id") or ""),
         "failure": _contract_failure(task.get("failure")),
         "completed_mutation_keys": _completed_mutation_keys(task),
+        "failed_replan_call_keys": _failed_replan_call_keys(task),
+        "pending_mutation_keys": _bounded_key_list(task.get("pending_mutation_keys")),
+    }
+
+
+def _new_task(run_id: str, user_input: str) -> dict[str, Any]:
+    now = _now_iso()
+    return {
+        "task_id": _task_id(run_id, user_input),
+        "objective": _bounded_text(user_input, 1200),
+        "constraints": [],
+        "relationship": {"kind": "initial"},
+        "plan_revision": 1,
+        "replan_attempts": 0,
+        "nodes": [],
+        "evidence_refs": [],
+        "unknowns": [],
+        "assertions": {},
+        "failure": {},
+        "created_at": now,
     }
 
 
@@ -137,6 +398,7 @@ def render_task_state_guidance(contract: dict[str, Any]) -> str:
         f"base_revision={int(contract.get('base_revision') or 0)}",
         f"relationship={_relationship_kind(contract.get('relationship'))}",
         f"prior_status={contract.get('status', '')}",
+        f"recovery_status={contract.get('recovery_status', '')}",
         f"plan_revision={int(contract.get('plan_revision') or 0)}",
         f"replan_attempts={int(contract.get('replan_attempts') or 0)}",
         f"evidence_count={int(contract.get('evidence_count') or 0)}",
@@ -158,8 +420,17 @@ def render_task_state_guidance(contract: dict[str, Any]) -> str:
     if completed_mutations:
         lines.append(f"completed_side_effect_count={len(completed_mutations)}")
         lines.append("Completed side-effecting calls are execution-fenced by the server; do not propose an identical replay.")
+    pending_mutations = _as_list(contract.get("pending_mutation_keys"))
+    if pending_mutations:
+        lines.append(f"unknown_mutation_outcome_count={len(pending_mutations)}")
+        lines.append("A prior side-effecting call may have been interrupted; do not propose any mutation until its outcome is independently verified.")
+    failed_replan_keys = _as_list(contract.get("failed_replan_call_keys"))
+    if failed_replan_keys:
+        lines.append(f"failed_replan_step_count={len(failed_replan_keys)}")
+        lines.append("The server rejects an identical replay of a prior failed replan step; select a materially different, policy-valid recovery step.")
     prior_status = str(contract.get("status") or "")
-    if prior_status == "replan_required":
+    recovery_status = str(contract.get("recovery_status") or "")
+    if prior_status == "replan_required" or recovery_status == "replan_required":
         lines.append("Replan from the recorded failure and verified evidence. Select a different, policy-valid observation or recovery step; do not merely retry the same failed plan.")
     elif prior_status == "waiting_approval":
         lines.append("This is an approved continuation. Continue only through the server-issued approval grant and preserve prior task evidence.")
@@ -255,25 +526,16 @@ def _evolve_task(
         task["relationship"] = relationship
         task["plan_revision"] = int(task.get("plan_revision") or 0) + 1
     else:
-        task = {
-            "task_id": _task_id(run_id, user_input),
-            "objective": _bounded_text(user_input, 1200),
-            "constraints": [],
-            "relationship": {"kind": "initial"},
-            "plan_revision": 1,
-            "replan_attempts": 0,
-            "nodes": [],
-            "evidence_refs": [],
-            "unknowns": [],
-            "assertions": {},
-            "failure": {},
-            "created_at": now,
-        }
+        task = _new_task(run_id, user_input)
     task["source_run_id"] = run_id
     task["last_run_id"] = run_id
     task["nodes"] = _merge_nodes(_as_list(task.get("nodes")), tool_calls)
     task["completed_mutation_keys"] = _merge_completed_mutation_keys(
         _as_list(task.get("completed_mutation_keys")),
+        metadata.get("task_state_execution_manifest"),
+    )
+    task["failed_replan_call_keys"] = _merge_failed_replan_call_keys(
+        _as_list(task.get("failed_replan_call_keys")),
         metadata.get("task_state_execution_manifest"),
     )
     task["evidence_refs"] = _merge_evidence(_as_list(task.get("evidence_refs")), metadata.get("evidence"), tool_calls)
@@ -282,11 +544,15 @@ def _evolve_task(
     task["failure"] = _failure_from_metadata(metadata, run_ok, tool_calls)
     if _replan_requested(task, metadata):
         prior_attempts = int(previous_task.get("replan_attempts") or 0) if previous_task else 0
-        prior_replan = str(previous_task.get("status") or "") == "replan_required" if previous_task else False
+        prior_replan = (
+            str(previous_task.get("status") or "") == "replan_required"
+            or str(previous_task.get("active_from_status") or "") == "replan_required"
+        ) if previous_task else False
         task["replan_attempts"] = prior_attempts + 1 if prior_replan else 1
     elif not previous_task or str(previous_task.get("status") or "") != "replan_required":
         task["replan_attempts"] = 0
     task["status"], task["next_action"] = _derive_status(task, metadata, run_ok)
+    task.pop("active_from_status", None)
     return task
 
 
@@ -388,6 +654,11 @@ def _derive_status(task: dict[str, Any], metadata: dict[str, Any], run_ok: bool)
     unknowns = _as_list(task.get("unknowns"))
     cognitive = metadata.get("cognitive") if isinstance(metadata.get("cognitive"), dict) else {}
     decision = str(cognitive.get("outcome") or "")
+    runtime_errors = [str(item).strip().lower() for item in _as_list(metadata.get("runtime_errors"))]
+    if "cancelled_by_user" in runtime_errors:
+        return "cancelled", "cancelled_by_user"
+    if _bounded_key_list(task.get("pending_mutation_keys")):
+        return "waiting_user", "resolve_unknown_mutation_outcome"
     if bool(metadata.get("approval_required")):
         return "waiting_approval", "resume_after_approval"
     if str(metadata.get("execution_outcome") or "") == "unknown" or unknowns:
@@ -420,6 +691,8 @@ def _event_from_transition(
         "waiting_user": "task_waiting_user",
         "waiting_approval": "task_waiting_approval",
         "failed": "task_failed",
+        "cancelled": "task_cancelled",
+        "interrupted": "task_interrupted",
     }.get(status, "task_updated")
     return {
         "schema": _EVENT_SCHEMA,
@@ -477,6 +750,36 @@ def _merge_completed_mutation_keys(existing: list[Any], manifest: Any) -> list[s
             if not isinstance(item, dict):
                 continue
             if not bool(item.get("ok")) or not bool(item.get("side_effecting")):
+                continue
+            key = _bounded_text(item.get("call_key") or "", 640)
+            if key:
+                keys.append(key)
+    return list(dict.fromkeys(keys))[-96:]
+
+
+def _failed_replan_call_keys(task: dict[str, Any]) -> list[str]:
+    return list(dict.fromkeys(
+        _bounded_text(item, 640)
+        for item in _as_list(task.get("failed_replan_call_keys"))
+        if isinstance(item, str) and _bounded_text(item, 640)
+    ))[-96:]
+
+
+def _merge_failed_replan_call_keys(existing: list[Any], manifest: Any) -> list[str]:
+    """Persist exact failed call identities for the next replan gate.
+
+    The list is server-generated from the QueryLoop execution manifest, never
+    from request metadata.  It forbids blind replay; a different call remains
+    eligible for normal policy validation and execution.
+    """
+    keys = [
+        _bounded_text(item, 640)
+        for item in existing
+        if isinstance(item, str) and _bounded_text(item, 640)
+    ]
+    if isinstance(manifest, list):
+        for item in manifest:
+            if not isinstance(item, dict) or bool(item.get("ok")):
                 continue
             key = _bounded_text(item.get("call_key") or "", 640)
             if key:

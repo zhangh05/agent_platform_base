@@ -32,6 +32,53 @@ _MEMORY_WRITE_EXECUTOR = concurrent.futures.ThreadPoolExecutor(
 )
 
 
+class _TaskStateResolutionFailure(RuntimeError):
+    """Internal marker for a fail-closed TaskState read boundary."""
+
+
+def _persist_inflight_user_message(session, turn, user_input: str) -> None:
+    """Durably retain the original request before tools can run.
+
+    The terminal run persistence writes the same `(run_id, user)` projection
+    again, so this is idempotent.  An interrupted process therefore restores a
+    safe untrusted context for an explicit later resume.
+    """
+    if not user_input or bool((getattr(turn.op, "metadata", {}) or {}).get("__approval_continuation_resume")):
+        return
+    from storage.message_store import SessionMessageStore
+    from core.runtime_engine.context_compaction import build_history_state_record
+    metadata = dict(getattr(turn.op, "metadata", {}) or {})
+    SessionMessageStore(session_id=session.session_id, ws_id=session.workspace_id).write_message(
+        turn.turn_id,
+        "user",
+        user_input,
+        metadata={
+            "created_at": now_iso(),
+            "client_request_id": str(metadata.get("client_request_id") or ""),
+            "attachments": list(metadata.get("attachments") or []),
+            "history_state": build_history_state_record(
+                "user", user_input, references=list(metadata.get("attachments") or [])
+            ),
+        },
+    )
+
+
+def _mark_task_state_persistence_failure(result: AgentResult, code: str) -> None:
+    """Prevent an uncommitted execution from being reported as task completion."""
+    result.ok = False
+    result.error_type = code
+    if code not in result.errors:
+        result.errors.append(code)
+    result.metadata.setdefault(
+        "task_state_persistence",
+        {"stage": "commit", "status": "failed", "code": code},
+    )
+    result.final_response = (
+        "本轮执行结果未能写入可信任务状态，系统已将其标记为未完成。"
+        "为避免重复或遗漏操作，请先恢复任务状态；不要据此回复继续执行副作用操作。"
+    )
+
+
 def run_ssot_turn(
     session,
     turn,
@@ -148,6 +195,7 @@ def run_ssot_turn(
     # Generic TaskState is a trusted runtime projection, not a second planner.
     # It carries only server-derived lifecycle facts into the canonical QueryLoop.
     task_state_contract: dict[str, Any] | None = None
+    task_state_resolution_error: Exception | None = None
     approval_parent_run_id = (
         str(metadata_in.get("approval_parent_run_id") or "")
         if metadata_in.get("__approval_continuation_resume") else ""
@@ -171,8 +219,58 @@ def run_ssot_turn(
                     render_task_state_guidance(task_state_contract),
                 )
             )
-    except Exception:
+    except Exception as exc:
+        # Generic task state is a safety-relevant SSOT contract.  Continuing as
+        # an untracked turn can repeat a prior mutation or falsely complete a
+        # replan, so defer a fail-closed result until the common context exists.
+        task_state_resolution_error = exc
         _LOG.warning("task state resolution failed", exc_info=True)
+    if task_state_resolution_error is None:
+        try:
+            from agent.runtime.task_state import begin_task_state
+            active_task_contract = begin_task_state(
+                workspace_id=workspace_id,
+                session_id=session_id,
+                run_id=turn.turn_id,
+                user_input=user_input,
+                continuation_contract=task_state_contract,
+            )
+            if active_task_contract is None:
+                raise RuntimeError("task_state_begin_rejected")
+            task_state_contract = active_task_contract
+            metadata_in["task_state_contract"] = active_task_contract
+            metadata_in["__trusted_task_state_contract"] = active_task_contract
+            trusted_items = list(metadata_in.get("trusted_prompt_items") or [])
+            metadata_in["trusted_prompt_items"] = [
+                item for item in trusted_items
+                if getattr(item, "source_kind", "") != "task_state"
+            ]
+            from core.runtime_engine.prompt_contract import trusted_prompt_item
+            from agent.runtime.task_state import render_task_state_guidance
+            metadata_in["trusted_prompt_items"].append(
+                trusted_prompt_item("task_state", render_task_state_guidance(active_task_contract))
+            )
+            from agent.runtime.task_state import checkpoint_task_state_execution
+            def _task_state_execution_checkpoint(phase: str, manifest: list[dict[str, Any]]):
+                nonlocal task_state_contract
+                next_contract = checkpoint_task_state_execution(
+                    workspace_id=workspace_id,
+                    session_id=session_id,
+                    run_id=turn.turn_id,
+                    contract=dict(task_state_contract or {}),
+                    phase=phase,
+                    manifest=manifest,
+                )
+                if next_contract is None:
+                    raise RuntimeError("task_state_execution_checkpoint_rejected")
+                task_state_contract = next_contract
+                metadata_in["task_state_contract"] = next_contract
+                metadata_in["__trusted_task_state_contract"] = next_contract
+                return next_contract
+            metadata_in["__task_state_execution_checkpoint"] = _task_state_execution_checkpoint
+        except Exception as exc:
+            task_state_resolution_error = exc
+            _LOG.warning("task state begin checkpoint failed", exc_info=True)
     retrieved_context_block = _build_retrieved_context_block(
         workspace_id=workspace_id,
         session_id=session_id,
@@ -207,6 +305,9 @@ def run_ssot_turn(
     ]
 
     try:
+        if task_state_resolution_error is not None:
+            raise _TaskStateResolutionFailure() from task_state_resolution_error
+        _persist_inflight_user_message(session, turn, user_input)
         engine = _build_engine(
             workspace_id=workspace_id,
             session_id=session_id,
@@ -313,6 +414,9 @@ def run_ssot_turn(
             "execution_outcome": str(
                 (runtime_result.metadata or {}).get("execution_outcome") or "complete"
             ),
+            # Server-produced terminal errors are lifecycle facts for TaskState;
+            # request metadata never contributes to this list.
+            "runtime_errors": [str(item)[:240] for item in (runtime_result.errors or []) if str(item).strip()][:16],
             "tool_execution_outcome": str(
                 (runtime_result.metadata or {}).get("tool_execution_outcome") or "complete"
             ),
@@ -370,6 +474,34 @@ def run_ssot_turn(
             no_tool_reason="" if tool_calls else "SSOT Runtime planner selected no tools.",
         )
 
+    except _TaskStateResolutionFailure:
+        elapsed_ms = int((time.monotonic() - started) * 1000)
+        events.append(_event("error", "TaskState resolution failed", trace_id, turn.turn_id, started_at=started))
+        result = AgentResult(
+            ok=False,
+            final_response=(
+                "任务状态无法读取，系统已安全停止，未执行模型或工具。"
+                "请稍后重试；不要把本轮视为已完成。"
+            ),
+            events=events,
+            trace_id=trace_id,
+            session_id=session_id,
+            turn_id=turn.turn_id,
+            errors=["task_state_resolution_failed"],
+            metadata={
+                **context.metadata,
+                "runtime_engine": "ssot_runtime",
+                "task_state_persistence": {"stage": "resolution", "status": "failed"},
+                "timeline_summary": {
+                    "node_count": len(events),
+                    "total_duration_ms": elapsed_ms,
+                    "artifact_saved_count": 0,
+                },
+            },
+            error_type="task_state_resolution_failed",
+            tool_decision={"needed": False, "reason": "TaskState resolution failed before execution."},
+            no_tool_reason="task_state_resolution_failed",
+        )
     except Exception as exc:
         _LOG.exception("SSOT Runtime turn failed")
         elapsed_ms = int((time.monotonic() - started) * 1000)
@@ -411,7 +543,36 @@ def run_ssot_turn(
         run_id=turn.turn_id,
         client_request_id=history_exclude_client_request_id,
     )
-    if not is_approval_pending:
+    task_state_commit_error = ""
+    try:
+        from agent.runtime.task_state import commit_task_state
+        task_state_snapshot = commit_task_state(
+            workspace_id=workspace_id,
+            session_id=session_id,
+            run_id=turn.turn_id,
+            user_input=user_input,
+            final_response=result.final_response or "",
+            run_ok=bool(result.ok),
+            runtime_metadata=dict((result.metadata or {}).get("ssot_runtime") or {}),
+            tool_calls=list(result.tool_calls or []),
+            continuation_contract=task_state_contract,
+        )
+        if task_state_snapshot and isinstance(result.metadata, dict):
+            result.metadata["task_state"] = task_state_snapshot
+        elif task_state_snapshot is None:
+            # A None result includes a stale continuation CAS.  Do not expose a
+            # seemingly completed response whose canonical task state did not
+            # advance.
+            task_state_commit_error = "task_state_commit_rejected"
+    except Exception:
+        task_state_commit_error = "task_state_commit_failed"
+        _LOG.warning("task state commit failed", exc_info=True)
+    if task_state_commit_error:
+        _mark_task_state_persistence_failure(result, task_state_commit_error)
+    elif not is_approval_pending:
+        # Enumerated delivery continuation is a secondary, domain-specific
+        # projection.  It may advance only after the generic TaskState SSOT
+        # accepted the same terminal turn; otherwise the two stores diverge.
         try:
             from agent.runtime.task_continuation import commit_task_continuation
 
@@ -428,23 +589,6 @@ def run_ssot_turn(
                 result.metadata["task_continuation"] = task_snapshot
         except Exception:
             _LOG.warning("task continuation commit failed", exc_info=True)
-    try:
-        from agent.runtime.task_state import commit_task_state
-        task_state_snapshot = commit_task_state(
-            workspace_id=workspace_id,
-            session_id=session_id,
-            run_id=turn.turn_id,
-            user_input=user_input,
-            final_response=result.final_response or "",
-            run_ok=bool(result.ok),
-            runtime_metadata=dict((result.metadata or {}).get("ssot_runtime") or {}),
-            tool_calls=list(result.tool_calls or []),
-            continuation_contract=task_state_contract,
-        )
-        if task_state_snapshot and isinstance(result.metadata, dict):
-            result.metadata["task_state"] = task_state_snapshot
-    except Exception:
-        _LOG.warning("task state commit failed", exc_info=True)
 
     persist_run_record(session, turn, result, context)
 
