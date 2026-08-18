@@ -3,6 +3,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 from agent.runtime.ssot_runtime import (
+    _build_history_block,
     _recent_session_attachments,
     _select_history_messages,
 )
@@ -116,3 +117,44 @@ def test_historical_attachment_is_reused_for_immediate_followup(monkeypatch):
     assert _recent_session_attachments(session, user_input="再详细一点") == [
         {"file_id": "file_config"},
     ]
+
+
+def test_quantity_only_continuation_keeps_immediate_exchange_constraints():
+    messages = [
+        _message("user", "连续输出24条企业网络值班检查项；每条完整中文，使用编号，不调用工具。"),
+        _message("assistant", "1. 核对交接班日志。\n2. 检查核心链路。"),
+        _message("user", "查询杭州天气"),
+        _message("assistant", "杭州今天有阵雨。"),
+        _message("user", "连续输出24条企业网络值班检查项；每条完整中文，使用编号，不调用工具。"),
+        _message("assistant", "1. 检查监控平台。\n2. 核对告警状态。"),
+    ]
+
+    recent, older, retrieved = _select_history_messages(messages, "再来30条")
+
+    assert [item["content"] for item in recent] == [
+        "连续输出24条企业网络值班检查项；每条完整中文，使用编号，不调用工具。",
+        "1. 检查监控平台。\n2. 核对告警状态。",
+    ]
+    assert older == []
+    assert retrieved is False
+
+
+def test_quantity_only_continuation_projects_constraints_into_prompt_history(monkeypatch):
+    messages = [
+        _message("user", "连续输出24条企业网络值班检查项；每条完整中文，使用编号，不调用工具。"),
+        _message("assistant", "1. 检查监控平台。\n2. 核对告警状态。"),
+    ]
+    monkeypatch.setattr(
+        "agent.runtime.ssot_runtime._load_context_messages",
+        lambda *_args, **_kwargs: messages,
+    )
+
+    block = _build_history_block(
+        SimpleNamespace(),
+        user_input="再来30条",
+    )
+
+    assert "RECENT CONVERSATION HISTORY:" in block
+    assert "连续输出24条企业网络值班检查项" in block
+    assert "每条完整中文，使用编号，不调用工具" in block
+    assert "检查监控平台" in block

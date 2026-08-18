@@ -1354,6 +1354,16 @@ def _is_immediate_followup(text: str) -> bool:
         value,
     ):
         return True
+    # Quantity-only continuations such as “再来30条” have no lexical topic
+    # signal, but their only coherent referent is the immediately preceding
+    # exchange. Treat them as continuation instructions before lexical history
+    # selection, so the original target, quantity and output constraints remain
+    # visible to the canonical QueryLoop prompt.
+    if re.fullmatch(
+        r"(?:再来|再给|再生成|再写|再列|再补)\s*(?:\d+|几|一些|一批)?\s*(?:条|个|项|份|段|组)?[。.!！?？\s]*",
+        value,
+    ):
+        return True
     return any(value.startswith(pattern) for pattern in _HISTORY_IMMEDIATE_PATTERNS)
 
 
