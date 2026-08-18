@@ -208,3 +208,36 @@ def test_quality_gate_accepts_textual_scope_deletion_with_exact_delivery_contrac
         task_continuation_contract=contract,
     )
     assert issues == []
+
+
+def test_shared_enumerated_parser_accepts_space_delimiter_and_inline_markers():
+    from core.runtime_engine.enumerated_items import extract_enumerated_items
+
+    items = extract_enumerated_items(
+        "PARK-01 检查核心设备。PARK-02 检查汇聚设备。\n- PARK-03：检查接入设备。"
+    )
+    assert [(item.prefix, item.ordinal) for item in items] == [
+        ("PARK-", 1),
+        ("PARK-", 2),
+        ("PARK-", 3),
+    ]
+
+
+def test_quality_gate_accepts_space_delimited_scope_contract_output():
+    contract = {
+        "relation": {"kind": "scope"},
+        "validation": {
+            "kind": "enumerated_items",
+            "mode": "replace_scope",
+            "expected_total_items": 3,
+            "expected_start_ordinal": 1,
+            "required_prefix": "PARK-",
+            "unit": "条",
+        },
+    }
+    issues = validate_response_quality(
+        "PARK-01 检查核心设备。PARK-02 检查汇聚设备。\nPARK-03 检查接入设备。",
+        user_input="删除其他章节，只保留3条，并保持 PARK- 前缀和连续编号。",
+        task_continuation_contract=contract,
+    )
+    assert issues == []

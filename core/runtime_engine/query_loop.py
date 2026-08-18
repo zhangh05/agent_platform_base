@@ -2207,19 +2207,32 @@ class QueryLoop:
                 # Real-world completion claims, runtime references and secret-like
                 # output require a bounded correction through this same QueryLoop.
                 # Other presentation observations remain non-blocking.
-                hard_quality_codes = {
+                # Safety violations describe external or sensitive facts and must
+                # never be delivered without evidence. Delivery-contract violations
+                # are recoverable text-shaping defects with independent retries.
+                safety_hard_quality_codes = {
                     "UNVERIFIED_ACTION_COMPLETION",
                     "UNVERIFIED_REFERENCE",
                     "SENSITIVE_OUTPUT",
                     "DELIVERED_EVIDENCE_DENIED",
+                }
+                contract_quality_codes = {
                     "TASK_CONTINUATION_CONTRACT_VIOLATION",
                 }
-                blocking_issues = [
+                safety_blocking_issues = [
                     issue for issue in quality_issues
-                    if issue.code in hard_quality_codes
+                    if issue.code in safety_hard_quality_codes
                 ]
+                contract_issues = [
+                    issue for issue in quality_issues
+                    if issue.code in contract_quality_codes
+                ]
+                blocking_issues = safety_blocking_issues + contract_issues
+                max_quality_corrections = (
+                    2 if contract_issues and not safety_blocking_issues else 1
+                )
                 if blocking_issues:
-                    if response_quality_attempts < 1 and iterations < max_iterations:
+                    if response_quality_attempts < max_quality_corrections and iterations < max_iterations:
                         response_quality_attempts += 1
                         ctx.extras.setdefault("response_quality_events", []).append({
                             "attempt": response_quality_attempts,
@@ -2243,14 +2256,21 @@ class QueryLoop:
                         continue
                     return finish(
                         final_response=(
-                            "当前答复包含无法由本轮证据支持的完成声明、引用或敏感内容；"
+                            "本轮文本交付未满足数量、编号或前缀合同，未覆盖上一版已交付内容；"
+                            "已完成有界格式纠正但仍未满足服务器校验。请重试或调整交付约束。"
+                            if contract_issues and not safety_blocking_issues
+                            else "当前答复包含无法由本轮证据支持的完成声明、引用或敏感内容；"
                             "为避免误导，未直接交付该内容。请提供可验证结果或允许先执行必要核验。"
                         ),
                         tool_results=all_results,
                         iterations=iterations,
                         total_tool_calls=len(all_results),
                         llm_calls=llm_calls,
-                        error="response_quality_failed",
+                        error=(
+                            "task_continuation_contract_failed"
+                            if contract_issues and not safety_blocking_issues
+                            else "response_quality_failed"
+                        ),
                     )
                 ctx.extras.setdefault("response_quality_events", []).append({
                     "attempt": 0,

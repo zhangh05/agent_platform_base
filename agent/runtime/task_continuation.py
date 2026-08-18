@@ -18,6 +18,7 @@ from storage.locking import FileLock
 from storage.records import workspace_record_file
 from storage.redaction import redact_text
 from agent.runtime.task_relation_policy import classify_task_relation, render_task_relation_guidance
+from core.runtime_engine.enumerated_items import extract_enumerated_items
 
 _SCHEMA = "runtime.task_continuation.v1"
 _SESSION_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,160}$")
@@ -28,10 +29,6 @@ _DETAIL_RE = re.compile(r"^(?:继续|接着|展开|详细点|再详细|再说说
 _REFINE_RE = re.compile(r"^(?:改成|改为|不要|只要|换成|调整为).{1,240}$")
 _COUNT_RE = re.compile(r"(?<!\d)(?P<count>\d{1,3})\s*(?P<unit>条|个|项|份|段|组)")
 _PREFIX_RE = re.compile(r"(?:以|用|使用)\s*[“\"']?(?P<prefix>[A-Za-z][A-Za-z0-9_-]{0,15}-)[”\"']?\s*开头")
-_ITEM_RE = re.compile(
-    r"^\s*(?:[-*+]\s+)?(?P<prefix>[A-Za-z][A-Za-z0-9_-]{0,15}-)?"
-    r"(?P<ordinal>\d{1,4})\s*(?:[.、:：)])"
-)
 
 
 def _now_iso() -> str:
@@ -67,17 +64,10 @@ def _parse_relation(user_input: str) -> dict[str, Any] | None:
 
 
 def _extract_items(text: str) -> list[dict[str, Any]]:
-    items: list[dict[str, Any]] = []
-    for line in str(text or "").splitlines():
-        match = _ITEM_RE.match(line)
-        if not match:
-            continue
-        items.append({
-            "prefix": str(match.group("prefix") or ""),
-            "ordinal": int(match.group("ordinal")),
-        })
-    return items
-
+    return [
+        {"prefix": item.prefix, "ordinal": item.ordinal}
+        for item in extract_enumerated_items(text)
+    ]
 
 def _delivery_contract(user_input: str, assistant_response: str) -> dict[str, Any] | None:
     request = str(user_input or "")

@@ -11,6 +11,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import re
 from typing import Iterable
+from .enumerated_items import extract_enumerated_items
 
 
 @dataclass(frozen=True)
@@ -201,15 +202,10 @@ def _validate_task_continuation_output(
     if expected_count <= 0 or expected_start <= 0:
         return None
     required_prefix = str(validation.get("required_prefix") or "")
-    item_pattern = re.compile(
-        r"^\s*(?:[-*+]\s+)?(?P<prefix>[A-Za-z][A-Za-z0-9_-]{0,15}-)?"
-        r"(?P<ordinal>\d{1,4})\s*(?:[.、:：)])"
-    )
-    items = []
-    for line in str(text or "").splitlines():
-        match = item_pattern.match(line)
-        if match:
-            items.append((str(match.group("prefix") or ""), int(match.group("ordinal"))))
+    items = [
+        (item.prefix, item.ordinal)
+        for item in extract_enumerated_items(text)
+    ]
     expected_ordinals = list(range(expected_start, expected_start + expected_count))
     actual_ordinals = [item[1] for item in items]
     prefixes_ok = not required_prefix or all(prefix == required_prefix for prefix, _ in items)

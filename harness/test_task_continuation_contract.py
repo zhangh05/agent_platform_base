@@ -398,3 +398,66 @@ def test_scope_progress_preserves_active_task_for_following_rewrite(monkeypatch,
     assert rewritten_task["source_run_id"] == "run_rewrite"
     assert rewritten_task["goal"] == original_goal
     assert rewritten_task["delivery_contract"]["requested_count"] == 3
+
+
+def test_query_loop_reports_exhausted_contract_retries_without_safety_fallback():
+    import asyncio
+    from unittest import mock
+    from core.runtime_engine import SSOTRuntimeConfig, SSOTRuntimeEngine
+
+    calls: list[dict] = []
+
+    def llm_mock(**kwargs):
+        calls.append(kwargs)
+        return _append_answer(1, 4)
+
+    engine = SSOTRuntimeEngine(
+        config=SSOTRuntimeConfig(),
+        llm_invoke=llm_mock,
+        tool_runtime=mock.MagicMock(),
+    )
+    result = asyncio.run(engine.run(
+        user_input="删除其他章节，只保留3条",
+        workspace_id="test",
+        extras={"task_continuation_contract": {
+            "schema": "runtime.task_continuation.v1",
+            "relation": {"kind": "scope"},
+            "validation": {
+                "kind": "enumerated_items",
+                "mode": "replace_scope",
+                "expected_total_items": 3,
+                "expected_start_ordinal": 1,
+                "required_prefix": "DC-",
+                "unit": "条",
+            },
+        }},
+    ))
+    assert result.success is False
+    assert "task_continuation_contract_failed" in result.errors
+    assert "无法由本轮证据支持" not in result.final_response
+    assert "未满足数量、编号或前缀合同" in result.final_response
+    assert len(calls) == 3
+
+
+def test_initial_contract_progress_accepts_inline_space_delimited_items(monkeypatch, tmp_path):
+    monkeypatch.setenv("LZCORE_WORKSPACE_ROOT", str(tmp_path))
+    response = (
+        "PARK-01 检查核心设备。PARK-02 检查汇聚设备。\n"
+        "PARK-03 检查接入设备。\nPARK-04 检查出口设备。\nPARK-05 检查网管平台。"
+    )
+    record = commit_task_continuation(
+        workspace_id="default",
+        session_id="session_inline_first_turn",
+        run_id="run_inline",
+        user_input=(
+            "连续输出5条园区网络交接检查项，每条以 PARK- 开头，"
+            "使用连续编号。"
+        ),
+        assistant_response=response,
+        run_ok=True,
+    )
+    assert record is not None
+    delivery = record["active_task"]["delivery_contract"]
+    assert delivery["produced_count"] == 5
+    assert delivery["last_ordinal"] == 5
+    assert delivery["prefix"] == "PARK-"
