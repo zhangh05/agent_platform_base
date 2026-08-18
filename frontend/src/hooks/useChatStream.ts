@@ -21,6 +21,7 @@ import { isApiError } from "../types";
 import type { AgentResult, ToolCallResult, InlineToolCall, CognitiveSummary, CognitiveEvent } from "../types";
 import { sanitizeAssistantText, toolLabel, filterStreamingThink, type ThinkFilterState } from "../utils/displayText";
 import { beginModelStep, canFallbackToHttp, discardToolCallDraft, finalizeStreamText, runningIdempotentRedirectJobId, shouldFlushUncommittedStreamDraft } from "../utils/agentStream";
+import { nextStreamRevealLength } from "../utils/streamReveal";
 import { agentResultFromWsDone } from "../utils/wsResult";
 import { notifyRunCompleted } from "../utils/appEvents";
 import { createStreamActivityWatchdog, STREAM_IDLE_TIMEOUT_MS } from "../utils/streamActivity";
@@ -31,7 +32,6 @@ const WS_TIMEOUT_MS = 3000;
 // Rendering Markdown is substantially more expensive than receiving tokens.
 // Five text-node updates per second looks fluid and leaves enough main-thread
 // time for input, navigation and scrolling during long responses.
-const TOKEN_FLUSH_MS = 200;
 
 export type ChatStreamAttachment = {
   file_id: string;
@@ -240,24 +240,55 @@ export function useChatStream(
       let interruptionReason = "";
 
       await new Promise<void>((resolve) => {
-        const flushTokenBuffer = () => {
+        // Transport receives every token immediately. Display commits are
+        // requestAnimationFrame-bound so the active bubble updates at most once
+        // per paint, while a large provider chunk is revealed over a bounded
+        // window instead of jumping into the DOM at once.
+        const reducedMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
+        let revealFrameId: number | null = null;
+        let pendingStartedAt: number | null = null;
+        let lastRevealAt = performance.now();
+        const flushTokenBuffer = (force = false) => {
           if (!tokenBufferRef.pending) return;
-          streamState.draft += tokenBufferRef.pending;
+          const now = performance.now();
+          if (pendingStartedAt === null) pendingStartedAt = now;
+          const visibleLength = nextStreamRevealLength(
+            tokenBufferRef.pending.length,
+            now - lastRevealAt,
+            now - pendingStartedAt,
+            { force, reducedMotion },
+          );
+          streamState.draft += tokenBufferRef.pending.slice(0, visibleLength);
           streamedText = streamState.draft;
-          tokenBufferRef.pending = "";
+          tokenBufferRef.pending = tokenBufferRef.pending.slice(visibleLength);
+          if (!tokenBufferRef.pending) pendingStartedAt = null;
+          lastRevealAt = now;
           useWorkbenchStore.getState().updateAssistant(
             streamingMsgId, { text: streamedText }, scratch,
           );
         };
-        const flushTimer = setInterval(flushTokenBuffer, TOKEN_FLUSH_MS);
+        const scheduleTokenFlush = () => {
+          if (!tokenBufferRef.pending || revealFrameId !== null) return;
+          revealFrameId = window.requestAnimationFrame(() => {
+            revealFrameId = null;
+            flushTokenBuffer();
+            scheduleTokenFlush();
+          });
+        };
+        const flushAllTokenBuffer = () => {
+          if (revealFrameId !== null) {
+            window.cancelAnimationFrame(revealFrameId);
+            revealFrameId = null;
+          }
+          flushTokenBuffer(true);
+        };
         let finished = false;
 
         const finish = () => {
           if (finished) return;
           finished = true;
           watchdog.stop();
-          clearInterval(flushTimer);
-          flushTokenBuffer();
+          flushAllTokenBuffer();
           resolve();
         };
 
@@ -290,7 +321,11 @@ export function useChatStream(
               case "token": {
                 const raw = msg.content || "";
                 const visible = filterStreamingThink(raw, thinkFilter);
-                tokenBufferRef.pending += visible;
+                if (visible) {
+                  if (!tokenBufferRef.pending) pendingStartedAt = performance.now();
+                  tokenBufferRef.pending += visible;
+                  scheduleTokenFlush();
+                }
                 break;
               }
               case "event": {
@@ -380,7 +415,7 @@ export function useChatStream(
                   }
                 }
                 if (stageName === "tool_call") {
-                  flushTokenBuffer();
+                  flushAllTokenBuffer();
                   discardToolCallDraft(streamState);
                   streamedText = "";
                   useWorkbenchStore.getState().updateAssistant(streamingMsgId, { text: "" }, scratch);
@@ -389,9 +424,8 @@ export function useChatStream(
               }
               case "done": {
                 terminalFrameReceived = true;
-                // The final token batch can arrive less than TOKEN_FLUSH_MS before done.
-                // Fold it into the draft before choosing between draft and final_response.
-                flushTokenBuffer();
+                // Terminal frames own the final response, so no reveal queue may remain.
+                flushAllTokenBuffer();
                 resolvedSid = msg.session_id || activeSessionId || "";
                 streamedText = finalizeStreamText(streamState.draft, msg.final_response || "");
                 streamingResult.session_id = msg.session_id;
@@ -431,24 +465,16 @@ export function useChatStream(
         };
 
         socket.onclose = () => {
+          // finish() force-flushes only interrupted visible-safe text; a
+          // terminal frame has already committed its authoritative response.
           if (shouldFlushUncommittedStreamDraft(terminalFrameReceived, tokenBufferRef.pending, streamState.draft, streamedText)) {
-            streamState.draft += tokenBufferRef.pending;
-            streamedText = streamState.draft;
-            tokenBufferRef.pending = "";
-            useWorkbenchStore.getState().updateAssistant(
-              streamingMsgId, { text: streamedText }, scratch,
-            );
+            flushAllTokenBuffer();
           }
           finish();
         };
         socket.onerror = () => {
           if (shouldFlushUncommittedStreamDraft(terminalFrameReceived, tokenBufferRef.pending, streamState.draft, streamedText)) {
-            streamState.draft += tokenBufferRef.pending;
-            streamedText = streamState.draft;
-            tokenBufferRef.pending = "";
-            useWorkbenchStore.getState().updateAssistant(
-              streamingMsgId, { text: streamedText }, scratch,
-            );
+            flushAllTokenBuffer();
           }
           finish();
         };

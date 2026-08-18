@@ -1,5 +1,5 @@
 export const STREAM_IDLE_TIMEOUT_MS = 30_000;
-export const STREAM_ELAPSED_TICK_MS = 1_000;
+export const STREAM_ELAPSED_TICK_MS = 250;
 
 type StreamActivityWatchdogOptions = {
   onTick: (elapsedMs: number) => void;
