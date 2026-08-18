@@ -100,6 +100,7 @@ def run_ssot_turn(
             str(metadata_in.get("approval_parent_run_id") or "")
             if metadata_in.get("__approval_continuation_resume") else ""
         ),
+        exclude_client_request_id=str(metadata_in.get("client_request_id") or ""),
     )
     if history_block:
         metadata_in["conversation_history_block"] = history_block
@@ -1226,6 +1227,7 @@ def _build_history_block(
     user_input: str = "",
     max_tokens: int = 8000,
     exclude_run_id: str = "",
+    exclude_client_request_id: str = "",
 ) -> str:
     """Build prompt-ready conversation context from the session message SSOT.
 
@@ -1239,7 +1241,11 @@ def _build_history_block(
     a second runtime path.
     """
     try:
-        messages = _load_context_messages(session, exclude_run_id=exclude_run_id)
+        messages = _load_context_messages(
+            session,
+            exclude_run_id=exclude_run_id,
+            exclude_client_request_id=exclude_client_request_id,
+        )
         if not messages:
             return ""
 
@@ -1473,7 +1479,10 @@ def _active_attachment_references(
 
 
 def _load_context_messages(
-    session, *, exclude_run_id: str = "",
+    session,
+    *,
+    exclude_run_id: str = "",
+    exclude_client_request_id: str = "",
 ) -> list[dict[str, str]]:
     persisted: list[dict[str, str]] = []
     persisted_seen: set[str] = set()
@@ -1484,6 +1493,12 @@ def _load_context_messages(
             from storage.message_store import SessionMessageStore
 
             for m in SessionMessageStore(session_id=session_id, ws_id=ws_id).get_messages():
+                metadata = m.get("metadata") if isinstance(m.get("metadata"), dict) else {}
+                if (
+                    exclude_client_request_id
+                    and str(metadata.get("client_request_id") or "") == exclude_client_request_id
+                ):
+                    continue
                 _append_context_message(persisted, persisted_seen, m)
         except Exception:
             _LOG.debug("SessionMessageStore history read failed for %s", session_id, exc_info=True)
