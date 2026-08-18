@@ -178,7 +178,7 @@ def _validate_task_continuation_output(
     if not isinstance(validation, dict) or validation.get("kind") != "enumerated_items":
         return None
     try:
-        expected_count = int(validation.get("expected_new_items") or 0)
+        expected_count = int(validation.get("expected_new_items") or validation.get("expected_total_items") or 0)
         expected_start = int(validation.get("expected_start_ordinal") or 0)
     except (TypeError, ValueError):
         return None
@@ -200,13 +200,23 @@ def _validate_task_continuation_output(
     if actual_ordinals == expected_ordinals and prefixes_ok:
         return None
     unit = str(validation.get("unit") or "条")
+    mode = str(validation.get("mode") or "append")
+    if mode == "replace_scope":
+        requirement = (
+            f"requires exactly {expected_count} total {unit}, numbered continuously "
+            f"from {expected_start} through {expected_start + expected_count - 1}"
+        )
+    else:
+        requirement = (
+            f"requires exactly {expected_count} new {unit}, numbered continuously "
+            f"from {expected_start} through {expected_start + expected_count - 1}"
+        )
     return ResponseQualityIssue(
         code="TASK_CONTINUATION_CONTRACT_VIOLATION",
         message=(
-            f"The server-derived append contract requires exactly {expected_count} new {unit}, "
-            f"numbered continuously from {expected_start} through {expected_start + expected_count - 1}"
+            "The server-derived task continuation contract " + requirement
             + (f" with prefix {required_prefix}" if required_prefix else "")
-            + ". Regenerate the complete continuation; do not treat the requested count as a final ordinal."
+            + ". Regenerate the complete continuation and satisfy this contract exactly."
         ),
     )
 

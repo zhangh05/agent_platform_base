@@ -17,6 +17,7 @@ from storage.atomic_io import atomic_write_json
 from storage.locking import FileLock
 from storage.records import workspace_record_file
 from storage.redaction import redact_text
+from agent.runtime.task_relation_policy import classify_task_relation, render_task_relation_guidance
 
 _SCHEMA = "runtime.task_continuation.v1"
 _SESSION_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,160}$")
@@ -60,23 +61,8 @@ def load_task_continuation(workspace_id: str, session_id: str) -> dict[str, Any]
     with FileLock(path.with_suffix(".lock")):
         return dict(_read_unlocked(path))
 
-
 def _parse_relation(user_input: str) -> dict[str, Any] | None:
-    value = str(user_input or "").strip()
-    match = _ADDITIONAL_RE.fullmatch(value)
-    if match:
-        count = int(match.group("count") or 0)
-        if count < 0 or count > 200:
-            return None
-        return {
-            "kind": "append",
-            "expected_new_items": count or None,
-            "unit": match.group("unit") or "",
-        }
-    if _DETAIL_RE.fullmatch(value):
-        return {"kind": "expand"}
-    if _REFINE_RE.fullmatch(value):
-        return {"kind": "refine", "instruction": value[:240]}
+    return classify_task_relation(user_input)
     return None
 
 
@@ -204,6 +190,15 @@ def resolve_task_continuation(
             "required_prefix": str(output.get("prefix") or ""),
             "unit": str(relation.get("unit") or output.get("unit") or "条"),
         }
+    elif relation["kind"] == "scope" and relation.get("target_item_count") and output.get("numbered"):
+        contract["validation"] = {
+            "kind": "enumerated_items",
+            "mode": "replace_scope",
+            "expected_total_items": int(relation["target_item_count"]),
+            "expected_start_ordinal": 1,
+            "required_prefix": str(output.get("prefix") or ""),
+            "unit": str(relation.get("unit") or output.get("unit") or "条"),
+        }
     return contract
 
 
@@ -226,6 +221,9 @@ def render_task_continuation_guidance(contract: dict[str, Any]) -> str:
             "Generate exactly expected_new_items NEW items, starting at expected_start_ordinal. "
             "The requested count is additional and must not be interpreted as the final ordinal."
         )
+    operation_guidance = render_task_relation_guidance(relation)
+    if operation_guidance:
+        lines.append(operation_guidance)
     return "\n".join(lines)
 def commit_task_continuation(
     *,
@@ -280,15 +278,14 @@ def commit_task_continuation(
 def _apply_continuation_progress(
     contract: dict[str, Any], response: str, *, run_id: str) -> dict[str, Any]:
     previous_output = dict(contract.get("delivery_contract") or {})
-    items = _extract_items(response)
-    output = dict(previous_output)
-    if items:
-        output["produced_count"] = int(previous_output.get("produced_count") or 0) + len(items)
-        output["last_ordinal"] = max(int(item["ordinal"]) for item in items)
     relation = dict(contract.get("relation") or {})
+    output = dict(previous_output)
+    if relation.get("kind") == "append":
+        items = _extract_items(response)
+        if items:
+            output["produced_count"] = int(previous_output.get("produced_count") or 0) + len(items)
+            output["last_ordinal"] = max(int(item["ordinal"]) for item in items)
     constraints = list(contract.get("constraints") or [])[:8]
-    if relation.get("kind") == "refine" and relation.get("instruction"):
-        constraints.append(str(relation["instruction"])[:240])
     return {
         "task_id": str(contract.get("task_id") or ""),
         "source_run_id": run_id,
