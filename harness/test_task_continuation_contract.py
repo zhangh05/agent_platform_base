@@ -330,3 +330,71 @@ def test_query_loop_corrects_structured_scope_contract_before_delivery():
     assert len(calls) == 2
     assert result.final_response.splitlines()[-1].startswith("DC-03")
     assert result.metadata["response_quality_corrections"] == 1
+
+
+def test_scope_progress_preserves_active_task_for_following_rewrite(monkeypatch, tmp_path):
+    monkeypatch.setenv("LZCORE_WORKSPACE_ROOT", str(tmp_path))
+    session_id = "session_scope_then_rewrite"
+    scope_input = "删除其他章节，只保留3条，并保持 DC- 前缀和连续编号。"
+    scope_contract = resolve_task_continuation(
+        workspace_id="default",
+        session_id=session_id,
+        user_input=scope_input,
+        messages=_seed_messages(),
+    )
+    assert scope_contract is not None
+    assert scope_contract["bootstrap"] is True
+    original_task_id = scope_contract["task_id"]
+    original_goal = scope_contract["goal"]
+    scoped_answer = _append_answer(1, 3)
+    scoped = commit_task_continuation(
+        workspace_id="default",
+        session_id=session_id,
+        run_id="run_scope",
+        user_input=scope_input,
+        assistant_response=scoped_answer,
+        run_ok=True,
+        continuation_contract=scope_contract,
+    )
+    assert scoped is not None
+    scoped_task = scoped["active_task"]
+    assert scoped_task["task_id"] == original_task_id
+    assert scoped_task["goal"] == original_goal
+    assert scoped_task["delivery_contract"]["requested_count"] == 3
+    assert scoped_task["delivery_contract"]["produced_count"] == 3
+    assert scoped_task["delivery_contract"]["last_ordinal"] == 3
+
+    rewrite_input = "把第2项重写得更正式，并保持当前3条范围不变。"
+    rewrite_contract = resolve_task_continuation(
+        workspace_id="default",
+        session_id=session_id,
+        user_input=rewrite_input,
+        messages=_seed_messages() + [
+            _message("user", scope_input, "request_scope"),
+            _message("assistant", scoped_answer, "run_scope"),
+        ],
+    )
+    assert rewrite_contract is not None
+    assert rewrite_contract["relation"]["kind"] == "rewrite"
+    assert rewrite_contract["task_id"] == original_task_id
+    assert rewrite_contract["delivery_contract"]["requested_count"] == 3
+
+    rewritten_answer = "\n".join(
+        f"DC-{index:02d}：正式网络交接检查项 {index}。"
+        for index in range(1, 4)
+    )
+    rewritten = commit_task_continuation(
+        workspace_id="default",
+        session_id=session_id,
+        run_id="run_rewrite",
+        user_input=rewrite_input,
+        assistant_response=rewritten_answer,
+        run_ok=True,
+        continuation_contract=rewrite_contract,
+    )
+    assert rewritten is not None
+    rewritten_task = rewritten["active_task"]
+    assert rewritten_task["task_id"] == original_task_id
+    assert rewritten_task["source_run_id"] == "run_rewrite"
+    assert rewritten_task["goal"] == original_goal
+    assert rewritten_task["delivery_contract"]["requested_count"] == 3

@@ -285,6 +285,15 @@ def _apply_continuation_progress(
         if items:
             output["produced_count"] = int(previous_output.get("produced_count") or 0) + len(items)
             output["last_ordinal"] = max(int(item["ordinal"]) for item in items)
+    elif relation.get("kind") == "scope":
+        validation = dict(contract.get("validation") or {})
+        target = int(validation.get("expected_total_items") or 0)
+        if target:
+            output["requested_count"] = target
+        items = _extract_items(response)
+        if items:
+            output["produced_count"] = len(items)
+            output["last_ordinal"] = max(int(item["ordinal"]) for item in items)
     constraints = list(contract.get("constraints") or [])[:8]
     return {
         "task_id": str(contract.get("task_id") or ""),

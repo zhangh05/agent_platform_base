@@ -211,3 +211,67 @@ def test_ssot_runtime_continuation_uses_assistant_terminal_run_id_from_persisted
     assert contract["validation"]["expected_start_ordinal"] == 5
     assert load_task_continuation(workspace_id, session_id)["active_task"]["delivery_contract"]["last_ordinal"] == 6
     assert result.ok is True
+
+
+def test_context_projection_excludes_current_prewrite_memory_tail(monkeypatch, tmp_path):
+    """The current provisional request must not break the prior complete exchange."""
+    monkeypatch.setenv("LZCORE_WORKSPACE_ROOT", str(tmp_path))
+    from agent.core.session import AgentSession
+    from agent.protocol.message import AssistantMessage, UserMessage
+    from agent.runtime.ssot_runtime import _load_context_messages
+    from agent.runtime.task_continuation import commit_task_continuation, resolve_task_continuation
+    from storage.message_store import SessionMessageStore
+
+    workspace_id = "ws-current-prewrite-memory"
+    session_id = "session-current-prewrite-memory"
+    request_id = "request-current-scope"
+    seed_prompt = "连续输出4条数据中心网络交接检查项；每条必须以DC-开头、使用编号、每条一句完整中文。"
+    seed_answer = "\n".join(
+        f"DC-{index:02d}：数据中心网络交接检查项 {index}。"
+        for index in range(1, 5)
+    )
+    scope_input = "删除其他章节，只保留3条，并保持 DC- 前缀和连续编号。"
+    store = SessionMessageStore(session_id=session_id, ws_id=workspace_id)
+    store.write_message("request_seed", "user", seed_prompt, metadata={})
+    store.write_message("run_seed", "assistant", seed_answer, metadata={})
+    store.write_message(
+        "request_scope", "user", scope_input,
+        metadata={"client_request_id": request_id, "provisional": True},
+    )
+    assert commit_task_continuation(
+        workspace_id=workspace_id,
+        session_id=session_id,
+        run_id="run_seed",
+        user_input=seed_prompt,
+        assistant_response=seed_answer,
+        run_ok=True,
+    ) is not None
+
+    session = AgentSession(
+        session_id=session_id,
+        workspace_id=workspace_id,
+        history=[
+            UserMessage(content=seed_prompt),
+            AssistantMessage(content=seed_answer),
+            UserMessage(content=scope_input),
+        ],
+    )
+    messages = _load_context_messages(
+        session,
+        exclude_client_request_id=request_id,
+        exclude_current_user_input=scope_input,
+    )
+    assert [(message["role"], message["content"]) for message in messages] == [
+        ("user", seed_prompt),
+        ("assistant", seed_answer),
+    ]
+    contract = resolve_task_continuation(
+        workspace_id=workspace_id,
+        session_id=session_id,
+        user_input=scope_input,
+        messages=messages,
+    )
+    assert contract is not None
+    assert contract["relation"]["kind"] == "scope"
+    assert contract["bootstrap"] is False
+    assert contract["validation"]["expected_total_items"] == 3

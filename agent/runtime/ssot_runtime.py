@@ -104,6 +104,7 @@ def run_ssot_turn(
         max_tokens=runtime_context_budget.history_tokens,
         exclude_run_id=history_exclude_run_id,
         exclude_client_request_id=history_exclude_client_request_id,
+        exclude_current_user_input=user_input,
     )
     if history_block:
         metadata_in["conversation_history_block"] = history_block
@@ -125,6 +126,7 @@ def run_ssot_turn(
                 session,
                 exclude_run_id=history_exclude_run_id,
                 exclude_client_request_id=history_exclude_client_request_id,
+                exclude_current_user_input=user_input,
             ),
         )
         if task_continuation_contract:
@@ -1278,6 +1280,7 @@ def _build_history_block(
     max_tokens: int = 8000,
     exclude_run_id: str = "",
     exclude_client_request_id: str = "",
+    exclude_current_user_input: str = "",
 ) -> str:
     """Build prompt-ready conversation context from the session message SSOT.
 
@@ -1295,6 +1298,7 @@ def _build_history_block(
             session,
             exclude_run_id=exclude_run_id,
             exclude_client_request_id=exclude_client_request_id,
+            exclude_current_user_input=exclude_current_user_input,
         )
         if not messages:
             return ""
@@ -1543,6 +1547,7 @@ def _load_context_messages(
     *,
     exclude_run_id: str = "",
     exclude_client_request_id: str = "",
+    exclude_current_user_input: str = "",
 ) -> list[dict[str, str]]:
     persisted: list[dict[str, str]] = []
     persisted_seen: set[str] = set()
@@ -1565,7 +1570,16 @@ def _load_context_messages(
 
     memory: list[dict[str, str]] = []
     memory_seen: set[str] = set()
-    for i, msg in enumerate(list(getattr(session, "history", None) or [])):
+    memory_source = list(getattr(session, "history", None) or [])
+    current_input = str(exclude_current_user_input or "").strip()
+    if current_input and memory_source:
+        latest = memory_source[-1]
+        if (
+            str(getattr(latest, "role", "") or "") == "user"
+            and str(getattr(latest, "content", "") or "").strip() == current_input
+        ):
+            memory_source = memory_source[:-1]
+    for i, msg in enumerate(memory_source):
         role = str(getattr(msg, "role", "") or "")
         content = str(getattr(msg, "content", "") or "")
         _append_context_message(memory, memory_seen, {
