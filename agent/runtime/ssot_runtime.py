@@ -104,7 +104,6 @@ def run_ssot_turn(
         max_tokens=runtime_context_budget.history_tokens,
         exclude_run_id=history_exclude_run_id,
         exclude_client_request_id=history_exclude_client_request_id,
-        exclude_current_user_input=user_input,
     )
     if history_block:
         metadata_in["conversation_history_block"] = history_block
@@ -126,7 +125,6 @@ def run_ssot_turn(
                 session,
                 exclude_run_id=history_exclude_run_id,
                 exclude_client_request_id=history_exclude_client_request_id,
-                exclude_current_user_input=user_input,
             ),
         )
         if task_continuation_contract:
@@ -374,6 +372,8 @@ def run_ssot_turn(
         result.final_response,
         include_user=not is_approval_resume,
         include_assistant=not is_approval_pending,
+        run_id=turn.turn_id,
+        client_request_id=history_exclude_client_request_id,
     )
     if not is_approval_pending:
         try:
@@ -1280,7 +1280,6 @@ def _build_history_block(
     max_tokens: int = 8000,
     exclude_run_id: str = "",
     exclude_client_request_id: str = "",
-    exclude_current_user_input: str = "",
 ) -> str:
     """Build prompt-ready conversation context from the session message SSOT.
 
@@ -1298,7 +1297,6 @@ def _build_history_block(
             session,
             exclude_run_id=exclude_run_id,
             exclude_client_request_id=exclude_client_request_id,
-            exclude_current_user_input=exclude_current_user_input,
         )
         if not messages:
             return ""
@@ -1547,7 +1545,6 @@ def _load_context_messages(
     *,
     exclude_run_id: str = "",
     exclude_client_request_id: str = "",
-    exclude_current_user_input: str = "",
 ) -> list[dict[str, str]]:
     persisted: list[dict[str, str]] = []
     persisted_seen: set[str] = set()
@@ -1570,22 +1567,18 @@ def _load_context_messages(
 
     memory: list[dict[str, str]] = []
     memory_seen: set[str] = set()
-    memory_source = list(getattr(session, "history", None) or [])
-    current_input = str(exclude_current_user_input or "").strip()
-    if current_input and memory_source:
-        latest = memory_source[-1]
-        if (
-            str(getattr(latest, "role", "") or "") == "user"
-            and str(getattr(latest, "content", "") or "").strip() == current_input
-        ):
-            memory_source = memory_source[:-1]
-    for i, msg in enumerate(memory_source):
+    for i, msg in enumerate(list(getattr(session, "history", None) or [])):
         role = str(getattr(msg, "role", "") or "")
         content = str(getattr(msg, "content", "") or "")
+        client_request_id = str(getattr(msg, "client_request_id", "") or "")
+        if exclude_client_request_id and client_request_id == exclude_client_request_id:
+            continue
         _append_context_message(memory, memory_seen, {
             "message_id": getattr(msg, "id", "") or getattr(msg, "message_id", "") or f"mem:{i}:{role}:{content[:40]}",
+            "run_id": getattr(msg, "run_id", "") or "",
             "role": role,
             "content": content,
+            "metadata": {"client_request_id": client_request_id},
         })
     overlap = _history_overlap(persisted, memory)
     merged = persisted + memory[overlap:]
@@ -1795,6 +1788,8 @@ def _sync_session_history(
     *,
     include_user: bool = True,
     include_assistant: bool = True,
+    run_id: str = "",
+    client_request_id: str = "",
 ) -> None:
     """Append current turn to session.history for context in next turns."""
     try:
@@ -1827,9 +1822,19 @@ def _sync_session_history(
             return
 
         if include_user and user_input:
-            history.append(UserMessage(content=user_input))
+            history.append(UserMessage(
+                content=user_input,
+                message_id=(f"{client_request_id}:user" if client_request_id else f"{run_id}:user"),
+                run_id=run_id,
+                client_request_id=client_request_id,
+            ))
         if include_assistant and final_response:
-            history.append(AssistantMessage(content=final_response))
+            history.append(AssistantMessage(
+                content=final_response,
+                message_id=f"{run_id}:assistant",
+                run_id=run_id,
+                client_request_id=client_request_id,
+            ))
     except Exception:
         logging.getLogger(__name__).warning("Failed to sync session history", exc_info=True)
 def _approved_call_key(tool_id: str, args: dict[str, Any]) -> str:

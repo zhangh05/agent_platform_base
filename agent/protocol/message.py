@@ -9,6 +9,9 @@ from typing import Optional, List
 class UserMessage:
     role: str = "user"
     content: str = ""
+    message_id: str = ""
+    run_id: str = ""
+    client_request_id: str = ""
 
     def to_llm_message(self):
         from agent.llm.schemas import LLMMessage
@@ -30,6 +33,9 @@ class AssistantMessage:
     role: str = "assistant"
     content: str = ""
     tool_calls: list = field(default_factory=list)
+    message_id: str = ""
+    run_id: str = ""
+    client_request_id: str = ""
 
     def to_llm_message(self):
         from agent.llm.schemas import LLMMessage

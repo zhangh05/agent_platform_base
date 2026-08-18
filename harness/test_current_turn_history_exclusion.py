@@ -251,19 +251,18 @@ def test_context_projection_excludes_current_prewrite_memory_tail(monkeypatch, t
         session_id=session_id,
         workspace_id=workspace_id,
         history=[
-            UserMessage(content=seed_prompt),
-            AssistantMessage(content=seed_answer),
-            UserMessage(content=scope_input),
+            UserMessage(content=seed_prompt, message_id="request_seed:user", run_id="request_seed"),
+            AssistantMessage(content=seed_answer, message_id="run_seed:assistant", run_id="run_seed"),
+            UserMessage(content=scope_input, message_id="request_scope:user", client_request_id=request_id),
         ],
     )
     messages = _load_context_messages(
         session,
         exclude_client_request_id=request_id,
-        exclude_current_user_input=scope_input,
     )
-    assert [(message["role"], message["content"]) for message in messages] == [
-        ("user", seed_prompt),
-        ("assistant", seed_answer),
+    assert [(message["role"], message["content"], message.get("run_id")) for message in messages] == [
+        ("user", seed_prompt, "request_seed"),
+        ("assistant", seed_answer, "run_seed"),
     ]
     contract = resolve_task_continuation(
         workspace_id=workspace_id,
@@ -275,3 +274,44 @@ def test_context_projection_excludes_current_prewrite_memory_tail(monkeypatch, t
     assert contract["relation"]["kind"] == "scope"
     assert contract["bootstrap"] is False
     assert contract["validation"]["expected_total_items"] == 3
+
+
+def test_session_history_lifecycle_preserves_message_identity(monkeypatch, tmp_path):
+    monkeypatch.setenv("LZCORE_WORKSPACE_ROOT", str(tmp_path))
+    from agent.app.facade import _restore_session_history
+    from agent.core.session import AgentSession
+    from agent.runtime.ssot_runtime import _sync_session_history
+    from storage.message_store import SessionMessageStore
+
+    workspace_id = "ws-message-identity"
+    session_id = "session-message-identity"
+    request_id = "request-stable-identity"
+    run_id = "run-terminal-identity"
+    store = SessionMessageStore(session_id=session_id, ws_id=workspace_id)
+    store.write_message(
+        "request_persisted",
+        "user",
+        "已持久化请求",
+        metadata={"client_request_id": request_id},
+    )
+    store.write_message("run_persisted", "assistant", "已持久化答复", metadata={})
+
+    restored = AgentSession(session_id=session_id, workspace_id=workspace_id)
+    _restore_session_history(restored, session_id, workspace_id)
+    assert restored.history[0].message_id == "request_persisted:user"
+    assert restored.history[0].run_id == "request_persisted"
+    assert restored.history[0].client_request_id == request_id
+    assert restored.history[1].message_id == "run_persisted:assistant"
+    fresh = AgentSession(session_id="fresh-identity", workspace_id=workspace_id)
+    _sync_session_history(
+        fresh,
+        "本轮请求",
+        "本轮答复",
+        run_id=run_id,
+        client_request_id=request_id,
+    )
+    assert fresh.history[0].message_id == f"{request_id}:user"
+    assert fresh.history[0].client_request_id == request_id
+    assert fresh.history[1].message_id == f"{run_id}:assistant"
+    assert fresh.history[1].run_id == run_id
+    assert fresh.history[1].client_request_id == request_id

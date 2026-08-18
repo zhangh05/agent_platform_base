@@ -28,10 +28,24 @@ def _restore_session_history(session, session_id: str, workspace_id: str):
             for m in msgs:
                 role = m.get("role", "")
                 content = m.get("content", "")
+                message_id = str(m.get("message_id") or "")
+                run_id = str(m.get("run_id") or "")
+                metadata = m.get("metadata") if isinstance(m.get("metadata"), dict) else {}
+                client_request_id = str(metadata.get("client_request_id") or "")
                 if role == "user" and content:
-                    history.append(UserMessage(content=content))
+                    history.append(UserMessage(
+                        content=content,
+                        message_id=message_id,
+                        run_id=run_id,
+                        client_request_id=client_request_id,
+                    ))
                 elif role == "assistant" and content:
-                    history.append(AssistantMessage(content=content))
+                    history.append(AssistantMessage(
+                        content=content,
+                        message_id=message_id,
+                        run_id=run_id,
+                        client_request_id=client_request_id,
+                    ))
             if history:
                 session.history = history
                 logger.info("Restored %d history messages for session %s from disk", len(history), session_id)
