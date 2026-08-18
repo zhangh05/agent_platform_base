@@ -714,11 +714,19 @@ def _event_from_transition(
 
 
 def _replan_requested(task: dict[str, Any], metadata: dict[str, Any]) -> bool:
+    """Honor the cognitive terminal decision before legacy retryable-failure fallback.
+
+    A failed observation remains durable audit evidence, but it must not override
+    a server-derived ``stop_completed`` decision after execution outcome and
+    assertions prove that another result satisfied the objective.  The fallback
+    retains compatibility for terminal callers that predate cognitive metadata.
+    """
     failure = dict(task.get("failure") or {})
     cognitive = metadata.get("cognitive") if isinstance(metadata.get("cognitive"), dict) else {}
-    return str(cognitive.get("outcome") or "") == "continue_replan" or bool(
-        failure and failure.get("retryable")
-    )
+    decision = str(cognitive.get("outcome") or "")
+    if decision:
+        return decision == "continue_replan"
+    return bool(failure and failure.get("retryable"))
 
 
 def _contract_failure(value: Any) -> dict[str, Any]:

@@ -205,6 +205,31 @@ def test_retryable_tool_failure_marks_replan_required(monkeypatch, tmp_path):
 
 
 
+def test_completed_cognitive_decision_does_not_replan_from_retryable_tool_failure(monkeypatch, tmp_path):
+    """A recovered non-critical failure must not split UI completion from TaskState SSOT."""
+    monkeypatch.setenv("LZCORE_WORKSPACE_ROOT", str(tmp_path))
+    from agent.runtime.task_state import commit_task_state, list_task_events
+
+    snapshot = commit_task_state(
+        workspace_id="ws-complete-after-failure",
+        session_id="session-complete-after-failure",
+        run_id="run-one",
+        user_input="读取官方页面并只交付已验证的结果。",
+        final_response="已使用可核验证据完成交付。",
+        run_ok=True,
+        runtime_metadata=_metadata(execution_outcome="complete", decision="stop_completed"),
+        tool_calls=[_tool(call_id="call-ok"), _tool(call_id="call-failed", ok=False)],
+    )
+    assert snapshot is not None
+    assert snapshot["task"]["status"] == "completed"
+    assert snapshot["task"]["next_action"] == "await_user_or_continuation"
+    assert snapshot["task"]["failure"]["classification"] == "tool_failure"
+    event = list_task_events("ws-complete-after-failure", "session-complete-after-failure")[-1]
+    assert event["event_type"] == "task_completed"
+    assert event["execution_outcome"] == "complete"
+    assert event["successful_tool_count"] == 1
+
+
 def test_replan_contract_projects_failure_and_completed_mutation_fence(monkeypatch, tmp_path):
     monkeypatch.setenv("LZCORE_WORKSPACE_ROOT", str(tmp_path))
     from agent.runtime.task_state import (
