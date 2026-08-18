@@ -540,6 +540,7 @@ def finish_session_turn_snapshot(
     job_id: str,
     session_id: str,
     *,
+    client_request_id: str = "",
     run_id: str = "",
     trace_id: str = "",
     ok: bool,
@@ -554,6 +555,13 @@ def finish_session_turn_snapshot(
     cancelled = bool(getattr(rec, "cancel_requested", False))
     metadata = dict(rec.metadata or {})
     active = dict(metadata.get("active_turn") or {})
+    active_request_id = str(active.get("client_request_id") or "")
+    if client_request_id and active_request_id and active_request_id != str(client_request_id):
+        _log.warning(
+            "stale terminal snapshot ignored ws=%s job=%s session=%s request=%s active_request=%s",
+            ws_id, job_id, session_id, str(client_request_id)[:32], active_request_id[:32],
+        )
+        return
     terminal_status = "cancelled" if cancelled else ("succeeded" if ok else "failed")
     terminal_stage = "turn_cancelled" if cancelled else ("turn_completed" if ok else "turn_failed")
     terminal_label = "已取消" if cancelled else ("形成建议" if ok else "处理失败")

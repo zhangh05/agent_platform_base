@@ -557,6 +557,7 @@ def _run_agent_thread(
                     workspace_id,
                     job_id,
                     effective_session_id,
+                    client_request_id=client_request_id,
                     run_id=result_payload.get("turn_id", ""),
                     trace_id=result_payload.get("trace_id", ""),
                     ok=bool(result_payload.get("ok", not result_payload.get("errors"))),
@@ -638,6 +639,7 @@ def _run_agent_thread(
                     workspace_id,
                     job_id,
                     session_id,
+                    client_request_id=client_request_id,
                     ok=False,
                     error=str(e),
                 )
