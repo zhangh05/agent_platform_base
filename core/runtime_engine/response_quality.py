@@ -49,11 +49,18 @@ def validate_response_quality(
     tool_results: Iterable[object] = (),
     evidence: dict | None = None,
     known_reference_ids: Iterable[str] = (),
+    task_continuation_contract: dict | None = None,
 ) -> list[ResponseQualityIssue]:
     """Return deterministic user-visible quality violations."""
     value = str(text or "")
     tool_results = tuple(tool_results)
     issues: list[ResponseQualityIssue] = []
+    continuation_issue = _validate_task_continuation_output(
+        value,
+        task_continuation_contract,
+    )
+    if continuation_issue:
+        issues.append(continuation_issue)
 
     if "\ufffd" in value:
         issues.append(ResponseQualityIssue(
@@ -157,6 +164,50 @@ def build_response_quality_nudge(issues: Iterable[ResponseQualityIssue]) -> str:
         "verified evidence and the user's original request. You may call tools if scope evidence is missing. "
         "Return a clean user-facing answer, not a discussion of this correction.\n"
         + details
+    )
+
+
+def _validate_task_continuation_output(
+    text: str,
+    contract: dict | None,
+) -> ResponseQualityIssue | None:
+    """Validate only server-derived mechanical continuation constraints."""
+    if not isinstance(contract, dict):
+        return None
+    validation = contract.get("validation")
+    if not isinstance(validation, dict) or validation.get("kind") != "enumerated_items":
+        return None
+    try:
+        expected_count = int(validation.get("expected_new_items") or 0)
+        expected_start = int(validation.get("expected_start_ordinal") or 0)
+    except (TypeError, ValueError):
+        return None
+    if expected_count <= 0 or expected_start <= 0:
+        return None
+    required_prefix = str(validation.get("required_prefix") or "")
+    item_pattern = re.compile(
+        r"^\s*(?:[-*+]\s+)?(?P<prefix>[A-Za-z][A-Za-z0-9_-]{0,15}-)?"
+        r"(?P<ordinal>\d{1,4})\s*(?:[.、:：)])"
+    )
+    items = []
+    for line in str(text or "").splitlines():
+        match = item_pattern.match(line)
+        if match:
+            items.append((str(match.group("prefix") or ""), int(match.group("ordinal"))))
+    expected_ordinals = list(range(expected_start, expected_start + expected_count))
+    actual_ordinals = [item[1] for item in items]
+    prefixes_ok = not required_prefix or all(prefix == required_prefix for prefix, _ in items)
+    if actual_ordinals == expected_ordinals and prefixes_ok:
+        return None
+    unit = str(validation.get("unit") or "条")
+    return ResponseQualityIssue(
+        code="TASK_CONTINUATION_CONTRACT_VIOLATION",
+        message=(
+            f"The server-derived append contract requires exactly {expected_count} new {unit}, "
+            f"numbered continuously from {expected_start} through {expected_start + expected_count - 1}"
+            + (f" with prefix {required_prefix}" if required_prefix else "")
+            + ". Regenerate the complete continuation; do not treat the requested count as a final ordinal."
+        ),
     )
 
 

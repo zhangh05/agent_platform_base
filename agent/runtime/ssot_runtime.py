@@ -54,6 +54,7 @@ def run_ssot_turn(
     session_id = getattr(session, "session_id", "") or getattr(turn.op, "session_id", "")
     user_input = (getattr(turn.op, "user_input", "") or "").strip()
     metadata_in = dict(getattr(turn.op, "metadata", {}) or {})
+    task_continuation_contract: dict[str, Any] | None = None
 
     try:
         from backend.core.chat_attachments import build_attachment_runtime_guidance
@@ -92,18 +93,50 @@ def run_ssot_turn(
 
     # ── Build canonical conversation context for prompt injection ──
     metadata_in["__raw_user_input"] = user_input
+    history_exclude_run_id = (
+        str(metadata_in.get("approval_parent_run_id") or "")
+        if metadata_in.get("__approval_continuation_resume") else ""
+    )
+    history_exclude_client_request_id = str(metadata_in.get("client_request_id") or "")
     history_block = _build_history_block(
         session,
         user_input=user_input,
         max_tokens=runtime_context_budget.history_tokens,
-        exclude_run_id=(
-            str(metadata_in.get("approval_parent_run_id") or "")
-            if metadata_in.get("__approval_continuation_resume") else ""
-        ),
-        exclude_client_request_id=str(metadata_in.get("client_request_id") or ""),
+        exclude_run_id=history_exclude_run_id,
+        exclude_client_request_id=history_exclude_client_request_id,
     )
     if history_block:
         metadata_in["conversation_history_block"] = history_block
+    # Session task continuation is a separate SSOT. Only server-derived
+    # relation/progress fields enter trusted guidance; historic user wording
+    # remains untrusted in the conversation history block.
+    try:
+        from agent.runtime.task_continuation import (
+            render_task_continuation_guidance,
+            resolve_task_continuation,
+        )
+        from core.runtime_engine.prompt_contract import trusted_prompt_item
+
+        task_continuation_contract = resolve_task_continuation(
+            workspace_id=workspace_id,
+            session_id=session_id,
+            user_input=user_input,
+            messages=_load_context_messages(
+                session,
+                exclude_run_id=history_exclude_run_id,
+                exclude_client_request_id=history_exclude_client_request_id,
+            ),
+        )
+        if task_continuation_contract:
+            metadata_in["task_continuation_contract"] = task_continuation_contract
+            metadata_in.setdefault("trusted_prompt_items", []).append(
+                trusted_prompt_item(
+                    "task_continuation",
+                    render_task_continuation_guidance(task_continuation_contract),
+                )
+            )
+    except Exception:
+        _LOG.warning("task continuation resolution failed", exc_info=True)
     retrieved_context_block = _build_retrieved_context_block(
         workspace_id=workspace_id,
         session_id=session_id,
@@ -340,6 +373,23 @@ def run_ssot_turn(
         include_user=not is_approval_resume,
         include_assistant=not is_approval_pending,
     )
+    if not is_approval_pending:
+        try:
+            from agent.runtime.task_continuation import commit_task_continuation
+
+            task_snapshot = commit_task_continuation(
+                workspace_id=workspace_id,
+                session_id=session_id,
+                run_id=turn.turn_id,
+                user_input=user_input,
+                assistant_response=result.final_response or "",
+                run_ok=bool(result.ok),
+                continuation_contract=task_continuation_contract,
+            )
+            if task_snapshot and isinstance(result.metadata, dict):
+                result.metadata["task_continuation"] = task_snapshot
+        except Exception:
+            _LOG.warning("task continuation commit failed", exc_info=True)
 
     persist_run_record(session, turn, result, context)
 

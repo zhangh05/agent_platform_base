@@ -2199,6 +2199,7 @@ class QueryLoop:
                 tool_results=all_results,
                 evidence=evidence_summary(ctx.extras),
                 known_reference_ids=(ctx.request_id, ctx.session_id, ctx.workspace_id),
+                task_continuation_contract=ctx.extras.get("task_continuation_contract"),
             )
             quality_observation = {}
             if quality_issues:
@@ -2211,6 +2212,7 @@ class QueryLoop:
                     "UNVERIFIED_REFERENCE",
                     "SENSITIVE_OUTPUT",
                     "DELIVERED_EVIDENCE_DENIED",
+                    "TASK_CONTINUATION_CONTRACT_VIOLATION",
                 }
                 blocking_issues = [
                     issue for issue in quality_issues
