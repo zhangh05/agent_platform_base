@@ -1315,6 +1315,13 @@ class QueryLoop:
         validation_correction_attempts = 0
         response_quality_attempts = 0
         completed_call_keys: set[str] = set()
+        trusted_task_state = ctx.extras.get("__trusted_task_state_contract")
+        if isinstance(trusted_task_state, dict):
+            completed_call_keys.update(
+                str(item)[:640]
+                for item in (trusted_task_state.get("completed_mutation_keys") or [])
+                if isinstance(item, str) and str(item).strip()
+            )
         mutation_epoch = 0
         used_call_ids: set[str] = set()
         execution_duration_ms = 0.0
@@ -1392,6 +1399,9 @@ class QueryLoop:
                 "response_quality_events": list(
                     ctx.extras.get("response_quality_events") or []
                 ),
+                "task_state_execution_manifest": list(
+                    ctx.extras.get("task_state_execution_manifest") or []
+                )[-128:],
             }
             metric_overrides = dict(values.pop("metrics", {}) or {})
             projected_metrics.update(metric_overrides)
@@ -1498,6 +1508,7 @@ class QueryLoop:
             ctx.extras.pop("approved_tool_call_keys", None)
             ctx.extras.pop("approved_tool_call_ids", None)
             all_results.extend(resumed_results)
+            self._record_task_state_execution_manifest(ctx, resumed_calls, resumed_results)
             for call, result in zip(resumed_calls, resumed_results):
                 completed_call_keys.add(self._completion_key(call, mutation_epoch))
                 if result.ok and not self._executor._is_read_only_call(call):
@@ -1940,6 +1951,7 @@ class QueryLoop:
                 try:
                     results = await self._executor.execute(tool_calls, ctx=ctx, budget=budget)
                     all_results.extend(results)
+                    self._record_task_state_execution_manifest(ctx, tool_calls, results)
                     for tc, result in zip(tool_calls, results):
                         ctx.extras.setdefault("tool_call_history", []).append({
                             "tool": tc.name.replace("__", "."),
@@ -2695,6 +2707,28 @@ class QueryLoop:
             "result_bindings": dict(tc.result_bindings or {}),
         }
         return f"{tc.name}:{json.dumps(identity, sort_keys=True, ensure_ascii=False, default=str)}"
+
+    def _record_task_state_execution_manifest(
+        self,
+        ctx: StatelessContext,
+        tool_calls: List[LLMToolCall],
+        results: List[StreamingToolResult],
+    ) -> None:
+        """Record execution facts for durable TaskState; never schedule work."""
+        manifest = ctx.extras.setdefault("task_state_execution_manifest", [])
+        if not isinstance(manifest, list):
+            manifest = []
+            ctx.extras["task_state_execution_manifest"] = manifest
+        for call, result in zip(tool_calls, results):
+            manifest.append({
+                "tool_id": str(call.name or "")[:160],
+                "call_key": self._tool_call_key(call)[:640],
+                "side_effecting": not self._executor._is_read_only_call(call),
+                "ok": bool(result.ok),
+            })
+        if len(manifest) > 128:
+            del manifest[:-128]
+
 
     def _completion_key(self, tc: LLMToolCall, mutation_epoch: int) -> str:
         """Deduplicate reads only within the same observed state generation."""

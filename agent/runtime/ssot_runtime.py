@@ -54,6 +54,10 @@ def run_ssot_turn(
     session_id = getattr(session, "session_id", "") or getattr(turn.op, "session_id", "")
     user_input = (getattr(turn.op, "user_input", "") or "").strip()
     metadata_in = dict(getattr(turn.op, "metadata", {}) or {})
+    # TaskState contracts are constructed only from session persistence below.
+    # Request metadata cannot seed a trusted execution fence.
+    metadata_in.pop("__trusted_task_state_contract", None)
+    metadata_in.pop("task_state_contract", None)
     task_continuation_contract: dict[str, Any] | None = None
 
     try:
@@ -107,6 +111,13 @@ def run_ssot_turn(
     )
     if history_block:
         metadata_in["conversation_history_block"] = history_block
+    # One server-filtered history projection feeds every state resolver. This
+    # prevents current pre-written requests from becoming continuation history.
+    context_messages = _load_context_messages(
+        session,
+        exclude_run_id=history_exclude_run_id,
+        exclude_client_request_id=history_exclude_client_request_id,
+    )
     # Session task continuation is a separate SSOT. Only server-derived
     # relation/progress fields enter trusted guidance; historic user wording
     # remains untrusted in the conversation history block.
@@ -121,11 +132,7 @@ def run_ssot_turn(
             workspace_id=workspace_id,
             session_id=session_id,
             user_input=user_input,
-            messages=_load_context_messages(
-                session,
-                exclude_run_id=history_exclude_run_id,
-                exclude_client_request_id=history_exclude_client_request_id,
-            ),
+            messages=context_messages,
         )
         if task_continuation_contract:
             metadata_in["task_continuation_contract"] = task_continuation_contract
@@ -137,6 +144,35 @@ def run_ssot_turn(
             )
     except Exception:
         _LOG.warning("task continuation resolution failed", exc_info=True)
+
+    # Generic TaskState is a trusted runtime projection, not a second planner.
+    # It carries only server-derived lifecycle facts into the canonical QueryLoop.
+    task_state_contract: dict[str, Any] | None = None
+    approval_parent_run_id = (
+        str(metadata_in.get("approval_parent_run_id") or "")
+        if metadata_in.get("__approval_continuation_resume") else ""
+    )
+    try:
+        from agent.runtime.task_state import render_task_state_guidance, resolve_task_state
+        from core.runtime_engine.prompt_contract import trusted_prompt_item
+        task_state_contract = resolve_task_state(
+            workspace_id=workspace_id,
+            session_id=session_id,
+            user_input=user_input,
+            messages=context_messages,
+            approval_parent_run_id=approval_parent_run_id,
+        )
+        if task_state_contract:
+            metadata_in["task_state_contract"] = task_state_contract
+            metadata_in["__trusted_task_state_contract"] = task_state_contract
+            metadata_in.setdefault("trusted_prompt_items", []).append(
+                trusted_prompt_item(
+                    "task_state",
+                    render_task_state_guidance(task_state_contract),
+                )
+            )
+    except Exception:
+        _LOG.warning("task state resolution failed", exc_info=True)
     retrieved_context_block = _build_retrieved_context_block(
         workspace_id=workspace_id,
         session_id=session_id,
@@ -392,6 +428,23 @@ def run_ssot_turn(
                 result.metadata["task_continuation"] = task_snapshot
         except Exception:
             _LOG.warning("task continuation commit failed", exc_info=True)
+    try:
+        from agent.runtime.task_state import commit_task_state
+        task_state_snapshot = commit_task_state(
+            workspace_id=workspace_id,
+            session_id=session_id,
+            run_id=turn.turn_id,
+            user_input=user_input,
+            final_response=result.final_response or "",
+            run_ok=bool(result.ok),
+            runtime_metadata=dict((result.metadata or {}).get("ssot_runtime") or {}),
+            tool_calls=list(result.tool_calls or []),
+            continuation_contract=task_state_contract,
+        )
+        if task_state_snapshot and isinstance(result.metadata, dict):
+            result.metadata["task_state"] = task_state_snapshot
+    except Exception:
+        _LOG.warning("task state commit failed", exc_info=True)
 
     persist_run_record(session, turn, result, context)
 
