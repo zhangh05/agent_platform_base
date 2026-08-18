@@ -273,4 +273,26 @@ describe("workbench backend message merge", () => {
     store.discardMessages([userId, assistantId], "sess-conflict");
     expect(useWorkbenchStore.getState().bySession["sess-conflict"]).toEqual([]);
   });
+  it("keeps user before assistant when legacy backend timestamps collide across runs", () => {
+    const store = useWorkbenchStore.getState();
+    store.switchSession("sess-collision");
+    store.mergeFromBackend("sess-collision", [
+      {
+        message_id: "fc148697:assistant", session_id: "sess-collision", role: "assistant",
+        content: "你好！很高兴见到你。", created_at: "2026-08-18T06:16:51.661472+00:00",
+        run_id: "fc148697",
+      },
+      {
+        message_id: "request_41:user", session_id: "sess-collision", role: "user",
+        content: "你好啊", created_at: "2026-08-18T06:16:51.661472+00:00",
+        run_id: "request_41",
+      },
+    ]);
+    expect(useWorkbenchStore.getState().bySession["sess-collision"].map(
+      (message) => `${message.role}:${message.text}`,
+    )).toEqual([
+      "user:你好啊",
+      "assistant:你好！很高兴见到你。",
+    ]);
+  });
 });

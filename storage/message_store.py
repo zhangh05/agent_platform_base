@@ -296,8 +296,8 @@ def _message_sort_key(message: Dict[str, Any]) -> tuple:
     role_rank = 0 if message.get("role") == "user" else 1
     return (
         message.get("created_at") or "",
-        message.get("run_id") or "",
         role_rank,
+        message.get("run_id") or "",
         message.get("message_id") or "",
     )
 

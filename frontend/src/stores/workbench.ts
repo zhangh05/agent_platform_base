@@ -681,8 +681,15 @@ export const useWorkbenchStore = create<WorkbenchState>()(
             seenKeys.add(messageKey(localMsg));
           }
 
-          // Sort by created_at ascending
-          combined.sort((a, b) => (a.created_at || "").localeCompare(b.created_at || ""));
+          // Preserve chronology for legacy records where a user provisional
+          // message and its assistant result share the same timestamp. UUID
+          // lexical order is unrelated to conversational causality.
+          combined.sort((a, b) => {
+            const timestampOrder = (a.created_at || "").localeCompare(b.created_at || "");
+            if (timestampOrder !== 0) return timestampOrder;
+            const rank = (message: ChatMsg) => message.role === "user" ? 0 : message.role === "assistant" ? 1 : 2;
+            return rank(a) - rank(b);
+          });
           const cleaned = dedupeMessages(combined);
           const next = capHistory(
             { ...s.bySession, [session_id]: cleaned },

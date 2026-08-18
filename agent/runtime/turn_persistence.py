@@ -166,7 +166,7 @@ def persist_run_record(session, turn, result, context) -> None:
                 )
                 message_run_id = parent_run_id if is_approval_resume and parent_run_id else run_id
                 store.write_message(message_run_id, "assistant", final_response, metadata={
-                    "created_at": state.created_at,
+                    "created_at": now_iso(),
                     "intent": state.intent,
                     "trace_id": result.trace_id if result else "",
                     # The full audit remains in the run record and trace.
