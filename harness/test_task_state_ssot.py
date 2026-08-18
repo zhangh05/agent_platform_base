@@ -605,6 +605,11 @@ def test_ssot_runtime_projects_replan_contract_on_next_turn(monkeypatch, tmp_pat
     assert contract["task_id"] == initial.metadata["task_state"]["task"]["task_id"]
     assert contract["status"] == "replan_required"
     assert contract["next_action"] == "propose_alternative_plan"
+    trusted_items = calls[1]["extras"]["trusted_prompt_items"]
+    task_state_items = [item for item in trusted_items if item.source_kind == "task_state"]
+    assert len(task_state_items) == 1
+    assert "replan_required" in task_state_items[0].content
+    assert "propose_alternative_plan" in task_state_items[0].content
     assert resumed.metadata["task_state"]["revision"] == 2
     assert resumed.metadata["task_state"]["task"]["status"] == "completed"
 
