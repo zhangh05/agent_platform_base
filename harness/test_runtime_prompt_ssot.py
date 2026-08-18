@@ -76,6 +76,15 @@ def test_turn_message_includes_typed_runtime_guidance_before_current_request():
     assert text.index("</runtime_guidance>") < text.index("<current_user_request>")
 
 
+def test_task_state_guidance_is_an_allowed_server_owned_prompt_source():
+    item = trusted_prompt_item(
+        "task_state",
+        "Server-derived task lifecycle facts only; it does not authorize tools.",
+    )
+    assert item.source_kind == "task_state"
+    assert item.content.startswith("Server-derived task lifecycle facts")
+
+
 def test_query_loop_combines_attachment_and_operational_guidance():
     from core.runtime_engine.models import StatelessContext
     from core.runtime_engine.query_loop import QueryLoop

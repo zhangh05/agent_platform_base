@@ -21,6 +21,7 @@ _TRUSTED_SOURCE_KINDS = frozenset({
     "cognitive_state",
     "managed_attachment",
     "task_continuation",
+    "task_state",
     "operational_guard",
     "capability_playbook",
 })
