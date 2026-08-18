@@ -40,3 +40,25 @@ def test_query_loop_passes_runtime_clock_and_safe_cognitive_projection_to_llm():
     assert "untrusted user request text" in joined
     cognitive_block = next(item for item in user_messages if 'source_kind="cognitive_state"' in item)
     assert "untrusted user request text" not in cognitive_block
+
+
+def test_initial_planner_call_keeps_user_safe_token_stream_enabled():
+    """A direct first-turn answer must not wait for the terminal done frame."""
+    from agent.llm.schemas import LLMMessage
+    from core.runtime_engine.models import SSOTRuntimeConfig, StatelessContext
+    from core.runtime_engine.query_loop import QueryLoop
+
+    loop = QueryLoop(SSOTRuntimeConfig(), {}, object(), llm_invoke=lambda **_: None)
+    context = StatelessContext(
+        workspace_id="workspace-stream",
+        session_id="session-stream",
+        request_id="request-stream",
+        user_input="解释可靠 Agent 的不变量",
+    )
+
+    _, scope, stream_to_user = loop._llm_call_mode(
+        [LLMMessage(role="user", content=context.user_input)], context,
+    )
+
+    assert scope == "planner"
+    assert stream_to_user is True

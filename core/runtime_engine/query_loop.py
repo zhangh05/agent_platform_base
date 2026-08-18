@@ -2515,7 +2515,11 @@ class QueryLoop:
             # the model can issue dependent calls, recover from validation
             # errors, or finish naturally.
             return build_runtime_system_prompt(ctx.extras), "continuation", True
-        return build_runtime_system_prompt(ctx.extras), "planner", False
+        # The first planner call may itself be the final natural-language answer.
+        # Keep planner scope for cognition and tool planning, but stream its user-
+        # visible content; provider reasoning channels are never mapped to content
+        # tokens and the UI additionally filters tagged reasoning.
+        return build_runtime_system_prompt(ctx.extras), "planner", True
 
     @staticmethod
     def _is_response_only(messages: List[LLMMessage]) -> bool:
