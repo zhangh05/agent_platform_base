@@ -60,6 +60,7 @@ export function Sidebar() {
   const setMobileNavOpen = useUIStore((s) => s.setMobileNavOpen);
   const [editingSessId, setEditingSessId] = useState<string | null>(null);
   const [editingSessName, setEditingSessName] = useState("");
+  const pendingCreatedSessionIdRef = useRef<string | null>(null);
 
   // Click handler: switch to the run's session and load its data into Timeline.
   const inspectRun = async (r: RecentRunSummary) => {
@@ -182,16 +183,25 @@ export function Sidebar() {
   }, []);
 
   useEffect(() => {
+    const pendingCreatedSessionId = pendingCreatedSessionIdRef.current;
     if (sessList.state.kind === "empty") {
-      if (currentSessionId) setCurrentSession(null);
+      if (!pendingCreatedSessionId && currentSessionId) { setCurrentSession(null); switchWbSession(null); }
       return;
     }
     if (sessList.state.kind !== "success") return;
+    if (pendingCreatedSessionId) {
+      pendingCreatedSessionIdRef.current = null;
+      setCurrentSession(pendingCreatedSessionId);
+      switchWbSession(pendingCreatedSessionId);
+      return;
+    }
     const sessions = sessList.state.data.sessions ?? [];
     if (!currentSessionId || !sessions.some((s) => s.session_id === currentSessionId)) {
-      setCurrentSession(sessions[0]?.session_id ?? null);
+      const fallbackSessionId = sessions[0]?.session_id ?? null;
+      setCurrentSession(fallbackSessionId);
+      switchWbSession(fallbackSessionId);
     }
-  }, [currentSessionId, currentWorkspaceId, sessList.state, setCurrentSession]);
+  }, [currentSessionId, currentWorkspaceId, sessList.state, setCurrentSession, switchWbSession]);
 
   async function onNewSession() {
     if (!currentWorkspaceId) {
@@ -201,7 +211,9 @@ export function Sidebar() {
     try {
       const res = await sessionsApi.create(currentWorkspaceId, "");
       if (res?.session) {
+        pendingCreatedSessionIdRef.current = res.session.session_id;
         setCurrentSession(res.session.session_id);
+        switchWbSession(res.session.session_id);
         sessList.reload();
         toast({ kind: "success", title: "新会话已创建", body: res.session.session_id });
       }
@@ -251,13 +263,13 @@ export function Sidebar() {
     if (!confirm(`⚠️ 永久删除会话「${sess.title || sess.session_id}」？\n\n此操作不可撤销！消息和记录将被彻底清除。`)) return;
     try {
       await sessionsApi.delete(sess.session_id, currentWorkspaceId);
-      if (currentSessionId === sess.session_id) setCurrentSession(null);
+      if (currentSessionId === sess.session_id) { setCurrentSession(null); switchWbSession(null); }
       useSessionStore.getState().bumpSessionList();
       toast({ kind: "success", title: "已永久删除", body: sess.session_id });
     } catch (e: unknown) {
       // 404 = already deleted on disk → just reload the list
       if (isApiError(e) && e.status === 404) {
-        if (currentSessionId === sess.session_id) setCurrentSession(null);
+        if (currentSessionId === sess.session_id) { setCurrentSession(null); switchWbSession(null); }
         useSessionStore.getState().bumpSessionList();
         return;
       }
@@ -318,7 +330,7 @@ export function Sidebar() {
                   data-testid={`sess-${sess.session_id}`}
                 >
                   <button
-                    onClick={() => { cancelEditSession(); setCurrentSession(sess.session_id); setMobileNavOpen(false); }}
+                    onClick={() => { cancelEditSession(); setCurrentSession(sess.session_id); switchWbSession(sess.session_id); setMobileNavOpen(false); }}
                     data-testid={`sess-btn-${sess.session_id}`}
                     aria-label={`会话：${sess.title || sess.session_id}`}
                     type="button"

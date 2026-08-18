@@ -7,12 +7,14 @@ import { act, render, screen, fireEvent, waitFor } from "@testing-library/react"
 import { Sidebar } from "../layouts/Sidebar";
 import { enqueue, getRequests, installMockApi, resetMocks } from "./mockServer";
 import { useSessionStore } from "../stores/session";
+import { useWorkbenchStore } from "../stores/workbench";
 
 describe("Session switch", () => {
   beforeEach(() => {
     resetMocks();
     installMockApi();
     useSessionStore.getState().reset();
+    useWorkbenchStore.getState().resetForUser();
   });
 
   it("switches active session when user clicks", async () => {
@@ -71,5 +73,35 @@ describe("Session switch", () => {
     act(() => useSessionStore.getState().setCurrentSession("deleted-session"));
 
     await waitFor(() => expect(useSessionStore.getState().currentSessionId).toBeNull());
+  });
+});
+
+
+describe("New session cross-store activation", () => {
+  beforeEach(() => {
+    resetMocks();
+    installMockApi();
+    useSessionStore.getState().reset();
+    useWorkbenchStore.getState().resetForUser();
+  });
+
+  it("switches the workbench send target immediately after creating a session", async () => {
+    enqueue("/workspaces", { status: 200, data: { workspaces: [{ workspace_id: "default", name: "Default", created_at: "", is_default: true, stats: { session_count: 1, artifact_count: 0, knowledge_source_count: 0 } }] } });
+    enqueue("/sessions", { status: 200, data: { sessions: [{ session_id: "sess-old", workspace_id: "default", title: "Old", status: "active", created_at: "", updated_at: "", message_count: 2 }] } });
+    enqueue("/sessions", { status: 200, data: { ok: true, session: { session_id: "sess-new", workspace_id: "default", title: "", status: "active", created_at: "", updated_at: "", message_count: 0 } } });
+    enqueue("/sessions", { status: 200, data: { sessions: [{ session_id: "sess-new", workspace_id: "default", title: "", status: "active", created_at: "", updated_at: "", message_count: 0 }, { session_id: "sess-old", workspace_id: "default", title: "Old", status: "active", created_at: "", updated_at: "", message_count: 2 }] } });
+    enqueue("/runs/recent", { status: 200, data: { runs: [] } });
+    enqueue("/runs/recent", { status: 200, data: { runs: [] } });
+
+    render(<Sidebar />);
+    await screen.findByTestId("btn-new-session");
+    await waitFor(() => expect(useSessionStore.getState().currentSessionId).toBe("sess-old"));
+    act(() => useWorkbenchStore.getState().switchSession("sess-old"));
+    fireEvent.click(screen.getByTestId("btn-new-session"));
+
+    await waitFor(() => {
+      expect(useSessionStore.getState().currentSessionId).toBe("sess-new");
+      expect(useWorkbenchStore.getState().currentSessionId).toBe("sess-new");
+    });
   });
 });
