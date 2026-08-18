@@ -461,3 +461,91 @@ def test_initial_contract_progress_accepts_inline_space_delimited_items(monkeypa
     assert delivery["produced_count"] == 5
     assert delivery["last_ordinal"] == 5
     assert delivery["prefix"] == "PARK-"
+
+
+def test_scope_rewrite_then_qualified_append_preserves_task_identity(monkeypatch, tmp_path):
+    monkeypatch.setenv("LZCORE_WORKSPACE_ROOT", str(tmp_path))
+    session_id = "session_scope_rewrite_qualified_append"
+    created = commit_task_continuation(
+        workspace_id="default",
+        session_id=session_id,
+        run_id="run_1",
+        user_input=_seed_prompt(),
+        assistant_response=_seed_answer(),
+        run_ok=True,
+    )
+    assert created is not None
+    task_id = created["active_task"]["task_id"]
+    scope_input = "删除其他章节，只保留3条，并保持 DC- 前缀和连续编号。"
+    scoped_answer = _append_answer(1, 3)
+    scope_contract = resolve_task_continuation(
+        workspace_id="default",
+        session_id=session_id,
+        user_input=scope_input,
+        messages=_seed_messages(),
+    )
+    assert scope_contract is not None
+    assert commit_task_continuation(
+        workspace_id="default",
+        session_id=session_id,
+        run_id="run_scope",
+        user_input=scope_input,
+        assistant_response=scoped_answer,
+        run_ok=True,
+        continuation_contract=scope_contract,
+    ) is not None
+    rewrite_input = "把第2项重写为正式交接用语，保持当前3条范围不变。"
+    rewritten_answer = "\n".join(
+        f"DC-{index:02d}：正式网络交接检查项 {index}。"
+        for index in range(1, 4)
+    )
+    rewrite_contract = resolve_task_continuation(
+        workspace_id="default",
+        session_id=session_id,
+        user_input=rewrite_input,
+        messages=_seed_messages() + [
+            _message("user", scope_input, "request_scope"),
+            _message("assistant", scoped_answer, "run_scope"),
+        ],
+    )
+    assert rewrite_contract is not None
+    assert commit_task_continuation(
+        workspace_id="default",
+        session_id=session_id,
+        run_id="run_rewrite",
+        user_input=rewrite_input,
+        assistant_response=rewritten_answer,
+        run_ok=True,
+        continuation_contract=rewrite_contract,
+    ) is not None
+    append_input = "再来2条，保持 DC- 前缀和连续编号。"
+    append_contract = resolve_task_continuation(
+        workspace_id="default",
+        session_id=session_id,
+        user_input=append_input,
+        messages=_seed_messages() + [
+            _message("user", scope_input, "request_scope"),
+            _message("assistant", scoped_answer, "run_scope"),
+            _message("user", rewrite_input, "request_rewrite"),
+            _message("assistant", rewritten_answer, "run_rewrite"),
+        ],
+    )
+    assert append_contract is not None
+    assert append_contract["bootstrap"] is False
+    assert append_contract["task_id"] == task_id
+    assert append_contract["validation"]["expected_start_ordinal"] == 4
+    appended = commit_task_continuation(
+        workspace_id="default",
+        session_id=session_id,
+        run_id="run_append",
+        user_input=append_input,
+        assistant_response=_append_answer(4, 2),
+        run_ok=True,
+        continuation_contract=append_contract,
+    )
+    assert appended is not None
+    active_task = appended["active_task"]
+    assert active_task["task_id"] == task_id
+    assert active_task["source_run_id"] == "run_append"
+    assert active_task["delivery_contract"]["produced_count"] == 5
+    assert active_task["delivery_contract"]["last_ordinal"] == 5

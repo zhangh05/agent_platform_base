@@ -9,7 +9,18 @@ import re
 from typing import Any
 
 _APPEND = re.compile(
-    r"^(?:再来|再给|再生成|再写|再列|再补)\s*(?:(?P<count>\d+)\s*)?(?P<unit>条|个|项|份|段|组)?[。.!！?？\s]*$"
+    r"^(?:再来|再给|再生成|再写|再列|再补)\s*"
+    r"(?:(?P<count>\d+)\s*)?(?P<unit>条|个|项|份|段|组)?"
+    r"(?P<tail>.*)$"
+)
+# A qualified append may carry only an explicit continuity constraint after the
+# quantity. This keeps “再来2条，保持 PARK- 前缀和连续编号” on the active
+# deliverable while refusing “再来2条，分析杭州天气” as a new topic.
+_APPEND_CONTINUITY_TAIL = re.compile(
+    r"^[，,、;；:：\s]*(?:"
+    r"(?:保持|沿用|继续|仍用|按照|按|使用|采用|格式|前缀|编号|序号|范围|不变|一致|"
+    r"之前|原有|上文|上述|以上|每条|同样).{0,120}"
+    r")?[。.!！?？\s]*$"
 )
 _EXPAND = re.compile(r"^(?:继续|接着|展开|详细点|再详细|再说说)[。.!！?？\s]*$")
 _ITEM_COUNT = re.compile(r"(?<!\d)(?P<count>\d{1,3})\s*(?P<unit>条|个|项|份|段|组)")
@@ -35,6 +46,9 @@ def classify_task_relation(user_input: str) -> dict[str, Any] | None:
     value = str(user_input or "").strip()
     append = _APPEND.fullmatch(value)
     if append:
+        tail = str(append.group("tail") or "")
+        if len(value) > 240 or not _APPEND_CONTINUITY_TAIL.fullmatch(tail):
+            return None
         count = int(append.group("count") or 0)
         if count < 0 or count > 200:
             return None

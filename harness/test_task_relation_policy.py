@@ -35,3 +35,13 @@ def test_new_topic_is_not_classified_as_a_continuation_operation():
 
 def test_oversized_instruction_is_not_promoted_to_a_contract_relation():
     assert classify_task_relation("重写" + "内容" * 121) is None
+
+
+def test_append_with_continuity_constraint_remains_bound_to_active_deliverable():
+    assert classify_task_relation("再来2条，保持 PARK- 前缀和连续编号。") == {
+        "kind": "append", "expected_new_items": 2, "unit": "条"
+    }
+
+
+def test_append_with_new_topic_tail_is_not_misclassified_as_continuation():
+    assert classify_task_relation("再来2条，分析杭州未来三天天气。") is None
