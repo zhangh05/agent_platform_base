@@ -153,3 +153,61 @@ def test_ssot_runtime_projects_and_commits_structured_task_continuation(monkeypa
     assert seed_prompt not in task_items[0].content
     assert load_task_continuation(workspace_id, session_id)["active_task"]["delivery_contract"]["last_ordinal"] == 6
     assert result.ok is True
+
+
+def test_ssot_runtime_continuation_uses_assistant_terminal_run_id_from_persisted_history(monkeypatch, tmp_path):
+    """Production request rows and final assistant rows intentionally have different run IDs."""
+    monkeypatch.setenv("LZCORE_WORKSPACE_ROOT", str(tmp_path))
+    from agent.core.session import AgentSession
+    from agent.core.turn import AgentTurn
+    from agent.protocol.op import AgentOp
+    from agent.runtime.ssot_runtime import _load_context_messages, run_ssot_turn
+    from agent.runtime.task_continuation import commit_task_continuation, load_task_continuation
+    from storage.message_store import SessionMessageStore
+
+    workspace_id = "ws-production-shaped-continuation"
+    session_id = "session-production-shaped-continuation"
+    seed_request_id = "request-accepted-seed"
+    seed_final_run_id = "run-seed-final"
+    seed_prompt = "连续输出4条数据中心网络交接检查项；每条必须以DC-开头、使用编号、每条一句完整中文。"
+    seed_answer = "\n".join(
+        f"DC-{index:02d}：数据中心网络交接检查项 {index}。"
+        for index in range(1, 5)
+    )
+    store = SessionMessageStore(session_id=session_id, ws_id=workspace_id)
+    store.write_message(seed_request_id, "user", seed_prompt, metadata={"client_request_id": "client-seed", "provisional": True})
+    store.write_message(seed_final_run_id, "assistant", seed_answer, metadata={})
+    assert commit_task_continuation(
+        workspace_id=workspace_id,
+        session_id=session_id,
+        run_id=seed_final_run_id,
+        user_input=seed_prompt,
+        assistant_response=seed_answer,
+        run_ok=True,
+    ) is not None
+    persisted = _load_context_messages(AgentSession(session_id=session_id, workspace_id=workspace_id))
+    assert [message["run_id"] for message in persisted[-2:]] == [seed_request_id, seed_final_run_id]
+
+    captured = {}
+    class FakeEngine:
+        async def run(self, **kwargs):
+            captured.update(kwargs)
+            return SimpleNamespace(
+                success=True,
+                final_response="DC-05：数据中心网络交接检查项 5。\nDC-06：数据中心网络交接检查项 6。",
+                tool_calls=[], events=[], errors=[], metadata={}, node_results={},
+            )
+    monkeypatch.setattr("agent.runtime.ssot_runtime._build_engine", lambda **_kwargs: FakeEngine())
+    monkeypatch.setattr("agent.runtime.ssot_runtime.persist_run_record", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr("agent.runtime.ssot_runtime._record_experience_and_maybe_reflect", lambda **_kwargs: None)
+
+    session = AgentSession(session_id=session_id, workspace_id=workspace_id)
+    turn = AgentTurn.from_op(AgentOp.user_message(user_input="再来2条", session_id=session_id, workspace_id=workspace_id))
+    result = run_ssot_turn(session, turn)
+
+    contract = captured["extras"]["task_continuation_contract"]
+    assert contract["bootstrap"] is False
+    assert contract["source_run_id"] == seed_final_run_id
+    assert contract["validation"]["expected_start_ordinal"] == 5
+    assert load_task_continuation(workspace_id, session_id)["active_task"]["delivery_contract"]["last_ordinal"] == 6
+    assert result.ok is True

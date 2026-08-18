@@ -1661,6 +1661,9 @@ def _append_context_message(messages: list[dict[str, Any]], seen: set[str], raw:
         "content": content,
     }
     history_state = metadata.get("history_state")
+    run_id = str(raw.get("run_id") or metadata.get("run_id") or "").strip()
+    if run_id:
+        message["run_id"] = run_id
     if isinstance(history_state, dict) and history_state.get("schema") == "runtime.history_state.v1":
         from storage.redaction import redact_value
 
