@@ -1656,21 +1656,35 @@ def _summarize_older_messages(
 
 
 def _retrieve_history_references(messages: list[dict[str, str]], user_input: str) -> list[dict[str, str]]:
+    """Return bounded, query-relevant history outside the recent window.
+
+    Explicit references must recover matching middle turns in a long session.
+    Query matches take precedence over generic importance so unrelated later
+    constraints cannot crowd out the named historical fact.
+    """
     text = (user_input or "").strip()
     if not text or not any(p in text for p in _HISTORY_REFERENCE_PATTERNS):
         return []
-    terms = {
-        token.strip("，。,.、：:；;（）()[]【】\"'")
-        for token in text.replace("/", " ").replace("-", " ").split()
-        if len(token.strip()) >= 2
-    }
-    important: list[dict[str, str]] = []
-    for m in messages[:-_HISTORY_RECENT_MESSAGES]:
-        content = m["content"]
-        if (terms and any(t in content for t in terms)) or _history_record_score(m) > 0:
-            important.append(m)
-    return important[-8:]
-
+    recent_count = min(8, _HISTORY_RECENT_MESSAGES)
+    candidates = messages[:-recent_count] if len(messages) > recent_count else []
+    terms = _history_terms(text)
+    matched_indexes = [
+        index for index, message in enumerate(candidates)
+        if terms and _message_matches_history_terms(message.get("content", ""), terms)
+    ]
+    if matched_indexes:
+        selected_indexes = set(matched_indexes[-8:])
+        for index in range(len(candidates) - 1, -1, -1):
+            if len(selected_indexes) >= 8:
+                break
+            if index not in selected_indexes and _history_record_score(candidates[index]) > 0:
+                selected_indexes.add(index)
+        return [candidates[index] for index in sorted(selected_indexes)]
+    important_indexes = [
+        index for index, message in enumerate(candidates)
+        if _history_record_score(message) > 0
+    ]
+    return [candidates[index] for index in important_indexes[-8:]]
 
 def _history_record_score(message: dict[str, Any]) -> int:
     from core.runtime_engine.context_compaction import history_importance_score
@@ -1684,7 +1698,15 @@ def _history_record_score(message: dict[str, Any]) -> int:
         state_weights.get(str(signal), 0)
         for signal in state.get("signals", [])
     )
-    return max(persisted_score, history_importance_score(str(message.get("content") or "")))
+    unresolved_score = 6 if any(
+        isinstance(item, dict) and not bool(item.get("ok", False))
+        for item in list(state.get("unresolved") or [])
+    ) else 0
+    return max(
+        persisted_score,
+        unresolved_score,
+        history_importance_score(str(message.get("content") or "")),
+    )
 
 
 # ── Session history sync ──────────────────────────────────────
