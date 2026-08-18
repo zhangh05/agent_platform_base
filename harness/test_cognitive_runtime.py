@@ -163,3 +163,16 @@ def test_cognitive_gate_does_not_complete_with_blocking_evidence_gap():
     )
     assert decision.outcome == STOP_NEEDS_USER_INPUT
     assert decision.terminal is True
+
+def test_cognitive_gate_completes_recovered_noncritical_tool_failure():
+    decision = decide_next_action(
+        tool_results=[
+            SimpleNamespace(ok=False, execution_may_continue=False),
+            SimpleNamespace(ok=True, execution_may_continue=False),
+        ],
+        execution_outcome="complete",
+        goal_assertions={},
+    )
+    assert decision.outcome == STOP_COMPLETED
+    assert decision.terminal is True
+    assert decision.reason_codes == ("completion_with_nonblocking_tool_failure",)

@@ -60,6 +60,18 @@ def decide_next_action(
         )
     if terminal_error:
         return CognitiveDecision(STOP_FAILED, ("terminal_runtime_error",), "运行时发生无法继续的错误，未误报为完成。", True)
-    if any(not bool(getattr(item, "ok", False)) for item in results):
+    failed_observations = any(not bool(getattr(item, "ok", False)) for item in results)
+    if failed_observations:
+        # `derive_execution_outcome` has already evaluated terminal errors,
+        # required assertions and successful evidence.  A complete task result
+        # means failed attempts were recovered/non-critical telemetry; turning
+        # it back into replan here creates a contradictory terminal state.
+        if str(execution_outcome or "").lower() == "complete":
+            return CognitiveDecision(
+                STOP_COMPLETED,
+                ("completion_with_nonblocking_tool_failure",),
+                "目标已由可核验证据满足；非关键工具失败已保留在审计记录中。",
+                True,
+            )
         return CognitiveDecision(CONTINUE_REPLAN, ("tool_observation_gap",), "部分工具结果未满足当前目标，正在受控重新规划。", False)
     return CognitiveDecision(STOP_COMPLETED, ("completion_criteria_satisfied",), "目标、证据和安全条件已满足，可以生成最终结论。", True)
