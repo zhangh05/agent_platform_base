@@ -982,6 +982,130 @@ def test_task_state_tool_checkpoint_preserves_unknown_mutation_for_restart(monke
     assert recovered["task"]["status"] == "waiting_user"
     assert recovered["task"]["next_action"] == "resolve_unknown_mutation_outcome"
 
+def test_explicit_unknown_mutation_attestation_releases_restart_fence(monkeypatch, tmp_path):
+    monkeypatch.setenv("LZCORE_WORKSPACE_ROOT", str(tmp_path))
+    from agent.runtime.task_state import (
+        acknowledge_pending_mutation_outcome,
+        begin_task_state,
+        checkpoint_task_state_execution,
+        list_task_events,
+        load_task_state,
+        reconcile_active_task_states,
+        resolve_task_state,
+    )
+
+    active = begin_task_state(
+        workspace_id="ws-unknown-attestation",
+        session_id="session-unknown-attestation",
+        run_id="run-original",
+        user_input="写入审计文件。",
+    )
+    prepared = checkpoint_task_state_execution(
+        workspace_id="ws-unknown-attestation",
+        session_id="session-unknown-attestation",
+        run_id="run-original",
+        contract=active,
+        phase="prepared",
+        manifest=[{"tool_id": "workspace.file", "call_key": "workspace.file:write:audit", "side_effecting": True}],
+    )
+    assert prepared is not None
+    reconcile_active_task_states("ws-unknown-attestation")
+    contract = resolve_task_state(
+        workspace_id="ws-unknown-attestation",
+        session_id="session-unknown-attestation",
+        user_input="我已通过只读核验确认先前写入已成功，请继续。",
+        messages=[{"role": "user", "content": "写入审计文件。", "run_id": "run-original"}],
+    )
+    assert contract is not None
+    assert contract["pending_mutation_keys"] == ["workspace.file:write:audit"]
+    assert acknowledge_pending_mutation_outcome(
+        workspace_id="ws-unknown-attestation",
+        session_id="session-unknown-attestation",
+        run_id="run-resume",
+        contract=contract,
+        user_input="继续。",
+    ) is None
+    assert load_task_state("ws-unknown-attestation", "session-unknown-attestation")["task"]["pending_mutation_keys"]
+    acknowledged = acknowledge_pending_mutation_outcome(
+        workspace_id="ws-unknown-attestation",
+        session_id="session-unknown-attestation",
+        run_id="run-resume",
+        contract=contract,
+        user_input="我已通过只读核验确认先前写入已成功，请继续。",
+    )
+    assert acknowledged is not None
+    assert acknowledged["pending_mutation_keys"] == []
+    resumed = begin_task_state(
+        workspace_id="ws-unknown-attestation",
+        session_id="session-unknown-attestation",
+        run_id="run-resume",
+        user_input="我已通过只读核验确认先前写入已成功，请继续。",
+        continuation_contract=acknowledged,
+    )
+    assert resumed is not None
+    assert resumed["status"] == "active"
+    assert resumed["pending_mutation_keys"] == []
+    events = list_task_events("ws-unknown-attestation", "session-unknown-attestation")
+    assert events[-2]["event_type"] == "task_mutation_outcome_acknowledged"
+    assert events[-2]["verification_source"] == "user_attested"
+
+
+def test_ssot_runtime_explicit_unknown_mutation_attestation_unfreezes_trusted_contract(monkeypatch, tmp_path):
+    monkeypatch.setenv("LZCORE_WORKSPACE_ROOT", str(tmp_path))
+    from types import SimpleNamespace
+    from agent.core.session import AgentSession
+    from agent.core.turn import AgentTurn
+    from agent.protocol.op import AgentOp
+    from agent.runtime.task_state import begin_task_state, checkpoint_task_state_execution, reconcile_active_task_states
+    from agent.runtime.ssot_runtime import run_ssot_turn
+
+    active = begin_task_state(
+        workspace_id="ws-unknown-runtime",
+        session_id="session-unknown-runtime",
+        run_id="run-original",
+        user_input="写入审计文件。",
+    )
+    prepared = checkpoint_task_state_execution(
+        workspace_id="ws-unknown-runtime",
+        session_id="session-unknown-runtime",
+        run_id="run-original",
+        contract=active,
+        phase="prepared",
+        manifest=[{"tool_id": "workspace.file", "call_key": "workspace.file:write:audit", "side_effecting": True}],
+    )
+    assert prepared is not None
+    reconcile_active_task_states("ws-unknown-runtime")
+    captured = {}
+
+    class FakeEngine:
+        async def run(self, **kwargs):
+            captured.update(kwargs)
+            return SimpleNamespace(
+                success=True,
+                final_response="已完成只读核验后的安全续写。",
+                node_results={},
+                errors=[],
+                metadata={"execution_outcome": "complete", "cognitive": {"outcome": "stop_completed"}},
+            )
+
+    monkeypatch.setattr("agent.runtime.ssot_runtime._load_context_messages", lambda *_args, **_kwargs: [
+        {"role": "user", "content": "写入审计文件。", "run_id": "run-original"},
+    ])
+    monkeypatch.setattr("agent.runtime.ssot_runtime._build_engine", lambda **_kwargs: FakeEngine())
+    monkeypatch.setattr("agent.runtime.ssot_runtime.persist_run_record", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr("agent.runtime.ssot_runtime._record_experience_and_maybe_reflect", lambda **_kwargs: None)
+    session = AgentSession(session_id="session-unknown-runtime", workspace_id="ws-unknown-runtime")
+    result = run_ssot_turn(session, AgentTurn.from_op(AgentOp.user_message(
+        user_input="我已通过只读核验确认先前写入已成功，请继续。",
+        session_id=session.session_id,
+        workspace_id=session.workspace_id,
+    )))
+    assert result.ok is True
+    trusted = captured["extras"]["__trusted_task_state_contract"]
+    assert trusted["status"] == "active"
+    assert trusted["pending_mutation_keys"] == []
+
+
 def test_queryloop_unknown_mutation_checkpoint_freezes_new_writes():
     import asyncio
     from agent.llm.schemas import LLMResponse, LLMToolCall

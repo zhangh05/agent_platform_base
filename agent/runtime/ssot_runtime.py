@@ -211,6 +211,16 @@ def run_ssot_turn(
             approval_parent_run_id=approval_parent_run_id,
         )
         if task_state_contract:
+            from agent.runtime.task_state import acknowledge_pending_mutation_outcome
+            acknowledged_contract = acknowledge_pending_mutation_outcome(
+                workspace_id=workspace_id,
+                session_id=session_id,
+                run_id=turn.turn_id,
+                contract=task_state_contract,
+                user_input=user_input,
+            )
+            if acknowledged_contract is not None:
+                task_state_contract = acknowledged_contract
             metadata_in["task_state_contract"] = task_state_contract
             metadata_in["__trusted_task_state_contract"] = task_state_contract
             metadata_in.setdefault("trusted_prompt_items", []).append(

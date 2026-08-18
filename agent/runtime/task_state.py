@@ -218,6 +218,84 @@ def checkpoint_task_state_execution(
         return _contract_from_state(record, task, recovery_status=str(task.get("active_from_status") or ""))
 
 
+
+def acknowledge_pending_mutation_outcome(
+    *,
+    workspace_id: str,
+    session_id: str,
+    run_id: str,
+    contract: dict[str, Any],
+    user_input: str,
+) -> dict[str, Any] | None:
+    """Clear an interrupted mutation fence only after an explicit user attestation.
+
+    This is a durable lifecycle transition, not a tool path.  It preserves the
+    original unknown-operation keys in an immutable audit event and never treats
+    an ordinary ``继续`` as proof that the user actually verified the outcome.
+    """
+    if not _explicit_unknown_mutation_attestation(user_input):
+        return None
+    path = _state_path(workspace_id, session_id)
+    with FileLock(path.with_suffix(".lock")):
+        current = _read_unlocked(path)
+        task = current.get("task") if isinstance(current.get("task"), dict) else None
+        pending = _bounded_key_list((task or {}).get("pending_mutation_keys"))
+        if (
+            not task
+            or str(task.get("task_id") or "") != str(contract.get("task_id") or "")
+            or int(current.get("revision") or 0) != int(contract.get("base_revision") or 0)
+            or str(task.get("status") or "") != "waiting_user"
+            or not pending
+        ):
+            return None
+        if len(pending) > 1 and not any(token in str(user_input or "") for token in ("全部", "所有", "全都")):
+            return None
+        task = deepcopy(task)
+        revision = int(current.get("revision") or 0) + 1
+        now = _now_iso()
+        task["pending_mutation_keys"] = []
+        task["next_action"] = "resume_after_user_verified_mutation_outcome"
+        task["updated_at"] = now
+        task["revision"] = revision
+        record = {
+            "schema": _SCHEMA,
+            "workspace_id": workspace_id,
+            "session_id": session_id,
+            "revision": revision,
+            "task": task,
+            "updated_at": now,
+        }
+        event = {
+            "schema": _EVENT_SCHEMA,
+            "event_id": f"evt_{hashlib.sha256(f'{task.get('task_id', '')}:{revision}:{run_id}:mutation_ack'.encode()).hexdigest()[:20]}",
+            "event_type": "task_mutation_outcome_acknowledged",
+            "task_id": str(task.get("task_id") or ""),
+            "revision": revision,
+            "run_id": run_id,
+            "at": now,
+            "status": "waiting_user",
+            "relationship": _relationship_kind(task.get("relationship")),
+            "tool_count": 0,
+            "successful_tool_count": 0,
+            "assertion_status": _assertion_status(task.get("assertions")),
+            "next_action": str(task.get("next_action") or ""),
+            "run_ok": False,
+            "execution_outcome": "user_attested_unknown_mutation_outcome",
+            "acknowledged_mutation_count": len(pending),
+            "verification_source": "user_attested",
+        }
+        append_jsonl(workspace_id, _event_parts(session_id), event)
+        atomic_write_json(path, record)
+        return _contract_from_state(record, task, recovery_status="waiting_user")
+
+
+def _explicit_unknown_mutation_attestation(user_input: str) -> bool:
+    text = _bounded_text(user_input, 1200)
+    verification_terms = ("核验", "验证", "核对", "检查确认")
+    outcome_terms = ("结果", "成功", "失败", "未执行", "已完成", "已经完成", "已生效", "不存在")
+    return any(term in text for term in verification_terms) and any(term in text for term in outcome_terms)
+
+
 def _bounded_key_list(value: Any) -> list[str]:
     return list(dict.fromkeys(
         _bounded_text(item, 640) for item in _as_list(value)
@@ -318,13 +396,22 @@ def resolve_task_state(
         and bool(approval_parent_run_id)
         and approval_parent_run_id == str(task.get("source_run_id") or "")
     )
-    relation = {"kind": "approval_resume"} if is_approval_resume else _continuation_relation(user_input)
+    is_waiting_user_attestation = (
+        str(task.get("status") or "") == "waiting_user"
+        and _explicit_unknown_mutation_attestation(user_input)
+    )
+    relation = (
+        {"kind": "approval_resume"}
+        if is_approval_resume
+        else ({"kind": "user_verified_mutation_outcome"} if is_waiting_user_attestation else _continuation_relation(user_input))
+    )
     if relation is None:
         return None
     if not is_approval_resume:
         latest_user, latest_assistant = _latest_complete_exchange(messages)
-        if str(task.get("status") or "") == "interrupted":
-            # An in-flight checkpoint may legitimately have no assistant half.
+        if str(task.get("status") or "") in {"interrupted", "waiting_user"}:
+            # A restart can leave either a plain interrupted checkpoint or a
+            # waiting_user unknown-mutation fence without an assistant half.
             # Resume only when the last durable user request is exactly the
             # interrupted run, never from an arbitrary new topic.
             last_user = next(
