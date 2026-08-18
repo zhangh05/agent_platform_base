@@ -160,3 +160,51 @@ def test_query_loop_stops_if_unverified_claim_persists():
     assert "response_quality_failed" in result.errors
     assert "配置已成功部署" not in result.final_response
     assert len(calls) == 2
+
+
+def test_quality_gate_allows_textual_scope_deletion_without_tool_evidence():
+    contract = {"relation": {"kind": "scope"}}
+    issues = validate_response_quality(
+        "已删除其他章节，仅保留以下三条文本。\nPARK-01：检查项一。\nPARK-02：检查项二。\nPARK-03：检查项三。",
+        user_input="删除其他章节，只保留3条。",
+        task_continuation_contract=contract,
+    )
+    assert issues == []
+
+
+def test_quality_gate_keeps_external_action_claim_blocking_for_scope_contract():
+    contract = {"relation": {"kind": "scope"}}
+    issues = validate_response_quality(
+        "已上传交接文档。",
+        user_input="删除其他章节，只保留3条。",
+        task_continuation_contract=contract,
+    )
+    assert [issue.code for issue in issues] == ["UNVERIFIED_ACTION_COMPLETION"]
+
+
+def test_quality_gate_keeps_textual_deletion_blocking_without_contract():
+    issues = validate_response_quality(
+        "已删除生产配置。",
+        user_input="删除生产配置。",
+    )
+    assert [issue.code for issue in issues] == ["UNVERIFIED_ACTION_COMPLETION"]
+
+
+def test_quality_gate_accepts_textual_scope_deletion_with_exact_delivery_contract():
+    contract = {
+        "relation": {"kind": "scope"},
+        "validation": {
+            "kind": "enumerated_items",
+            "mode": "replace_scope",
+            "expected_total_items": 3,
+            "expected_start_ordinal": 1,
+            "required_prefix": "PARK-",
+            "unit": "条",
+        },
+    }
+    issues = validate_response_quality(
+        "已删除其他章节，仅保留以下三条文本。\nPARK-01：检查项一。\nPARK-02：检查项二。\nPARK-03：检查项三。",
+        user_input="删除其他章节，只保留3条，并保持 PARK- 前缀和连续编号。",
+        task_continuation_contract=contract,
+    )
+    assert issues == []

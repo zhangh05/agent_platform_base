@@ -42,6 +42,17 @@ _SECRET_ASSIGNMENT_RE = re.compile(
 _REFERENCE_RE = re.compile(r"\b(?:art|job|run|report|trace)[A-Za-z0-9_-]{8,64}\b")
 
 
+def _is_textual_continuation_edit_claim(claim: str, contract: dict | None) -> bool:
+    """Allow only textual scope/rewrite edits, never external action claims."""
+    if not isinstance(contract, dict):
+        return False
+    relation = contract.get("relation")
+    kind = str(relation.get("kind") or "") if isinstance(relation, dict) else ""
+    if kind not in {"scope", "rewrite", "refine", "repair"}:
+        return False
+    return bool(re.search(r"(?:修改|删除)$", str(claim or "")))
+
+
 def validate_response_quality(
     text: str,
     *,
@@ -120,7 +131,12 @@ def validate_response_quality(
             ),
         ))
 
-    if _ACTION_COMPLETION_CLAIM_RE.search(value) and not _has_successful_tool_result(tool_results):
+    completion_claims = tuple(_ACTION_COMPLETION_CLAIM_RE.finditer(value))
+    unverified_completion_claims = [
+        claim for claim in completion_claims
+        if not _is_textual_continuation_edit_claim(claim.group(0), task_continuation_contract)
+    ]
+    if unverified_completion_claims and not _has_successful_tool_result(tool_results):
         issues.append(ResponseQualityIssue(
             code="UNVERIFIED_ACTION_COMPLETION",
             message=(
