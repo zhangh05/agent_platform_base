@@ -26,6 +26,7 @@ import { agentResultFromWsDone } from "../utils/wsResult";
 import { notifyRunCompleted } from "../utils/appEvents";
 import { createStreamActivityWatchdog, STREAM_IDLE_TIMEOUT_MS } from "../utils/streamActivity";
 import { decideStreamFrame } from "../utils/streamSequence";
+import { createStreamRenderCoordinator } from "../utils/streamCoordinator";
 import { progressPatchForStreamStage, stageElapsedSince } from "../utils/streamStage";
 
 const WS_TIMEOUT_MS = 3000;
@@ -245,7 +246,6 @@ export function useChatStream(
         // per paint, while a large provider chunk is revealed over a bounded
         // window instead of jumping into the DOM at once.
         const reducedMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
-        let revealFrameId: number | null = null;
         let pendingStartedAt: number | null = null;
         let lastRevealAt = performance.now();
         const flushTokenBuffer = (force = false) => {
@@ -263,41 +263,37 @@ export function useChatStream(
           tokenBufferRef.pending = tokenBufferRef.pending.slice(visibleLength);
           if (!tokenBufferRef.pending) pendingStartedAt = null;
           lastRevealAt = now;
-          useWorkbenchStore.getState().updateAssistant(
-            streamingMsgId, { text: streamedText }, scratch,
-          );
+          streamRender.markText(streamedText);
         };
-        const scheduleTokenFlush = () => {
-          if (!tokenBufferRef.pending || revealFrameId !== null) return;
-          revealFrameId = window.requestAnimationFrame(() => {
-            revealFrameId = null;
+        const streamRender = createStreamRenderCoordinator({
+          commit: (patch) => {
+            useWorkbenchStore.getState().updateAssistant(streamingMsgId, patch, scratch);
+          },
+          onFrame: () => {
+            if (!tokenBufferRef.pending) return false;
             flushTokenBuffer();
-            scheduleTokenFlush();
-          });
+            return Boolean(tokenBufferRef.pending);
+          },
+        });
+        const scheduleTokenFlush = () => {
+          if (tokenBufferRef.pending) streamRender.request();
         };
         const flushAllTokenBuffer = () => {
-          if (revealFrameId !== null) {
-            window.cancelAnimationFrame(revealFrameId);
-            revealFrameId = null;
-          }
           flushTokenBuffer(true);
+          streamRender.flush();
         };
         let finished = false;
-
         const finish = () => {
           if (finished) return;
           finished = true;
           watchdog.stop();
           flushAllTokenBuffer();
+          streamRender.cancel();
           resolve();
         };
-
         const watchdog = createStreamActivityWatchdog({
           onTick: (elapsedMs) => {
-            const stageElapsedMs = stageElapsedSince(stageStartedAt);
-            useWorkbenchStore.getState().updateAssistant(
-              streamingMsgId, { progressElapsedMs: elapsedMs, stageElapsedMs }, scratch,
-            );
+            streamRender.setElapsed(elapsedMs, stageElapsedSince(stageStartedAt) ?? 0);
           },
           onTimeout: () => {
             interruptionReason = `实时连接已超过 ${Math.round(STREAM_IDLE_TIMEOUT_MS / 1000)} 秒没有收到服务器消息，已结束等待。请重试本轮。`;
@@ -305,7 +301,6 @@ export function useChatStream(
             finish();
           },
         });
-
         useWorkbenchStore.getState().updateAssistant(
           streamingMsgId, { progressText: "等待 SSOT Runtime 调度…" }, scratch,
         );

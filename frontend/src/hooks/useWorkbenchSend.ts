@@ -145,7 +145,7 @@ export function useWorkbenchSend({
     }
 
     prepareToSend();
-    requestAnimationFrame(keepAtBottom);
+    keepAtBottom();
     await sendStream({ text: fullText, attachments: displayAttachments, effectiveSessionId, turnMetadata });
   }, [attachments, clearDraft, input, keepAtBottom, pendingAutoMetadataRef, prepareToSend, sendStream, sending, sessionId, setAttachments, setInput, toast, visionSupported, workspaceId]);
 

@@ -1,4 +1,4 @@
-import React, { lazy, Suspense, useState, useRef, useEffect, useCallback, useMemo } from "react";
+import React, { lazy, Suspense, useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo } from "react";
 import { jobsApi, sessionsApi, settingsApi, sseApi } from "../../api";
 import { getApiAccessToken, realtimeEndpoint } from "../../api/client";
 import type { SSEConnection } from "../../api/sse";
@@ -142,41 +142,35 @@ export function TaskWorkbench() {
   const [showScrollBtn, setShowScrollBtn] = useState(false);
   const userScrolledUpRef = useRef(false);    // true = user intentionally scrolled up
   const atBottomRef = useRef(true);
-  const sendingRef = useRef(false);
-  const scrollFrameRef = useRef<number | null>(null);
-
   const chatRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
-
-  useEffect(() => {
-    sendingRef.current = sending;
-  }, [sending]);
 
   const handleChatScroll = useCallback(() => {
     const el = chatRef.current;
     if (!el) return;
     const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 32;
     atBottomRef.current = atBottom;
-    setShowScrollBtn(!atBottom);
-    if (!atBottom && !sendingRef.current) userScrolledUpRef.current = true;
+    setShowScrollBtn((shown) => shown !== !atBottom ? !atBottom : shown);
+    if (!atBottom) userScrolledUpRef.current = true;
     if (atBottom) userScrolledUpRef.current = false;
   }, []);
 
+  /**
+   * Scroll only after React has committed a real message change. This executes
+   * in the same paint cycle as the coalesced stream update and deliberately
+   * has no competing requestAnimationFrame of its own.
+   */
   const keepAtBottom = useCallback(() => {
-    if (userScrolledUpRef.current || scrollFrameRef.current !== null) return;
-    scrollFrameRef.current = requestAnimationFrame(() => {
-      scrollFrameRef.current = null;
-      const el = chatRef.current;
-      if (!el || userScrolledUpRef.current) return;
-      el.scrollTop = el.scrollHeight;
-      atBottomRef.current = true;
-      setShowScrollBtn(false);
-    });
+    const el = chatRef.current;
+    if (!el || userScrolledUpRef.current) return;
+    el.scrollTop = el.scrollHeight;
+    atBottomRef.current = true;
+    setShowScrollBtn((shown) => shown ? false : shown);
   }, []);
 
-  useEffect(() => () => {
-    if (scrollFrameRef.current !== null) cancelAnimationFrame(scrollFrameRef.current);
-  }, []);
+  useLayoutEffect(() => {
+    keepAtBottom();
+  }, [keepAtBottom, visibleHistory]);
 
   const handleScrollBtnClick = useCallback(() => {
     userScrolledUpRef.current = false;
@@ -545,16 +539,6 @@ export function TaskWorkbench() {
   const llmStatusLabel = llmHealth.connected
     ? llmHealth.recentFailure ? "模型可用 · 最近一次请求超时，可重试" : `模型可用 · ${llmHealth.model || llmHealth.provider || "在线"}`
     : "模型不可用";
-
-  useEffect(() => {
-    keepAtBottom();
-  }, [
-    keepAtBottom,
-    sending,
-    visibleHistory.length,
-    visibleHistory[visibleHistory.length - 1]?.text,
-    visibleHistory[visibleHistory.length - 1]?.status,
-  ]);
 
   return (
     <div className={["wb-shell", progressPanelCollapsed ? "is-progress-collapsed" : "", headerCollapsed ? "is-header-collapsed" : ""].filter(Boolean).join(" ")}>
