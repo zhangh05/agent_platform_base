@@ -2189,7 +2189,10 @@ class QueryLoop:
                     error="unbacked_approval_claim",
                 )
 
-            from .response_quality import validate_response_quality
+            from .response_quality import (
+                build_response_quality_nudge,
+                validate_response_quality,
+            )
             quality_issues = validate_response_quality(
                 final_text,
                 user_input=ctx.user_input,
@@ -2200,6 +2203,53 @@ class QueryLoop:
             quality_observation = {}
             if quality_issues:
                 quality_codes = [issue.code for issue in quality_issues]
+                # Real-world completion claims, runtime references and secret-like
+                # output require a bounded correction through this same QueryLoop.
+                # Other presentation observations remain non-blocking.
+                hard_quality_codes = {
+                    "UNVERIFIED_ACTION_COMPLETION",
+                    "UNVERIFIED_REFERENCE",
+                    "SENSITIVE_OUTPUT",
+                    "DELIVERED_EVIDENCE_DENIED",
+                }
+                blocking_issues = [
+                    issue for issue in quality_issues
+                    if issue.code in hard_quality_codes
+                ]
+                if blocking_issues:
+                    if response_quality_attempts < 1 and iterations < max_iterations:
+                        response_quality_attempts += 1
+                        ctx.extras.setdefault("response_quality_events", []).append({
+                            "attempt": response_quality_attempts,
+                            "issues": quality_codes,
+                            "observed": True,
+                            "blocking": True,
+                            "corrected": False,
+                        })
+                        cognitive_state.begin_reflection(
+                            quality_codes,
+                            attempt=response_quality_attempts,
+                        )
+                        cognitive_state.complete_reflection(
+                            resolved=False,
+                            attempt=response_quality_attempts,
+                        )
+                        messages = self._append_turn_nudge(
+                            messages,
+                            build_response_quality_nudge(blocking_issues),
+                        )
+                        continue
+                    return finish(
+                        final_response=(
+                            "当前答复包含无法由本轮证据支持的完成声明、引用或敏感内容；"
+                            "为避免误导，未直接交付该内容。请提供可验证结果或允许先执行必要核验。"
+                        ),
+                        tool_results=all_results,
+                        iterations=iterations,
+                        total_tool_calls=len(all_results),
+                        llm_calls=llm_calls,
+                        error="response_quality_failed",
+                    )
                 ctx.extras.setdefault("response_quality_events", []).append({
                     "attempt": 0,
                     "issues": quality_codes,

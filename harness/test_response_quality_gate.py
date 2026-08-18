@@ -117,7 +117,31 @@ def test_query_loop_observes_corrupt_text_without_replacing_final_answer():
     assert observation["blocking"] is False
 
 
-def test_query_loop_observes_unverified_claim_without_hiding_reply():
+def test_query_loop_corrects_unverified_claim_before_delivery():
+    calls: list[dict] = []
+
+    def llm_mock(**kwargs):
+        calls.append(kwargs)
+        if len(calls) == 1:
+            return "配置已成功部署。"
+        return "尚未执行部署，无法确认成功。"
+
+    engine = SSOTRuntimeEngine(
+        config=SSOTRuntimeConfig(),
+        llm_invoke=llm_mock,
+        tool_runtime=mock.MagicMock(),
+    )
+
+    result = asyncio.run(engine.run(user_input="部署配置", workspace_id="test"))
+
+    assert result.success is True
+    assert "response_quality_failed" not in result.errors
+    assert result.final_response == "尚未执行部署，无法确认成功。"
+    assert len(calls) == 2
+    assert result.metadata["response_quality_corrections"] == 1
+
+
+def test_query_loop_stops_if_unverified_claim_persists():
     calls: list[dict] = []
 
     def llm_mock(**kwargs):
@@ -132,12 +156,7 @@ def test_query_loop_observes_unverified_claim_without_hiding_reply():
 
     result = asyncio.run(engine.run(user_input="部署配置", workspace_id="test"))
 
-    assert result.success is True
-    assert "response_quality_failed" not in result.errors
-    assert result.final_response == "配置已成功部署。"
-    assert len(calls) == 1
-    assert result.metadata["response_quality_observation"] == {
-        "codes": ["UNVERIFIED_ACTION_COMPLETION"],
-        "correction_attempts": 0,
-        "blocking": False,
-    }
+    assert result.success is False
+    assert "response_quality_failed" in result.errors
+    assert "配置已成功部署" not in result.final_response
+    assert len(calls) == 2
