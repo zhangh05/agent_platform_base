@@ -193,17 +193,22 @@ export function useChatStream(
     // session snapshot, not a value captured by an earlier send callback.
     const scratch = effectiveSessionId;
 
-    // Append the user + streaming placeholder so the page can render immediately.
-    const store = useWorkbenchStore.getState();
-    const userMessageId = store.appendUser(text, scratch, attachments.length ? attachments : undefined);
-    const streamingMsgId = store.appendAssistantStreaming(scratch);
-    useWorkbenchStore.getState().setSending(true);
-
     const fullText = text;
     const clientRequestId = typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
       ? crypto.randomUUID()
       : `request-${Date.now()}-${Math.random().toString(16).slice(2)}`;
     const turnMetadata = { ...metadataOverride, client_request_id: clientRequestId };
+    // Append both optimistic messages with the same durable client-turn key.
+    // A delayed result can then replace exactly this pair after a WebSocket loss.
+    const store = useWorkbenchStore.getState();
+    const userMessageId = store.appendUser(
+      text,
+      scratch,
+      attachments.length ? attachments : undefined,
+      clientRequestId,
+    );
+    const streamingMsgId = store.appendAssistantStreaming(scratch, clientRequestId);
+    useWorkbenchStore.getState().setSending(true);
     activeClientRequestIdRef.current = clientRequestId;
 
     // Try WebSocket streaming first, fall back to HTTP.

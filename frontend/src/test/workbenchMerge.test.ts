@@ -295,4 +295,40 @@ describe("workbench backend message merge", () => {
       "assistant:你好！很高兴见到你。",
     ]);
   });
+
+
+  it("merges a delayed completion by client request id without replacing another turn", () => {
+    const store = useWorkbenchStore.getState();
+    store.switchSession("sess-request-correlation");
+    const oldUser = store.appendUser("旧请求", "sess-request-correlation", undefined, "request-old");
+    const oldAssistant = store.appendAssistantStreaming("sess-request-correlation", "request-old");
+    store.updateAssistant(oldAssistant, { status: "error", text: "连接中断，等待服务器恢复。" }, "sess-request-correlation");
+    const nextUser = store.appendUser("新请求", "sess-request-correlation", undefined, "request-new");
+    const nextAssistant = store.appendAssistantStreaming("sess-request-correlation", "request-new");
+
+    store.mergeFromBackend("sess-request-correlation", [
+      {
+        message_id: "run-old:user", session_id: "sess-request-correlation", role: "user",
+        content: "旧请求", created_at: "2026-08-19T10:00:00Z", run_id: "run-old",
+        metadata: { client_request_id: "request-old" },
+      },
+      {
+        message_id: "run-old:assistant", session_id: "sess-request-correlation", role: "assistant",
+        content: "旧请求的最终结果", created_at: "2026-08-19T10:00:01Z", run_id: "run-old",
+        metadata: { client_request_id: "request-old" },
+      },
+    ]);
+
+    const messages = useWorkbenchStore.getState().bySession["sess-request-correlation"];
+    expect(messages).toHaveLength(4);
+    expect(messages.find((message) => message.id === oldUser)?.run_id).toBe("run-old");
+    expect(messages.find((message) => message.id === oldAssistant)).toMatchObject({
+      run_id: "run-old", text: "旧请求的最终结果", status: "error",
+    });
+    expect(messages.find((message) => message.id === nextUser)?.client_request_id).toBe("request-new");
+    expect(messages.find((message) => message.id === nextAssistant)).toMatchObject({
+      client_request_id: "request-new", status: "streaming", text: "",
+    });
+  });
+
 });

@@ -61,6 +61,8 @@ function idleJsonStorage<T>(key: string, delayMs = 500): PersistStorage<T> {
 export interface ChatMsg {
   id: string;
   message_id?: string;
+  /** Stable client-turn identity, used to merge delayed durable results safely. */
+  client_request_id?: string;
   role: "user" | "assistant" | "system";
   text: string;
   created_at: string;
@@ -141,9 +143,10 @@ function capHistory(
   return capped;
 }
 
-function messageKey(m: Pick<ChatMsg, "message_id" | "run_id" | "role" | "text" | "created_at">): string {
+function messageKey(m: Pick<ChatMsg, "message_id" | "client_request_id" | "run_id" | "role" | "text" | "created_at">): string {
   if (m.message_id) return `id:${m.message_id}`;
   if (m.run_id) return `run:${m.run_id}:${m.role}`;
+  if (m.client_request_id) return `request:${m.client_request_id}:${m.role}`;
   return `fallback:${m.role}:${m.created_at}:${m.text}`;
 }
 
@@ -178,6 +181,15 @@ function findLocalForServer(serverMsg: ChatMsg, localMessages: ChatMsg[], matche
   // Server messages carry message_id which takes priority in messageKey;
   // local placeholders often only have run_id (set during finalize).
   // Match by run_id before falling through to heuristics.
+  if (serverMsg.client_request_id) {
+    const requestMatch = localMessages.find(
+      (m) =>
+        m.client_request_id === serverMsg.client_request_id &&
+        m.role === serverMsg.role &&
+        !matchedIds.has(m.id),
+    );
+    if (requestMatch) return requestMatch;
+  }
   if (serverMsg.run_id) {
     const runMatch = localMessages.find(
       (m) => m.run_id && m.run_id === serverMsg.run_id && m.role === serverMsg.role && !matchedIds.has(m.id),
@@ -185,14 +197,32 @@ function findLocalForServer(serverMsg: ChatMsg, localMessages: ChatMsg[], matche
     if (runMatch) return runMatch;
   }
   if (serverMsg.role === "assistant") {
-    // Match any local assistant placeholder that lacks server-side identity.
-    return localMessages.find(
+    // Legacy placeholders lack a durable request identity. A pre-existing
+    // rendered answer is only safe to merge when its text exactly agrees with
+    // the authoritative server value. Otherwise only one anonymous streaming
+    // placeholder may be adopted; an old interrupted/error bubble must never
+    // absorb a delayed completion for another turn.
+    const exactLegacyAnswer = localMessages.filter(
       (m) =>
         m.role === "assistant" &&
+        m.text.trim() !== "" &&
+        m.text === serverMsg.text &&
         !m.message_id &&
+        !m.client_request_id &&
         !m.run_id &&
         !matchedIds.has(m.id),
     );
+    if (exactLegacyAnswer.length === 1) return exactLegacyAnswer[0];
+    const anonymousStreaming = localMessages.filter(
+      (m) =>
+        m.role === "assistant" &&
+        m.status === "streaming" &&
+        !m.message_id &&
+        !m.client_request_id &&
+        !m.run_id &&
+        !matchedIds.has(m.id),
+    );
+    return anonymousStreaming.length === 1 ? anonymousStreaming[0] : undefined;
   }
   if (serverMsg.role === "user") {
     return localMessages.find(
@@ -224,9 +254,9 @@ interface WorkbenchState {
 
   switchSession: (session_id: string | null) => void;
   moveSessionMessages: (from_session_id: string, to_session_id: string) => void;
-  appendUser: (text: string, session_id: string | null, attachments?: ChatMsg["attachments"]) => string;
+  appendUser: (text: string, session_id: string | null, attachments?: ChatMsg["attachments"], client_request_id?: string) => string;
   /** Create a streaming assistant placeholder before response arrives */
-  appendAssistantStreaming: (session_id: string | null) => string;
+  appendAssistantStreaming: (session_id: string | null, client_request_id?: string) => string;
   /** Remove local-only placeholders when the server did not accept a turn. */
   discardMessages: (messageIds: string[], session_id?: string) => void;
   /** Update an existing message (streaming→ready/error, append tool calls) */
@@ -307,10 +337,11 @@ export const useWorkbenchStore = create<WorkbenchState>()(
         });
       },
 
-      appendUser: (text, session_id, attachments) => {
+      appendUser: (text, session_id, attachments, client_request_id) => {
         const sid = session_id ?? get().currentSessionId ?? "_scratch";
         const msg: ChatMsg = {
           id: nextId(),
+          client_request_id,
           role: "user",
           text,
           status: "ready",
@@ -325,11 +356,12 @@ export const useWorkbenchStore = create<WorkbenchState>()(
         return msg.id;
       },
 
-      appendAssistantStreaming: (session_id) => {
+      appendAssistantStreaming: (session_id, client_request_id) => {
         const sid = session_id ?? get().currentSessionId ?? "_scratch";
         const msgId = nextId();
         const msg: ChatMsg = {
           id: msgId,
+          client_request_id,
           role: "assistant",
           text: "",
           status: "streaming",
@@ -608,6 +640,9 @@ export const useWorkbenchStore = create<WorkbenchState>()(
             m.message_id ??
             `srv-${m.run_id ?? `${m.role}-${m.created_at}-${m.content}`}:${m.role}`,
           message_id: m.message_id,
+          client_request_id: typeof m.metadata?.client_request_id === "string"
+            ? m.metadata.client_request_id
+            : undefined,
           role: m.role,
           text: m.role === "assistant" ? sanitizeAssistantText(m.content) : m.content,
           status: "ready",
