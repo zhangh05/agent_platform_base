@@ -2916,6 +2916,10 @@ class QueryLoop:
                 "call_key": self._durable_call_key(call),
                 "side_effecting": not self._executor._is_read_only_call(call),
                 "ok": bool(result.ok),
+                # Preserve a transport/runtime timeout's uncertainty across the
+                # durable checkpoint boundary; this is not equivalent to a
+                # completed failed call and must retain its mutation fence.
+                "execution_may_continue": bool(result.execution_may_continue),
             })
         if len(manifest) > 128:
             del manifest[:-128]

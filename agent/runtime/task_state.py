@@ -186,7 +186,16 @@ def checkpoint_task_state_execution(
                     if key:
                         pending.append(key)
         else:
-            settled = { _bounded_text(item.get("call_key") or "", 640) for item in entries }
+            # A timeout/cancellation can return while an out-of-process or
+            # thread-backed mutation is still finishing.  Its call key remains
+            # pending until the user supplies an explicit read-only verification;
+            # clearing it here would turn an unknown side effect into a normal
+            # retryable failure after restart.
+            settled = {
+                _bounded_text(item.get("call_key") or "", 640)
+                for item in entries
+                if not bool(item.get("execution_may_continue"))
+            }
             pending = [key for key in pending if key not in settled]
             task["completed_mutation_keys"] = _merge_completed_mutation_keys(
                 _as_list(task.get("completed_mutation_keys")), entries

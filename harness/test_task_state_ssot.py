@@ -1392,3 +1392,89 @@ def test_legacy_durable_call_key_freezes_mutation_instead_of_guessing_identity()
     assert result.success is False
     assert "task_state_legacy_call_key_ambiguous" in result.errors
     assert invoked == []
+
+def test_queryloop_uncertain_write_checkpoint_keeps_pending_mutation_fence(monkeypatch, tmp_path):
+    """A returned timeout must not clear the durable side-effect fence."""
+    import asyncio
+    from agent.llm.schemas import LLMResponse, LLMToolCall
+    from agent.runtime.task_state import (
+        begin_task_state,
+        checkpoint_task_state_execution,
+        load_task_state,
+    )
+    from core.runtime_engine.engine import SSOTRuntimeEngine
+    from core.runtime_engine.models import SSOTRuntimeConfig
+    from core.runtime_engine.tool_runtime import ToolRuntime
+
+    monkeypatch.setenv("LZCORE_WORKSPACE_ROOT", str(tmp_path / "workspaces"))
+    workspace_id = "ws-uncertain-checkpoint"
+    session_id = "session-uncertain-checkpoint"
+    run_id = "run-uncertain-checkpoint"
+    active = begin_task_state(
+        workspace_id=workspace_id,
+        session_id=session_id,
+        run_id=run_id,
+        user_input="写入审计文件。",
+    )
+    assert active is not None
+    current_contract = active
+    observed = []
+
+    def checkpoint(phase, manifest):
+        nonlocal current_contract
+        observed.append((phase, [dict(item) for item in manifest]))
+        current_contract = checkpoint_task_state_execution(
+            workspace_id=workspace_id,
+            session_id=session_id,
+            run_id=run_id,
+            contract=current_contract,
+            phase=phase,
+            manifest=manifest,
+        )
+        assert current_contract is not None
+
+    call = LLMToolCall(
+        id="uncertain-write",
+        name="workspace.file",
+        arguments={"action": "write", "filename": "audit.txt", "content": "new"},
+    )
+    config = SSOTRuntimeConfig(max_query_loop_iterations=1)
+    runtime = ToolRuntime(config)
+    runtime.register("workspace.file", lambda _arguments: {
+        "ok": False,
+        "error": "remote write may still be running",
+        "error_code": "TOOL_TIMEOUT_UNCERTAIN",
+        "execution_may_continue": True,
+    })
+    registry = {
+        "workspace.file": {
+            "description": "files",
+            "args_schema": {
+                "type": "object",
+                "required": ["action"],
+                "properties": {
+                    "action": {"type": "string", "enum": ["write"]},
+                    "filename": {"type": "string"},
+                    "content": {"type": "string"},
+                },
+            },
+        },
+    }
+    engine = SSOTRuntimeEngine(
+        config=config,
+        llm_invoke=lambda **_kwargs: LLMResponse(tool_calls=[call]),
+        tool_registry=registry,
+        tool_runtime=runtime,
+    )
+    asyncio.run(engine.run(
+        "写入审计文件。",
+        workspace_id=workspace_id,
+        session_id=session_id,
+        extras={"__task_state_execution_checkpoint": checkpoint},
+    ))
+
+    settled = [manifest for phase, manifest in observed if phase == "settled"]
+    assert len(settled) == 1
+    assert settled[0][0]["execution_may_continue"] is True
+    persisted = load_task_state(workspace_id, session_id)
+    assert persisted["task"]["pending_mutation_keys"] == [settled[0][0]["call_key"]]
