@@ -4,18 +4,17 @@
 import time, sys, os, traceback
 
 from jobs.schemas import JobRecord, JobEvent
-from jobs.store import get_job, update_job, append_event, append_log
-from jobs.manager import mark_running, mark_succeeded, mark_failed, mark_cancelled, update_progress
+from jobs.store import get_job, update_job, append_event, append_log, claim_job_for_execution
+from jobs.manager import mark_succeeded, mark_failed, mark_cancelled, update_progress
 
 
 def run_job(ws_id: str, job_id: str):
     """Execute a job. Entry point called by worker/API."""
-    rec = get_job(ws_id, job_id)
+    rec = claim_job_for_execution(ws_id, job_id)
     if not rec:
         return
 
     try:
-        mark_running(ws_id, job_id)
         append_log(ws_id, job_id, f"Starting {rec.job_type} job")
 
         if rec.job_type in {"agent_run", "generic_agent_task"}:

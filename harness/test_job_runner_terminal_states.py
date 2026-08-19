@@ -8,7 +8,7 @@ def test_runner_does_not_overwrite_failed_terminal_state(monkeypatch):
 
     record = JobRecord(job_id="job_deadbeef", workspace_id="default", job_type="export_report", status="queued")
     monkeypatch.setattr(runner, "get_job", lambda *_args: record)
-    monkeypatch.setattr(runner, "mark_running", lambda *_args: setattr(record, "status", "running"))
+    monkeypatch.setattr(runner, "claim_job_for_execution", lambda *_args: setattr(record, "status", "running") or record)
     monkeypatch.setattr(runner, "_run_export_report", lambda _record: setattr(record, "status", "failed"))
     succeeded = []
     monkeypatch.setattr(runner, "mark_succeeded", lambda *_args, **_kwargs: succeeded.append(True))
@@ -59,3 +59,24 @@ def test_mark_failed_has_no_retired_memory_side_channel(monkeypatch):
     monkeypatch.setattr(manager, "append_event", lambda *_args, **_kwargs: None)
 
     assert manager.mark_failed("default", record.job_id, "failed") is record
+
+
+def test_duplicate_dispatch_executes_queued_job_only_once(monkeypatch, tmp_path):
+    monkeypatch.setenv("LZCORE_WORKSPACE_ROOT", str(tmp_path))
+    from jobs.manager import create_job
+    import jobs.runner as runner
+
+    job = create_job(
+        workspace_id="default",
+        job_type="agent_run",
+        title="duplicate-dispatch",
+        payload={"message": "do it once"},
+        enqueue=True,
+    )
+    calls = []
+    monkeypatch.setattr(runner, "_run_agent_job", lambda rec: calls.append(rec.job_id))
+
+    runner.run_job(job.workspace_id, job.job_id)
+    runner.run_job(job.workspace_id, job.job_id)
+
+    assert calls == [job.job_id]

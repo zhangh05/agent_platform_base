@@ -115,7 +115,7 @@ def test_workflow_job_runs_through_durable_job_lifecycle(monkeypatch, tmp_path):
     from jobs.manager import create_job
     from jobs.runner import run_job
     from jobs.store import get_job
-    job = create_job("default", "workflow_run", "Workflow", {"workflow_id": "cross_extension", "inputs": {"text": "queued text"}}, enqueue=False)
+    job = create_job("default", "workflow_run", "Workflow", {"workflow_id": "cross_extension", "inputs": {"text": "queued text"}}, enqueue=True)
     run_job("default", job.job_id)
     completed = get_job("default", job.job_id)
     assert completed and completed.status == "succeeded"

@@ -104,6 +104,34 @@ def update_job(ws_id, job_id, patch: dict) -> Optional[JobRecord]:
     return rec
 
 
+def claim_job_for_execution(ws_id, job_id) -> Optional[JobRecord]:
+    """Atomically claim one queued job for execution; return None for stale dispatches."""
+    with FileLock(_job_lock_path(ws_id, job_id)):
+        rec = get_job(ws_id, job_id)
+        if not rec or rec.status != "queued":
+            return None
+        now = now_iso()
+        rec.status = "running"
+        rec.started_at = now
+        rec.finished_at = ""
+        rec.error = ""
+        rec.cancel_requested = False
+        rec.updated_at = now
+        d = _ensure(ws_id, job_id)
+        safe = sanitize_job_record_for_storage(rec.as_dict())
+        atomic_write_json(d / f"{job_id}.json", safe)
+        for key, value in safe.items():
+            if hasattr(rec, key):
+                setattr(rec, key, value)
+    _update_index(ws_id, rec)
+    _update_workspace_stats(ws_id)
+    append_event(ws_id, job_id, JobEvent(
+        job_id=job_id, workspace_id=ws_id,
+        event_type="job_started", message="Job started",
+    ))
+    return rec
+
+
 def request_job_cancellation(
     ws_id: str,
     job_id: str,
