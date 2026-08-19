@@ -132,6 +132,47 @@ def claim_job_for_execution(ws_id, job_id) -> Optional[JobRecord]:
     return rec
 
 
+def fence_reclaimed_running_job(ws_id, job_id, *, lease_id: str, attempt: int) -> Optional[JobRecord]:
+    """Fail closed when a reclaimed queue delivery finds an uncertain running job."""
+    if int(attempt or 0) <= 1:
+        return None
+    with FileLock(_job_lock_path(ws_id, job_id)):
+        rec = get_job(ws_id, job_id)
+        if not rec or rec.status != "running":
+            return None
+        now = now_iso()
+        metadata = dict(rec.metadata or {})
+        active_turn = dict(metadata.get("active_turn") or {})
+        active_turn["status"] = "failed"
+        active_turn["error"] = "worker_lease_expired"
+        active_turn["finished_at"] = now
+        active_turn["unknown_outcome"] = {
+            "tool_id": "jobs.worker",
+            "call_id": str(lease_id or job_id),
+            "error_code": "WORKER_LEASE_EXPIRED",
+            "execution_may_continue": True,
+        }
+        metadata["active_turn"] = active_turn
+        rec.status = "failed"
+        rec.finished_at = now
+        rec.error = "worker_lease_expired"
+        rec.metadata = metadata
+        rec.updated_at = now
+        d = _ensure(ws_id, job_id)
+        safe = sanitize_job_record_for_storage(rec.as_dict())
+        atomic_write_json(d / f"{job_id}.json", safe)
+        for key, value in safe.items():
+            if hasattr(rec, key):
+                setattr(rec, key, value)
+    _update_index(ws_id, rec)
+    _update_workspace_stats(ws_id)
+    append_event(ws_id, job_id, JobEvent(
+        job_id=job_id, workspace_id=ws_id, event_type="job_failed",
+        message="Job lease expired; outcome requires reconciliation",
+    ))
+    return rec
+
+
 def request_job_cancellation(
     ws_id: str,
     job_id: str,

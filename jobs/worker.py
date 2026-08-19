@@ -60,6 +60,15 @@ def run_once() -> dict:
 
             from jobs.store import get_job
             job = get_job(receipt.workspace_id, receipt.job_id)
+            from jobs.store import fence_reclaimed_running_job
+            fenced = fence_reclaimed_running_job(
+                receipt.workspace_id, receipt.job_id,
+                lease_id=receipt.lease_id, attempt=receipt.attempt,
+            )
+            if fenced is not None:
+                queue_backend.ack(receipt)
+                _write_state({"status": "lease_expired", "job_id": fenced.job_id, "job_type": fenced.job_type, "worker_id": worker_id, "attempt": receipt.attempt})
+                return {"status": "lease_expired", "job_id": fenced.job_id}
             if not job:
                 queue_backend.ack(receipt)
                 return {"status": "missing", "job_id": receipt.job_id}
