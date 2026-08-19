@@ -50,6 +50,11 @@ def _request_registry_path(ws_id: str, session_id: str, client_request_id: str):
     )
 
 
+def _request_input_sha256(user_input: str) -> str:
+    """Bind an idempotency key to its accepted payload without retaining it twice."""
+    return hashlib.sha256(str(user_input or "").encode("utf-8")).hexdigest()
+
+
 def _read_request_record(path) -> dict[str, Any]:
     if not path.is_file():
         return {}
@@ -219,6 +224,19 @@ def _claim_session_turn_request(
         path = _request_registry_path(ws_id, session_id, request_id)
         existing = _read_request_record(path)
         if existing:
+            # An idempotency key identifies one immutable accepted payload. A
+            # reused key must not project an earlier turn's outcome onto a
+            # different user message in the same session.
+            existing_input_sha = str(existing.get("input_sha256") or "")
+            if existing_input_sha and existing_input_sha != _request_input_sha256(user_input):
+                return SessionTurnClaim(
+                    job_id=str(existing.get("job_id") or ""),
+                    should_execute=False,
+                    status="conflict",
+                    run_id=str(existing.get("run_id") or ""),
+                    trace_id=str(existing.get("trace_id") or ""),
+                    error="client_request_payload_mismatch",
+                )
             if _reconcile_running_request_record(ws_id, request_id, existing):
                 _write_request_record(path, existing)
             return SessionTurnClaim(
@@ -269,6 +287,7 @@ def _claim_session_turn_request(
             )
         _write_request_record(path, {
             "client_request_id": request_id,
+            "input_sha256": _request_input_sha256(user_input),
             "session_id": session_id,
             "workspace_id": ws_id,
             "job_id": job_id,

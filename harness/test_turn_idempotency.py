@@ -22,7 +22,7 @@ def test_client_request_claim_is_durable_and_terminal(monkeypatch, tmp_path: Pat
         client_request_id="client-request-idempotent",
     )
     duplicate = lifecycle.claim_session_turn(
-        "ws-idempotent", "session-idempotent", "changed input",
+        "ws-idempotent", "session-idempotent", "first input",
         client_request_id="client-request-idempotent",
     )
 
@@ -41,7 +41,7 @@ def test_client_request_claim_is_durable_and_terminal(monkeypatch, tmp_path: Pat
         ok=True,
     )
     completed = lifecycle.claim_session_turn(
-        "ws-idempotent", "session-idempotent", "retry input",
+        "ws-idempotent", "session-idempotent", "first input",
         client_request_id="client-request-idempotent",
     )
 
@@ -180,7 +180,7 @@ def test_cancelled_claim_is_not_misrecorded_as_failed(monkeypatch, tmp_path: Pat
     )
 
     claim = lifecycle.claim_session_turn(
-        "ws-cancelled", "session-cancelled", "retry same request",
+        "ws-cancelled", "session-cancelled", "cancel me",
         client_request_id="request-cancelled",
     )
     assert claim.should_execute is False
@@ -253,7 +253,7 @@ def test_same_request_reconciles_to_failed_after_interrupted_job(monkeypatch, tm
     })
 
     duplicate = lifecycle.claim_session_turn(
-        ws_id, session_id, "retry after restart", client_request_id=request_id,
+        ws_id, session_id, "interrupted request", client_request_id=request_id,
     )
     assert duplicate.should_execute is False
     assert duplicate.job_id == first.job_id
@@ -408,3 +408,30 @@ def test_terminal_turn_reuses_claimed_user_message_without_run_fallback_duplicat
     assert user_messages[0]["metadata"]["client_request_id"] == request_id
     assert len(assistant_messages) == 1
     assert assistant_messages[0]["content"] == result.final_response
+
+
+def test_same_request_id_with_different_input_is_rejected(monkeypatch, tmp_path: Path):
+    monkeypatch.setenv("LZCORE_WORKSPACE_ROOT", str(tmp_path))
+    import jobs.lifecycle as lifecycle
+    from storage.session_store import ensure_session
+
+    ws_id = "ws-request-payload-binding"
+    session_id = "session-request-payload-binding"
+    request_id = "request-payload-binding"
+    ensure_session(session_id, ws_id)
+    first = lifecycle.claim_session_turn(
+        ws_id, session_id, "first immutable request", client_request_id=request_id,
+    )
+    assert first.should_execute is True
+    conflict = lifecycle.claim_session_turn(
+        ws_id, session_id, "different request must not inherit first result",
+        client_request_id=request_id,
+    )
+    assert conflict.should_execute is False
+    assert conflict.job_id == first.job_id
+    assert conflict.status == "conflict"
+    assert conflict.error == "client_request_payload_mismatch"
+    record = lifecycle._read_request_record(
+        lifecycle._request_registry_path(ws_id, session_id, request_id),
+    )
+    assert record["input_sha256"] == lifecycle._request_input_sha256("first immutable request")
