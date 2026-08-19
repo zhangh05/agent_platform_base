@@ -121,3 +121,39 @@ def test_query_loop_passes_trusted_cancel_callback_as_llm_execution_control():
     assert result.content == "ok"
     assert captured["extra"]["__runtime_cancel_check"] is callback
     assert "cancel_check" not in captured["extra"]
+
+
+def test_openai_stream_accepts_sse_data_without_optional_space(monkeypatch):
+    import json
+
+    first = {"choices": [{"delta": {"content": "first"}, "finish_reason": None}]}
+    tool = {
+        "choices": [{
+            "delta": {"tool_calls": [{
+                "index": 0,
+                "id": "call-1",
+                "function": {
+                    "name": "web__manage",
+                    "arguments": json.dumps({"action": "search"}, separators=(",", ":")),
+                },
+            }]},
+            "finish_reason": "tool_calls",
+        }],
+    }
+    response = _FakeStreamResponse([
+        "data:" + json.dumps(first, separators=(",", ":")),
+        "data:" + json.dumps(tool, separators=(",", ":")),
+        "data:[DONE]",
+    ])
+    _install_requests(monkeypatch, response)
+    result = provider._api_generate_stream(
+        "https://provider.invalid/v1/chat/completions",
+        {}, {"api_key": "test", "provider": "test"},
+        LLMRequest(task="assistant_chat", metadata={"stream_to_user": False}),
+    )
+    assert result.content == "first"
+    assert result.finish_reason == "tool_calls"
+    assert len(result.tool_calls) == 1
+    assert result.tool_calls[0].id == "call-1"
+    assert result.tool_calls[0].name == "web__manage"
+    assert result.tool_calls[0].arguments == {"action": "search"}

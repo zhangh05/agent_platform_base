@@ -420,10 +420,13 @@ def _api_generate_stream(url: str, body_dict: dict, cfg: dict, req: "LLMRequest"
                 )
             if not line:
                 continue
-            if not line.startswith("data: "):
+            # SSE permits the optional single space after the ``data:`` field
+            # delimiter. Some OpenAI-compatible providers omit it; accepting
+            # both forms prevents a valid stream from being silently discarded.
+            if not line.startswith("data:"):
                 continue
 
-            data_str = line[6:]  # Remove "data: " prefix
+            data_str = line[5:].lstrip()  # Remove ``data:`` and optional space
             if data_str == "[DONE]":
                 break
 
