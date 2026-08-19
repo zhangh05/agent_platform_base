@@ -301,14 +301,16 @@ def list_logs(ws_id, job_id, limit=200) -> list:
 
 
 def get_next_queued_job() -> Optional[JobRecord]:
-    ws_root = _get_ws_root()
-    for wd in sorted(ws_root.iterdir(), reverse=True):
-        if not wd.is_dir(): continue
-        jd = wd / "jobs"
-        if not jd.is_dir(): continue
-        for f in sorted(jd.glob("*/*.json")):
-            j = get_job(wd.name, f.stem)
-            if j and j.status == "queued": return j
+    """Return one queued job visible to the current storage principal."""
+    from storage.workspace_store import list_workspace_ids
+    for ws_id in sorted(list_workspace_ids(), reverse=True):
+        jobs_dir = _workspace_path(ws_id) / "jobs"
+        if not jobs_dir.is_dir():
+            continue
+        for path in sorted(jobs_dir.glob("*/*.json")):
+            job = get_job(ws_id, path.stem)
+            if job and job.status == "queued":
+                return job
     return None
 
 

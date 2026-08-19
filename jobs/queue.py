@@ -12,6 +12,7 @@ class QueueReceipt:
     job_id: str
     lease_id: str
     attempt: int
+    principal: str = ""
 
 
 class JobQueue(Protocol):
@@ -42,8 +43,14 @@ class FileJobQueue:
 
     def claim(self, worker_id: str) -> QueueReceipt | None:
         from jobs.store import get_next_queued_job
-        job = get_next_queued_job()
-        return QueueReceipt(job.workspace_id, job.job_id, f"file:{job.job_id}", job.retry_count + 1) if job else None
+        from storage.principal import current_storage_principal, known_storage_principals, storage_principal
+        principals = [current_storage_principal(), *known_storage_principals()]
+        for principal in dict.fromkeys(principal for principal in principals if principal):
+            with storage_principal(principal):
+                job = get_next_queued_job()
+            if job:
+                return QueueReceipt(job.workspace_id, job.job_id, f"file:{job.job_id}", job.retry_count + 1, principal)
+        return None
 
     def ack(self, receipt: QueueReceipt) -> None:
         return None
@@ -71,12 +78,13 @@ class RedisJobQueue:
         self.client = redis.Redis.from_url(url, decode_responses=True, socket_connect_timeout=3, socket_timeout=3)
 
     @staticmethod
-    def _payload(workspace_id: str, job_id: str, attempt: int = 1) -> str:
+    def _payload(workspace_id: str, job_id: str, attempt: int = 1, principal: str = "") -> str:
         import json
-        return json.dumps({"workspace_id": workspace_id, "job_id": job_id, "attempt": attempt}, separators=(",", ":"))
+        return json.dumps({"workspace_id": workspace_id, "job_id": job_id, "attempt": attempt, "principal": principal}, separators=(",", ":"))
 
     def enqueue(self, workspace_id: str, job_id: str) -> QueueReceipt:
-        payload = self._payload(workspace_id, job_id)
+        from storage.principal import current_storage_principal
+        payload = self._payload(workspace_id, job_id, principal=current_storage_principal())
         self.client.lpush(self.QUEUED, payload)
         return QueueReceipt(workspace_id, job_id, payload, 1)
 
@@ -87,7 +95,7 @@ class RedisJobQueue:
         if not payload:
             return None
         data = json.loads(payload)
-        receipt = QueueReceipt(data["workspace_id"], data["job_id"], payload, int(data.get("attempt", 1)))
+        receipt = QueueReceipt(data["workspace_id"], data["job_id"], payload, int(data.get("attempt", 1)), str(data.get("principal") or ""))
         self.client.hset(self.LEASES, payload, json.dumps({"worker_id": worker_id, "heartbeat_at": time.time()}))
         return receipt
 
@@ -97,7 +105,7 @@ class RedisJobQueue:
 
     def retry(self, receipt: QueueReceipt, reason: str = "") -> None:
         self.ack(receipt)
-        self.client.lpush(self.QUEUED, self._payload(receipt.workspace_id, receipt.job_id, receipt.attempt + 1))
+        self.client.lpush(self.QUEUED, self._payload(receipt.workspace_id, receipt.job_id, receipt.attempt + 1, receipt.principal))
 
     def heartbeat(self, receipt: QueueReceipt, worker_id: str) -> bool:
         import json
@@ -125,7 +133,7 @@ class RedisJobQueue:
             self.client.lrem(self.PROCESSING, 1, payload)
             self.client.hdel(self.LEASES, payload)
             if data.get("workspace_id") and data.get("job_id"):
-                self.client.lpush(self.QUEUED, self._payload(data["workspace_id"], data["job_id"], int(data.get("attempt", 1)) + 1))
+                self.client.lpush(self.QUEUED, self._payload(data["workspace_id"], data["job_id"], int(data.get("attempt", 1)) + 1, str(data.get("principal") or "")))
                 reclaimed += 1
         return reclaimed
 

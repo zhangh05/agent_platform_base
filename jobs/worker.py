@@ -58,8 +58,12 @@ def run_once() -> dict:
                 _write_state({"status": "idle", "message": "No queued jobs", "worker_id": worker_id, "reclaimed": reclaimed})
                 return {"status": "idle", "message": "No queued jobs", "reclaimed": reclaimed}
 
-            from jobs.store import get_job
-            job = get_job(receipt.workspace_id, receipt.job_id)
+            from contextlib import nullcontext
+            from storage.principal import storage_principal
+            principal_scope = lambda: storage_principal(receipt.principal) if receipt.principal else nullcontext()
+            with principal_scope():
+                from jobs.store import get_job
+                job = get_job(receipt.workspace_id, receipt.job_id)
             from jobs.store import fence_reclaimed_running_job
             fenced = fence_reclaimed_running_job(
                 receipt.workspace_id, receipt.job_id,
@@ -83,7 +87,8 @@ def run_once() -> dict:
             )
             heartbeat.start()
             try:
-                run_job(job.workspace_id, job.job_id)
+                with principal_scope():
+                    run_job(job.workspace_id, job.job_id)
             except Exception:
                 heartbeat_stop.set()
                 heartbeat.join(timeout=1)
