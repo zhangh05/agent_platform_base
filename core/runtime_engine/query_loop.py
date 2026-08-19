@@ -2673,13 +2673,29 @@ class QueryLoop:
             for message in messages[-2:]
         )
 
-    @staticmethod
+    def _artifact_analysis_char_limit(self) -> int:
+        """Return the exact complete-artifact cap available to this turn."""
+        return min(
+            ARTIFACT_ANALYSIS_MAX_CHARS,
+            self._context_budget.artifact_result_tokens * 2,
+        )
+
     def _has_complete_analysis_artifact(
+        self,
         results: List[StreamingToolResult],
     ) -> bool:
+        """True only when the complete artifact can actually reach the model.
+
+        The response-only nudge is a control decision, so it must use the same
+        budget boundary as ``_artifact_analysis_content``.  Looking only at the
+        producer's ``content_complete`` claim would otherwise tell the model a
+        truncated result was complete after context-budget projection.
+        """
+        max_chars = self._artifact_analysis_char_limit()
         return any(
             result.ok
             and result.output.get("content_complete") is True
+            and len(str(result.output.get("preview") or "")) <= max_chars
             and result.output.get("artifact_type") in {
                 "input_data", "output_data", "report",
             }
@@ -3261,10 +3277,7 @@ class QueryLoop:
             output_str = (
                 _artifact_analysis_content(
                     tool_payload,
-                    max_chars=min(
-                        ARTIFACT_ANALYSIS_MAX_CHARS,
-                        self._context_budget.artifact_result_tokens * 2,
-                    ),
+                    max_chars=self._artifact_analysis_char_limit(),
                 )
                 if is_complete_text_artifact
                 else _json_compact(

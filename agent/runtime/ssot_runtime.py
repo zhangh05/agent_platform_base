@@ -349,6 +349,9 @@ def run_ssot_turn(
         task_id=turn.turn_id,
         user_input=user_input,
         max_tokens=runtime_context_budget.retrieved_context_tokens,
+        include_workspace_memory=not bool(
+            getattr(session, "is_sub_agent", False)
+        ),
     )
     if retrieved_context_block:
         metadata_in["retrieved_context_block"] = retrieved_context_block
@@ -1532,35 +1535,50 @@ _HISTORY_STOP_TERMS = frozenset({
 def _build_retrieved_context_block(
     *, workspace_id: str, session_id: str, task_id: str, user_input: str,
     max_tokens: int = 3000,
+    include_workspace_memory: bool = True,
 ) -> str:
-    """Retrieve concise governed memory and knowledge context for this turn."""
+    """Retrieve governed context without silently widening child-agent access.
+
+    A subagent has a restricted tool profile and an isolated child session.
+    Its automatic context must not reintroduce workspace/global memory that the
+    profile did not expose.  Workspace knowledge remains available when its
+    canonical tool profile permits research-oriented work.
+    """
     if not workspace_id or not user_input.strip():
         return ""
     try:
         from core.context.unified_retriever import get_retriever
         from storage.memory_governance import MemoryStore
 
-        retrieved = get_retriever(workspace_id).retrieve_for_context(
-            user_input,
-            top_k_memory=3,
-            top_k_knowledge=2,
-            session_id=session_id,
-            task_id=task_id,
-        )
+        retriever = get_retriever(workspace_id)
+        if include_workspace_memory:
+            retrieved = retriever.retrieve_for_context(
+                user_input,
+                top_k_memory=3,
+                top_k_knowledge=2,
+                session_id=session_id,
+                task_id=task_id,
+            )
+        else:
+            retrieved = {
+                "memory_hits": [],
+                "knowledge_hits": retriever.search_knowledge(user_input, top_k=2),
+            }
         from core.runtime_engine.context_budget import truncate_text_to_tokens
 
         lines: list[str] = []
         item_tokens = max(200, min(750, max_tokens // 3))
-        core_rules = MemoryStore().list_retrievable(
-            workspace_id,
-            memory_type="core_rule",
-            limit=8,
-        )
-        for rule in core_rules:
-            content = str(rule.get("content") or rule.get("summary") or "").strip()
-            if content:
-                compacted, _ = truncate_text_to_tokens(content, min(item_tokens, 350))
-                lines.append(f"[core-rule scope=workspace authority=explicit-user] {compacted}")
+        if include_workspace_memory:
+            core_rules = MemoryStore().list_retrievable(
+                workspace_id,
+                memory_type="core_rule",
+                limit=8,
+            )
+            for rule in core_rules:
+                content = str(rule.get("content") or rule.get("summary") or "").strip()
+                if content:
+                    compacted, _ = truncate_text_to_tokens(content, min(item_tokens, 350))
+                    lines.append(f"[core-rule scope=workspace authority=explicit-user] {compacted}")
         for hit in retrieved.get("memory_hits", [])[:3]:
             if str(hit.get("memory_type") or "") == "core_rule":
                 continue

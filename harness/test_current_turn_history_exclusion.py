@@ -442,3 +442,90 @@ def test_ssot_runtime_discards_caller_control_plane_metadata(monkeypatch, tmp_pa
     )
     persisted = SessionMessageStore(session_id=session_id, ws_id=workspace_id).get_messages()
     assert [item["role"] for item in persisted] == ["user"]
+
+def test_subagent_retrieval_keeps_knowledge_but_excludes_workspace_memory(monkeypatch):
+    from agent.runtime.ssot_runtime import _build_retrieved_context_block
+
+    class FakeRetriever:
+        def retrieve_for_context(self, *_args, **_kwargs):
+            raise AssertionError("child context must not fetch workspace memory")
+
+        def search_knowledge(self, _query, top_k=2):
+            assert top_k == 2
+            return [{"content": "公开知识：OSPF 邻居巡检流程。"}]
+
+    monkeypatch.setattr(
+        "core.context.unified_retriever.get_retriever",
+        lambda _workspace_id: FakeRetriever(),
+    )
+    block = _build_retrieved_context_block(
+        workspace_id="ws-subagent-context",
+        session_id="sub-abcdef12",
+        task_id="run-subagent",
+        user_input="检查 OSPF 邻居",
+        include_workspace_memory=False,
+    )
+
+    assert "公开知识：OSPF 邻居巡检流程。" in block
+    assert "memory scope=" not in block
+    assert "core-rule scope=" not in block
+
+def test_ssot_runtime_uses_child_session_marker_to_disable_workspace_memory(
+    monkeypatch, tmp_path,
+):
+    monkeypatch.setenv("LZCORE_WORKSPACE_ROOT", str(tmp_path))
+    from agent.core.session import AgentSession
+    from agent.core.turn import AgentTurn
+    from agent.protocol.op import AgentOp
+    from agent.runtime.ssot_runtime import run_ssot_turn
+
+    seen = {}
+
+    def fake_retrieval(**kwargs):
+        seen.update(kwargs)
+        return "[knowledge scope=workspace] OSPF 巡检手册"
+
+    class FakeEngine:
+        async def run(self, **_kwargs):
+            return SimpleNamespace(
+                success=True,
+                final_response="已完成。",
+                tool_calls=[],
+                events=[],
+                errors=[],
+                metadata={},
+                node_results={},
+            )
+
+    monkeypatch.setattr(
+        "agent.runtime.ssot_runtime._build_retrieved_context_block",
+        fake_retrieval,
+    )
+    monkeypatch.setattr(
+        "agent.runtime.ssot_runtime._build_engine",
+        lambda **_kwargs: FakeEngine(),
+    )
+    monkeypatch.setattr(
+        "agent.runtime.ssot_runtime.persist_run_record",
+        lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        "agent.runtime.ssot_runtime._record_experience_and_maybe_reflect",
+        lambda **_kwargs: None,
+    )
+
+    session = AgentSession(
+        session_id="sub-abcdef12", workspace_id="ws-subagent-entry",
+    )
+    session.mark_sub_agent()
+    turn = AgentTurn.from_op(AgentOp.user_message(
+        user_input="检查 OSPF 邻居",
+        session_id=session.session_id,
+        workspace_id=session.workspace_id,
+    ))
+
+    result = run_ssot_turn(session, turn, allowed_tool_ids={"knowledge.manage"})
+
+    assert result.ok is True
+    assert seen["include_workspace_memory"] is False
+    assert seen["session_id"] == "sub-abcdef12"

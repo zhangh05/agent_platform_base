@@ -541,3 +541,30 @@ def test_query_loop_marks_oversized_subagent_handoff_incomplete():
     assert payload["content_complete"] is False
     assert payload["content_returned_chars"] < len(full_result)
     assert payload["artifact_id"] == "art_child"
+    # The control decision must follow the actual context projection rather
+    # than the producer's original complete-content claim.
+    assert loop._has_complete_analysis_artifact([
+        StreamingToolResult(
+            tool_name="agent.manage", call_id="call_handoff", ok=True,
+            output={
+                "ok": True,
+                "artifact_id": "art_child",
+                "artifact_type": "output_data",
+                "preview": full_result,
+                "content_complete": True,
+                "subagent_result_complete": True,
+            },
+        )
+    ]) is False
+    assert loop._has_complete_analysis_artifact([
+        StreamingToolResult(
+            tool_name="workspace.artifact", call_id="call_artifact", ok=True,
+            output={
+                "ok": True,
+                "artifact_id": "art_large",
+                "artifact_type": "report",
+                "preview": full_result,
+                "content_complete": True,
+            },
+        )
+    ]) is False
