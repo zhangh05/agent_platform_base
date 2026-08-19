@@ -66,27 +66,80 @@ _active_turns_lock = threading.Lock()
 # Durable job updates are supplementary to the dedicated per-turn message
 # WebSocket. Never let a slow dashboard listener synchronously stall the
 # runtime callback that is producing tokens and stages.
+# Durable lifecycle snapshots are coalesced before recipient fan-out.
 _broadcast_pending: dict[str, tuple[str, str, str]] = {}
 _broadcast_cv = threading.Condition()
 _broadcast_worker_started = False
+# Per-socket state isolates slow recipients from their peers.
+_broadcast_inflight: set[str] = set()
+_broadcast_deferred: dict[str, dict[str, str]] = {}
+
+# One stalled browser must not serialize delivery to unrelated clients.
+# At most one sender runs per socket; a newer lifecycle snapshot replaces its
+# deferred predecessor while that sender is blocked.
+def _drop_broadcast_client(key: str, ws: object | None = None) -> None:
+    with _active_ws_lock:
+        current = _active_ws_connections.get(key)
+        if ws is None or current is None or current[2] is ws:
+            _active_ws_connections.pop(key, None)
+        _broadcast_inflight.discard(key)
+        _broadcast_deferred.pop(key, None)
 
 
-def _deliver_broadcast(username: str, workspace_id: str, payload: str) -> None:
-    dead: list[str] = []
+def _send_broadcast_recipient(key: str, ws: object, payload: str) -> None:
+    while True:
+        try:
+            ws.send(payload)
+        except (OSError, RuntimeError, TypeError, ValueError):
+            _drop_broadcast_client(key, ws)
+            return
+        with _active_ws_lock:
+            current = _active_ws_connections.get(key)
+            deferred = _broadcast_deferred.get(key)
+            if current is None or current[2] is not ws or not deferred:
+                _broadcast_inflight.discard(key)
+                _broadcast_deferred.pop(key, None)
+                return
+            next_key = next(iter(deferred))
+            payload = deferred.pop(next_key)
+            if not deferred:
+                _broadcast_deferred.pop(key, None)
+
+def _schedule_broadcast_recipient(
+    key: str,
+    ws: object,
+    coalesce_key: str,
+    payload: str,
+) -> None:
+    with _active_ws_lock:
+        current = _active_ws_connections.get(key)
+        if current is None or current[2] is not ws:
+            return
+        if key in _broadcast_inflight:
+            _broadcast_deferred.setdefault(key, {})[coalesce_key] = payload
+            return
+        _broadcast_inflight.add(key)
+    threading.Thread(
+        target=_send_broadcast_recipient,
+        args=(key, ws, payload),
+        name="lzcore-ws-recipient",
+        daemon=True,
+    ).start()
+
+
+def _deliver_broadcast(
+    username: str,
+    workspace_id: str,
+    coalesce_key: str,
+    payload: str,
+) -> None:
     with _active_ws_lock:
         recipients = [
             (key, ws) for key, (owner, ws_id, ws) in _active_ws_connections.items()
             if ws_id == workspace_id and owner == username
         ]
     for key, ws in recipients:
-        try:
-            ws.send(payload)
-        except Exception:
-            dead.append(key)
-    if dead:
-        with _active_ws_lock:
-            for key in dead:
-                _active_ws_connections.pop(key, None)
+        _schedule_broadcast_recipient(key, ws, coalesce_key, payload)
 
 
 def _broadcast_worker() -> None:
@@ -94,8 +147,9 @@ def _broadcast_worker() -> None:
         with _broadcast_cv:
             while not _broadcast_pending:
                 _broadcast_cv.wait()
-            _, (username, workspace_id, payload) = _broadcast_pending.popitem()
-        _deliver_broadcast(username, workspace_id, payload)
+            coalesce_key = next(iter(_broadcast_pending))
+            username, workspace_id, payload = _broadcast_pending.pop(coalesce_key)
+        _deliver_broadcast(username, workspace_id, coalesce_key, payload)
 
 
 def _enqueue_broadcast(username: str, workspace_id: str, coalesce_key: str, payload: str) -> None:
@@ -347,8 +401,7 @@ def register_ws_routes(app):
                 pass
         finally:
             if ws_key:
-                with _active_ws_lock:
-                    _active_ws_connections.pop(ws_key, None)
+                _drop_broadcast_client(ws_key, ws)
 
     return app
 
