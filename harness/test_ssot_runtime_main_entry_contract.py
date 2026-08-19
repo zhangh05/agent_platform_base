@@ -34,6 +34,38 @@ def test_agent_app_submit_uses_ssot_runtime(monkeypatch, temp_dirs):
     assert result.tool_calls == []
 
 
+def test_agent_app_projects_single_terminal_cancel_error_to_task_state(monkeypatch, temp_dirs):
+    """A QueryLoop primary error is a lifecycle fact even when errors is empty."""
+    from types import SimpleNamespace
+    from agent.app.facade import AgentApp
+
+    class FakeEngine:
+        async def run(self, **_kwargs):
+            return SimpleNamespace(
+                success=False,
+                final_response="任务已取消。",
+                node_results={},
+                error="cancelled_by_user",
+                errors=[],
+                metadata={"execution_outcome": "failed"},
+            )
+
+    monkeypatch.setattr(
+        "agent.runtime.ssot_runtime._build_engine",
+        lambda **_kwargs: FakeEngine(),
+    )
+    result = AgentApp().submit_user_message(
+        user_input="生成答复",
+        workspace_id="default",
+        metadata={"transport": "test"},
+    )
+    assert result.ok is False
+    assert result.errors == ["cancelled_by_user"]
+    assert result.metadata["runtime_errors"] == ["cancelled_by_user"]
+    assert result.metadata["task_state"]["task"]["status"] == "cancelled"
+    assert result.metadata["task_state"]["task"]["next_action"] == "cancelled_by_user"
+
+
 def test_agent_app_projects_unknown_outcome_as_read_only_terminal_fact(monkeypatch, temp_dirs):
     """The UI contract may observe uncertainty, but cannot own execution recovery."""
     from types import SimpleNamespace

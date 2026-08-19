@@ -361,6 +361,19 @@ def run_ssot_turn(
             tool_calls=tool_calls,
             runtime_result=runtime_result,
         )
+        # QueryLoop exposes a terminal error both as a primary `error` field
+        # and, for multi-error paths, as `errors`. Preserve the ordered union
+        # before projecting lifecycle facts; otherwise cancellation is visible
+        # to the response but lost to TaskState terminal derivation.
+        runtime_errors = [
+            str(item)[:240]
+            for item in (runtime_result.errors or [])
+            if str(item).strip()
+        ]
+        terminal_error = str(getattr(runtime_result, "error", "") or "").strip()
+        if terminal_error and terminal_error not in runtime_errors:
+            runtime_errors.append(terminal_error[:240])
+        runtime_errors = runtime_errors[:16]
         metadata = {
             **context.metadata,
             "runtime_engine": "ssot_runtime",
@@ -426,7 +439,7 @@ def run_ssot_turn(
             ),
             # Server-produced terminal errors are lifecycle facts for TaskState;
             # request metadata never contributes to this list.
-            "runtime_errors": [str(item)[:240] for item in (runtime_result.errors or []) if str(item).strip()][:16],
+            "runtime_errors": list(runtime_errors),
             "tool_execution_outcome": str(
                 (runtime_result.metadata or {}).get("tool_execution_outcome") or "complete"
             ),
@@ -457,7 +470,6 @@ def run_ssot_turn(
                 else []
             ),
         }
-        runtime_errors = list(runtime_result.errors or [])
         failed_tool_count = sum(1 for call in tool_calls if not call.get("ok"))
         successful_tool_count = len(tool_calls) - failed_tool_count
         if not runtime_result.success and failed_tool_count and not runtime_errors:
@@ -563,7 +575,7 @@ def run_ssot_turn(
             user_input=user_input,
             final_response=result.final_response or "",
             run_ok=bool(result.ok),
-            runtime_metadata=dict((result.metadata or {}).get("ssot_runtime") or {}),
+            runtime_metadata=_task_state_runtime_metadata(result.metadata),
             tool_calls=list(result.tool_calls or []),
             continuation_contract=task_state_contract,
         )
@@ -618,6 +630,33 @@ def run_ssot_turn(
         )
 
     return result
+
+
+def _task_state_runtime_metadata(result_metadata: dict[str, Any] | None) -> dict[str, Any]:
+    """Project only server-owned terminal facts into the TaskState commit.
+
+    ``ssot_runtime`` preserves raw QueryLoop metrics, while the adapter may
+    normalize lifecycle fields (notably a primary QueryLoop ``error`` into
+    ``runtime_errors``).  Passing the raw mirror alone splits TaskState from the
+    delivered AgentResult.  The fixed allow-list preserves the execution facts
+    without allowing caller-provided top-level metadata to influence state.
+    """
+    metadata = result_metadata if isinstance(result_metadata, dict) else {}
+    raw = metadata.get("ssot_runtime")
+    projected = dict(raw) if isinstance(raw, dict) else {}
+    for key in (
+        "execution_outcome",
+        "runtime_errors",
+        "tool_execution_outcome",
+        "unknown_outcome",
+        "goal_assertions",
+        "evidence",
+        "cognitive",
+        "cognitive_events",
+    ):
+        if key in metadata:
+            projected[key] = metadata[key]
+    return projected
 
 
 def _record_experience_and_maybe_reflect(
