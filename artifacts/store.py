@@ -534,12 +534,19 @@ def delete_artifact(workspace_id: str, artifact_id: str, hard: bool = False) -> 
     _remove_from_knowledge_index(workspace_id, artifact_id)
     if hard:
         records = _records_in_index_order(workspace_id)
-        file_is_shared = bool(rec.file_id) and any(
-            item.artifact_id != artifact_id
-            and item.lifecycle != "deleted"
-            and item.file_id == rec.file_id
-            for item in records
-        )
+        file_is_shared = False
+        if rec.file_id:
+            from storage.reference_index import list_references_for_file
+            file_is_shared = any(
+                item.artifact_id != artifact_id
+                and item.lifecycle != "deleted"
+                and item.file_id == rec.file_id
+                for item in records
+            ) or any(
+                reference.get("owner_type") != "artifact"
+                or reference.get("owner_id") != artifact_id
+                for reference in list_references_for_file(workspace_id, rec.file_id)
+            )
         if rec.file_id and not file_is_shared:
             from storage.file_store import delete_file_permanently
             delete_file_permanently(workspace_id, rec.file_id)

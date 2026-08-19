@@ -388,7 +388,7 @@ def delete_session_permanently(
             )
         runs_dir = _ws_root(ws_id) / "runs"
         for run_id in run_ids:
-            for suffix in (".json", ".trace.json", ".decision.json"):
+            for suffix in (".json", ".trace.json", ".decision.json", ".artifacts.json"):
                 record_path = runs_dir / f"{run_id}{suffix}"
                 if record_path.is_file():
                     try:

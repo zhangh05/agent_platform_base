@@ -124,3 +124,19 @@ def test_permanent_delete_reports_partial_failure_and_can_retry(isolated_store, 
     monkeypatch.setattr(shutil, "rmtree", real_rmtree)
     assert delete_session_permanently(session_id, workspace_id, True) is True
     assert not message_dir.exists()
+
+
+def test_permanent_delete_removes_session_run_artifact_index(isolated_store):
+    """A permanent session delete must remove its run-scoped artifact projection."""
+    from storage.run_artifact_store import mutate_run_artifacts
+    from storage.session_store import add_run_to_session, delete_session_permanently, ensure_session
+
+    session_id, workspace_id, run_id = "sess_delete_artifacts", "ws_lock", "run_delete_artifacts"
+    ensure_session(session_id, workspace_id)
+    add_run_to_session(session_id, run_id, workspace_id)
+    mutate_run_artifacts(workspace_id, run_id, lambda _index: None)
+    index_path = isolated_store / workspace_id / "runs" / f"{run_id}.artifacts.json"
+    assert index_path.is_file()
+
+    assert delete_session_permanently(session_id, workspace_id, True) is True
+    assert not index_path.exists()
