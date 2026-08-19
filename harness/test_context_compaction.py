@@ -168,3 +168,25 @@ def test_durable_history_state_keeps_constraints_entities_and_failures():
     assert "hunter2" not in json.dumps(record, ensure_ascii=False)
     assert record["unresolved"][0]["tool_id"] == "device__manage"
     assert record["references"] == [{"artifact_id": "artifact-1"}]
+
+
+def test_protocol_validator_rejects_duplicate_call_and_result_ids():
+    duplicate_calls = [_call("repeat", {"x": 1}), _call("repeat", {"x": 2})]
+    with pytest.raises(ValueError, match="duplicate tool call id"):
+        assert_tool_protocol(duplicate_calls)
+
+    duplicate_results = [
+        _call("repeat", {"x": 1}),
+        _result("repeat", {"ok": True}),
+        _result("repeat", {"ok": True}),
+    ]
+    with pytest.raises(ValueError, match="duplicate tool result"):
+        assert_tool_protocol(duplicate_results)
+
+
+def test_below_budget_compaction_rejects_invalid_tool_protocol():
+    with pytest.raises(ValueError, match="orphaned"):
+        compact_messages([
+            LLMMessage(role="user", content="current request"),
+            _result("missing", {"ok": True}),
+        ], max_tokens=10_000)

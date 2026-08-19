@@ -9,6 +9,7 @@ from __future__ import annotations
 import concurrent.futures
 import logging
 import threading
+from core.runtime_engine.models import ApprovedContinuationRuntimeControl
 
 _LOG = logging.getLogger(__name__)
 _EXECUTOR = concurrent.futures.ThreadPoolExecutor(
@@ -108,14 +109,13 @@ def _resume_claimed_continuation(workspace_id: str, continuation_id: str, grant,
             user_input=str(payload.get("user_input") or ""),
             workspace_id=workspace_id,
             session_id=session_id,
-            metadata={
-                "__approved_tool_continuation": grant,
-                "__approval_continuation_resume": True,
-                "approval_parent_run_id": str(payload.get("parent_run_id") or ""),
-                "__approval_cognitive_state": dict(payload.get("cognitive_state") or {}),
-                "__approval_prior_tool_evidence": list(payload.get("prior_tool_evidence") or []),
-                "transport": "approval_resume",
-            },
+            metadata={"transport": "approval_resume"},
+            runtime_control=ApprovedContinuationRuntimeControl(
+                grant=grant,
+                parent_run_id=str(payload.get("parent_run_id") or ""),
+                cognitive_state=dict(payload.get("cognitive_state") or {}),
+                prior_tool_evidence=tuple(payload.get("prior_tool_evidence") or ()),
+            ),
         )
         completed = finish_continuation(
             workspace_id,

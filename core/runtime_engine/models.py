@@ -106,6 +106,20 @@ class ApprovedToolContinuation:
     approval_ids: tuple[str, ...] = ()
 
 
+@dataclass(frozen=True)
+class ApprovedContinuationRuntimeControl:
+    """Typed, server-only control envelope for an approved continuation.
+
+    This envelope is intentionally carried outside caller-provided turn metadata.
+    HTTP/WebSocket request metadata is data-only and must never manufacture an
+    approval, restore cognitive state, or inject previous tool evidence.
+    """
+    grant: ApprovedToolContinuation
+    parent_run_id: str = ""
+    cognitive_state: dict[str, Any] = field(default_factory=dict)
+    prior_tool_evidence: tuple[dict[str, Any], ...] = ()
+
+
 @dataclass
 class ToolResult:
     """Standardized result from any tool execution."""

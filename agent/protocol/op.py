@@ -4,7 +4,7 @@
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Any, Optional
 
 
 @dataclass
@@ -16,10 +16,18 @@ class AgentOp:
     user_input: str = ""
     payload: dict = field(default_factory=dict)
     metadata: dict = field(default_factory=dict)
+    runtime_control: Any = None
     created_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
     @classmethod
-    def user_message(cls, user_input: str, session_id: str = None, workspace_id: str = "", metadata: dict = None) -> "AgentOp":
+    def user_message(
+        cls,
+        user_input: str,
+        session_id: str = None,
+        workspace_id: str = "",
+        metadata: dict = None,
+        runtime_control: Any = None,
+    ) -> "AgentOp":
         # session_id is intentionally NOT auto-generated. Previously we
         # minted a UUID here when no session_id was supplied, which
         # produced orphan sessions that were never persisted or
@@ -37,4 +45,5 @@ class AgentOp:
             workspace_id=workspace_id,
             user_input=user_input,
             metadata=metadata or {},
+            runtime_control=runtime_control,
         )

@@ -65,6 +65,7 @@ class AgentApp:
         workspace_id: str,
         session_id: str = None,
         metadata: dict = None,
+        runtime_control: object = None,
     ) -> "AgentResult":
         """Submit a user message and return AgentResult.
 
@@ -92,7 +93,13 @@ class AgentApp:
             metadata = dict(metadata)
             metadata.setdefault("turn_serialization", "per_session")
 
-            op = AgentOp.user_message(user_input=user_input, session_id=sid, workspace_id=workspace_id, metadata=metadata)
+            op = AgentOp.user_message(
+                user_input=user_input,
+                session_id=sid,
+                workspace_id=workspace_id,
+                metadata=metadata,
+                runtime_control=runtime_control,
+            )
             thread = AgentThread(session=session)
             return thread.submit(op)
 

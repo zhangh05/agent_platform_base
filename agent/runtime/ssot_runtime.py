@@ -32,6 +32,63 @@ _MEMORY_WRITE_EXECUTOR = concurrent.futures.ThreadPoolExecutor(
 )
 
 
+_CALLER_RESERVED_RUNTIME_METADATA_KEYS = frozenset({
+    "approval_parent_run_id",
+    "approved_tool_call_ids",
+    "approved_tool_call_keys",
+    "approval_allowed",
+    "approval_continuation_id",
+    "approval_required",
+    "approval_resolved",
+    "cognitive_state",
+    "conversation_history_block",
+    "operational_clarification",
+    "retrieved_context_block",
+    "task_continuation_contract",
+    "task_state_contract",
+    "trusted_prompt_items",
+})
+
+
+def _sanitize_caller_runtime_metadata(metadata: Any) -> dict[str, Any]:
+    """Keep caller metadata data-only before it enters the SSOT control plane."""
+    if not isinstance(metadata, dict):
+        return {}
+    return {
+        str(key): value
+        for key, value in metadata.items()
+        if isinstance(key, str)
+        and not key.startswith("__")
+        and key not in _CALLER_RESERVED_RUNTIME_METADATA_KEYS
+    }
+
+
+def _is_approved_continuation_runtime_control(runtime_control: Any) -> bool:
+    """Return true only for a server-created typed approval continuation."""
+    from core.runtime_engine.models import (
+        ApprovedContinuationRuntimeControl,
+        ApprovedToolContinuation,
+    )
+
+    return (
+        isinstance(runtime_control, ApprovedContinuationRuntimeControl)
+        and isinstance(runtime_control.grant, ApprovedToolContinuation)
+    )
+
+
+def _apply_runtime_control(metadata: dict[str, Any], runtime_control: Any) -> None:
+    """Install only a typed server-created approval continuation envelope."""
+    if not _is_approved_continuation_runtime_control(runtime_control):
+        return
+    metadata.update({
+        "__approved_tool_continuation": runtime_control.grant,
+        "__approval_continuation_resume": True,
+        "approval_parent_run_id": str(runtime_control.parent_run_id or ""),
+        "__approval_cognitive_state": dict(runtime_control.cognitive_state or {}),
+        "__approval_prior_tool_evidence": list(runtime_control.prior_tool_evidence or ()),
+    })
+
+
 class _TaskStateResolutionFailure(RuntimeError):
     """Internal marker for a fail-closed TaskState read boundary."""
 
@@ -43,7 +100,9 @@ def _persist_inflight_user_message(session, turn, user_input: str) -> None:
     again, so this is idempotent.  An interrupted process therefore restores a
     safe untrusted context for an explicit later resume.
     """
-    if not user_input or bool((getattr(turn.op, "metadata", {}) or {}).get("__approval_continuation_resume")):
+    if not user_input or _is_approved_continuation_runtime_control(
+        getattr(turn.op, "runtime_control", None)
+    ):
         return
     from storage.message_store import SessionMessageStore
     from core.runtime_engine.context_compaction import build_history_state_record
@@ -104,11 +163,10 @@ def run_ssot_turn(
     workspace_id = getattr(session, "workspace_id", "") or getattr(turn.op, "workspace_id", "")
     session_id = getattr(session, "session_id", "") or getattr(turn.op, "session_id", "")
     user_input = (getattr(turn.op, "user_input", "") or "").strip()
-    metadata_in = dict(getattr(turn.op, "metadata", {}) or {})
-    # TaskState contracts are constructed only from session persistence below.
-    # Request metadata cannot seed a trusted execution fence.
-    metadata_in.pop("__trusted_task_state_contract", None)
-    metadata_in.pop("task_state_contract", None)
+    metadata_in = _sanitize_caller_runtime_metadata(
+        getattr(turn.op, "metadata", {}) or {}
+    )
+    _apply_runtime_control(metadata_in, getattr(turn.op, "runtime_control", None))
     task_continuation_contract: dict[str, Any] | None = None
 
     try:

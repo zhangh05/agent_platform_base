@@ -586,6 +586,10 @@ def test_ssot_approval_resume_reuses_waiting_task_state_contract(monkeypatch, tm
     from agent.protocol.op import AgentOp
     from agent.runtime.ssot_runtime import run_ssot_turn
     from agent.runtime.task_state import commit_task_state
+    from core.runtime_engine.models import (
+        ApprovedContinuationRuntimeControl,
+        ApprovedToolContinuation,
+    )
 
     pending = commit_task_state(
         workspace_id="ws-approval-resume-runtime",
@@ -622,10 +626,16 @@ def test_ssot_approval_resume_reuses_waiting_task_state_contract(monkeypatch, tm
         user_input="删除已确认的临时文件。",
         session_id=session.session_id,
         workspace_id=session.workspace_id,
-        metadata={
-            "__approval_continuation_resume": True,
-            "approval_parent_run_id": "run-pending",
-        },
+        metadata={},
+        runtime_control=ApprovedContinuationRuntimeControl(
+            grant=ApprovedToolContinuation(
+                continuation_id="cont_" + "a" * 32,
+                tool_calls=({"id": "delete-1", "name": "workspace.file", "arguments": {"action": "delete"}},),
+                approved_node_ids=("delete-1",),
+                approval_ids=("approval-1",),
+            ),
+            parent_run_id="run-pending",
+        ),
     ))
     result = run_ssot_turn(session, turn)
     assert captured["extras"]["task_state_contract"]["relationship"]["kind"] == "approval_resume"

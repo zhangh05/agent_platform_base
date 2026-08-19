@@ -397,6 +397,10 @@ def compact_messages(
     info = CompactInfo()
     token_limit = max(128, int(max_tokens or DEFAULT_COMPACT_MESSAGE_TOKENS))
     before_tokens = estimate_message_tokens(messages)
+    # The compacting branch already validates the retained transcript. Validate
+    # the below-budget branch as well so callers never forward an orphaned or
+    # ambiguous tool result merely because the transcript is short.
+    assert_tool_protocol(messages)
     if before_tokens <= token_limit:
         return messages, info
 
@@ -486,12 +490,17 @@ def assert_tool_protocol(messages: list[LLMMessage]) -> None:
             if isinstance(arguments, str):
                 json.loads(arguments)
             call_id = str(call.get("id") or "")
-            if call_id:
-                expected.add(call_id)
+            if not call_id:
+                raise ValueError("tool call missing id")
+            if call_id in expected:
+                raise ValueError("duplicate tool call id")
+            expected.add(call_id)
         if message.role == "tool":
             call_id = str(message.tool_call_id or "")
             if not call_id or call_id not in expected:
                 raise ValueError("orphaned tool result")
+            if call_id in seen:
+                raise ValueError("duplicate tool result")
             seen.add(call_id)
     if expected != seen:
         raise ValueError("tool call/result mismatch")
