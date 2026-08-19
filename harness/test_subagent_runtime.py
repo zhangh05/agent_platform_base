@@ -618,3 +618,31 @@ def test_query_loop_marks_oversized_subagent_handoff_incomplete():
             },
         )
     ]) is False
+
+
+def test_subagent_result_artifact_persistence_failure_is_not_reported_as_success(monkeypatch):
+    from agent.runtime.durable.subagent import get_subagent_task
+
+    full_result = "不可丢失的完整子代理结果\n" + ("证据行\n" * 1200)
+    monkeypatch.setattr(
+        "agent.runtime.ssot_runtime.run_ssot_turn",
+        lambda *args, **kwargs: type("Result", (), {
+            "ok": True,
+            "final_response": full_result,
+            "events": [],
+            "tool_calls": [],
+            "trace_id": "trace_artifact_write_failure",
+        })(),
+    )
+    monkeypatch.setattr("artifacts.store.save_artifact", lambda *args, **kwargs: None)
+
+    ws = f"ws_handoff_failure_{uuid.uuid4().hex[:8]}"
+    created = create_subagent_task("parent", ws, "s1", "research_agent", "Research")
+    completed = run_subagent_task(created["subtask_id"], ws)
+    task = get_subagent_task(ws, created["subtask_id"])
+
+    assert completed["ok"] is False
+    assert completed["status"] == "failed"
+    assert task["status"] == "failed"
+    assert not task["result_artifact_id"]
+    assert any("artifact" in error.lower() for error in completed["errors"])

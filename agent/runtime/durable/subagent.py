@@ -340,15 +340,19 @@ def run_subagent_task(subtask_id: str, ws_id: str) -> dict:
                     },
                 )
                 if record is None:
-                    result.warnings.append("subagent full-result artifact was not persisted")
+                    result.status = "failed"
+                    result.errors.append("subagent full-result artifact was not persisted")
+                    result.summary = "Subagent result persistence failed"
                 else:
                     result.artifacts.append(record.artifact_id)
                     task.result_artifact_id = record.artifact_id
                     task.result_total_chars = result_total_chars
             except (OSError, RuntimeError, TypeError, ValueError) as artifact_exc:
-                result.warnings.append(
+                result.status = "failed"
+                result.errors.append(
                     f"subagent full-result artifact persistence failed: {str(artifact_exc)[:160]}"
                 )
+                result.summary = "Subagent result persistence failed"
         elif elapsed >= profile.max_runtime_seconds:
             result.status = "failed"
             result.warnings.append(f"Budget exceeded: {profile.max_runtime_seconds}s")
