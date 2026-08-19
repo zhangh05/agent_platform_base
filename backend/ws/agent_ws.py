@@ -529,6 +529,20 @@ def _run_agent_thread(
         if job_id and cancel_event is not None:
             with _active_turns_lock:
                 _active_turns[(username, workspace_id, job_id)] = cancel_event
+            # The HTTP cancellation endpoint persists its intent before it
+            # reaches this process-local map.  Replay that durable intent after
+            # registration so a stop in the claim/register window is never
+            # lost and frontend retries are not required for correctness.
+            try:
+                from jobs.store import get_job
+                durable_job = get_job(workspace_id, job_id)
+                if durable_job and bool(getattr(durable_job, "cancel_requested", False)):
+                    cancel_event.set()
+            except (OSError, RuntimeError, TypeError, ValueError):
+                _log.warning(
+                    "unable to restore durable cancellation ws=%s job=%s",
+                    workspace_id, job_id, exc_info=True,
+                )
         # StreamEmitter stores callbacks thread-locally, so it must be set in
         # the same worker thread that runs AgentApp.submit_user_message().
         StreamEmitter.set_realtime_callback(realtime_callback)

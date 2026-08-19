@@ -46,3 +46,38 @@ def test_startup_reconcile_closes_running_job_in_user_scoped_workspace(monkeypat
     assert active["error"] == "backend_restart_during_job"
     assert record.progress["percent"] == 100
     assert record.progress["message"] == "处理失败"
+
+
+def test_startup_reconcile_preserves_durable_cancelled_turn(monkeypatch, tmp_path):
+    monkeypatch.setenv("LZCORE_WORKSPACE_ROOT", str(tmp_path / "workspaces"))
+    monkeypatch.setattr("storage.principal.known_storage_principals", lambda: ["alice"])
+    with storage_principal("alice"):
+        create_job(JobRecord(
+            job_id="job_cancel_restart",
+            workspace_id="default",
+            job_type="agent_run",
+            status="running",
+            cancel_requested=True,
+            updated_at="2024-01-01T00:00:00+00:00",
+            metadata={"active_turn": {
+                "client_request_id": "request-cancel-restart",
+                "status": "running",
+                "stage": "turn_started",
+            }},
+        ))
+
+    assert reconcile_running_jobs(
+        finished_at="2024-01-02T00:00:00+00:00",
+        started_before="2024-01-02T00:00:00+00:00",
+    ) == 1
+    with storage_principal("alice"):
+        record = get_job("default", "job_cancel_restart")
+    assert record is not None
+    assert record.status == "cancelled"
+    assert record.cancel_requested is True
+    assert record.error == ""
+    active = record.metadata["active_turn"]
+    assert active["status"] == "cancelled"
+    assert active["stage"] == "turn_cancelled"
+    assert active["error"] == "任务已取消。"
+    assert record.progress["message"] == "已取消"

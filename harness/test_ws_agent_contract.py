@@ -196,3 +196,48 @@ def test_ws_duplicate_client_request_skips_second_agent_execution(monkeypatch):
     assert duplicate_done["metadata"]["idempotent_redirect"] == {
         "job_id": "job-idempotent", "status": "running",
     }
+
+
+def test_ws_worker_replays_durable_cancel_requested_after_active_registration(monkeypatch):
+    import queue
+    import threading
+    from types import SimpleNamespace
+    from backend.ws import agent_ws
+    import agent.app.service as service
+    import jobs.lifecycle as lifecycle
+    import jobs.store as job_store
+
+    captured = {}
+
+    class FakeResult:
+        def to_dict(self):
+            return {"ok": False, "final_response": "", "events": [], "tool_calls": [], "metadata": {}, "errors": ["cancelled_by_user"]}
+
+    class FakeApp:
+        def submit_user_message(self, **kwargs):
+            captured.update(kwargs)
+            return FakeResult()
+
+    monkeypatch.setattr(service, "get_default_agent_app", lambda: FakeApp())
+    monkeypatch.setattr(
+        lifecycle,
+        "claim_session_turn",
+        lambda *_args, **_kwargs: lifecycle.SessionTurnClaim(job_id="job_pre_registered_cancel"),
+    )
+    monkeypatch.setattr(
+        job_store,
+        "get_job",
+        lambda *_args, **_kwargs: SimpleNamespace(cancel_requested=True),
+    )
+    monkeypatch.setattr(lifecycle, "finish_session_turn_snapshot", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(lifecycle, "finish_claimed_session_turn", lambda *_args, **_kwargs: None)
+
+    cancel_event = threading.Event()
+    agent_ws._run_agent_thread(
+        "cancel before registration", "session-pre-cancel", "default",
+        {"client_request_id": "request-pre-cancel"}, queue.Queue(),
+        {"error": None}, {"live_events": 0}, cancel_event,
+    )
+
+    assert cancel_event.is_set() is True
+    assert captured["runtime_control"].cancel_check() is True

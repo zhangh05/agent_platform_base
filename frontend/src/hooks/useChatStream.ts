@@ -28,6 +28,10 @@ import { createStreamActivityWatchdog, STREAM_IDLE_TIMEOUT_MS } from "../utils/s
 import { decideStreamFrame } from "../utils/streamSequence";
 import { createStreamRenderCoordinator } from "../utils/streamCoordinator";
 import { progressPatchForStreamStage, stageElapsedSince } from "../utils/streamStage";
+import {
+  claimJobCancellation,
+  releaseJobCancellation,
+} from "../utils/jobCancellation";
 
 const WS_TIMEOUT_MS = 3000;
 // Rendering Markdown is substantially more expensive than receiving tokens.
@@ -92,6 +96,7 @@ export function useChatStream(
   const sendInFlightRef = useRef(false);
   const stopRequestedRef = useRef(false);
   const activeClientRequestIdRef = useRef("");
+  const cancellationClaimsRef = useRef(new Set<string>());
 
   // Stable refs so the send function identity is stable across renders.
   const paramsRef = useRef(params);
@@ -100,7 +105,18 @@ export function useChatStream(
   callbacksRef.current = callbacks;
 
   const requestCancel = (jobId: string, workspaceId: string, clientRequestId = activeClientRequestIdRef.current) => {
-    void jobsApi.cancel(jobId, workspaceId, clientRequestId).catch(() => {});
+    const claim = claimJobCancellation(
+      cancellationClaimsRef.current,
+      workspaceId,
+      jobId,
+      clientRequestId,
+    );
+    if (!claim) return;
+    void jobsApi.cancel(jobId, workspaceId, clientRequestId).catch(() => {
+      // Only a transport/API failure releases the claim. A successful durable
+      // cancellation is idempotent and must not be re-sent for each stream frame.
+      releaseJobCancellation(cancellationClaimsRef.current, claim);
+    });
   };
 
   const stopStream = (): void => {
@@ -171,6 +187,7 @@ export function useChatStream(
 
     sendInFlightRef.current = true;
     stopRequestedRef.current = false;
+    cancellationClaimsRef.current.clear();
 
     // Reads that decide where a turn belongs must use the current render's
     // session snapshot, not a value captured by an earlier send callback.

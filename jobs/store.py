@@ -120,6 +120,11 @@ def request_job_cancellation(
         actual = str(active.get("client_request_id") or "").strip()
         if expected and actual != expected:
             return rec, False
+        # A durable cancel intent is a one-way, idempotent transition.  The
+        # caller may retry after a transient transport error, but retries must
+        # not append duplicate audit events or manufacture a new transition.
+        if rec.cancel_requested:
+            return rec, False
         rec.cancel_requested = True
         rec.updated_at = now_iso()
         d = _ensure(ws_id, job_id)
@@ -263,21 +268,30 @@ def reconcile_running_jobs(finished_at: str, started_before: str) -> int:
                         continue
                     if str(data.get("updated_at") or "") >= started_before:
                         continue
+                    # Cancellation is durable user intent.  A restart before
+                    # the worker emits its terminal frame must not rewrite it as
+                    # an execution failure.
+                    cancelled = bool(data.get("cancel_requested", False))
+                    terminal_status = "cancelled" if cancelled else "failed"
+                    terminal_stage = "turn_cancelled" if cancelled else "turn_failed"
+                    terminal_label = "已取消" if cancelled else "处理失败"
+                    terminal_error = "任务已取消。" if cancelled else "backend_restart_during_job"
                     patch = {
-                        "status": "failed",
+                        "status": terminal_status,
                         "finished_at": finished_at,
-                        "error": "backend_restart_during_job",
+                        "error": "" if cancelled else terminal_error,
+                        "cancel_requested": cancelled,
                     }
                     metadata = dict(data.get("metadata") or {})
                     active_turn = dict(metadata.get("active_turn") or {})
                     if active_turn.get("status") == "running":
                         active_turn.update({
-                            "status": "failed",
-                            "stage": "turn_failed",
-                            "stage_label": "处理失败",
+                            "status": terminal_status,
+                            "stage": terminal_stage,
+                            "stage_label": terminal_label,
                             "updated_at": finished_at,
                             "finished_at": finished_at,
-                            "error": "backend_restart_during_job",
+                            "error": terminal_error,
                         })
                         metadata["active_turn"] = active_turn
                         patch["metadata"] = metadata
@@ -285,16 +299,20 @@ def reconcile_running_jobs(finished_at: str, started_before: str) -> int:
                             "current": 4,
                             "total": 4,
                             "percent": 100,
-                            "message": "处理失败",
-                            "current_step": "处理失败",
+                            "message": terminal_label,
+                            "current_step": terminal_label,
                             "updated_at": finished_at,
                         }
-                    result = update_job(
-                        ws_id,
-                        str(data.get("job_id") or path.parent.name),
-                        patch,
-                    )
+                    job_id = str(data.get("job_id") or path.parent.name)
+                    result = update_job(ws_id, job_id, patch)
                     if result:
+                        if cancelled:
+                            append_event(ws_id, job_id, JobEvent(
+                                job_id=job_id,
+                                workspace_id=ws_id,
+                                event_type="job_cancelled",
+                                message="Job cancelled during backend restart recovery",
+                            ))
                         reconciled += 1
     return reconciled
 

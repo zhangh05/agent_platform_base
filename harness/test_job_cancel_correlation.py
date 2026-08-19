@@ -65,3 +65,22 @@ def test_cancel_route_returns_conflict_for_stale_turn(monkeypatch, tmp_path):
     assert response.status_code == 409
     assert response.get_json()["error"] == "stale_turn"
     assert get_job(record.workspace_id, record.job_id).cancel_requested is False
+
+
+def test_cancellation_request_is_idempotent_after_first_durable_transition(monkeypatch, tmp_path):
+    monkeypatch.setenv("LZCORE_WORKSPACE_ROOT", str(tmp_path))
+    from jobs.manager import cancel_job
+    from jobs.store import create_job
+    import jobs.manager as manager
+
+    record = _running_turn("job_idempotent_cancel")
+    create_job(record)
+    events = []
+    monkeypatch.setattr(manager, "append_event", lambda *_args, **_kwargs: events.append(_args[2]))
+
+    first = cancel_job(record.workspace_id, record.job_id, expected_client_request_id="current-turn")
+    second = cancel_job(record.workspace_id, record.job_id, expected_client_request_id="current-turn")
+
+    assert first.cancel_requested is True
+    assert second.cancel_requested is True
+    assert [event.event_type for event in events] == ["job_cancel_requested"]
