@@ -141,8 +141,16 @@ def test_exec_defaults_to_current_workspace(monkeypatch, tmp_path):
     monkeypatch.setenv("LZCORE_WORKSPACE_ROOT", str(tmp_path))
     captured = {}
 
-    def fake_run(command, cwd=None, shell="/bin/bash", env=None, timeout=None):
-        captured.update(command=command, cwd=cwd, timeout=timeout)
+    def fake_run(
+        command, cwd=None, shell="/bin/bash", env=None, timeout=None,
+        cancel_check=None,
+    ):
+        captured.update(
+            command=command,
+            cwd=cwd,
+            timeout=timeout,
+            cancel_check=cancel_check,
+        )
         return {"ok": True, "exit_code": 0, "stdout": "", "stderr": ""}
 
     monkeypatch.setattr(command_tools, "_run_shell", fake_run)

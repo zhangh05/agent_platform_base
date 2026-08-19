@@ -259,7 +259,7 @@ def _run_shell(command: str, cwd: str = None, shell: str = "/bin/bash",
     on Windows) so that on timeout ALL child processes are killed — not just
     the immediate parent.
     """
-    import subprocess, os as _os, time
+    import subprocess, os as _os
     if not command or not command.strip():
         return {"ok": False, "error": "empty command"}
 
