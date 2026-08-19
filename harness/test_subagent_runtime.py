@@ -433,3 +433,111 @@ def test_agent_spawn_honors_explicit_foreground(monkeypatch):
 
     assert result["ok"] is True
     assert captured["background"] is False
+
+
+def test_completed_subagent_persists_full_result_artifact_and_get_result_exposes_it(monkeypatch):
+    from artifacts.store import read_artifact_content
+    from agent.runtime.durable.subagent import get_subagent_task
+    from core.tools.general_tools.agent_tools import handle_agent_get_result
+    from core.tools.schemas import ToolInvocation
+
+    full_result = "子代理完整证据\n" + ("逐日天气数据\n" * 700)
+    monkeypatch.setattr(
+        "agent.runtime.ssot_runtime.run_ssot_turn",
+        lambda *args, **kwargs: type("Result", (), {
+            "ok": True,
+            "final_response": full_result,
+            "events": [],
+            "tool_calls": [],
+            "trace_id": "trace_complete_handoff",
+        })(),
+    )
+    ws = f"ws_handoff_{uuid.uuid4().hex[:8]}"
+    created = create_subagent_task("parent", ws, "s1", "research_agent", "Research")
+    completed = run_subagent_task(created["subtask_id"], ws)
+    assert completed["ok"] is True
+    task = get_subagent_task(ws, created["subtask_id"])
+    assert task["result_total_chars"] == len(full_result)
+    assert task["result_artifact_id"]
+    assert read_artifact_content(ws, task["result_artifact_id"]) == full_result
+
+    handoff = handle_agent_get_result(ToolInvocation(
+        tool_id="agent.manage",
+        workspace_id=ws,
+        arguments={"action": "get", "subtask_id": created["subtask_id"]},
+    ))
+    assert handoff["subagent_result_complete"] is True
+    assert handoff["content_complete"] is True
+    assert handoff["preview"] == full_result
+    assert handoff["artifact_id"] == task["result_artifact_id"]
+
+
+def test_query_loop_injects_complete_subagent_handoff_at_artifact_budget():
+    import json
+    from core.runtime_engine.models import SSOTRuntimeConfig
+    from agent.llm.schemas import LLMToolCall
+    from core.runtime_engine.query_loop import QueryLoop, StreamingToolResult
+
+    full_result = "完整子代理证据" * 800
+    loop = QueryLoop(
+        SSOTRuntimeConfig(context_window_tokens=32000, max_input_tokens=16000),
+        {"agent.manage": {"description": "", "args_schema": {"type": "object", "properties": {}}}},
+        object(),
+    )
+    messages = loop._append_tool_round([], [LLMToolCall(id="call_handoff", name="agent.manage", arguments={})], [
+        StreamingToolResult(
+            tool_name="agent.manage",
+            call_id="call_handoff",
+            ok=True,
+            output={
+                "ok": True,
+                "artifact_id": "art_child",
+                "artifact_type": "output_data",
+                "preview": full_result,
+                "content_complete": True,
+                "subagent_result_complete": True,
+            },
+        ),
+    ])
+    payload = json.loads(messages[-1].content)
+    assert payload["content_complete"] is True
+    assert payload["preview"] == full_result
+    assert loop._has_complete_analysis_artifact([
+        StreamingToolResult(
+            tool_name="agent.manage", call_id="call_handoff", ok=True,
+            output=payload,
+        )
+    ])
+
+
+def test_query_loop_marks_oversized_subagent_handoff_incomplete():
+    import json
+    from core.runtime_engine.models import SSOTRuntimeConfig
+    from agent.llm.schemas import LLMToolCall
+    from core.runtime_engine.query_loop import QueryLoop, StreamingToolResult
+
+    full_result = "完整子代理证据" * 8000
+    loop = QueryLoop(
+        SSOTRuntimeConfig(context_window_tokens=10000, max_input_tokens=2048, max_output_tokens=1024),
+        {"agent.manage": {"description": "", "args_schema": {"type": "object", "properties": {}}}},
+        object(),
+    )
+    messages = loop._append_tool_round([], [LLMToolCall(id="call_handoff", name="agent.manage", arguments={})], [
+        StreamingToolResult(
+            tool_name="agent.manage",
+            call_id="call_handoff",
+            ok=True,
+            output={
+                "ok": True,
+                "artifact_id": "art_child",
+                "artifact_type": "output_data",
+                "preview": full_result,
+                "content_complete": True,
+                "subagent_result_complete": True,
+            },
+        ),
+    ])
+    payload = json.loads(messages[-1].content)
+    assert payload["content_complete"] is False
+    assert payload["content_returned_chars"] < len(full_result)
+    assert payload["artifact_id"] == "art_child"

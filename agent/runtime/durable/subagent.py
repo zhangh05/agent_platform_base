@@ -99,6 +99,9 @@ class SubagentTask:
     errors: list = field(default_factory=list)
     warnings: list = field(default_factory=list)
     summary: str = ""
+    # Full terminal output is durable evidence; summary remains a bounded status preview.
+    result_artifact_id: str = ""
+    result_total_chars: int = 0
 
     def __post_init__(self):
         if not self.created_at:
@@ -313,8 +316,42 @@ def run_subagent_task(subtask_id: str, ws_id: str) -> dict:
             result.status = "cancelled"
             result.summary = "Subagent cancelled by user"
         elif is_ok and final_resp:
+            # Preserve the unabridged child response as a workspace-scoped,
+            # governed artifact. The parent may receive a compact status
+            # summary, but must never lose the source result because of that
+            # presentation bound.
             result.summary = final_resp[:4000]
             result.findings = [final_resp[:1000]]
+            result_total_chars = len(final_resp)
+            try:
+                from artifacts.store import save_artifact
+                record = save_artifact(
+                    workspace_id=ws_id,
+                    content=final_resp,
+                    artifact_type="output_data",
+                    title=f"Subagent result {subtask_id}",
+                    scope="session",
+                    sensitivity="internal",
+                    session_id=subagent_session_id,
+                    run_id=str(getattr(llm_result, "trace_id", "") or ""),
+                    module="subagent",
+                    source="subagent_result",
+                    metadata={
+                        "subtask_id": subtask_id,
+                        "parent_task_id": task.parent_task_id,
+                        "result_total_chars": result_total_chars,
+                    },
+                )
+                if record is None:
+                    result.warnings.append("subagent full-result artifact was not persisted")
+                else:
+                    result.artifacts.append(record.artifact_id)
+                    task.result_artifact_id = record.artifact_id
+                    task.result_total_chars = result_total_chars
+            except (OSError, RuntimeError, TypeError, ValueError) as artifact_exc:
+                result.warnings.append(
+                    f"subagent full-result artifact persistence failed: {str(artifact_exc)[:160]}"
+                )
         elif elapsed >= profile.max_runtime_seconds:
             result.status = "failed"
             result.warnings.append(f"Budget exceeded: {profile.max_runtime_seconds}s")
@@ -519,6 +556,8 @@ def get_subagent_task(ws_id: str, subtask_id: str) -> Optional[dict]:
         "profile_id": task.profile_id,
         "instruction": task.goal[:100],
         "summary": task.summary[:4000],
+        "result_artifact_id": task.result_artifact_id,
+        "result_total_chars": int(task.result_total_chars or len(task.summary or "")),
         "created_at": task.created_at,
         "started_at": task.started_at,
         "finished_at": task.finished_at,
@@ -648,6 +687,9 @@ def _task_result_payload(task: SubagentTask, *, ok: bool) -> dict:
         "subtask_id": task.subtask_id,
         "status": task.status,
         "summary": task.summary,
+        "result_artifact_id": task.result_artifact_id,
+        "result_total_chars": int(task.result_total_chars or len(task.summary or "")),
+        "artifact_ids": [task.result_artifact_id] if task.result_artifact_id else [],
         "findings": [],
         "tool_results": [],
         "errors": list(task.errors or []),

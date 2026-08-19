@@ -200,11 +200,34 @@ def handle_agent_get_result(inv: ToolInvocation) -> dict:
         persisted = get_subagent_task(ws, subtask_id)
         if persisted is not None:
             status = str(persisted.get("status") or "unknown")
-            return _ok(inv, str(persisted.get("summary") or f"Subagent status: {status}"), {
+            payload = {
                 "workspace_id": ws,
                 **persisted,
                 "tracking": _subtask_tracking(subtask_id, status),
-            })
+            }
+            artifact_id = str(persisted.get("result_artifact_id") or "").strip()
+            if status == "succeeded" and artifact_id:
+                # This remains inside the registered agent.manage handler. The
+                # artifact is the durable authority for a completed child result;
+                # do not downgrade it to the diagnostic summary field.
+                from artifacts.store import read_artifact_content
+                full_result = read_artifact_content(ws, artifact_id)
+                if full_result is not None:
+                    payload.update({
+                        "artifact_id": artifact_id,
+                        "artifact_ids": [artifact_id],
+                        "artifact_type": "output_data",
+                        "preview": full_result,
+                        "content_chars": len(full_result),
+                        "content_complete": True,
+                        "subagent_result_complete": True,
+                    })
+                    return _ok(
+                        inv,
+                        f"Subagent result ready: {len(full_result)} chars in artifact {artifact_id}",
+                        payload,
+                    )
+            return _ok(inv, str(persisted.get("summary") or f"Subagent status: {status}"), payload)
 
         return _error_inv(inv, "subtask not found")
     except Exception as e:

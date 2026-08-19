@@ -2679,11 +2679,17 @@ class QueryLoop:
     ) -> bool:
         return any(
             result.ok
-            and result.tool_name.replace("__", ".") == "workspace.artifact"
             and result.output.get("content_complete") is True
             and result.output.get("artifact_type") in {
                 "input_data", "output_data", "report",
             }
+            and (
+                result.tool_name.replace("__", ".") == "workspace.artifact"
+                or (
+                    result.tool_name.replace("__", ".") == "agent.manage"
+                    and result.output.get("subagent_result_complete") is True
+                )
+            )
             for result in results
         )
 
@@ -3238,12 +3244,19 @@ class QueryLoop:
             if tool_payload.get("ok", True) and r.error:
                 tool_payload["ok"] = False
                 tool_payload["errors"] = [r.error]
+            canonical_tool_name = r.tool_name.replace("__", ".")
             is_complete_text_artifact = (
-                r.tool_name.replace("__", ".") == "workspace.artifact"
-                and tool_payload.get("content_complete") is True
+                tool_payload.get("content_complete") is True
                 and tool_payload.get("artifact_type") in {
                     "input_data", "output_data", "report",
                 }
+                and (
+                    canonical_tool_name == "workspace.artifact"
+                    or (
+                        canonical_tool_name == "agent.manage"
+                        and tool_payload.get("subagent_result_complete") is True
+                    )
+                )
             )
             output_str = (
                 _artifact_analysis_content(
