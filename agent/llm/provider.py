@@ -328,6 +328,41 @@ def _api_generate(req: LLMRequest, cfg: dict) -> LLMResponse:
         )
 
 
+def _is_stream_cancelled(req: "LLMRequest") -> bool:
+    """Read only the server-owned request cancellation callback.
+
+    This lives beside provider I/O so a user stop prevents both further token
+    projection and unnecessary stream consumption. Callback faults are fail-open
+    to preserve provider availability; cancellation itself remains authoritative
+    in QueryLoop after the call returns.
+    """
+    check = getattr(req, "cancel_check", None)
+    if not callable(check):
+        return False
+    try:
+        return bool(check())
+    except (TypeError, ValueError, RuntimeError):
+        return False
+
+
+def _cancelled_stream_response(
+    content_parts: list[str],
+    cfg: dict,
+    *,
+    model: str = "",
+    usage=None,
+    finish_reason: str = "",
+) -> "LLMResponse":
+    return LLMResponse(
+        content="".join(content_parts),
+        provider=cfg.get("provider", cfg.get("default_provider", "")),
+        model=model or cfg.get("model", ""),
+        usage=usage,
+        finish_reason=finish_reason or "cancelled",
+        metadata={"stream_cancelled": True},
+    )
+
+
 def _api_generate_stream(url: str, body_dict: dict, cfg: dict, req: "LLMRequest") -> "LLMResponse":
     """Streaming LLM API call — yields tokens via StreamEmitter callback.
 
@@ -377,6 +412,12 @@ def _api_generate_stream(url: str, body_dict: dict, cfg: dict, req: "LLMRequest"
         raw_chunks = []
         raw_chunk_count = 0
         for line in resp.iter_lines(decode_unicode=True):
+            if _is_stream_cancelled(req):
+                resp.close()
+                return _cancelled_stream_response(
+                    content_parts, cfg, model=provider_model,
+                    usage=usage, finish_reason=finish_reason,
+                )
             if not line:
                 continue
             if not line.startswith("data: "):
@@ -409,6 +450,12 @@ def _api_generate_stream(url: str, body_dict: dict, cfg: dict, req: "LLMRequest"
             # Token content
             token = delta.get("content", "")
             if token:
+                if _is_stream_cancelled(req):
+                    resp.close()
+                    return _cancelled_stream_response(
+                        content_parts, cfg, model=provider_model,
+                        usage=usage, finish_reason=finish_reason,
+                    )
                 content_parts.append(token)
                 # v3.11 (stream scope): only push to the real-time
                 # WebSocket token channel when the caller explicitly
@@ -752,6 +799,12 @@ def _anthropic_messages_stream(url, body, headers, cfg, req) -> LLMResponse:
         if response.status_code != 200:
             return LLMResponse(error=f"provider_http_{response.status_code}: {response.text[:300]}", metadata={"http_status": response.status_code})
         for raw in response.iter_lines(decode_unicode=True):
+            if _is_stream_cancelled(req):
+                response.close()
+                return _cancelled_stream_response(
+                    content_parts, cfg, model=model,
+                    usage=usage, finish_reason=stop_reason,
+                )
             if not raw or not raw.startswith("data:"):
                 continue
             try:
@@ -766,7 +819,14 @@ def _anthropic_messages_stream(url, body, headers, cfg, req) -> LLMResponse:
             elif kind == "content_block_delta":
                 delta = event.get("delta") or {}; block = blocks.setdefault(event.get("index", 0), {})
                 if delta.get("type") == "text_delta":
-                    token = str(delta.get("text") or ""); content_parts.append(token)
+                    token = str(delta.get("text") or "")
+                    if _is_stream_cancelled(req):
+                        response.close()
+                        return _cancelled_stream_response(
+                            content_parts, cfg, model=model,
+                            usage=usage, finish_reason=stop_reason,
+                        )
+                    content_parts.append(token)
                     if req.metadata.get("stream_to_user") and token: _push_stream_token(token)
                 elif delta.get("type") == "input_json_delta":
                     block["_partial_json"] = block.get("_partial_json", "") + str(delta.get("partial_json") or "")

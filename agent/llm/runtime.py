@@ -115,6 +115,7 @@ def invoke_llm(
         "stream_to_user": bool((extra or {}).get("stream_to_user", False)),
         "stream_scope": str((extra or {}).get("stream_scope", "internal")),
     }
+    runtime_cancel_check = (extra or {}).get("__runtime_cancel_check")
     req = LLMRequest(
         task=task,
         messages=messages,
@@ -125,6 +126,7 @@ def invoke_llm(
         tools=tools,
         stream=use_stream,
         metadata=req_metadata,
+        cancel_check=runtime_cancel_check if callable(runtime_cancel_check) else None,
     )
 
     # One guard for every invocation path, including the SSOT QueryLoop.

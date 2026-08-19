@@ -2,7 +2,7 @@
 """LLM schemas — task types, messages, safe output, function calling support."""
 
 from dataclasses import dataclass, field
-from typing import List, Optional, Dict, Any, Union
+from typing import Callable, List, Optional, Dict, Any, Union
 from enum import Enum
 
 
@@ -44,6 +44,9 @@ class LLMRequest:
     temperature: float = 0.7
     max_tokens: int = 4096
     metadata: Dict[str, Any] = field(default_factory=dict)
+    # Server-owned execution control. This is intentionally separate from
+    # request metadata so callbacks cannot enter prompts or caller input.
+    cancel_check: Optional[Callable[[], bool]] = None
     tools: Optional[List[dict]] = None  # OpenAI function definitions
     stream: bool = False  # Enable token-level streaming
 

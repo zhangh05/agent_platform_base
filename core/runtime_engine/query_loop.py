@@ -2600,6 +2600,15 @@ class QueryLoop:
                             "stream_to_user": stream_to_user,
                             "workspace_id": ctx.workspace_id,
                             "session_id": ctx.session_id,
+                            # Server-owned execution control is deliberately
+                            # kept outside prompt/request metadata. The LLM
+                            # runtime transfers it to LLMRequest only when it is
+                            # callable, and providers observe it while streaming.
+                            "__runtime_cancel_check": (
+                                ctx.extras.get("cancel_check")
+                                if callable(ctx.extras.get("cancel_check"))
+                                else None
+                            ),
                             # Typed references only, never image bytes. The
                             # adapter resolves pending image evidence for this
                             # call; QueryLoop acknowledges it after success.
