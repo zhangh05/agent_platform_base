@@ -40,6 +40,11 @@ const AUTO_SEND_DELAY_MS = 500;
 const WS_RECONNECT_BASE_MS = 1000;
 // Cap on the exponential reconnect delay.
 const WS_RECONNECT_MAX_MS = 5000;
+// Health probes invoke the provider's real chat path. Retry only while the
+// provider is unavailable, with bounded backoff, so a backend warm-up cannot
+// leave the workbench permanently showing a stale unavailable state.
+const LLM_HEALTH_RETRY_INITIAL_MS = 1000;
+const LLM_HEALTH_RETRY_MAX_MS = 30_000;
 // Keep typing on the React path; synchronous localStorage writes are deferred.
 const DRAFT_WRITE_DEBOUNCE_MS = 180;
 
@@ -203,16 +208,58 @@ export function TaskWorkbench() {
   useEffect(() => { prevSessionId.current = currentSessionId; });
 
 
-  // LLM health — load once on mount
+  // LLM health is probed by the backend using the real chat endpoint. A
+  // one-shot request can legitimately race backend/provider warm-up after a
+  // deploy, so retry only failed states with bounded backoff. Once connected,
+  // this effect is quiet and does not create periodic provider traffic.
   useEffect(() => {
-    settingsApi.llmStatus().then((s) => {
-      if (!s) return;
-      setLlmHealth({
-        connected: s.connected, provider: s.provider || s.provider_type || "",
-        model: s.model || "", recentFailure: s.recent_failure?.error_type ? s.recent_failure.error_summary : undefined,
-        visionSupported: s.vision_supported,
-      });
-    }).catch(() => {});
+    let disposed = false;
+    let retryDelay = LLM_HEALTH_RETRY_INITIAL_MS;
+    let retryTimer: ReturnType<typeof setTimeout> | null = null;
+
+    const scheduleRetry = () => {
+      if (disposed || retryTimer) return;
+      const delay = retryDelay;
+      retryDelay = Math.min(retryDelay * 2, LLM_HEALTH_RETRY_MAX_MS);
+      retryTimer = setTimeout(() => {
+        retryTimer = null;
+        void refreshLlmHealth();
+      }, delay);
+    };
+
+    const refreshLlmHealth = async () => {
+      try {
+        const status = await settingsApi.llmStatus();
+        if (disposed || !status) {
+          if (!disposed) scheduleRetry();
+          return;
+        }
+        const connected = Boolean(status.connected);
+        setLlmHealth({
+          connected,
+          provider: status.provider || status.provider_type || "",
+          model: status.model || "",
+          recentFailure: status.recent_failure?.error_type
+            ? status.recent_failure.error_summary
+            : undefined,
+          visionSupported: status.vision_supported,
+        });
+        if (connected) {
+          retryDelay = LLM_HEALTH_RETRY_INITIAL_MS;
+          return;
+        }
+      } catch {
+        // Retain the last known state: a transient status request failure must
+        // not overwrite a previously healthy indicator.
+      }
+      scheduleRetry();
+    };
+
+    void refreshLlmHealth();
+    return () => {
+      disposed = true;
+      if (retryTimer) clearTimeout(retryTimer);
+    };
   }, []);
 
   // ── Persistent system WebSocket — replaces all polling ──

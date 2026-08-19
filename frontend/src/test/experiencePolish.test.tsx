@@ -242,4 +242,47 @@ describe("Experience polish", () => {
     expect(screen.getByTestId("sess-sess-14")).toHaveClass("active");
     expect(screen.getByText("另有 2 个活跃会话")).toBeInTheDocument();
   });
+
+  it("recovers the workbench LLM indicator after startup probe becomes healthy", async () => {
+    useSessionStore.setState({ currentWorkspaceId: "default", currentSessionId: "sess-llm-retry" });
+    enqueue("/agent/llm/status", {
+      status: 200,
+      data: {
+        enabled: true,
+        connected: false,
+        provider: "minimax",
+        provider_type: "anthropic_messages",
+        model: "MiniMax-M3",
+        safe_mode: true,
+        key_loaded: true,
+        key_source: "ui_settings",
+        config_source: "ui_settings",
+        enabled_by_ui: true,
+        settings_file_exists: true,
+        health: { connected: false },
+      },
+    });
+    enqueue("/agent/llm/status", {
+      status: 200,
+      data: {
+        enabled: true,
+        connected: true,
+        provider: "minimax",
+        provider_type: "anthropic_messages",
+        model: "MiniMax-M3",
+        safe_mode: true,
+        key_loaded: true,
+        key_source: "ui_settings",
+        config_source: "ui_settings",
+        enabled_by_ui: true,
+        settings_file_exists: true,
+        health: { connected: true, chat_completion_ok: true },
+      },
+    });
+
+    render(<TaskWorkbench />);
+
+    expect(await screen.findByText("模型可用 · MiniMax-M3", {}, { timeout: 2500 })).toBeInTheDocument();
+  });
+
 });
