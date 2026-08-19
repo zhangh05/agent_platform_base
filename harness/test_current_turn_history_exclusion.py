@@ -29,6 +29,63 @@ def test_current_provisional_request_is_excluded_from_history_block(monkeypatch,
     assert user_input not in block
 
 
+def test_ssot_runtime_inflight_and_terminal_user_persistence_share_request_identity(monkeypatch, tmp_path):
+    """Pre-execution checkpoint and terminal sync must never create two user bubbles."""
+    monkeypatch.setenv("LZCORE_WORKSPACE_ROOT", str(tmp_path))
+    from agent.core.session import AgentSession
+    from agent.core.turn import AgentTurn
+    from agent.protocol.op import AgentOp
+    from agent.runtime.message_identity import user_message_storage_run_id
+    from agent.runtime.ssot_runtime import run_ssot_turn
+    from storage.message_store import SessionMessageStore
+    from storage.session_store import get_session_messages
+
+    workspace_id = "ws-message-idempotency"
+    session_id = "session-message-idempotency"
+    request_id = "request-message-idempotency"
+    user_input = "不要调用工具，输出一条变更检查项。"
+
+    class FakeEngine:
+        async def run(self, **_kwargs):
+            return SimpleNamespace(
+                success=True,
+                final_response="DC-01：核对变更前配置备份。",
+                tool_calls=[],
+                events=[],
+                errors=[],
+                metadata={},
+                node_results={},
+            )
+
+    monkeypatch.setattr(
+        "agent.runtime.ssot_runtime._build_engine",
+        lambda **_kwargs: FakeEngine(),
+    )
+    monkeypatch.setattr(
+        "agent.runtime.ssot_runtime._record_experience_and_maybe_reflect",
+        lambda **_kwargs: None,
+    )
+    session = AgentSession(session_id=session_id, workspace_id=workspace_id)
+    turn = AgentTurn.from_op(AgentOp.user_message(
+        user_input=user_input,
+        session_id=session_id,
+        workspace_id=workspace_id,
+        metadata={"client_request_id": request_id},
+    ))
+
+    result = run_ssot_turn(session, turn)
+    assert result.ok is True
+    messages = SessionMessageStore(session_id=session_id, ws_id=workspace_id).get_messages()
+    users = [message for message in messages if message["role"] == "user"]
+    assert len(users) == 1
+    assert users[0]["run_id"] == user_message_storage_run_id(request_id, turn.turn_id)
+    assert users[0]["metadata"]["client_request_id"] == request_id
+    api_messages = get_session_messages(session_id, workspace_id)
+    api_users = [message for message in api_messages if message["role"] == "user"]
+    assert len(api_users) == 1
+    assert api_users[0]["metadata"]["client_request_id"] == request_id
+
+
 def test_ssot_runtime_excludes_current_provisional_request_from_model_history(monkeypatch, tmp_path):
     monkeypatch.setenv("LZCORE_WORKSPACE_ROOT", str(tmp_path))
     from agent.core.session import AgentSession

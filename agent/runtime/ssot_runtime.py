@@ -47,9 +47,13 @@ def _persist_inflight_user_message(session, turn, user_input: str) -> None:
         return
     from storage.message_store import SessionMessageStore
     from core.runtime_engine.context_compaction import build_history_state_record
+    from agent.runtime.message_identity import user_message_storage_run_id
     metadata = dict(getattr(turn.op, "metadata", {}) or {})
+    message_run_id = user_message_storage_run_id(
+        str(metadata.get("client_request_id") or ""), turn.turn_id,
+    )
     SessionMessageStore(session_id=session.session_id, ws_id=session.workspace_id).write_message(
-        turn.turn_id,
+        message_run_id,
         "user",
         user_input,
         metadata={

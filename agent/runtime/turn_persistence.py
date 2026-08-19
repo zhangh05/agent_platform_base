@@ -1,6 +1,6 @@
 """Turn persistence — write run records, messages, and trace events to disk."""
 
-import hashlib
+from agent.runtime.message_identity import user_message_storage_run_id
 import json
 import logging
 import re
@@ -15,11 +15,6 @@ from storage.run_record_store import save_trace_record, update_run_record, write
 
 _log = logging.getLogger(__name__)
 
-
-def _request_message_run_id(client_request_id: str) -> str:
-    """Mirror the stable provisional message id allocated by turn claiming."""
-    digest = hashlib.sha256(client_request_id.encode("utf-8")).hexdigest()
-    return f"request_{digest}"
 
 
 def persist_run_record(session, turn, result, context) -> None:
@@ -145,9 +140,8 @@ def persist_run_record(session, turn, result, context) -> None:
             )
             if user_input and not is_approval_resume:
                 user_attachments = list((getattr(turn.op, "metadata", {}) or {}).get("attachments") or [])
-                user_message_run_id = (
-                    _request_message_run_id(client_request_id)
-                    if client_request_id else run_id
+                user_message_run_id = user_message_storage_run_id(
+                    client_request_id, run_id,
                 )
                 store.write_message(user_message_run_id, "user", user_input, metadata={
                     "created_at": state.created_at,
