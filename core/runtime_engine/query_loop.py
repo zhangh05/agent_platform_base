@@ -670,6 +670,30 @@ class StreamingToolExecutor:
                     failure_policy=tc.failure_policy,
                 ))
 
+            if stop_requested and runnable:
+                # A stop-policy failure was discovered while validating this
+                # layer. No queued call has started yet, so fail closed rather
+                # than letting an earlier runnable sibling cross the barrier.
+                for tc in runnable:
+                    step_id = str(tc.step_id or tc.id)
+                    error = "execution stopped by a failed step in this layer"
+                    result = StreamingToolResult(
+                        tool_name=tc.name, call_id=tc.id,
+                        output={"ok": False, "executed": False,
+                                "error_code": "PLAN_STOPPED", "error": error,
+                                "_orchestration": {
+                                    "step_id": step_id,
+                                    "depends_on": list(tc.depends_on),
+                                    "layer": layer_index, "parallel": False,
+                                    "failure_policy": tc.failure_policy,
+                                }},
+                        ok=False, error=error,
+                    )
+                    result_by_id[tc.id] = result
+                    evidence[step_id] = StepEvidence(
+                        step_id, tc.id, tc.name, False, result.output, error,
+                    )
+                runnable = []
             runnable_by_step = {str(tc.step_id or tc.id): tc for tc in runnable}
             actual_parallel_steps = self._parallel_step_ids(
                 [str(tc.step_id or tc.id) for tc in runnable], runnable_by_step,
@@ -1712,6 +1736,23 @@ class QueryLoop:
                     iteration=iterations,
                 )
                 planner_completed_emitted = True
+            # A cancellation may arrive while the provider is generating.
+            # Re-check before interpreting either tool calls or final prose so
+            # the user-authoritative cancellation cannot be overwritten by a
+            # late model response.
+            if self._is_cancelled(ctx):
+                return finish(
+                    final_response=(
+                        self._build_tool_result_fallback(ctx, all_results)
+                        if all_results else "任务已取消。"
+                    ),
+                    tool_results=all_results,
+                    iterations=iterations,
+                    total_tool_calls=len(all_results),
+                    llm_calls=budget.llm_calls,
+                    error="cancelled_by_user",
+                )
+
             if response is not None and (response.metadata or {}).get("output_truncated"):
                 output_truncated = True
                 output_truncation_reason = str(

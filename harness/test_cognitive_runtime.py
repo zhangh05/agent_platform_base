@@ -74,6 +74,30 @@ def test_cognitive_gate_completes_only_without_safety_or_quality_blockers():
     assert decision.terminal is True
 
 
+def test_query_loop_honors_cancel_arriving_during_final_llm_response():
+    from agent.llm.schemas import LLMResponse
+    from core.runtime_engine.budget_controller import BudgetController
+    from core.runtime_engine.models import SSOTRuntimeConfig, StatelessContext
+    from core.runtime_engine.query_loop import QueryLoop
+
+    cancelled = {"value": False}
+
+    def llm(**_kwargs):
+        cancelled["value"] = True
+        return LLMResponse(content="这条生成中的答复不应在用户取消后提交。")
+
+    config = SSOTRuntimeConfig(max_query_loop_iterations=1)
+    loop = QueryLoop(config, {}, object(), llm_invoke=llm)
+    context = StatelessContext(
+        workspace_id="default", session_id="session-cancel-race",
+        request_id="request-cancel-race", user_input="生成答复",
+        extras={"cancel_check": lambda: cancelled["value"]},
+    )
+    result = asyncio.run(loop.run(context, BudgetController(config), None))
+    assert result.error == "cancelled_by_user"
+    assert result.final_response == "任务已取消。"
+
+
 def test_query_loop_projects_server_generated_cognitive_events_once():
     from agent.llm.schemas import LLMResponse
     from core.runtime_engine.budget_controller import BudgetController

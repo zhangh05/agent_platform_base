@@ -343,6 +343,31 @@ def test_sync_handler_does_not_block_event_loop_and_uncertain_timeout_is_not_ret
     assert calls["count"] == 1
 
 
+def test_stop_binding_failure_prevents_same_layer_execution():
+    calls_seen = []
+
+    class Runtime:
+        def invoke_raw(self, tool_id, arguments):
+            calls_seen.append(arguments["action"])
+            if arguments["action"] == "source":
+                return {"ok": True, "text": "seed"}
+            return {"ok": True}
+
+    calls = [
+        LLMToolCall(id="source", name="data.manage", arguments={"action": "source"}, step_id="source"),
+        LLMToolCall(id="independent", name="data.manage", arguments={"action": "independent"}, step_id="independent", depends_on=["source"]),
+        LLMToolCall(
+            id="fatal-binding", name="data.manage", arguments={"action": "fatal"},
+            step_id="fatal-binding", depends_on=["source"],
+            result_bindings={"text": "steps.source.output.missing"}, failure_policy="stop",
+        ),
+    ]
+    results = asyncio.run(StreamingToolExecutor(Runtime(), SSOTRuntimeConfig()).execute(calls, ctx=_ctx()))
+    assert calls_seen == ["source"]
+    assert results[1].output["error_code"] == "PLAN_STOPPED"
+    assert results[2].output["error_code"] == "RESULT_BINDING_FAILED"
+
+
 def test_stop_failure_policy_prevents_later_layers():
     calls_seen = []
 
