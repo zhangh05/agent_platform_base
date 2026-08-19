@@ -623,6 +623,8 @@ def _run_agent_thread(
         if effective_session_id:
             try:
                 from jobs.lifecycle import attach_run_to_session_job, finish_claimed_session_turn, finish_session_turn_snapshot
+                result_metadata = result_payload.get("metadata") if isinstance(result_payload.get("metadata"), dict) else {}
+                unknown_outcome = result_metadata.get("unknown_outcome") if isinstance(result_metadata.get("unknown_outcome"), dict) else {}
                 finish_session_turn_snapshot(
                     workspace_id,
                     job_id,
@@ -631,6 +633,7 @@ def _run_agent_thread(
                     run_id=result_payload.get("turn_id", ""),
                     trace_id=result_payload.get("trace_id", ""),
                     ok=bool(result_payload.get("ok", not result_payload.get("errors"))),
+                    unknown_outcome=unknown_outcome,
                     error=str((result_payload.get("errors") or [""])[0]),
                 )
                 finish_claimed_session_turn(

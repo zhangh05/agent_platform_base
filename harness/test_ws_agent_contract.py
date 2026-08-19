@@ -241,3 +241,62 @@ def test_ws_worker_replays_durable_cancel_requested_after_active_registration(mo
 
     assert cancel_event.is_set() is True
     assert captured["runtime_control"].cancel_check() is True
+
+
+def test_ws_worker_projects_unknown_outcome_into_durable_job_snapshot(monkeypatch):
+    import queue
+    from types import SimpleNamespace
+    from backend.ws import agent_ws
+    import agent.app.service as service
+    import jobs.lifecycle as lifecycle
+    import jobs.store as job_store
+
+    unknown = {
+        "tool_id": "workspace.file",
+        "call_id": "write-unknown",
+        "error_code": "TOOL_TIMEOUT_UNCERTAIN",
+        "execution_may_continue": True,
+    }
+    snapshots = []
+
+    class FakeResult:
+        def to_dict(self):
+            return {
+                "ok": False,
+                "final_response": "",
+                "events": [],
+                "tool_calls": [],
+                "metadata": {"unknown_outcome": unknown},
+                "errors": ["unknown_outcome"],
+            }
+
+    class FakeApp:
+        def submit_user_message(self, **_kwargs):
+            return FakeResult()
+
+    monkeypatch.setattr(service, "get_default_agent_app", lambda: FakeApp())
+    monkeypatch.setattr(
+        lifecycle,
+        "claim_session_turn",
+        lambda *_args, **_kwargs: lifecycle.SessionTurnClaim(job_id="job_unknown_snapshot"),
+    )
+    monkeypatch.setattr(
+        job_store,
+        "get_job",
+        lambda *_args, **_kwargs: SimpleNamespace(cancel_requested=False),
+    )
+    monkeypatch.setattr(
+        lifecycle,
+        "finish_session_turn_snapshot",
+        lambda *_args, **kwargs: snapshots.append(kwargs),
+    )
+    monkeypatch.setattr(lifecycle, "finish_claimed_session_turn", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(lifecycle, "attach_run_to_session_job", lambda *_args, **_kwargs: None)
+
+    agent_ws._run_agent_thread(
+        "unknown outcome", "session-unknown", "default",
+        {"client_request_id": "request-unknown"}, queue.Queue(),
+        {"error": None}, {"live_events": 0},
+    )
+
+    assert snapshots[-1]["unknown_outcome"] == unknown

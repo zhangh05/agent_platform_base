@@ -564,6 +564,7 @@ def finish_session_turn_snapshot(
     trace_id: str = "",
     ok: bool,
     error: str = "",
+    unknown_outcome: dict | None = None,
 ) -> None:
     """Close the durable turn snapshot before the session job is finalized."""
     if not job_id:
@@ -594,6 +595,10 @@ def finish_session_turn_snapshot(
         "trace_id": str(trace_id or ""),
         "error": ("任务已取消。" if cancelled else str(error or ""))[:240],
     })
+    if isinstance(unknown_outcome, dict) and unknown_outcome:
+        active["unknown_outcome"] = dict(unknown_outcome)
+    else:
+        active.pop("unknown_outcome", None)
     metadata["active_turn"] = active
     update_job(ws_id, job_id, {
         "metadata": metadata,

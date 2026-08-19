@@ -108,6 +108,11 @@ def cancel_job(ws_id, job_id, *, expected_client_request_id="") -> JobRecord:
 def retry_job(ws_id, job_id, force=False) -> JobRecord:
     rec = get_job(ws_id, job_id)
     if not rec: raise ValueError("job not found")
+    active_turn = dict((getattr(rec, "metadata", {}) or {}).get("active_turn") or {})
+    unknown_outcome = active_turn.get("unknown_outcome")
+    if isinstance(unknown_outcome, dict) and unknown_outcome:
+        raise ValueError("unknown_outcome_requires_reconciliation")
+
     if not force:
         _check_transition(rec.status, "queued")
     if rec.retry_count >= rec.max_retries:

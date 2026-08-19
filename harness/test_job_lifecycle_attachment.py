@@ -212,3 +212,32 @@ def test_cancelled_snapshot_marks_active_turn_and_job_cancelled(monkeypatch):
     assert active["stage"] == "turn_cancelled"
     assert patches[-1]["progress"]["message"] == "已取消"
     assert cancelled == [("default", "job_1", "Agent turn cancelled")]
+
+
+def test_unknown_outcome_snapshot_is_persisted_for_retry_fence(monkeypatch):
+    import jobs.lifecycle as lifecycle
+
+    rec = type("Rec", (), {
+        "cancel_requested": False,
+        "metadata": {"active_turn": {"status": "running", "events": [], "tool_calls": []}},
+    })()
+    patches = []
+    monkeypatch.setattr(lifecycle, "get_job", lambda *_args: rec)
+    monkeypatch.setattr(lifecycle, "update_job", lambda _ws, _job, patch: patches.append(patch))
+    monkeypatch.setattr(lifecycle, "_broadcast_job", lambda *_args, **_kwargs: None)
+
+    unknown = {
+        "tool_id": "workspace.file",
+        "call_id": "write-unknown",
+        "error_code": "TOOL_TIMEOUT_UNCERTAIN",
+        "execution_may_continue": True,
+    }
+    lifecycle.finish_session_turn_snapshot(
+        "default", "job_1", "session_1",
+        run_id="run_1", ok=False, error="unknown_outcome",
+        unknown_outcome=unknown,
+    )
+
+    active = patches[-1]["metadata"]["active_turn"]
+    assert active["status"] == "failed"
+    assert active["unknown_outcome"] == unknown

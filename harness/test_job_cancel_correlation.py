@@ -1,4 +1,5 @@
 from flask import Flask
+import pytest
 
 from jobs.schemas import JobRecord
 
@@ -84,3 +85,38 @@ def test_cancellation_request_is_idempotent_after_first_durable_transition(monke
     assert first.cancel_requested is True
     assert second.cancel_requested is True
     assert [event.event_type for event in events] == ["job_cancel_requested"]
+
+
+def test_retry_job_rejects_unknown_side_effect_outcome(monkeypatch, tmp_path):
+    monkeypatch.setenv("LZCORE_WORKSPACE_ROOT", str(tmp_path / "workspaces"))
+    from jobs.manager import retry_job
+    from jobs.schemas import JobRecord
+    from jobs.store import create_job, get_job
+
+    ws_id = "retry_unknown_outcome"
+    record = JobRecord(
+        workspace_id=ws_id,
+        job_id="job_unknown_outcome",
+        job_type="agent_run",
+        status="failed",
+        retry_count=0,
+        max_retries=3,
+        metadata={
+            "active_turn": {
+                "status": "failed",
+                "unknown_outcome": {
+                    "tool_id": "workspace.file",
+                    "call_id": "write-1",
+                    "error_code": "TOOL_TIMEOUT_UNCERTAIN",
+                },
+            },
+        },
+    )
+    create_job(record)
+
+    with pytest.raises(ValueError, match="unknown_outcome_requires_reconciliation"):
+        retry_job(ws_id, record.job_id)
+
+    persisted = get_job(ws_id, record.job_id)
+    assert persisted.status == "failed"
+    assert persisted.retry_count == 0
