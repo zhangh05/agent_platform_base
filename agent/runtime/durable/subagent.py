@@ -250,12 +250,14 @@ def run_subagent_task(subtask_id: str, ws_id: str) -> dict:
         from agent.core.turn import AgentTurn
         from agent.protocol.op import AgentOp
         from agent.runtime.ssot_runtime import run_ssot_turn
+        from core.runtime_engine.models import SubagentRuntimeControl
+
         op = AgentOp(
             user_input=task.goal,
             workspace_id=ws_id,
             session_id=subagent_session_id,
-            metadata={
-                "subagent_profile": {
+            runtime_control=SubagentRuntimeControl(
+                profile={
                     "profile_id": profile.profile_id,
                     "name": profile.name,
                     "role": profile.role,
@@ -264,18 +266,13 @@ def run_subagent_task(subtask_id: str, ws_id: str) -> dict:
                     "allowed_action_classes": list(profile.allowed_action_classes),
                     "output_contract": profile.output_contract,
                 },
-                "parent_session_id": task.session_id,
-                "subtask_id": subtask_id,
-                "cancel_check": cancel_event.is_set,
-            },
+                max_steps=effective_steps,
+                subtask_id=subtask_id,
+                parent_session_id=task.session_id,
+                cancel_check=cancel_event.is_set,
+            ),
         )
         turn = AgentTurn.from_op(op)
-        turn.metadata = {
-            "max_steps": effective_steps,
-            "subtask_id": subtask_id,
-            "subagent_profile": profile.profile_id,
-            "cancel_check": cancel_event.is_set,
-        }
 
         try:
             llm_result = _run_ssot_runtime_with_timeout(
@@ -564,8 +561,14 @@ def get_subagent_task(ws_id: str, subtask_id: str) -> Optional[dict]:
     }
 
 
-def reconcile_subagent_tasks() -> list[str]:
-    """Mark process-owned queued/running tasks interrupted after restart."""
+def reconcile_subagent_tasks(*, started_before: str = "") -> list[str]:
+    """Mark only pre-start queued/running tasks interrupted after restart.
+
+    ``started_before`` is the backend start watermark. It prevents the
+    asynchronous startup reconciler from racing with a newly accepted task.
+    Missing or malformed legacy timestamps remain eligible for reconciliation
+    rather than being stranded indefinitely.
+    """
     from storage.subagent_store import list_subagents
     from storage.workspace_store import list_workspace_ids
     from storage.principal import known_storage_principals, storage_principal
@@ -581,6 +584,16 @@ def reconcile_subagent_tasks() -> list[str]:
                         key: value for key, value in raw.items()
                         if key in SubagentTask.__dataclass_fields__
                     })
+                    if started_before:
+                        try:
+                            from storage.time_utils import from_iso
+                            task_time = str(task.started_at or task.created_at or "")
+                            if task_time and from_iso(task_time) >= from_iso(started_before):
+                                continue
+                        except (TypeError, ValueError):
+                            # A legacy record without a valid timestamp is safer
+                            # to reconcile than to leave permanently running.
+                            pass
                     task.status = "failed"
                     task.finished_at = _now()
                     task.summary = "Subagent interrupted by service restart"
@@ -702,16 +715,6 @@ def _get_manifest(tool_id: str):
         return gm(tool_id)
     except Exception: return None
 
-def _execute_as_subagent(tool_id: str, args: dict, ws_id: str) -> dict:
-    try:
-        from core.tools.integration import get_default_tool_runtime_client
-        from core.tools.context import ToolRuntimeContext
-        client = get_default_tool_runtime_client()
-        ctx = ToolRuntimeContext(workspace_id=ws_id, requested_by="subagent")
-        result = client.invoke(tool_id, args, context=ctx)
-        return {"ok": result.status in ("succeeded", "dry_run"), "summary": result.summary or ""}
-    except Exception as e:
-        return {"ok": False, "summary": str(e)[:200]}
 
 
 def _run_ssot_runtime_with_timeout(

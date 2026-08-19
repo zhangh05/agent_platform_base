@@ -135,6 +135,45 @@ class TestSubagentRuntime:
         assert r["ok"]
         assert r["status"] in ("succeeded", "failed")
 
+    def test_durable_subagent_uses_typed_runtime_control(self, monkeypatch):
+        from core.runtime_engine.models import SubagentRuntimeControl
+
+        captured = {}
+
+        def fake_run_turn(session, turn, **kwargs):
+            captured["control"] = turn.op.runtime_control
+            captured["metadata"] = dict(turn.op.metadata)
+            assert kwargs["requested_by"] == "subagent"
+            assert kwargs["allowed_tool_ids"] == set(get_profile("research_agent").allowed_tools)
+            return _FakeAgentResult()
+
+        monkeypatch.setattr("agent.runtime.ssot_runtime.run_ssot_turn", fake_run_turn)
+        ws = f"ws_typed_{uuid.uuid4().hex[:8]}"
+        created = create_subagent_task("t1", ws, "parent-s1", "research_agent", "Research evidence")
+
+        result = run_subagent_task(created["subtask_id"], ws)
+
+        assert result["ok"] is True
+        control = captured["control"]
+        assert isinstance(control, SubagentRuntimeControl)
+        assert control.profile["profile_id"] == "research_agent"
+        assert control.max_steps == get_profile("research_agent").max_steps
+        assert control.subtask_id == created["subtask_id"]
+        assert control.parent_session_id == "parent-s1"
+        assert callable(control.cancel_check)
+        assert captured["metadata"] == {}
+
+    def test_profile_registry_is_the_only_child_tool_surface(self):
+        from agent.runtime.ssot_runtime import _build_ssot_runtime_tool_registry
+
+        profile = get_profile("research_agent")
+        registry = _build_ssot_runtime_tool_registry(profile.allowed_tools)
+
+        assert registry
+        assert set(registry).issubset(set(profile.allowed_tools))
+        assert "knowledge.manage" in registry
+        assert "exec.run" not in registry
+
     def test_profile_max_steps_reaches_ssot_config(self, monkeypatch):
         import agent.runtime.ssot_runtime as runtime
 
@@ -259,6 +298,17 @@ class TestProfileToolsFilter:
         row = list_subagent_tasks(ws)[0]
         assert row["status"] == "failed"
         assert row["summary"] == "Subagent interrupted by service restart"
+
+    def test_reconcile_skips_subagent_created_after_startup_waterline(self, monkeypatch):
+        import agent.runtime.durable.subagent as subagent_runtime
+
+        monkeypatch.setattr(subagent_runtime, "_now", lambda: "2026-08-19T10:00:01+00:00")
+        ws = f"ws_new_{uuid.uuid4().hex[:8]}"
+        created = create_subagent_task("t1", ws, "s1", "research_agent", "Research")
+
+        assert reconcile_subagent_tasks(started_before="2026-08-19T10:00:00+00:00") == []
+        row = next(item for item in list_subagent_tasks(ws) if item["subtask_id"] == created["subtask_id"])
+        assert row["status"] == "created"
 
     def test_reconcile_scans_principal_scoped_workspace_data(self, monkeypatch, tmp_path):
         from storage.principal import storage_principal

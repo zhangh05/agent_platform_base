@@ -537,13 +537,16 @@ def _run_agent_thread(
         app = get_default_agent_app()
 
         runtime_metadata = dict(metadata or {})
+        runtime_control = None
         if cancel_event is not None:
-            runtime_metadata["cancel_check"] = cancel_event.is_set
+            from core.runtime_engine.models import MainAgentRuntimeControl
+            runtime_control = MainAgentRuntimeControl(cancel_check=cancel_event.is_set)
         result = app.submit_user_message(
             user_input=user_input,
             session_id=session_id,
             workspace_id=workspace_id,
             metadata=runtime_metadata,
+            runtime_control=runtime_control,
         )
 
         result_payload = result.to_dict()

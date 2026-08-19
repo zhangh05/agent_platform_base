@@ -977,6 +977,28 @@ def test_startup_reconciliation_interrupts_active_task_and_explicit_resume_recov
     assert recovered["source_run_id"] == "run-interrupt"
 
 
+def test_startup_reconciliation_skips_task_created_after_waterline(monkeypatch, tmp_path):
+    monkeypatch.setenv("LZCORE_WORKSPACE_ROOT", str(tmp_path))
+    import agent.runtime.task_state as task_state
+
+    monkeypatch.setattr(task_state, "_now_iso", lambda: "2026-08-19T10:00:01+00:00")
+    active = task_state.begin_task_state(
+        workspace_id="ws-startup-waterline",
+        session_id="session-startup-waterline",
+        run_id="run-startup-waterline",
+        user_input="检索两份官方资料。",
+    )
+    assert active is not None
+
+    outcome = task_state.reconcile_active_task_states(
+        "ws-startup-waterline",
+        started_before="2026-08-19T10:00:00+00:00",
+    )
+    assert outcome == {"interrupted": 0, "skipped": 1}
+    state = task_state.load_task_state("ws-startup-waterline", "session-startup-waterline")
+    assert state["task"]["status"] == "active"
+
+
 def test_ssot_runtime_persists_active_checkpoint_before_engine_runs(monkeypatch, tmp_path):
     monkeypatch.setenv("LZCORE_WORKSPACE_ROOT", str(tmp_path))
     from types import SimpleNamespace

@@ -120,6 +120,33 @@ class ApprovedContinuationRuntimeControl:
     prior_tool_evidence: tuple[dict[str, Any], ...] = ()
 
 
+@dataclass(frozen=True)
+class MainAgentRuntimeControl:
+    """Typed, server-only control facts for a main Agent turn.
+
+    The transport-owned cancellation callback is executable control state. It
+    never belongs in caller metadata, but must reach QueryLoop and ToolRuntime
+    for cooperative cancellation.
+    """
+    cancel_check: Any = None
+
+
+@dataclass(frozen=True)
+class SubagentRuntimeControl:
+    """Typed, server-only envelope for a constrained child Agent turn.
+
+    Child profile, budget, parent identity and cancellation callback are runtime
+    control facts. They must not share caller-supplied AgentOp.metadata, because
+    the profile is rendered as a system-level prompt extension and restricts the
+    canonical tool registry exposed to the child.
+    """
+    profile: dict[str, Any] = field(default_factory=dict)
+    max_steps: int = 0
+    subtask_id: str = ""
+    parent_session_id: str = ""
+    cancel_check: Any = None
+
+
 @dataclass
 class ToolResult:
     """Standardized result from any tool execution."""

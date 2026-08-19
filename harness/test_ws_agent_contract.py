@@ -87,7 +87,12 @@ def test_ws_worker_injects_cooperative_cancel_check(monkeypatch):
         "q", "s-1", "default", {}, event_queue,
         {"error": None}, {"live_events": 0}, cancel_event,
     )
-    check = captured["metadata"]["cancel_check"]
+    from core.runtime_engine.models import MainAgentRuntimeControl
+
+    assert "cancel_check" not in captured["metadata"]
+    control = captured["runtime_control"]
+    assert isinstance(control, MainAgentRuntimeControl)
+    check = control.cancel_check
     assert check() is False
     cancel_event.set()
     assert check() is True

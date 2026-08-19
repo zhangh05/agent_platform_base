@@ -47,6 +47,13 @@ _CALLER_RESERVED_RUNTIME_METADATA_KEYS = frozenset({
     "task_continuation_contract",
     "task_state_contract",
     "trusted_prompt_items",
+    # Subagent controls become system-prompt text and tool-registry limits.
+    # They are accepted only from SubagentRuntimeControl below.
+    "subagent_profile",
+    "max_steps",
+    "subtask_id",
+    "parent_session_id",
+    "cancel_check",
 })
 
 
@@ -77,16 +84,33 @@ def _is_approved_continuation_runtime_control(runtime_control: Any) -> bool:
 
 
 def _apply_runtime_control(metadata: dict[str, Any], runtime_control: Any) -> None:
-    """Install only a typed server-created approval continuation envelope."""
-    if not _is_approved_continuation_runtime_control(runtime_control):
+    """Install only typed, server-created runtime control envelopes."""
+    if _is_approved_continuation_runtime_control(runtime_control):
+        metadata.update({
+            "__approved_tool_continuation": runtime_control.grant,
+            "__approval_continuation_resume": True,
+            "approval_parent_run_id": str(runtime_control.parent_run_id or ""),
+            "__approval_cognitive_state": dict(runtime_control.cognitive_state or {}),
+            "__approval_prior_tool_evidence": list(runtime_control.prior_tool_evidence or ()),
+        })
         return
+
+    from core.runtime_engine.models import MainAgentRuntimeControl, SubagentRuntimeControl
+    if isinstance(runtime_control, MainAgentRuntimeControl):
+        if callable(runtime_control.cancel_check):
+            metadata["cancel_check"] = runtime_control.cancel_check
+        return
+    if not isinstance(runtime_control, SubagentRuntimeControl):
+        return
+    profile = runtime_control.profile if isinstance(runtime_control.profile, dict) else {}
     metadata.update({
-        "__approved_tool_continuation": runtime_control.grant,
-        "__approval_continuation_resume": True,
-        "approval_parent_run_id": str(runtime_control.parent_run_id or ""),
-        "__approval_cognitive_state": dict(runtime_control.cognitive_state or {}),
-        "__approval_prior_tool_evidence": list(runtime_control.prior_tool_evidence or ()),
+        "subagent_profile": dict(profile),
+        "max_steps": max(1, int(runtime_control.max_steps or 1)),
+        "subtask_id": str(runtime_control.subtask_id or ""),
+        "parent_session_id": str(runtime_control.parent_session_id or ""),
     })
+    if callable(runtime_control.cancel_check):
+        metadata["cancel_check"] = runtime_control.cancel_check
 
 
 class _TaskStateResolutionFailure(RuntimeError):

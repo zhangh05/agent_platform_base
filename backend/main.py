@@ -341,7 +341,7 @@ def create_app():
             )
         try:
             from agent.runtime.durable.subagent import reconcile_subagent_tasks
-            reconciled = reconcile_subagent_tasks()
+            reconciled = reconcile_subagent_tasks(started_before=_backend_started_at)
             if reconciled:
                 import logging as _subagent_log
                 _subagent_log.getLogger(__name__).warning(
@@ -367,7 +367,10 @@ def create_app():
                 with storage_principal(principal):
                     for workspace_id in sorted(set(workspace_ids)):
                         result_key = _startup_reconciliation_result_key(principal, workspace_id)
-                        reconciled_task_states[result_key] = reconcile_active_task_states(workspace_id)
+                        reconciled_task_states[result_key] = reconcile_active_task_states(
+                            workspace_id,
+                            started_before=_backend_started_at,
+                        )
             if any(int(value.get("interrupted") or 0) for value in reconciled_task_states.values()):
                 import logging as _task_state_log
                 _task_state_log.getLogger(__name__).warning(

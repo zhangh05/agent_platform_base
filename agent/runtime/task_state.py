@@ -303,8 +303,12 @@ def _bounded_key_list(value: Any) -> list[str]:
     ))[-96:]
 
 
-def reconcile_active_task_states(workspace_id: str) -> dict[str, int]:
-    """Mark only durable in-flight TaskStates interrupted after service start.
+def reconcile_active_task_states(
+    workspace_id: str,
+    *,
+    started_before: str = "",
+) -> dict[str, int]:
+    """Mark only pre-start durable in-flight TaskStates interrupted after service start.
 
     This function never dispatches a model or tool.  Explicit user continuation
     must re-enter AgentApp and QueryLoop, where the normal policy, approval and
@@ -330,6 +334,17 @@ def reconcile_active_task_states(workspace_id: str) -> dict[str, int]:
             task = state.get("task") if isinstance(state.get("task"), dict) else None
             if not task or str(task.get("status") or "") != "active":
                 continue
+            if started_before:
+                try:
+                    from storage.time_utils import from_iso
+                    task_time = str(task.get("updated_at") or state.get("updated_at") or "")
+                    if task_time and from_iso(task_time) >= from_iso(started_before):
+                        skipped += 1
+                        continue
+                except (TypeError, ValueError):
+                    # Legacy/invalid timestamps must not leave an old active
+                    # state permanently resumable after a process restart.
+                    pass
             now = _now_iso()
             revision = int(state.get("revision") or 0) + 1
             task = deepcopy(task)
