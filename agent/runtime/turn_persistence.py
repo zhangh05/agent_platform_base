@@ -17,7 +17,7 @@ _log = logging.getLogger(__name__)
 
 
 
-def persist_run_record(session, turn, result, context) -> None:
+def persist_run_record(session, turn, result, context) -> bool:
     """Best-effort: persist this turn to storage/run_record_store so that
     it shows up in /api/sessions/<id>/messages for plan-C sync.
 
@@ -184,6 +184,8 @@ def persist_run_record(session, turn, result, context) -> None:
                 _log.warning("persist_trace failed for run %s", run_id, exc_info=True)
     except Exception as e:
         _log.warning("persist_run_record failed for run %s: %s", run_id, e, exc_info=True)
+        return False
+    return True
 
 
 def persist_trace(run_id: str, ws_id: str, events: list) -> None:

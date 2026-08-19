@@ -177,3 +177,34 @@ def test_run_ssot_turn_projects_typed_main_cancel_control(monkeypatch, tmp_path)
 
     assert result.ok is True
     assert captured["extras"]["cancel_check"] is callback
+
+
+def test_run_ssot_turn_does_not_report_success_when_run_persistence_fails(monkeypatch, tmp_path):
+    import agent.runtime.ssot_runtime as runtime
+    from agent.core.session import AgentSession
+    from agent.core.turn import AgentTurn
+    from agent.protocol.op import AgentOp
+
+    monkeypatch.setenv("LZCORE_WORKSPACE_ROOT", str(tmp_path))
+
+    class FakeEngine:
+        async def run(self, **_kwargs):
+            return _fake_runtime_result()
+
+    monkeypatch.setattr(runtime, "_build_engine", lambda **_kwargs: FakeEngine())
+    monkeypatch.setattr(runtime, "persist_run_record", lambda *_args, **_kwargs: False)
+    monkeypatch.setattr(runtime, "_record_experience_and_maybe_reflect", lambda **_kwargs: None)
+
+    session = AgentSession(session_id="s-run-persist-fail", workspace_id="ws-run-persist-fail")
+    result = runtime.run_ssot_turn(
+        session,
+        AgentTurn.from_op(AgentOp.user_message(
+            user_input="请生成可持久化的运行记录。",
+            session_id=session.session_id,
+            workspace_id=session.workspace_id,
+        )),
+    )
+
+    assert result.ok is False
+    assert "run_record_persistence_failed" in result.errors
+    assert result.error_type == "run_record_persistence_failed"

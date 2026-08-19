@@ -166,6 +166,22 @@ def _mark_task_state_persistence_failure(result: AgentResult, code: str) -> None
     )
 
 
+
+def _mark_run_record_persistence_failure(result: AgentResult, code: str) -> None:
+    """Prevent a turn without its primary durable record from being reported as successful."""
+    result.ok = False
+    result.error_type = code
+    if code not in result.errors:
+        result.errors.append(code)
+    result.metadata.setdefault(
+        "run_record_persistence",
+        {"stage": "persist", "status": "failed", "code": code},
+    )
+    result.final_response = (
+        "本轮执行结果未能写入可信运行记录，系统已将其标记为未完成。"
+        "为避免重复或遗漏操作，请恢复存储后重新核验任务状态。"
+    )
+
 def run_ssot_turn(
     session,
     turn,
@@ -701,13 +717,15 @@ def run_ssot_turn(
         except Exception:
             _LOG.warning("task continuation commit failed", exc_info=True)
 
-    persist_run_record(session, turn, result, context)
+    run_record_persisted = persist_run_record(session, turn, result, context)
+    if run_record_persisted is False:
+        _mark_run_record_persistence_failure(result, "run_record_persistence_failed")
 
     # ── Experience journal and memory reflection ─────────────────────
     # Every completed turn is durable experience. Explicit user memory
     # commands are applied immediately; ordinary turns are consolidated only
     # at an operational task boundary or after a small accumulated batch.
-    if not bool((result.metadata or {}).get("ssot_runtime", {}).get("approval_required")):
+    if run_record_persisted is not False and not bool((result.metadata or {}).get("ssot_runtime", {}).get("approval_required")):
         _record_experience_and_maybe_reflect(
             workspace_id=workspace_id,
             session_id=session_id,
