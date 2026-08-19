@@ -113,6 +113,47 @@ def append_jsonl(workspace_id: str, parts: Iterable[str], record: dict[str, Any]
     return payload
 
 
+def append_jsonl_once(
+    workspace_id: str,
+    parts: Iterable[str],
+    record: dict[str, Any],
+    *,
+    identity_field: str = "event_id",
+) -> dict[str, Any]:
+    """Append a JSONL record once, deduplicated by a stable identity field.
+
+    The check and append share the same adapter/file lock so a retry after a
+    crash between event append and snapshot publication cannot duplicate an
+    immutable lifecycle fact.
+    """
+    path = workspace_record_file(workspace_id, *tuple(parts))
+    payload = dict(record)
+    identity = str(payload.get(identity_field) or "").strip()
+    with _lock_for(path):
+        with _file_lock(path):
+            if identity:
+                try:
+                    raw = path.read_text(encoding="utf-8") if path.exists() else ""
+                    for line in raw.splitlines():
+                        if not line.strip():
+                            continue
+                        try:
+                            existing = json.loads(line)
+                        except json.JSONDecodeError:
+                            continue
+                        if isinstance(existing, dict) and str(existing.get(identity_field) or "").strip() == identity:
+                            comparable_existing = {k: v for k, v in existing.items() if k != "at"}
+                            comparable_payload = {k: v for k, v in payload.items() if k != "at"}
+                            if comparable_existing != comparable_payload:
+                                raise ValueError("jsonl_identity_conflict")
+                            return dict(existing)
+                except OSError:
+                    pass
+            with open(path, "a", encoding="utf-8") as f:
+                f.write(json.dumps(payload, ensure_ascii=False, default=str) + "\n")
+    return payload
+
+
 def append_jsonl_path(path: Path, record: dict[str, Any]) -> dict[str, Any]:
     """Append one JSONL record to an explicit storage-owned path."""
     payload = dict(record)

@@ -26,6 +26,64 @@ def _tool(*, call_id: str, ok: bool = True, tool_id: str = "web.manage") -> dict
     }
 
 
+def test_startup_reconciliation_result_key_preserves_principal_scope():
+    from backend.main import _startup_reconciliation_result_key
+
+    assert _startup_reconciliation_result_key("Admin", "default") == "Admin:default"
+    assert _startup_reconciliation_result_key("network", "default") == "network:default"
+    assert _startup_reconciliation_result_key("", "default") == "<maintenance>:default"
+
+
+def test_task_event_append_is_idempotent_by_event_id(monkeypatch, tmp_path):
+    monkeypatch.setenv("LZCORE_WORKSPACE_ROOT", str(tmp_path))
+    from agent.runtime.task_state import list_task_events
+    from storage.records import append_jsonl_once
+
+    first = {"event_id": "evt_idempotent", "event_type": "task_started", "revision": 1}
+    second = {"event_id": "evt_idempotent", "event_type": "task_started", "revision": 1, "unexpected": "duplicate"}
+    append_jsonl_once("ws-event-idempotency", ("sessions", "session-event-idempotency", "task_events.jsonl"), first)
+    import pytest
+    with pytest.raises(ValueError, match="jsonl_identity_conflict"):
+        append_jsonl_once("ws-event-idempotency", ("sessions", "session-event-idempotency", "task_events.jsonl"), second)
+    returned = append_jsonl_once("ws-event-idempotency", ("sessions", "session-event-idempotency", "task_events.jsonl"), dict(first, at="retry-time"))
+    assert returned == first
+    events = list_task_events("ws-event-idempotency", "session-event-idempotency")
+    assert events == [first]
+
+
+def test_task_state_retries_snapshot_after_event_append_without_duplicate(monkeypatch, tmp_path):
+    monkeypatch.setenv("LZCORE_WORKSPACE_ROOT", str(tmp_path))
+    import pytest
+    import agent.runtime.task_state as task_state
+
+    original_atomic_write = task_state.atomic_write_json
+    calls = {"count": 0}
+
+    def fail_first_snapshot(path, record):
+        calls["count"] += 1
+        if calls["count"] == 1:
+            raise OSError("simulated_snapshot_crash")
+        return original_atomic_write(path, record)
+
+    monkeypatch.setattr(task_state, "atomic_write_json", fail_first_snapshot)
+    kwargs = {
+        "workspace_id": "ws-event-crash-retry",
+        "session_id": "session-event-crash-retry",
+        "run_id": "run-crash-retry",
+        "user_input": "记录一次可审计事实。",
+        "final_response": "已记录。",
+        "run_ok": True,
+        "runtime_metadata": _metadata(),
+        "tool_calls": [],
+    }
+    with pytest.raises(OSError, match="simulated_snapshot_crash"):
+        task_state.commit_task_state(**kwargs)
+    snapshot = task_state.commit_task_state(**kwargs)
+    assert snapshot is not None
+    assert snapshot["revision"] == 1
+    assert len(task_state.list_task_events("ws-event-crash-retry", "session-event-crash-retry")) == 1
+
+
 def test_initial_task_state_is_evented_with_queryloop_facts(monkeypatch, tmp_path):
     monkeypatch.setenv("LZCORE_WORKSPACE_ROOT", str(tmp_path))
     from agent.runtime.task_state import commit_task_state, list_task_events, load_task_state

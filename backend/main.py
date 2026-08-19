@@ -68,6 +68,12 @@ def _validated_workspace_id(raw=""):
         return None, _invalid_workspace_response()
 
 
+def _startup_reconciliation_result_key(principal: str, workspace_id: str) -> str:
+    """Keep startup recovery evidence distinct for each storage principal."""
+    owner = str(principal or "").strip() or "<maintenance>"
+    return f"{owner}:{validate_workspace_id(workspace_id)}"
+
+
 def create_app():
     app = Flask(__name__, static_folder=None)
     app.config["PORT"] = UNIFIED_PORT
@@ -360,7 +366,8 @@ def create_app():
                 workspace_ids = list(identity.get("workspace_ids") or []) if isinstance(identity, dict) else all_workspace_ids
                 with storage_principal(principal):
                     for workspace_id in sorted(set(workspace_ids)):
-                        reconciled_task_states[workspace_id] = reconcile_active_task_states(workspace_id)
+                        result_key = _startup_reconciliation_result_key(principal, workspace_id)
+                        reconciled_task_states[result_key] = reconcile_active_task_states(workspace_id)
             if any(int(value.get("interrupted") or 0) for value in reconciled_task_states.values()):
                 import logging as _task_state_log
                 _task_state_log.getLogger(__name__).warning(

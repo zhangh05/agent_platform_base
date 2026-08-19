@@ -18,7 +18,7 @@ from typing import Any, Iterable
 from agent.runtime.task_relation_policy import classify_task_relation
 from storage.atomic_io import atomic_write_json
 from storage.locking import FileLock
-from storage.records import append_jsonl, read_jsonl, workspace_record_dir, workspace_record_file
+from storage.records import append_jsonl_once, read_jsonl, workspace_record_dir, workspace_record_file
 
 _SCHEMA = "runtime.task_state.v1"
 _EVENT_SCHEMA = "runtime.task_event.v1"
@@ -147,7 +147,7 @@ def begin_task_state(
             "run_ok": False,
             "execution_outcome": "in_progress",
         }
-        append_jsonl(workspace_id, _event_parts(session_id), event)
+        append_jsonl_once(workspace_id, _event_parts(session_id), event)
         atomic_write_json(path, record)
         return _contract_from_state(record, task, recovery_status=str(task.get("active_from_status") or ""))
 
@@ -213,7 +213,7 @@ def checkpoint_task_state_execution(
             "assertion_status": _assertion_status(task.get("assertions")), "next_action": "run_query_loop",
             "run_ok": False, "execution_outcome": "in_progress",
         }
-        append_jsonl(workspace_id, _event_parts(session_id), event)
+        append_jsonl_once(workspace_id, _event_parts(session_id), event)
         atomic_write_json(path, record)
         return _contract_from_state(record, task, recovery_status=str(task.get("active_from_status") or ""))
 
@@ -284,7 +284,7 @@ def acknowledge_pending_mutation_outcome(
             "acknowledged_mutation_count": len(pending),
             "verification_source": "user_attested",
         }
-        append_jsonl(workspace_id, _event_parts(session_id), event)
+        append_jsonl_once(workspace_id, _event_parts(session_id), event)
         atomic_write_json(path, record)
         return _contract_from_state(record, task, recovery_status="waiting_user")
 
@@ -367,7 +367,7 @@ def reconcile_active_task_states(workspace_id: str) -> dict[str, int]:
                 "run_ok": False,
                 "execution_outcome": "unknown" if pending_mutations else "interrupted",
             }
-            append_jsonl(workspace_id, _event_parts(session_id), event)
+            append_jsonl_once(workspace_id, _event_parts(session_id), event)
             atomic_write_json(path, record)
             interrupted += 1
     return {"interrupted": interrupted, "skipped": skipped}
@@ -591,7 +591,7 @@ def commit_task_state(
             "updated_at": task["updated_at"],
         }
         # Append the immutable fact before publishing its matching snapshot.
-        append_jsonl(workspace_id, _event_parts(session_id), event)
+        append_jsonl_once(workspace_id, _event_parts(session_id), event)
         atomic_write_json(path, record)
         return deepcopy(record)
 
