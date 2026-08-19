@@ -3,6 +3,7 @@ import type { InlineToolCall } from "../../../types";
 import type { ChatMsg } from "../../../stores/workbench";
 import { renderAssistantHtml, sanitizeAssistantText, toolLabel } from "../../../utils/displayText";
 import { humanFailure } from "../../../utils/humanizeError";
+import { formatStreamElapsedSeconds } from "../../../utils/streamElapsed";
 import { InlineToolCallCard } from "./InlineToolCallCard";
 import { ResultInline } from "./ResultInline";
 import { StreamingContent } from "./StreamingContent";
@@ -143,16 +144,12 @@ export const MessageRow = memo(function MessageRow({ m, idx: _idx, total: _total
                   {m.stageElapsedMs != null && m.stageElapsedMs > 0 ? (
                     <span className="muted wb-progress-elapsed">
                       {" · 阶段 "}
-                      {m.stageElapsedMs >= 1000
-                        ? (m.stageElapsedMs / 1000).toFixed(1) + "s"
-                        : m.stageElapsedMs + "ms"}
+                      {formatStreamElapsedSeconds(m.stageElapsedMs)}
                     </span>
                   ) : null}
                   {m.progressElapsedMs != null && m.progressElapsedMs > 0 ? (
                     <span className="muted wb-progress-elapsed">
-                      {" · 本轮 ("}{m.progressElapsedMs >= 1000
-                        ? `${(m.progressElapsedMs / 1000).toFixed(1)}s`
-                        : `${m.progressElapsedMs}ms`})
+                      {" · 本轮 ("}{formatStreamElapsedSeconds(m.progressElapsedMs)})
                     </span>
                   ) : null}
                 </span>

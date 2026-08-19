@@ -1,5 +1,6 @@
 export const STREAM_IDLE_TIMEOUT_MS = 30_000;
-export const STREAM_ELAPSED_TICK_MS = 250;
+// Human-facing durations update once per second; token rendering remains frame-driven.
+export const STREAM_ELAPSED_TICK_MS = 1_000;
 
 type StreamActivityWatchdogOptions = {
   onTick: (elapsedMs: number) => void;

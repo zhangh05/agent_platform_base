@@ -194,6 +194,10 @@ export function useChatStream(
     abortRef.current = new AbortController();
 
     let wsTurnSubmitted = false;
+    // The visible turn duration is defined by this browser's monotonic clock.
+    // Backend timing fields stay in runtime evidence and never rebase this UI clock.
+    const streamClockNow = () => performance.now();
+    const turnStartedAt = streamClockNow();
     try {
       const socket = new WebSocket(wsUrl);
       msgWsRef.current = socket;
@@ -292,8 +296,12 @@ export function useChatStream(
           resolve();
         };
         const watchdog = createStreamActivityWatchdog({
+          now: streamClockNow,
           onTick: (elapsedMs) => {
-            streamRender.setElapsed(elapsedMs, stageElapsedSince(stageStartedAt) ?? 0);
+            streamRender.setElapsed(
+              elapsedMs,
+              stageElapsedSince(stageStartedAt, streamClockNow()) ?? 0,
+            );
           },
           onTimeout: () => {
             interruptionReason = `实时连接已超过 ${Math.round(STREAM_IDLE_TIMEOUT_MS / 1000)} 秒没有收到服务器消息，已结束等待。请重试本轮。`;
@@ -377,11 +385,17 @@ export function useChatStream(
                 }
                 const progressPatch = progressPatchForStreamStage(stageName, msg.data);
                 if (progressPatch) {
-                  const stageElapsedMs = progressPatch.stageElapsedMs ?? 0;
-                  stageStartedAt = Date.now() - stageElapsedMs;
+                  // A displayed stage starts on local receipt. This prevents
+                  // independent server monotonic epochs from jumping the UI clock.
+                  const stageNow = streamClockNow();
+                  stageStartedAt = stageNow;
                   useWorkbenchStore.getState().updateAssistant(
                     streamingMsgId,
-                    progressPatch,
+                    {
+                      progressText: progressPatch.progressText,
+                      progressElapsedMs: Math.max(0, stageNow - turnStartedAt),
+                      stageElapsedMs: 0,
+                    },
                     scratch,
                   );
                 }
