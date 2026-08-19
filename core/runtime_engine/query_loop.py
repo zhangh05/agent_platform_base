@@ -1338,25 +1338,38 @@ class QueryLoop:
         failure_counts: Dict[str, int] = {}
         validation_correction_attempts = 0
         response_quality_attempts = 0
+        # In-memory loop deduplication retains the readable canonical key.
+        # Cross-restart fences use only fixed-size SHA-256 identities. Prefix-
+        # truncated legacy records are deliberately not compared to a new call:
+        # equality would be unsound and can suppress a distinct large mutation.
         completed_call_keys: set[str] = set()
+        durable_completed_call_keys: set[str] = set()
+        legacy_completed_call_keys: set[str] = set()
         trusted_task_state = ctx.extras.get("__trusted_task_state_contract")
         replan_required = False
-        failed_replan_call_keys: set[str] = set()
+        durable_failed_replan_call_keys: set[str] = set()
+        legacy_failed_replan_call_keys: set[str] = set()
         if isinstance(trusted_task_state, dict):
-            completed_call_keys.update(
-                str(item)[:640]
-                for item in (trusted_task_state.get("completed_mutation_keys") or [])
-                if isinstance(item, str) and str(item).strip()
-            )
+            for item in (trusted_task_state.get("completed_mutation_keys") or []):
+                value = str(item or "").strip()
+                if not value:
+                    continue
+                if self._is_compact_durable_call_key(value):
+                    durable_completed_call_keys.add(value)
+                else:
+                    legacy_completed_call_keys.add(value)
             replan_required = (
                 str(trusted_task_state.get("status") or "") == "replan_required"
                 or str(trusted_task_state.get("recovery_status") or "") == "replan_required"
             )
-            failed_replan_call_keys.update(
-                str(item)[:640]
-                for item in (trusted_task_state.get("failed_replan_call_keys") or [])
-                if isinstance(item, str) and str(item).strip()
-            )
+            for item in (trusted_task_state.get("failed_replan_call_keys") or []):
+                value = str(item or "").strip()
+                if not value:
+                    continue
+                if self._is_compact_durable_call_key(value):
+                    durable_failed_replan_call_keys.add(value)
+                else:
+                    legacy_failed_replan_call_keys.add(value)
         pending_mutation_keys = set(
             str(item)[:640]
             for item in ((trusted_task_state or {}).get("pending_mutation_keys") or [])
@@ -1958,10 +1971,28 @@ class QueryLoop:
                 # such as file_read -> read because their raw keys differed.
                 candidate_epoch = mutation_epoch
                 candidate_keys: dict[str, str] = {}
+                candidate_durable_keys: dict[str, str] = {}
                 for tc in tool_calls:
                     candidate_keys[tc.id] = self._completion_key(tc, candidate_epoch)
+                    candidate_durable_keys[tc.id] = self._durable_call_key(tc)
                     if not self._executor._is_read_only_call(tc):
                         candidate_epoch += 1
+                legacy_ambiguous_mutation_calls = [
+                    tc for tc in tool_calls
+                    if (
+                        legacy_completed_call_keys
+                        or (replan_required and legacy_failed_replan_call_keys)
+                    ) and not self._executor._is_read_only_call(tc)
+                ]
+                if legacy_ambiguous_mutation_calls:
+                    return finish(
+                        final_response=(
+                            "检测到旧版本保存的副作用调用身份无法无碰撞校验；"
+                            "系统已冻结新的写操作，请先通过只读核验确认历史结果。"
+                        ),
+                        error="task_state_legacy_call_key_ambiguous",
+                        metrics={"execution_outcome": "unknown"},
+                    )
                 unknown_mutation_calls = [
                     tc for tc in tool_calls
                     if pending_mutation_keys and not self._executor._is_read_only_call(tc)
@@ -1977,7 +2008,8 @@ class QueryLoop:
                     )
                 repeated_replan_calls = [
                     tc for tc in tool_calls
-                    if replan_required and candidate_keys[tc.id] in failed_replan_call_keys
+                    if replan_required
+                    and candidate_durable_keys[tc.id] in durable_failed_replan_call_keys
                 ]
                 if repeated_replan_calls:
                     return finish(
@@ -1990,6 +2022,7 @@ class QueryLoop:
                 repeated_calls = [
                     tc for tc in tool_calls
                     if candidate_keys[tc.id] in completed_call_keys
+                    or candidate_durable_keys[tc.id] in durable_completed_call_keys
                 ]
                 repeated_mutations = [
                     tc for tc in repeated_calls
@@ -2030,7 +2063,7 @@ class QueryLoop:
                     prepared_manifest = [
                         {
                             "tool_id": str(call.name or "")[:160],
-                            "call_key": self._tool_call_key(call)[:640],
+                            "call_key": self._durable_call_key(call),
                             "side_effecting": not self._executor._is_read_only_call(call),
                         }
                         for call in tool_calls
@@ -2849,6 +2882,23 @@ class QueryLoop:
         }
         return f"{tc.name}:{json.dumps(identity, sort_keys=True, ensure_ascii=False, default=str)}"
 
+    @classmethod
+    def _durable_call_key(cls, tc: LLMToolCall) -> str:
+        """Return a fixed-size, collision-resistant identity for durable fences.
+
+        TaskState outlives one loop and must never use a prefix-truncated tool
+        payload as an execution identity: two large write arguments can share a
+        prefix while representing different side effects. The complete
+        canonical call identity is SHA-256 hashed before it crosses the durable
+        checkpoint boundary.
+        """
+        digest = hashlib.sha256(cls._tool_call_key(tc).encode("utf-8")).hexdigest()
+        return f"sha256:{digest}"
+
+    @staticmethod
+    def _is_compact_durable_call_key(value: object) -> bool:
+        return bool(re.fullmatch(r"sha256:[0-9a-f]{64}", str(value or "").strip()))
+
     def _record_task_state_execution_manifest(
         self,
         ctx: StatelessContext,
@@ -2863,7 +2913,7 @@ class QueryLoop:
         for call, result in zip(tool_calls, results):
             manifest.append({
                 "tool_id": str(call.name or "")[:160],
-                "call_key": self._tool_call_key(call)[:640],
+                "call_key": self._durable_call_key(call),
                 "side_effecting": not self._executor._is_read_only_call(call),
                 "ok": bool(result.ok),
             })

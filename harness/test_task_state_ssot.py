@@ -471,7 +471,7 @@ def test_task_state_completed_mutation_key_hits_queryloop_execution_fence():
             },
         },
     }
-    call_key = QueryLoop(config, registry, runtime)._completion_key(call, 0)
+    call_key = QueryLoop(config, registry, runtime)._durable_call_key(call)
     engine = SSOTRuntimeEngine(
         config=config,
         llm_invoke=lambda **_kwargs: LLMResponse(tool_calls=[call]),
@@ -854,7 +854,7 @@ def test_replan_contract_persists_failed_call_keys_and_queryloop_rejects_replay(
             },
         },
     }
-    call_key = QueryLoop(config, registry, runtime)._completion_key(call, 0)
+    call_key = QueryLoop(config, registry, runtime)._durable_call_key(call)
     first = commit_task_state(
         workspace_id="ws-replan-fence",
         session_id="session-replan-fence",
@@ -1323,3 +1323,72 @@ def test_task_state_commit_failure_does_not_advance_secondary_continuation(monke
     assert result.ok is False
     assert result.error_type == "task_state_commit_failed"
     assert continuation_calls == []
+
+
+def test_durable_call_key_distinguishes_large_mutations_after_restart():
+    """Durable fences must hash full arguments instead of a 640-char prefix."""
+    import asyncio
+    from agent.llm.schemas import LLMResponse, LLMToolCall
+    from core.runtime_engine.engine import SSOTRuntimeEngine
+    from core.runtime_engine.models import SSOTRuntimeConfig
+    from core.runtime_engine.query_loop import QueryLoop
+    from core.runtime_engine.tool_runtime import ToolRuntime
+
+    config = SSOTRuntimeConfig(max_query_loop_iterations=2)
+    runtime = ToolRuntime(config)
+    invoked: list[dict] = []
+    runtime.register("workspace.file", lambda arguments: invoked.append(dict(arguments)) or {"ok": True})
+    registry = {"workspace.file": {"description": "files", "args_schema": {"type": "object", "required": ["action"], "properties": {"action": {"type": "string", "enum": ["write"]}, "filename": {"type": "string"}, "content": {"type": "string"}}}}}
+    prefix = "x" * 1_200
+    completed = LLMToolCall(id="completed-large-write", name="workspace.file", arguments={"action": "write", "filename": "audit.txt", "content": prefix + "A"})
+    next_call = LLMToolCall(id="next-large-write", name="workspace.file", arguments={"action": "write", "filename": "audit.txt", "content": prefix + "B"})
+    loop = QueryLoop(config, registry, runtime)
+    completed_key = loop._durable_call_key(completed)
+    next_key = loop._durable_call_key(next_call)
+
+    assert completed_key.startswith("sha256:")
+    assert len(completed_key) == 71
+    assert completed_key != next_key
+
+    responses = iter([
+        LLMResponse(tool_calls=[next_call]),
+        LLMResponse(content="不同内容已安全写入。"),
+    ])
+    engine = SSOTRuntimeEngine(
+        config=config,
+        llm_invoke=lambda **_kwargs: next(responses),
+        tool_registry=registry,
+        tool_runtime=runtime,
+    )
+    result = asyncio.run(engine.run("继续写入不同的审计内容。", workspace_id="ws-durable-key", session_id="session-durable-key", extras={"__trusted_task_state_contract": {"task_id": "tsk-durable-key", "completed_mutation_keys": [completed_key]}}))
+
+    assert result.success is True
+    assert invoked == [dict(next_call.arguments)]
+
+
+def test_legacy_durable_call_key_freezes_mutation_instead_of_guessing_identity():
+    """Historical prefix-truncated checkpoints are an unknown mutation outcome."""
+    import asyncio
+    from agent.llm.schemas import LLMResponse, LLMToolCall
+    from core.runtime_engine.engine import SSOTRuntimeEngine
+    from core.runtime_engine.models import SSOTRuntimeConfig
+    from core.runtime_engine.tool_runtime import ToolRuntime
+
+    config = SSOTRuntimeConfig(max_query_loop_iterations=1)
+    runtime = ToolRuntime(config)
+    invoked: list[dict] = []
+    runtime.register("workspace.file", lambda arguments: invoked.append(dict(arguments)) or {"ok": True})
+    registry = {"workspace.file": {"description": "files", "args_schema": {"type": "object", "required": ["action"], "properties": {"action": {"type": "string", "enum": ["write"]}, "filename": {"type": "string"}, "content": {"type": "string"}}}}}
+    call = LLMToolCall(id="new-write", name="workspace.file", arguments={"action": "write", "filename": "audit.txt", "content": "new content"})
+    engine = SSOTRuntimeEngine(config=config, llm_invoke=lambda **_kwargs: LLMResponse(tool_calls=[call]), tool_registry=registry, tool_runtime=runtime)
+
+    result = asyncio.run(engine.run(
+        "继续写入审计内容。",
+        workspace_id="ws-legacy-key",
+        session_id="session-legacy-key",
+        extras={"__trusted_task_state_contract": {"task_id": "tsk-legacy-key", "completed_mutation_keys": ["workspace.file:{legacy-prefix-truncated}"]}},
+    ))
+
+    assert result.success is False
+    assert "task_state_legacy_call_key_ambiguous" in result.errors
+    assert invoked == []
