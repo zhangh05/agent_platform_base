@@ -19,7 +19,7 @@ import uuid
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from storage.redaction import redact_text
+from storage.redaction import redact_text, redact_value
 from storage.ids import validate_workspace_id, validate_session_id
 from storage.workspace_store import ensure_workspace
 
@@ -108,7 +108,7 @@ class SessionMessageStore:
         msg_dir = self._messages_dir()
         msg_dir.mkdir(parents=True, exist_ok=True)
 
-        meta = dict(metadata or {})
+        meta = redact_value(dict(metadata or {}))
         meta.setdefault("run_id", rid)
         meta.setdefault("session_id", self.session_id)
         meta.setdefault("workspace_id", self.ws_id)

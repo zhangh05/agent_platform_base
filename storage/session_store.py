@@ -17,6 +17,7 @@ from typing import Any, Dict, List, Optional
 from storage.ids import validate_session_id, validate_workspace_id
 from storage.workspace_store import ensure_workspace
 from storage.atomic_io import atomic_write_json
+from storage.redaction import redact_value
 from storage.locking import FileLock
 
 from storage.paths import workspace_root
@@ -64,11 +65,11 @@ def _read_session_unlocked(session_id: str, ws_id: str) -> Optional[Dict[str, An
             type(exc).__name__,
         )
         return None
-    return value if isinstance(value, dict) else None
+    return redact_value(value) if isinstance(value, dict) else None
 
 
 def _write_session_unlocked(session: Dict[str, Any], ws_id: str) -> None:
-    atomic_write_json(_session_path(session["session_id"], ws_id), session)
+    atomic_write_json(_session_path(session["session_id"], ws_id), redact_value(session))
 
 
 def _session_tombstone_path(session_id: str, ws_id: str) -> Path:
@@ -130,7 +131,7 @@ def create_session(
         "created_at": now,
         "updated_at": now,
         "run_ids": [],
-        "metadata": metadata or {},
+        "metadata": redact_value(dict(metadata or {})),
     }
     _write_session(session, ws_id)
     return session
@@ -202,7 +203,7 @@ def list_sessions(
 
     for f in sdir.glob("*.json"):
         try:
-            s = json.loads(f.read_text(encoding="utf-8"))
+            s = redact_value(json.loads(f.read_text(encoding="utf-8")))
             sid = s.get("session_id", f.stem)
             metadata = s.get("metadata") or {}
             if (
@@ -334,7 +335,7 @@ def update_session(
             session["status"] = status
             changed = True
         if metadata is not None:
-            merged = {**dict(session.get("metadata") or {}), **dict(metadata)}
+            merged = redact_value({**dict(session.get("metadata") or {}), **dict(metadata)})
             if session.get("metadata") != merged:
                 session["metadata"] = merged
                 changed = True
