@@ -244,3 +244,21 @@ def test_tool_executor_redacts_secret_in_handler_exception_before_returning():
     error_text = " ".join(str(item) for item in result.errors)
     assert "sk-test-secret" not in error_text
     assert "redacted" in error_text.lower()
+
+
+def test_streaming_tool_executor_redacts_secret_in_direct_runtime_exception():
+    import asyncio
+
+    from agent.llm.schemas import LLMToolCall
+    from core.runtime_engine.models import SSOTRuntimeConfig
+    from core.runtime_engine.query_loop import StreamingToolExecutor
+
+    class FailingRuntime:
+        def invoke_raw(self, _tool_id, _arguments):
+            raise RuntimeError("runtime token=sk-test-secret-abcdefghijklmnopqrstuvwxyz")
+
+    result = asyncio.run(StreamingToolExecutor(
+        FailingRuntime(), SSOTRuntimeConfig(),
+    ).execute([LLMToolCall(id="call-1", name="web.manage", arguments={})]))[0]
+    assert "sk-test-secret" not in str(result.error)
+    assert "redacted" in str(result.error).lower()

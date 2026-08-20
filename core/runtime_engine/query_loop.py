@@ -56,6 +56,7 @@ from .context_compaction import (
 )
 from agent.llm.schemas import LLMMessage, LLMResponse, LLMToolCall
 from agent.llm.tool_adapter import tool_spec_to_openai_function
+from core.tools.redaction import redact_tool_output
 from .prompt_contract import (
     RUNTIME_SYSTEM_PROMPT,
     build_runtime_system_prompt,
@@ -80,6 +81,12 @@ from .cognitive_state import initialize_cognitive_state, restore_cognitive_state
 # function-calling tools field on every planner call.
 QUERY_LOOP_SYSTEM_PROMPT = RUNTIME_SYSTEM_PROMPT
 RESPONSE_ONLY_MARKER = "[RESPONSE_ONLY]"
+
+def _redact_tool_error(error: Any, *, limit: int = 200) -> str:
+    """Return bounded, redacted tool or orchestration error text for model context."""
+    value = redact_tool_output({"error": str(error or "")}).get("error")
+    return str(value or "tool execution failed")[:limit]
+
 
 _LOG = logging.getLogger(__name__)
 
@@ -487,10 +494,10 @@ class StreamingToolExecutor:
                 tool_name=tc.name,
                 call_id=tc.id,
                 output={"ok": False, "executed": False,
-                        "error_code": "ORCHESTRATION_INVALID", "error": str(exc),
+                        "error_code": "ORCHESTRATION_INVALID", "error": _redact_tool_error(exc),
                         "retryable": True},
                 ok=False,
-                error=str(exc),
+                error=_redact_tool_error(exc),
             ) for tc in tool_calls]
 
         calls_by_step = {str(tc.step_id or tc.id): tc for tc in tool_calls}
@@ -623,13 +630,13 @@ class StreamingToolExecutor:
                     result = StreamingToolResult(
                         tool_name=tc.name, call_id=tc.id,
                         output={"ok": False, "executed": False,
-                                "error_code": "RESULT_BINDING_FAILED", "error": str(exc),
+                                "error_code": "RESULT_BINDING_FAILED", "error": _redact_tool_error(exc),
                                 "_orchestration": {
                                     "step_id": step_id, "depends_on": list(tc.depends_on),
                                     "layer": layer_index, "parallel": False,
                                     "failure_policy": tc.failure_policy,
                                 }},
-                        ok=False, error=str(exc),
+                        ok=False, error=_redact_tool_error(exc),
                     )
                     result_by_id[tc.id] = result
                     evidence[step_id] = StepEvidence(
@@ -1040,7 +1047,7 @@ class StreamingToolExecutor:
                 call_id=tc.id,
                 output={},
                 ok=False,
-                error=str(e),
+                error=_redact_tool_error(e),
             )
 
     async def _maybe_retry_node(
@@ -3550,7 +3557,7 @@ class QueryLoop:
                     call_id=poll_call_id,
                     output={},
                     ok=False,
-                    error=f"poll_crash: {str(e)[:200]}",
+                    error="poll_crash: " + _redact_tool_error(e),
                 )
                 state["last_error_count"] = 3
 
