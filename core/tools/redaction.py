@@ -11,7 +11,7 @@ import re
 # ── Secret patterns ──
 _SECRET_PATTERNS = [
     # Key-like (sk- prefix — OpenAI, Anthropic, etc.)
-    (re.compile(r'(sk-[a-zA-Z0-9_-]{4})[a-zA-Z0-9_-]+'), r'\1****[REDACTED]'),
+    (re.compile(r'(?<![A-Za-z0-9_])(sk-[a-zA-Z0-9_-]{4})[a-zA-Z0-9_-]+'), r'\1****[REDACTED]'),
     # MiniMax API key (group_xxx_xxx... or minimax_xxx)
     (re.compile(r'(?:group_|minimax_)[a-zA-Z0-9_]{8,}'), '[MINIMAX_KEY_REDACTED]'),
     # DeepSeek API key (sk-xxx...)

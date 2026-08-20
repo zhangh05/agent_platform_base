@@ -9,6 +9,7 @@ import logging
 from typing import Optional
 from .models import TaskState, RuntimeEvent, RuntimeCheckpoint
 from agent.runtime.utils import now_iso
+from core.tools.redaction import redact_tool_output
 from storage.ids import validate_checkpoint_id, validate_task_id
 from storage.durable_task_store import (
     append_task_event,
@@ -22,18 +23,24 @@ from storage.durable_task_store import (
 
 logger = logging.getLogger(__name__)
 
-_REDACT_KEYS = {"password","token","api_key","secret","credential","private_key","access_key","auth","authorization","x-api-token","x-admin-token"}
-
 def _redact(obj, max_len=256):
-    if isinstance(obj, dict): return {k: "[REDACTED]" if k.lower() in _REDACT_KEYS else _redact(v) for k,v in obj.items()}
-    if isinstance(obj, list): return [_redact(v) for v in obj]
-    if isinstance(obj, str) and len(obj) > max_len: return obj[:max_len] + "..."
+    """Deep-redact durable observations before they cross a persistence boundary."""
+    return _truncate(redact_tool_output(obj), max_len)
+
+
+def _truncate(obj, max_len):
+    if isinstance(obj, dict):
+        return {key: _truncate(value, max_len) for key, value in obj.items()}
+    if isinstance(obj, list):
+        return [_truncate(value, max_len) for value in obj]
+    if isinstance(obj, str) and len(obj) > max_len:
+        return obj[:max_len] + "..."
     return obj
 
 # ── Task CRUD ──
 def save_task(task: TaskState):
     task.updated_at = now_iso()
-    save_task_record(task.workspace_id, task.task_id, task.to_dict())
+    save_task_record(task.workspace_id, task.task_id, _redact(task.to_dict(), max_len=4000))
 
 def get_task(ws_id: str, task_id: str) -> Optional[TaskState]:
     data = read_task_record(ws_id, task_id)

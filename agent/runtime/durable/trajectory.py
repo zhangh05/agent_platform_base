@@ -8,6 +8,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 from storage.ids import validate_workspace_id
+from core.tools.redaction import redact_tool_output
 from storage.trajectory_store import list_trajectories as read_trajectories, read_trajectory, save_trajectory
 from agent.runtime.utils import now_iso, duration_ms
 
@@ -17,7 +18,6 @@ def _tid(): return f"traj-{uuid.uuid4().hex[:12]}"
 _log = logging.getLogger(__name__)
 _TRAJECTORY_ID_RE = re.compile(r"^traj-[0-9a-f]{12}$")
 
-_REDACT_KEYS = {"password","token","api_key","secret","credential","key","auth"}
 
 @dataclass
 class TrajectoryMetrics:
@@ -227,15 +227,5 @@ _live_tasks: dict[str, dict] = {}
 
 
 def _redact_dict(d: dict) -> dict:
-    if not isinstance(d, dict): return d
-    out = {}
-    for k, v in d.items():
-        if any(rk in k.lower() for rk in _REDACT_KEYS):
-            out[k] = "[REDACTED]"
-        elif isinstance(v, dict):
-            out[k] = _redact_dict(v)
-        elif isinstance(v, str) and len(v) > 500:
-            out[k] = v[:500] + "..."
-        else:
-            out[k] = v
-    return out
+    """Deep-redact every trajectory projection before durable persistence."""
+    return redact_tool_output(d) if isinstance(d, dict) else {}

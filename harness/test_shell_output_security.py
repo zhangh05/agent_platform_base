@@ -281,3 +281,13 @@ def test_queryloop_redacts_tool_result_again_before_model_message():
     content = str(messages[-1].content)
     assert "sk-test-secret" not in content
     assert "redacted" in content.lower()
+
+
+def test_redactor_preserves_task_ids_while_masking_standalone_sk_keys():
+    from core.tools.redaction import redact_string
+
+    task_id = "task-718e272cfc06"
+    secret = "sk-test-secret-abcdefghijklmnopqrstuvwxyz"
+
+    assert redact_string(task_id) == task_id
+    assert secret not in redact_string(f"Authorization: Bearer {secret}")

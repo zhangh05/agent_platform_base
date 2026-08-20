@@ -104,3 +104,26 @@ class TestFeedback:
         assert saved["checkpoints"] == [{"checkpoint_id": "cp1"}]
         assert saved["artifacts"] == ["art1"]
         assert saved["metrics"]["tool_call_count"] == 1
+
+
+def test_trajectory_feedback_is_deeply_redacted_before_persistence():
+    ws = f"ws_feedback_redaction_{uuid.uuid4().hex[:8]}"
+    rec = TrajectoryRecord(task_id="task-feedback", workspace_id=ws, session_id="s1")
+    persist_trajectory(rec)
+    secret = "sk-test-secret-abcdefghijklmnopqrstuvwxyz"
+
+    result = save_feedback(
+        rec.trajectory_id,
+        ws,
+        {
+            "rating": 1,
+            "comment": f"Authorization: Bearer {secret}",
+            "metadata": {"api_key": secret},
+        },
+    )
+
+    assert result["ok"] is True
+    saved = get_trajectory(rec.trajectory_id, ws)
+    serialized = str(saved)
+    assert secret not in serialized
+    assert "[REDACTED]" in serialized

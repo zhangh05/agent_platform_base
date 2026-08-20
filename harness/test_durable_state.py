@@ -190,3 +190,28 @@ class TestCrossWorkspaceIsolation:
         assert get_task(ws_a, task.task_id) is not None
         # task should NOT be accessible from ws_b (different directory)
         assert get_task(ws_b, task.task_id) is None
+
+
+def test_task_state_save_redacts_goal_results_and_errors_deeply():
+    from agent.runtime.durable.store import get_task, save_task
+
+    ws_id = f"ws_task_redaction_{uuid.uuid4().hex[:8]}"
+    secret = "sk-test-secret-abcdefghijklmnopqrstuvwxyz"
+    task = TaskState.new(
+        workspace_id=ws_id,
+        session_id="sess-redaction",
+        user_goal=f"核查 token={secret}",
+    )
+    task.tool_results = [{
+        "tool_id": "web.manage",
+        "summary": f"Authorization: Bearer {secret}",
+        "nested": {"api_key": secret},
+    }]
+    task.errors = [f"provider failed with token={secret}"]
+
+    save_task(task)
+
+    persisted = get_task(ws_id, task.task_id)
+    serialized = str(persisted.to_dict())
+    assert secret not in serialized
+    assert "[REDACTED]" in serialized
