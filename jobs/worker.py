@@ -62,13 +62,12 @@ def run_once() -> dict:
             from storage.principal import storage_principal
             principal_scope = lambda: storage_principal(receipt.principal) if receipt.principal else nullcontext()
             with principal_scope():
-                from jobs.store import get_job
+                from jobs.store import fence_reclaimed_running_job, get_job
                 job = get_job(receipt.workspace_id, receipt.job_id)
-            from jobs.store import fence_reclaimed_running_job
-            fenced = fence_reclaimed_running_job(
-                receipt.workspace_id, receipt.job_id,
-                lease_id=receipt.lease_id, attempt=receipt.attempt,
-            )
+                fenced = fence_reclaimed_running_job(
+                    receipt.workspace_id, receipt.job_id,
+                    lease_id=receipt.lease_id, attempt=receipt.attempt,
+                )
             if fenced is not None:
                 queue_backend.ack(receipt)
                 _write_state({"status": "lease_expired", "job_id": fenced.job_id, "job_type": fenced.job_type, "worker_id": worker_id, "attempt": receipt.attempt})
