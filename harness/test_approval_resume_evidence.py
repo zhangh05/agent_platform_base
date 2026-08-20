@@ -261,6 +261,9 @@ def test_approved_handler_consumes_exact_server_grant_once():
     observed_approval_ids = []
 
     class Client:
+        def canonicalize_arguments(self, _tool_id, arguments):
+            return {**dict(arguments), "target": "local", "shell": "cmd"}
+
         def invoke(self, tool_id, args, *, context):
             observed_approval_ids.append(context.approval_id)
             return SimpleNamespace(
@@ -268,15 +271,16 @@ def test_approved_handler_consumes_exact_server_grant_once():
                 artifact_ids=[], warnings=[], errors=[], duration_ms=1, redacted=True,
             )
 
-    args = {"action": "delete", "filepath": "old.txt"}
+    args = {"action": "shell", "command": "echo approved"}
+    canonical_args = {**args, "target": "local", "shell": "cmd"}
     grant = ApprovedToolContinuation(
         continuation_id="cont_" + "e" * 32,
-        tool_calls=({"id": "delete-1", "name": "workspace.file", "arguments": args},),
-        approved_node_ids=("delete-1",),
+        tool_calls=({"id": "exec-1", "name": "exec.run", "arguments": canonical_args},),
+        approved_node_ids=("exec-1",),
         approval_ids=("apr-server-1",),
     )
     handler = _make_tool_handler(
-        client=Client(), tool_id="workspace.file", workspace_id="default",
+        client=Client(), tool_id="exec.run", workspace_id="default",
         session_id="grant-session", run_id="run", trace_id="trace",
         requested_by="turn_runner", approved_call_grants=_approved_call_grants(grant),
     )
@@ -294,6 +298,9 @@ def test_approved_continuation_injects_approval_id_into_canonical_client(monkeyp
     observed_approval_ids = []
 
     class Client:
+        def canonicalize_arguments(self, _tool_id, arguments):
+            return dict(arguments)
+
         def invoke(self, tool_id, args, *, context):
             observed_approval_ids.append(context.approval_id)
             return SimpleNamespace(

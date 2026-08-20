@@ -697,7 +697,7 @@ def test_batch_approval_binds_each_node_to_its_exact_canonical_call(monkeypatch,
     assert [spec["tool_id"] for spec in created] == ["workspace.file", "exec.run"]
     assert [spec["arguments"] for spec in created] == [
         {"action": "delete", "filepath": "old.txt"},
-        {"command": "rm -rf /tmp/lzcore-probe"},
+        {"command": "rm -rf /tmp/lzcore-probe", "target": "local", "shell": "cmd", "action": "shell"},
     ]
     assert [spec["metadata"]["node_id"] for spec in created] == ["delete-1", "exec-1"]
 

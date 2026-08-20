@@ -48,6 +48,9 @@ def test_queryloop_runtime_binds_cancel_callback_to_canonical_invocation():
         redacted = False
 
     class FakeClient:
+        def canonicalize_arguments(self, _tool_id, arguments):
+            return dict(arguments)
+
         def invoke(self, tool_id, arguments, *, context):
             seen["tool_id"] = tool_id
             seen["cancel_check"] = context.cancel_check

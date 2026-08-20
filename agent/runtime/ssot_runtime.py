@@ -869,6 +869,7 @@ def _build_engine(
         context_safety_tokens=int(getattr(context_budget, "safety_tokens", 2048) or 2048),
     )
     registry = prebuilt_registry or _build_ssot_runtime_tool_registry(allowed_tool_ids)
+    client = _tool_runtime_client()
     engine_kwargs: dict[str, Any] = {
         "config": config,
         "llm_invoke": _invoke_llm_for_ssot_runtime,
@@ -882,9 +883,9 @@ def _build_engine(
         session_id=session_id,
         run_id=run_id,
         emitter=emitter,
+        client=client,
     )
     engine = SSOTRuntimeEngine(**engine_kwargs)
-    client = _tool_runtime_client()
     approved_call_grants = _approved_call_grants(approved_tool_grant)
 
     for tool_id in registry:
@@ -913,8 +914,10 @@ def _build_approval_handler(
     session_id: str,
     run_id: str,
     emitter: Any | None = None,
+    client: Any | None = None,
 ):
     """Persist an ordinary Agent approval continuation without blocking a worker."""
+    client = client or _tool_runtime_client()
 
     async def _handle(ctx, gate: dict[str, Any]) -> dict[str, Any]:
         from agent.approval import new_approval_id
@@ -953,6 +956,19 @@ def _build_approval_handler(
             if not node_id or node_id not in calls_by_node_id or node_id in details_by_node_id:
                 raise RuntimeError("approval details must map uniquely to approval nodes")
             details_by_node_id[node_id] = detail
+        # Bind the durable approval to the same default-expanded parameters
+        # that the final ToolRuntimeClient will pass to ToolExecutor.
+        for node_id in approval_nodes:
+            call = calls_by_node_id[node_id]
+            tool_id = str(call.get("name") or "").replace("__", ".")
+            if not tool_id:
+                raise RuntimeError(f"approval node {node_id} has no canonical tool id")
+            call["name"] = tool_id
+            call["arguments"] = client.canonicalize_arguments(
+                tool_id,
+                call.get("arguments") if isinstance(call.get("arguments"), dict) else {},
+            )
+
         approval_ids = [new_approval_id() for _ in approval_nodes]
         continuation_id = new_continuation_id()
         cognitive_state = ctx.extras.get("cognitive_state")
@@ -2259,7 +2275,7 @@ def _make_tool_handler(
     async def _handler(args: dict[str, Any]) -> dict[str, Any]:
         from core.tools.context import ToolRuntimeContext, get_runtime_cancel_check
 
-        args = dict(args or {})
+        args = client.canonicalize_arguments(tool_id, dict(args or {}))
         grant_key = _approved_call_key(tool_id, args)
         approval_queue = single_use_grants.get(grant_key) or []
         approval_id = approval_queue.pop(0) if approval_queue else None
