@@ -5,6 +5,7 @@ from __future__ import annotations
 from core.resolution.location_models import LocationCandidate
 from core.resolution.location_providers import (
     NominatimLocationProvider,
+    PhotonLocationProvider,
     _open_meteo_get,
 )
 from core.resolution.location_service import LocationResolver
@@ -87,12 +88,14 @@ def test_weak_primary_candidate_triggers_independent_provider_fallback():
             ),
         ],
     })
-    result = LocationResolver((weak, strong)).resolve("新地点")
+    unnecessary = FakeProvider("unnecessary", error=AssertionError("must stop"))
+    result = LocationResolver((weak, strong, unnecessary)).resolve("新地点")
 
     assert result.ok is True
     assert result.resolved is not None
     assert result.resolved.provider == "strong"
     assert result.provider_chain == ("weak", "strong")
+    assert unnecessary.calls == 0
 
 
 def test_unresolved_namesake_is_returned_as_ambiguity_not_a_guess():
@@ -108,6 +111,27 @@ def test_unresolved_namesake_is_returned_as_ambiguity_not_a_guess():
     assert result.status == "location_ambiguous"
     assert result.resolved is None
     assert len(result.candidates) == 2
+
+
+def test_administrative_city_can_outrank_small_non_admin_namesakes():
+    provider = FakeProvider("synthetic", searches={
+        "Example": [
+            _candidate(
+                "Example", provider="synthetic", latitude=1, longitude=1,
+                admin1="Main", place_type="city", population=0,
+            ),
+            _candidate(
+                "Example", provider="synthetic", latitude=2, longitude=2,
+                admin1="Elsewhere", place_type="village", population=10_000,
+            ),
+        ],
+    })
+
+    result = LocationResolver((provider,)).resolve("Example")
+
+    assert result.ok is True
+    assert result.resolved is not None
+    assert result.resolved.admin1 == "Main"
 
 
 def test_provider_failure_is_visible_while_later_provider_can_resolve():
@@ -261,3 +285,37 @@ def test_nominatim_transport_retries_connection_failure(monkeypatch):
 
     assert result.status_code == 200
     assert len(calls) == 2
+
+
+def test_photon_provider_maps_geojson_and_applies_country_constraint(monkeypatch):
+    response = _Response(200, payload={
+        "features": [{
+            "geometry": {"coordinates": [12.5, 34.5]},
+            "properties": {
+                "name": "Example City",
+                "city": "Example City",
+                "state": "Example State",
+                "country": "Example Country",
+                "countrycode": "EX",
+                "type": "city",
+                "osm_id": 123,
+            },
+        }, {
+            "geometry": {"coordinates": [99, 88]},
+            "properties": {"name": "Wrong Country", "countrycode": "NO"},
+        }],
+    })
+    monkeypatch.setattr(
+        "core.resolution.location_providers._photon_get",
+        lambda **_kwargs: response,
+    )
+
+    candidates = PhotonLocationProvider().search(
+        "Example City", language="en", limit=5, country_code="EX",
+    )
+
+    assert len(candidates) == 1
+    assert candidates[0].provider == "photon"
+    assert candidates[0].admin1 == "Example State"
+    assert candidates[0].latitude == 34.5
+    assert candidates[0].longitude == 12.5

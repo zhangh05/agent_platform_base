@@ -11,8 +11,10 @@ from .location_models import LocationCandidate
 
 _USER_AGENT = "LZCore/2.3 (+https://github.com/zhangh05/lzcore)"
 _ADMIN_SUFFIXES = "省市区县州盟旗特别行政自治区"
+_EXPLICIT_ADMIN_SUFFIXES = ("省", "市", "区", "县", "盟", "旗", "特别行政区", "自治区", "自治州")
 _RETRYABLE_HTTP_STATUSES = {408, 425, 429, 500, 502, 503, 504}
 _OPEN_METEO_SLOTS = threading.BoundedSemaphore(3)
+_PHOTON_SLOTS = threading.BoundedSemaphore(3)
 
 
 class LocationProviderUnavailable(RuntimeError):
@@ -28,17 +30,23 @@ def _retry_delay(response: object | None, attempt: int) -> float:
     return max(retry_after, 0.4 * (2 ** attempt))
 
 
-def _open_meteo_get(*, params: dict) -> object:
-    """Bound and retry an idempotent Open-Meteo geocoding request."""
+def _provider_get(
+    url: str,
+    *,
+    params: dict,
+    slots: threading.BoundedSemaphore,
+    provider_name: str,
+) -> object:
+    """Bound and retry an idempotent geocoding-provider request."""
     import requests
 
     last_error: Exception | None = None
     last_response: object | None = None
-    with _OPEN_METEO_SLOTS:
+    with slots:
         for attempt in range(3):
             try:
                 response = requests.get(
-                    "https://geocoding-api.open-meteo.com/v1/search",
+                    url,
                     params=params,
                     timeout=15,
                     headers={"User-Agent": _USER_AGENT},
@@ -60,7 +68,27 @@ def _open_meteo_get(*, params: dict) -> object:
         type(last_error).__name__
         if last_error else getattr(last_response, "status_code", "unknown")
     )
-    raise LocationProviderUnavailable(f"open_meteo unavailable after retries: {detail}")
+    raise LocationProviderUnavailable(
+        f"{provider_name} unavailable after retries: {detail}",
+    )
+
+
+def _open_meteo_get(*, params: dict) -> object:
+    return _provider_get(
+        "https://geocoding-api.open-meteo.com/v1/search",
+        params=params,
+        slots=_OPEN_METEO_SLOTS,
+        provider_name="open_meteo",
+    )
+
+
+def _photon_get(*, params: dict) -> object:
+    return _provider_get(
+        "https://photon.komoot.io/api/",
+        params=params,
+        slots=_PHOTON_SLOTS,
+        provider_name="photon",
+    )
 
 
 class LocationProvider(Protocol):
@@ -83,7 +111,7 @@ def _query_variants(query: str) -> list[str]:
     if (
         first_component
         and re.search(r"[\u3400-\u9fff]", first_component)
-        and not first_component.endswith(tuple(_ADMIN_SUFFIXES))
+        and not first_component.endswith(_EXPLICIT_ADMIN_SUFFIXES)
     ):
         variants.append(f"{first_component}市")
     return list(dict.fromkeys(item for item in variants if item))
@@ -153,6 +181,59 @@ class OpenMeteoLocationProvider:
                 for item in found
             ):
                 break
+        return found
+
+    def reverse(self, latitude: float, longitude: float, *, language: str) -> list[LocationCandidate]:
+        return []
+
+
+class PhotonLocationProvider:
+    """Keyless OSM-backed forward geocoder used as an independent fallback."""
+
+    name = "photon"
+    supports_reverse = False
+
+    def search(
+        self, query: str, *, language: str, limit: int,
+        country_code: str = "", admin_hint: str = "",
+    ) -> list[LocationCandidate]:
+        params: dict[str, object] = {
+            "q": ", ".join(item for item in (query, admin_hint) if item),
+            "limit": max(1, min(limit * 2, 20)),
+        }
+        language_code = language.split("-", 1)[0].lower()
+        if language_code in {"de", "en", "fr"}:
+            params["lang"] = language_code
+        response = _photon_get(params=params)
+        if response.status_code != 200:
+            return []
+        found: list[LocationCandidate] = []
+        for feature in response.json().get("features") or []:
+            properties = feature.get("properties") or {}
+            coordinates = (feature.get("geometry") or {}).get("coordinates") or []
+            try:
+                longitude = float(coordinates[0])
+                latitude = float(coordinates[1])
+            except (IndexError, TypeError, ValueError):
+                continue
+            candidate_country = str(properties.get("countrycode") or "").upper()
+            if country_code and candidate_country != country_code.upper():
+                continue
+            canonical_name = str(properties.get("name") or properties.get("city") or query)
+            found.append(LocationCandidate(
+                canonical_name=canonical_name,
+                latitude=latitude,
+                longitude=longitude,
+                provider=self.name,
+                provider_id=str(properties.get("osm_id") or ""),
+                country=str(properties.get("country") or ""),
+                country_code=candidate_country,
+                admin1=str(properties.get("state") or ""),
+                admin2=str(properties.get("county") or ""),
+                locality=str(properties.get("city") or canonical_name),
+                place_type=str(properties.get("type") or "unknown"),
+                raw=feature,
+            ))
         return found
 
     def reverse(self, latitude: float, longitude: float, *, language: str) -> list[LocationCandidate]:
@@ -280,4 +361,5 @@ __all__ = [
     "LocationProviderUnavailable",
     "NominatimLocationProvider",
     "OpenMeteoLocationProvider",
+    "PhotonLocationProvider",
 ]

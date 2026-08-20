@@ -13,6 +13,7 @@ from .location_providers import (
     LocationProvider,
     NominatimLocationProvider,
     OpenMeteoLocationProvider,
+    PhotonLocationProvider,
 )
 
 _ADMIN_SUFFIXES = "省市区县州盟旗特别行政自治区"
@@ -155,6 +156,17 @@ def _confidence(
         for name in (_token(ranked[0].canonical_name), _token(ranked[0].locality))
     )
     prominent = ranked[0].place_type in _PROMINENT_TYPES or ranked[0].population >= 50_000
+    exact_candidates = [
+        item for item in ranked
+        if _token(item.canonical_name) == _token(query) or _token(item.locality) == _token(query)
+    ]
+    type_dominates = bool(exact_candidates) and (
+        exact_candidates[0].place_type in _PROMINENT_TYPES
+        and all(
+            item.place_type not in _PROMINENT_TYPES and item.population < 50_000
+            for item in exact_candidates[1:]
+        )
+    )
     base = 0.58 + min(max(best_score - 90, 0), 60) / 200
     if name_match:
         base += 0.12
@@ -162,17 +174,13 @@ def _confidence(
         base += 0.10
     if gap >= 15:
         base += 0.10
-    elif gap < 8 and len(ranked) > 1:
+    elif gap < 8 and len(ranked) > 1 and not type_dominates:
         base -= 0.20
     exact_namesakes = {
         (_token(item.admin1), item.country_code, round(item.latitude, 3), round(item.longitude, 3))
         for item in ranked
         if _token(item.canonical_name) == _token(query) or _token(item.locality) == _token(query)
     }
-    exact_candidates = [
-        item for item in ranked
-        if _token(item.canonical_name) == _token(query) or _token(item.locality) == _token(query)
-    ]
     top_population = exact_candidates[0].population if exact_candidates else 0
     second_population = max((item.population for item in exact_candidates[1:]), default=0)
     population_dominates = top_population >= 250_000 and top_population >= max(1, second_population) * 5
@@ -182,9 +190,15 @@ def _confidence(
         base = min(base, 0.70)
     if not prominent:
         base = min(base, 0.72)
-    if len(ranked) > 1 and gap < 8 and not population_dominates and not admin_hint:
+    if (
+        len(ranked) > 1 and gap < 8 and not population_dominates
+        and not type_dominates and not admin_hint
+    ):
         base = min(base, 0.70)
-    if len(exact_namesakes) > 1 and gap < 15 and not admin_hint and not population_dominates:
+    if (
+        len(exact_namesakes) > 1 and gap < 15 and not admin_hint
+        and not population_dominates and not type_dominates
+    ):
         base = min(base, 0.70)
     return max(0.0, min(base, 0.99))
 
@@ -194,7 +208,9 @@ class LocationResolver:
 
     def __init__(self, providers: tuple[LocationProvider, ...] | None = None):
         self.providers = providers or (
-            OpenMeteoLocationProvider(), NominatimLocationProvider(),
+            OpenMeteoLocationProvider(),
+            PhotonLocationProvider(),
+            NominatimLocationProvider(),
         )
         self._cache: dict[tuple[object, ...], tuple[float, LocationResolution]] = {}
         self._cache_lock = threading.Lock()
@@ -260,7 +276,7 @@ class LocationResolver:
         candidates: list[LocationCandidate] = []
         provider_chain: list[str] = []
         warnings: list[str] = []
-        for index, provider in enumerate(self.providers):
+        for provider in self.providers:
             provider_chain.append(provider.name)
             try:
                 candidates.extend(provider.search(
@@ -275,9 +291,9 @@ class LocationResolver:
             confidence = _confidence(
                 query, ranked, country_code=country_code, admin_hint=admin_hint,
             )
-            # A strong primary result avoids a slower fallback. Otherwise
-            # collect independent candidates before accepting or rejecting.
-            if index == 0 and confidence >= 0.86:
+            # Stop as soon as accumulated evidence is decisive. Slower
+            # providers remain fallbacks instead of mandatory dependencies.
+            if confidence >= 0.86:
                 break
         ranked = _rank(query, candidates, country_code=country_code, admin_hint=admin_hint)
         confidence = _confidence(
