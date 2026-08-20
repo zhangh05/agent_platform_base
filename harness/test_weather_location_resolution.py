@@ -3,6 +3,10 @@
 from __future__ import annotations
 
 from core.resolution.location_models import LocationCandidate
+from core.resolution.location_providers import (
+    NominatimLocationProvider,
+    _open_meteo_get,
+)
 from core.resolution.location_service import LocationResolver
 
 
@@ -207,3 +211,53 @@ def test_location_source_contains_no_embedded_city_catalogue():
     )
     assert "北京" not in source
     assert "上海" not in source
+
+
+class _Response:
+    def __init__(self, status_code: int, *, payload=None, headers=None):
+        self.status_code = status_code
+        self._payload = payload or {}
+        self.headers = headers or {}
+
+    def json(self):
+        return self._payload
+
+
+def test_open_meteo_transport_retries_transient_http_status(monkeypatch):
+    import requests
+
+    responses = iter([_Response(429), _Response(200, payload={"results": []})])
+    calls = []
+    monkeypatch.setattr(requests, "get", lambda *_args, **_kwargs: calls.append(1) or next(responses))
+    monkeypatch.setattr("core.resolution.location_providers.time.sleep", lambda _seconds: None)
+
+    result = _open_meteo_get(params={"name": "Synthetic"})
+
+    assert result.status_code == 200
+    assert len(calls) == 2
+
+
+def test_nominatim_transport_retries_connection_failure(monkeypatch):
+    import requests
+
+    responses = iter([
+        requests.ConnectionError("temporary"),
+        _Response(200, payload=[]),
+    ])
+    calls = []
+
+    def fake_get(*_args, **_kwargs):
+        calls.append(1)
+        value = next(responses)
+        if isinstance(value, Exception):
+            raise value
+        return value
+
+    monkeypatch.setattr(requests, "get", fake_get)
+    monkeypatch.setattr("core.resolution.location_providers.time.sleep", lambda _seconds: None)
+    monkeypatch.setattr(NominatimLocationProvider, "_last_request", 0.0)
+
+    result = NominatimLocationProvider._get("https://example.invalid", params={})
+
+    assert result.status_code == 200
+    assert len(calls) == 2

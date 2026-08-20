@@ -11,6 +11,56 @@ from .location_models import LocationCandidate
 
 _USER_AGENT = "LZCore/2.3 (+https://github.com/zhangh05/lzcore)"
 _ADMIN_SUFFIXES = "省市区县州盟旗特别行政自治区"
+_RETRYABLE_HTTP_STATUSES = {408, 425, 429, 500, 502, 503, 504}
+_OPEN_METEO_SLOTS = threading.BoundedSemaphore(3)
+
+
+class LocationProviderUnavailable(RuntimeError):
+    """Raised when a provider exhausted transient-failure recovery."""
+
+
+def _retry_delay(response: object | None, attempt: int) -> float:
+    headers = getattr(response, "headers", {}) or {}
+    try:
+        retry_after = float(headers.get("Retry-After") or 0)
+    except (TypeError, ValueError):
+        retry_after = 0
+    return max(retry_after, 0.4 * (2 ** attempt))
+
+
+def _open_meteo_get(*, params: dict) -> object:
+    """Bound and retry an idempotent Open-Meteo geocoding request."""
+    import requests
+
+    last_error: Exception | None = None
+    last_response: object | None = None
+    with _OPEN_METEO_SLOTS:
+        for attempt in range(3):
+            try:
+                response = requests.get(
+                    "https://geocoding-api.open-meteo.com/v1/search",
+                    params=params,
+                    timeout=15,
+                    headers={"User-Agent": _USER_AGENT},
+                )
+                last_response = response
+            except requests.RequestException as exc:
+                last_error = exc
+                if attempt == 2:
+                    break
+                time.sleep(_retry_delay(None, attempt))
+                continue
+            if response.status_code == 200:
+                return response
+            if response.status_code not in _RETRYABLE_HTTP_STATUSES:
+                return response
+            if attempt < 2:
+                time.sleep(_retry_delay(response, attempt))
+    detail = (
+        type(last_error).__name__
+        if last_error else getattr(last_response, "status_code", "unknown")
+    )
+    raise LocationProviderUnavailable(f"open_meteo unavailable after retries: {detail}")
 
 
 class LocationProvider(Protocol):
@@ -51,8 +101,6 @@ class OpenMeteoLocationProvider:
         self, query: str, *, language: str, limit: int,
         country_code: str = "", admin_hint: str = "",
     ) -> list[LocationCandidate]:
-        import requests
-
         found: list[LocationCandidate] = []
         query_languages = [language]
         if re.search(r"[A-Za-z]", f"{query} {admin_hint}") and not language.lower().startswith("en"):
@@ -71,12 +119,7 @@ class OpenMeteoLocationProvider:
                 }
                 if country_code:
                     params["countryCode"] = country_code.upper()
-                response = requests.get(
-                    "https://geocoding-api.open-meteo.com/v1/search",
-                    params=params,
-                    timeout=15,
-                    headers={"User-Agent": _USER_AGENT},
-                )
+                response = _open_meteo_get(params=params)
                 if response.status_code != 200:
                     continue
                 for raw in response.json().get("results") or []:
@@ -127,17 +170,39 @@ class NominatimLocationProvider:
         import requests
 
         # The public endpoint requires a single request per second. Serialise
-        # all fallback and reverse calls so a batch remains policy-compliant.
+        # all fallback, reverse, and retry calls so a batch remains compliant.
         with cls._lock:
-            remaining = 1.05 - (time.monotonic() - cls._last_request)
-            if remaining > 0:
-                time.sleep(remaining)
-            response = requests.get(
-                url, params=params, timeout=20,
-                headers={"User-Agent": _USER_AGENT},
+            last_error: Exception | None = None
+            last_response: object | None = None
+            for attempt in range(3):
+                remaining = 1.05 - (time.monotonic() - cls._last_request)
+                if remaining > 0:
+                    time.sleep(remaining)
+                try:
+                    response = requests.get(
+                        url, params=params, timeout=20,
+                        headers={"User-Agent": _USER_AGENT},
+                    )
+                    last_response = response
+                except requests.RequestException as exc:
+                    last_error = exc
+                    cls._last_request = time.monotonic()
+                    if attempt == 2:
+                        break
+                    time.sleep(_retry_delay(None, attempt))
+                    continue
+                cls._last_request = time.monotonic()
+                if response.status_code == 200:
+                    return response
+                if response.status_code not in _RETRYABLE_HTTP_STATUSES:
+                    return response
+                if attempt < 2:
+                    time.sleep(_retry_delay(response, attempt))
+            detail = (
+                type(last_error).__name__
+                if last_error else getattr(last_response, "status_code", "unknown")
             )
-            cls._last_request = time.monotonic()
-        return response
+            raise LocationProviderUnavailable(f"nominatim unavailable after retries: {detail}")
 
     @staticmethod
     def _candidate(raw: dict) -> LocationCandidate | None:
@@ -212,6 +277,7 @@ class NominatimLocationProvider:
 
 __all__ = [
     "LocationProvider",
+    "LocationProviderUnavailable",
     "NominatimLocationProvider",
     "OpenMeteoLocationProvider",
 ]
