@@ -297,6 +297,12 @@ def _handle_web(inv: ToolInvocation) -> dict:
     return _unsupported(inv, "search|fetch|weather|deep_search")
 
 
+def _handle_location(inv: ToolInvocation) -> dict:
+    from core.tools.general_tools.location_tools import handle_location_manage
+
+    return handle_location_manage(inv)
+
+
 def _handle_data(inv: ToolInvocation) -> dict:
     from core.tools.general_tools import data_engine
 
@@ -729,6 +735,42 @@ _RAW_REGISTRY: list[CanonicalToolEntry] = [
             "collect_arg": "location",
             "collection_arg": "locations",
             "max_batch_size": 10,
+        }],
+    }),
+    _entry("location.manage", _handle_location, {
+        **_COMMON,
+        "action": {"type": "string", "enum": ["resolve", "resolve_batch", "reverse"]},
+        "query": {"type": "string", "description": "Natural-language place name or address to resolve."},
+        "queries": {
+            "type": "array", "items": {"type": "string"}, "minItems": 2, "maxItems": 20,
+            "description": "Two to twenty explicit place strings for bounded batch resolution.",
+        },
+        "latitude": {"type": "number", "minimum": -90, "maximum": 90},
+        "longitude": {"type": "number", "minimum": -180, "maximum": 180},
+        "language": {"type": "string"},
+        "country_code": {
+            "type": "string",
+            "description": "Optional ISO 3166-1 alpha-2 constraint supplied by the user or trusted context.",
+        },
+        "admin_hint": {
+            "type": "string",
+            "description": "Optional province/state/region constraint supplied by the user or trusted context.",
+        },
+        "limit": {"type": "integer", "minimum": 1, "maximum": 10},
+    }, required=["action"], description=(
+        "Resolve natural-language places into evidence-backed canonical geographic entities. "
+        "Returns coordinates, administrative hierarchy, provider identity, candidate set, confidence, "
+        "and explicit ambiguity instead of guessing. Use resolve_batch for 2-20 independent places and "
+        "reverse for coordinates. This is shared infrastructure for weather, assets, incidents, timezone, "
+        "regional analysis, and other location-aware capabilities."
+    ), execution_contract={
+        "batching": [{
+            "source_action": "resolve",
+            "target_action": "resolve_batch",
+            "group_by": ["language", "country_code", "admin_hint", "limit"],
+            "collect_arg": "query",
+            "collection_arg": "queries",
+            "max_batch_size": 20,
         }],
     }),
     _entry("data.manage", _handle_data, {**_COMMON, **_DATA_ARGS, "action": {"type": "string", "enum": ["parse", "stats", "distinct", "aggregate", "filter", "sort", "render", "pivot", "join"]}}, required=["action"], description="Structured data processing. Supply text or rows; action-specific columns/options are declared in the schema."),

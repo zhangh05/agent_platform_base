@@ -47,6 +47,17 @@ MANIFESTS: dict[str, CapabilityManifest] = {
         idempotency="safe_to_retry",
         timeout_seconds=90,
     ),
+    "location.manage": CapabilityManifest(
+        tool_id="location.manage",
+        category="web",
+        display_name="Location Resolution",
+        description="Resolve place names, addresses, and coordinates with candidates, confidence, and provider evidence.",
+        action_class="network",
+        risk_level="low",
+        side_effects="none",
+        idempotency="safe_to_retry",
+        timeout_seconds=90,
+    ),
     "data.manage": CapabilityManifest(
         tool_id="data.manage",
         category="data",

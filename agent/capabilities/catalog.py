@@ -83,6 +83,21 @@ _CAPABILITIES: tuple[dict, ...] = (
         "status": "enabled",
     },
     {
+        "capability_id": "location_resolution",
+        "display_name": "位置解析",
+        "description": "将地点、地址和坐标解析为带来源、行政层级、候选与置信度的标准位置实体。",
+        "module_ids": ("location",),
+        "recommended_tool_ids": ("location.manage",),
+        "prompt_hints": (
+            "位置会影响后续查询或操作时先解析；重名候选未消歧时不得猜测。",
+            "批量地点使用 resolve_batch，并核对请求、成功和未解析集合。",
+        ),
+        "safety_notes": (
+            "政策或业务区域的成员范围必须来自明确口径，不能由地理编码器自行定义。",
+        ),
+        "status": "enabled",
+    },
+    {
         "capability_id": "agent_delegation",
         "display_name": "智能体协作",
         "description": "派发独立子任务、组织协作并汇总执行结果。",

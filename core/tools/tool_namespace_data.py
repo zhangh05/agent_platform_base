@@ -79,6 +79,12 @@ NS_DATA = [
         "web.manage",
     ),
     (
+        "location.manage", "web", "location", "multi", "位置解析", "location.manage",
+        "Use whenever a place name, address, administrative area, or coordinate must be identified reliably before another tool acts. Return and preserve canonical coordinates, hierarchy, provider, confidence and candidates. Use resolve_batch for independent place sets; if status is location_ambiguous, ask for or obtain a country/region hint instead of guessing.",
+        "Do not define policy regions such as 长三角 from geocoding alone, invent missing administrative context, or treat a low-confidence candidate as confirmed.",
+        "location.manage",
+    ),
+    (
         "data.manage", "data", "table", "multi", "数据处理", "data.manage",
         "Use when structured rows require reproducible parsing, calculation, comparison or rendering. Report inputs, metric meaning and row counts needed to verify the result.",
         "Do not use for durable storage; save outputs through report/manage or workspace artifacts.",

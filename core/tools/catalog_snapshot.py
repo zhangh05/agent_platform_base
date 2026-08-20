@@ -45,10 +45,11 @@ _READ_ACTIONS = {
 _EXEC_ACTIONS = {
     "shell", "python", "slash", "background", "stream",
 }
-_NETWORK_ACTIONS = {"fetch", "weather", "deep_search"}
+_NETWORK_ACTIONS = {"fetch", "weather", "deep_search", "resolve", "resolve_batch", "reverse"}
 _NETWORK_TOOLS = {
     "web.manage",
     "browser.manage",
+    "location.manage",
 }
 
 

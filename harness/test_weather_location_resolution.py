@@ -1,80 +1,209 @@
-"""Weather geocoding must not silently choose same-named places elsewhere."""
+"""Generic location resolution must be extensible and ambiguity-safe."""
+
+from __future__ import annotations
+
+from core.resolution.location_models import LocationCandidate
+from core.resolution.location_service import LocationResolver
 
 
-def test_prd_city_prefers_guangdong_match():
-    from core.tools.general_tools.shared_web import (
-        _known_weather_place,
-        _select_weather_place,
-        _weather_geocoding_query,
+def _candidate(
+    name: str,
+    *,
+    provider: str,
+    latitude: float,
+    longitude: float,
+    admin1: str = "",
+    country_code: str = "XX",
+    place_type: str = "city",
+    population: int = 500_000,
+) -> LocationCandidate:
+    return LocationCandidate(
+        canonical_name=name,
+        locality=name,
+        latitude=latitude,
+        longitude=longitude,
+        provider=provider,
+        admin1=admin1,
+        country_code=country_code,
+        place_type=place_type,
+        population=population,
     )
 
-    matches = [
-        {"name": "珠海", "admin1": "山东", "country": "中国"},
-        {"name": "珠海", "admin1": "广东", "country": "中国"},
-    ]
 
-    selected = _select_weather_place("珠海", matches)
+class FakeProvider:
+    supports_reverse = True
+    def __init__(self, name: str, *, searches=None, reverse=None, error: Exception | None = None):
+        self.name = name
+        self.searches = searches or {}
+        self.reverse_result = reverse or []
+        self.error = error
+        self.calls = 0
 
-    assert selected["admin1"] == "广东"
-    assert _weather_geocoding_query("珠海") == "珠海市"
-    assert _weather_geocoding_query("珠海，中国") == "珠海市"
-    known = _known_weather_place("广东省珠海市，中国")
-    assert known["name"] == "珠海市"
-    assert known["admin1"] == "广东"
-    assert _known_weather_place("香港，中国")["longitude"] == 114.1694
-    assert _known_weather_place("澳门特别行政区")["admin1"] == "澳门特别行政区"
+    def search(self, query, *, language, limit, country_code="", admin_hint=""):
+        self.calls += 1
+        if self.error:
+            raise self.error
+        return list(self.searches.get(query, []))[:limit]
 
-
-def test_explicit_province_wins_for_unknown_city_name():
-    from core.tools.general_tools.shared_web import _select_weather_place
-
-    matches = [
-        {"name": "示例", "admin1": "甲省", "country": "中国"},
-        {"name": "示例", "admin1": "乙省", "country": "中国"},
-    ]
-
-    selected = _select_weather_place("乙省 示例市", matches)
-
-    assert selected["admin1"] == "乙省"
+    def reverse(self, latitude, longitude, *, language):
+        if self.error:
+            raise self.error
+        return list(self.reverse_result)
 
 
-def test_chinese_city_prefers_china_and_population_over_foreign_namesake():
-    from core.tools.general_tools.shared_web import (
-        _known_weather_place,
-        _select_weather_place,
+def test_explicit_admin_hint_resolves_same_named_candidates_without_catalogue():
+    provider = FakeProvider("synthetic", searches={
+        "示例城": [
+            _candidate("示例城", provider="synthetic", latitude=10, longitude=10, admin1="甲省"),
+            _candidate("示例城", provider="synthetic", latitude=20, longitude=20, admin1="乙省"),
+        ],
+    })
+    result = LocationResolver((provider,)).resolve("示例城", admin_hint="乙省")
+
+    assert result.ok is True
+    assert result.resolved is not None
+    assert result.resolved.admin1 == "乙省"
+    assert result.provider_chain == ("synthetic",)
+
+
+def test_weak_primary_candidate_triggers_independent_provider_fallback():
+    weak = FakeProvider("weak", searches={
+        "新地点": [
+            _candidate(
+                "新地点", provider="weak", latitude=1, longitude=1,
+                place_type="village", population=300,
+            ),
+        ],
+    })
+    strong = FakeProvider("strong", searches={
+        "新地点": [
+            _candidate(
+                "新地点", provider="strong", latitude=2, longitude=2,
+                place_type="administrative", population=800_000,
+            ),
+        ],
+    })
+    result = LocationResolver((weak, strong)).resolve("新地点")
+
+    assert result.ok is True
+    assert result.resolved is not None
+    assert result.resolved.provider == "strong"
+    assert result.provider_chain == ("weak", "strong")
+
+
+def test_unresolved_namesake_is_returned_as_ambiguity_not_a_guess():
+    provider = FakeProvider("synthetic", searches={
+        "Twin": [
+            _candidate("Twin", provider="synthetic", latitude=1, longitude=1, admin1="North"),
+            _candidate("Twin", provider="synthetic", latitude=2, longitude=2, admin1="South"),
+        ],
+    })
+    result = LocationResolver((provider,)).resolve("Twin")
+
+    assert result.ok is False
+    assert result.status == "location_ambiguous"
+    assert result.resolved is None
+    assert len(result.candidates) == 2
+
+
+def test_provider_failure_is_visible_while_later_provider_can_resolve():
+    broken = FakeProvider("broken", error=TimeoutError("down"))
+    healthy = FakeProvider("healthy", searches={
+        "Fallback": [
+            _candidate("Fallback", provider="healthy", latitude=3, longitude=4),
+        ],
+    })
+    result = LocationResolver((broken, healthy)).resolve("Fallback")
+
+    assert result.ok is True
+    assert result.resolved is not None
+    assert result.resolved.provider == "healthy"
+    assert result.warnings == ("broken_error:TimeoutError",)
+
+
+def test_resolver_cache_avoids_repeating_provider_requests():
+    provider = FakeProvider("cached", searches={
+        "Stable": [_candidate("Stable", provider="cached", latitude=5, longitude=6)],
+    })
+    resolver = LocationResolver((provider,))
+
+    assert resolver.resolve("Stable").ok is True
+    assert resolver.resolve("Stable").ok is True
+    assert provider.calls == 1
+
+
+def test_transient_provider_failure_is_not_cached():
+    candidate = _candidate("Retry", provider="flaky", latitude=5, longitude=6)
+
+    class FlakyProvider(FakeProvider):
+        def search(self, query, *, language, limit, country_code="", admin_hint=""):
+            self.calls += 1
+            if self.calls == 1:
+                raise TimeoutError("temporary")
+            return [candidate]
+
+    provider = FlakyProvider("flaky")
+    resolver = LocationResolver((provider,))
+
+    first = resolver.resolve("Retry")
+    second = resolver.resolve("Retry")
+
+    assert first.ok is False
+    assert first.warnings == ("flaky_error:TimeoutError",)
+    assert second.ok is True
+    assert provider.calls == 2
+
+
+def test_reverse_resolution_uses_first_provider_with_evidence():
+    empty = FakeProvider("empty")
+    candidate = _candidate("Reverse Place", provider="reverse", latitude=7, longitude=8)
+    reverse = FakeProvider("reverse", reverse=[candidate])
+
+    result = LocationResolver((empty, reverse)).reverse(7, 8)
+
+    assert result.ok is True
+    assert result.resolved == candidate
+    assert result.provider_chain == ("empty", "reverse")
+
+
+def test_explicit_country_constraint_cannot_be_overridden_by_ranking():
+    provider = FakeProvider("synthetic", searches={
+        "Only Wrong Country": [
+            _candidate(
+                "Only Wrong Country", provider="synthetic", latitude=9, longitude=9,
+                country_code="AA", population=2_000_000,
+            ),
+        ],
+    })
+
+    result = LocationResolver((provider,)).resolve("Only Wrong Country", country_code="BB")
+
+    assert result.ok is False
+    assert result.status == "location_ambiguous"
+
+
+def test_reverse_skips_provider_that_does_not_declare_support():
+    unsupported = FakeProvider("unsupported", reverse=[
+        _candidate("Wrong", provider="unsupported", latitude=7, longitude=8),
+    ])
+    unsupported.supports_reverse = False
+    expected = _candidate("Right", provider="reverse", latitude=7, longitude=8)
+    reverse = FakeProvider("reverse", reverse=[expected])
+
+    result = LocationResolver((unsupported, reverse)).reverse(7, 8)
+
+    assert result.ok is True
+    assert result.resolved == expected
+    assert result.provider_chain == ("reverse",)
+
+
+def test_location_source_contains_no_embedded_city_catalogue():
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1]
+    source = "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in (root / "core" / "resolution").glob("*.py")
     )
-
-    matches = [
-        {
-            "name": "Shanghai", "admin1": "Alabama", "country": "United States",
-            "country_code": "US", "feature_code": "PPL", "population": 500,
-        },
-        {
-            "name": "Shanghai", "admin1": "上海市", "country": "中国",
-            "country_code": "CN", "feature_code": "PPLA", "population": 24_000_000,
-        },
-    ]
-
-    selected = _select_weather_place("上海", matches)
-
-    assert selected["country_code"] == "CN"
-    assert _known_weather_place("上海") == {
-        "name": "上海市",
-        "admin1": "上海市",
-        "country": "中国",
-        "latitude": 31.2304,
-        "longitude": 121.4737,
-    }
-    assert _known_weather_place("Beijing, China")["name"] == "北京市"
-    assert _known_weather_place("Shanghai")["longitude"] == 121.4737
-
-
-def test_unknown_same_named_city_prefers_major_administrative_place():
-    from core.tools.general_tools.shared_web import _select_weather_place
-
-    matches = [
-        {"name": "示例", "country_code": "CN", "feature_code": "PPL", "population": 300},
-        {"name": "示例", "country_code": "CN", "feature_code": "PPLA", "population": 800_000},
-    ]
-
-    assert _select_weather_place("示例", matches)["feature_code"] == "PPLA"
+    assert "北京" not in source
+    assert "上海" not in source

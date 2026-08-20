@@ -65,7 +65,9 @@ canonical tool id
   -> ToolResult
 ```
 
-当前有 16 个 canonical tool。`handler_id` 是内部实现细节，不暴露给 LLM、前端或公共 API。SSOT Runtime 节点不会直接调用 handler，只能通过 `ToolRuntimeClient.invoke()` 进入工具边界。
+当前有 17 个 canonical tool。`handler_id` 是内部实现细节，不暴露给 LLM、前端或公共 API。SSOT Runtime 节点不会直接调用 handler，只能通过 `ToolRuntimeClient.invoke()` 进入工具边界。
+
+`location.manage` 是共享的地理实体解析边界：把地点名称、地址或坐标解析成带提供方证据、行政层级、候选集合和置信度的标准实体，并显式拒绝未消除的歧义。天气、资产、事件、时区和区域分析等能力只能复用这一边界，不得维护各自的城市、省份或经纬度白名单。“长三角”等政策或业务区域仍须依据明确来源或用户口径展开，不能降格为地理编码别名。
 
 ## 动态工具编排
 

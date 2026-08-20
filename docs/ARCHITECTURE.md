@@ -16,7 +16,7 @@ HTTP / WebSocket / SSE / Job entry
 
 ## Tool Boundary
 
-底座暴露 16 个通用 canonical tools。`core/tools/tool_namespace.py`、`core/tools/manifest_registry.py`、`core/runtime_engine/contracts.py` 和 `core/tools/canonical_registry.py` 必须数量一致、ID 一致。
+底座暴露 17 个通用 canonical tools。`core/tools/tool_namespace.py`、`core/tools/manifest_registry.py`、`core/runtime_engine/contracts.py` 和 `core/tools/canonical_registry.py` 必须数量一致、ID 一致。
 
 工具执行必须经过：
 

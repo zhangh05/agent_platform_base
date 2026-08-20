@@ -33,7 +33,7 @@ user sends message
 
 ## Tool And Capability UI
 
-工具目录来自 16 个通用 canonical tools。前端可以显示友好名称，但 API payload 必须使用 canonical tool id。
+工具目录来自 17 个通用 canonical tools。前端可以显示友好名称，但 API payload 必须使用 canonical tool id。
 
 ## Validation
 

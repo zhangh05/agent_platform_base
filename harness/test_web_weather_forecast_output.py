@@ -144,16 +144,6 @@ def test_compiled_weather_batch_preserves_scalar_default_as_current(monkeypatch)
     assert [item["requested_location"] for item in result["forecasts"]] == ["上海", "杭州"]
 
 
-def test_common_ambiguous_chinese_cities_resolve_to_expected_provinces():
-    from core.tools.general_tools.shared_web import _known_weather_place
-
-    assert _known_weather_place("绍兴")["admin1"] == "浙江"
-    assert _known_weather_place("马鞍山")["admin1"] == "安徽"
-    assert _known_weather_place("安庆")["admin1"] == "安徽"
-    assert _known_weather_place("泰州,江苏")["admin1"] == "江苏"
-    assert _known_weather_place("台州,浙江")["admin1"] == "浙江"
-
-
 def test_weather_batch_does_not_count_search_fallback_as_structured_success(monkeypatch):
     from core.tools.general_tools import web_tools
     from core.tools.schemas import ToolInvocation

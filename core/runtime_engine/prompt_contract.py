@@ -198,10 +198,18 @@ CAPABILITY_PLAYBOOKS: dict[str, str] = {
         "calling the task complete."
     ),
     "weather": (
-        "Use web__manage(action=\"weather\", location=..., days=1..10) for one location, or "
+        "Use location__manage when a place is ambiguous or needs canonical coordinates; do not guess among "
+        "same-named candidates. Use web__manage(action=\"weather\", location=..., days=1..10) for one location, or "
         "weather_batch with 2-10 explicit locations. Partition larger exact scopes into bounded batches and "
         "reconcile coverage before answering. Present natural "
         "user-language conditions and uncertainty; omit raw provider weather codes."
+    ),
+    "location_resolution": (
+        "Use location__manage(action=\"resolve\") to turn a place or address into a canonical entity with "
+        "coordinates, administrative hierarchy, provider evidence and confidence. Use resolve_batch for 2-20 "
+        "independent places and reverse for coordinates. If resolution is ambiguous, preserve the candidates "
+        "and obtain a country or administrative hint instead of silently choosing one. Geocoding does not define "
+        "policy regions such as 长三角; derive those scopes from an explicit authoritative source or user definition."
     ),
     "system_facts": (
         "Use system__manage(action=\"local_info\") for current local time and host/IP/OS facts rather "
@@ -232,6 +240,8 @@ def resolve_capability_playbooks(
         selected.append("large_scope")
     if re.search(r"天气|气温|温度|降雨|下雨|weather|forecast|temperature", lowered):
         selected.append("weather")
+    if re.search(r"地点|地址|坐标|经纬度|省份|城市|区县|机房|站点|location|address|coordinate|latitude|longitude", lowered):
+        selected.append("location_resolution")
     if re.search(r"本机|主机|操作系统|ip地址|当前时间|local host|operating system", lowered):
         selected.append("system_facts")
     return tuple(

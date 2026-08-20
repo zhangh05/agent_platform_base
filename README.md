@@ -57,7 +57,7 @@ bash stop.sh
 | `agent/app/` | AgentApp 门面、SessionManager、AgentThread |
 | `agent/runtime/` | SSOT Runtime 适配、结果投影、任务跟踪、记忆写入 |
 | `core/runtime_engine/` | QueryLoop、工具调用循环、提示词边界、重试与最终答复 |
-| `core/tools/` | 16 个通用 canonical tools、manifest、policy、executor、脱敏 |
+| `core/tools/` | 17 个通用 canonical tools、manifest、policy、executor、脱敏 |
 | `storage/` | 工作区、会话、运行记录、FileStore、记忆、运行状态 |
 | `artifacts/` | 制品生命周期、来源关系和当前证据投影 |
 | `jobs/` | 后台作业管理 |
@@ -66,9 +66,9 @@ bash stop.sh
 | `workflows/` | 核心工具与扩展工具的 DAG 编排 |
 | `deployment/` | 不可变发布槽、切换与回退 |
 
-## 16 个通用工具
+## 17 个通用工具
 
-`agent.manage`, `browser.manage`, `data.manage`, `exec.run`, `knowledge.manage`, `memory.manage`, `report.manage`, `skill.manage`, `system.manage`, `text.analyze`, `web.manage`, `workspace.artifact`, `workspace.document.pdf.extract_text`, `workspace.file`, `workspace.filestore`, `workspace.metadata.get`
+`agent.manage`, `browser.manage`, `data.manage`, `exec.run`, `knowledge.manage`, `location.manage`, `memory.manage`, `report.manage`, `skill.manage`, `system.manage`, `text.analyze`, `web.manage`, `workspace.artifact`, `workspace.document.pdf.extract_text`, `workspace.file`, `workspace.filestore`, `workspace.metadata.get`
 
 工具名、manifest、runtime contract 和 canonical registry 必须保持一致。新业务项目要加能力时，从这四处同步扩展，不要恢复旧业务工具名。
 

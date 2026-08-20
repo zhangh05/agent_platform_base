@@ -40,7 +40,7 @@ Frontend
 
 The base exposes only domain-neutral tools:
 
-`agent.manage`, `browser.manage`, `data.manage`, `exec.run`, `knowledge.manage`, `memory.manage`, `report.manage`, `skill.manage`, `system.manage`, `text.analyze`, `web.manage`, `workspace.artifact`, `workspace.document.pdf.extract_text`, `workspace.file`, `workspace.filestore`, `workspace.metadata.get`
+`agent.manage`, `browser.manage`, `data.manage`, `exec.run`, `knowledge.manage`, `location.manage`, `memory.manage`, `report.manage`, `skill.manage`, `system.manage`, `text.analyze`, `web.manage`, `workspace.artifact`, `workspace.document.pdf.extract_text`, `workspace.file`, `workspace.filestore`, `workspace.metadata.get`
 
 Product projects can add domain tools later, but they must be added through:
 

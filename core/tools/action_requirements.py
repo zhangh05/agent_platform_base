@@ -25,6 +25,9 @@ ACTION_REQUIRED_ALL: dict[tuple[str, str], tuple[str, ...]] = {
     ("web.manage", "fetch"): ("url",),
     ("web.manage", "weather"): ("location",),
     ("web.manage", "weather_batch"): ("locations",),
+    ("location.manage", "resolve"): ("query",),
+    ("location.manage", "resolve_batch"): ("queries",),
+    ("location.manage", "reverse"): ("latitude", "longitude"),
     ("data.manage", "distinct"): ("column",),
     ("data.manage", "filter"): ("conditions",),
     ("data.manage", "sort"): ("by",),
@@ -118,6 +121,9 @@ def _contracts(tool_id: str, actions: tuple[str, ...], contract: dict) -> dict[t
 ACTION_EXECUTION_CONTRACTS: dict[tuple[str, str], dict] = {}
 ACTION_EXECUTION_CONTRACTS.update(_contracts(
     "web.manage", ("search", "fetch", "weather", "weather_batch", "deep_search"), _READ,
+))
+ACTION_EXECUTION_CONTRACTS.update(_contracts(
+    "location.manage", ("resolve", "resolve_batch", "reverse"), _READ,
 ))
 ACTION_EXECUTION_CONTRACTS.update(_contracts(
     "workspace.file",

@@ -590,6 +590,8 @@ def handle_weather_current(inv: ToolInvocation) -> dict:
             language=language,
             structured=structured,
         )
+    if structured.get("status") in {"location_required", "location_not_found", "location_ambiguous"}:
+        return structured
 
     query = f"{location} current weather temperature humidity wind"
     result = _invoke_internal_web_search(inv, {
@@ -636,6 +638,8 @@ def handle_weather_forecast(inv: ToolInvocation) -> dict:
             language=language,
             structured=structured,
         )
+    if structured.get("status") in {"location_required", "location_not_found", "location_ambiguous"}:
+        return structured
 
     query = f"{location} {days} day weather forecast"
     result = _invoke_internal_web_search(inv, {

@@ -66,6 +66,18 @@ BUILTIN_CONTRACTS: dict[str, ToolContract] = {
         concurrency_group="external_http",
         max_retries=1,
     ),
+    "location.manage": ToolContract(
+        name="location.manage",
+        display_name="Location Resolution",
+        description="Resolve place names, addresses, and coordinates into canonical geographic entities.",
+        input_schema={"required": ["action"], "properties": {"action": {"type": "string"}}},
+        side_effect="external_request",
+        risk_level="low",
+        idempotent=True,
+        timeout_seconds=90,
+        concurrency_group="external_http",
+        max_retries=1,
+    ),
     "data.manage": ToolContract(
         name="data.manage",
         display_name="Data",
@@ -230,6 +242,7 @@ _sync_contracts_from_canonical_registry()
 
 ALWAYS_READ_ONLY_TOOLS: frozenset[str] = frozenset({
     "web.manage",
+    "location.manage",
     "data.manage",
     "text.analyze",
     "workspace.metadata.get",

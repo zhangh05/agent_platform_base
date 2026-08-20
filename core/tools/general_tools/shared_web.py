@@ -450,179 +450,10 @@ def _decorate_realtime_search_result(out: dict, *, tool_id: str, query: str,
         result.setdefault("warnings", [])
         result["warnings"] = list(result["warnings"]) + ["backed_by_public_web_search"]
     return result
-_CHINA_CITY_ADMIN_HINTS = {
-    "北京": "北京市", "上海": "上海市", "天津": "天津市", "重庆": "重庆市",
-    "广州": "广东", "深圳": "广东", "珠海": "广东", "佛山": "广东",
-    "东莞": "广东", "中山": "广东", "江门": "广东", "肇庆": "广东",
-    "惠州": "广东",
-    "南京": "江苏", "苏州": "江苏", "无锡": "江苏", "常州": "江苏",
-    "镇江": "江苏", "南通": "江苏", "扬州": "江苏", "泰州": "江苏",
-    "盐城": "江苏",
-    "杭州": "浙江", "宁波": "浙江", "温州": "浙江", "嘉兴": "浙江",
-    "湖州": "浙江", "绍兴": "浙江", "金华": "浙江", "台州": "浙江",
-    "合肥": "安徽", "芜湖": "安徽", "马鞍山": "安徽", "安庆": "安徽",
-    "池州": "安徽", "铜陵": "安徽", "宣城": "安徽",
-    "香港": "香港特别行政区", "澳门": "澳门特别行政区",
-}
-
-_KNOWN_WEATHER_PLACES = {
-    "北京": (39.9042, 116.4074),
-    "上海": (31.2304, 121.4737),
-    "天津": (39.0842, 117.2009),
-    "重庆": (29.5630, 106.5516),
-    "广州": (23.1291, 113.2644),
-    "深圳": (22.5431, 114.0579),
-    "珠海": (22.2707, 113.5767),
-    "佛山": (23.0215, 113.1214),
-    "东莞": (23.0207, 113.7518),
-    "中山": (22.5176, 113.3928),
-    "江门": (22.5787, 113.0819),
-    "肇庆": (23.0472, 112.4651),
-    "惠州": (23.1115, 114.4152),
-    "南京": (32.0603, 118.7969),
-    "苏州": (31.2989, 120.5853),
-    "无锡": (31.4912, 120.3119),
-    "常州": (31.8107, 119.9741),
-    "镇江": (32.1878, 119.4250),
-    "南通": (31.9802, 120.8943),
-    "扬州": (32.3942, 119.4129),
-    "泰州": (32.4555, 119.9231),
-    "盐城": (33.3474, 120.1636),
-    "杭州": (30.2741, 120.1551),
-    "宁波": (29.8683, 121.5440),
-    "温州": (27.9943, 120.6994),
-    "嘉兴": (30.7461, 120.7555),
-    "湖州": (30.8927, 120.0870),
-    "绍兴": (30.0303, 120.5802),
-    "金华": (29.0792, 119.6474),
-    "台州": (28.6564, 121.4208),
-    "合肥": (31.8206, 117.2272),
-    "芜湖": (31.3525, 118.4331),
-    "马鞍山": (31.6705, 118.5068),
-    "安庆": (30.5429, 117.0635),
-    "池州": (30.6648, 117.4916),
-    "铜陵": (30.9455, 117.8115),
-    "宣城": (30.9407, 118.7588),
-    "香港": (22.3193, 114.1694),
-    "澳门": (22.1987, 113.5439),
-}
-
-_KNOWN_WEATHER_PLACE_ALIASES = {
-    "beijing": "北京",
-    "peking": "北京",
-    "shanghai": "上海",
-    "tianjin": "天津",
-    "chongqing": "重庆",
-    "chungking": "重庆",
-    "guangzhou": "广州",
-    "canton": "广州",
-    "shenzhen": "深圳",
-    "zhuhai": "珠海",
-    "hongkong": "香港",
-    "hongkongchina": "香港",
-    "macau": "澳门",
-    "macao": "澳门",
-}
-
 # A delegated request can launch several weather lookups at once. Bound the
 # public provider traffic so one user turn does not create a burst of 9-18
 # simultaneous HTTP requests and turn transient throttling into false failures.
 _WEATHER_PROVIDER_SLOTS = threading.BoundedSemaphore(4)
-
-
-def _weather_place_token(value: Any) -> str:
-    return re.sub(r"[\s,，省市区县特别行政自治区]+", "", str(value or "")).casefold()
-
-
-def _weather_geocoding_query(location: str) -> str:
-    """Use the administrative-city form for known ambiguous Chinese cities."""
-    token = _weather_place_token(location)
-    for city in _CHINA_CITY_ADMIN_HINTS:
-        if _weather_place_token(city) in token:
-            return f"{city}市"
-    return location
-
-
-def _known_weather_place(location: str) -> dict:
-    """Resolve common ambiguous Chinese cities before using a fuzzy geocoder."""
-    token = _weather_place_token(location)
-    canonical_alias = next((
-        city for alias, city in _KNOWN_WEATHER_PLACE_ALIASES.items()
-        if alias in token
-    ), "")
-    for city, (latitude, longitude) in _KNOWN_WEATHER_PLACES.items():
-        if _weather_place_token(city) in token or city == canonical_alias:
-            return {
-                "name": city if city in {"香港", "澳门"} else f"{city}市",
-                "admin1": _CHINA_CITY_ADMIN_HINTS[city],
-                "country": "中国",
-                "latitude": latitude,
-                "longitude": longitude,
-            }
-    return {}
-
-
-def _select_weather_place(location: str, matches: list[dict]) -> dict:
-    """Choose a geographically credible geocoder match.
-
-    Open-Meteo can rank same-named villages ahead of well-known Chinese
-    prefecture-level cities. Prefer an explicit/request-derived province and
-    then an exact city-name match instead of blindly accepting result 1.
-    """
-    if not matches:
-        return {}
-    location_token = _weather_place_token(location)
-    admin_hint = ""
-    for city, admin in _CHINA_CITY_ADMIN_HINTS.items():
-        if _weather_place_token(city) in location_token:
-            admin_hint = admin
-            break
-    for match in matches:
-        admin = str(match.get("admin1") or "")
-        if admin and _weather_place_token(admin) in location_token:
-            admin_hint = admin
-            break
-
-    candidates = list(matches)
-    # A Chinese-language place name without an explicit country is still a
-    # strong country hint.  Without this, fuzzy geocoders can rank a tiny
-    # same-named settlement in another country ahead of the intended Chinese
-    # city (for example Shanghai, Alabama).
-    chinese_query = bool(re.search(r"[\u3400-\u9fff]", str(location or "")))
-    if chinese_query or "中国" in str(location) or "china" in str(location).casefold():
-        china = [
-            match for match in candidates
-            if str(match.get("country_code") or "").casefold() == "cn"
-            or _weather_place_token(match.get("country")) in {"中国", "china"}
-        ]
-        if china:
-            candidates = china
-    if admin_hint:
-        regional = [
-            match for match in candidates
-            if _weather_place_token(match.get("admin1")) == _weather_place_token(admin_hint)
-        ]
-        if regional:
-            candidates = regional
-    def _rank(match: dict) -> tuple[int, int, int]:
-        name_token = _weather_place_token(match.get("name"))
-        exact = int(bool(name_token and (
-            name_token in location_token or location_token in name_token
-        )))
-        # Prefer administrative cities/capitals over villages, then use
-        # population as the deterministic tie-breaker. Open-Meteo returns both
-        # fields for normal populated-place matches.
-        feature = str(match.get("feature_code") or "").upper()
-        feature_rank = {
-            "PPLC": 5, "PPLA": 4, "PPLA2": 3, "PPLA3": 2, "PPL": 1,
-        }.get(feature, 0)
-        try:
-            population = max(0, int(match.get("population") or 0))
-        except (TypeError, ValueError):
-            population = 0
-        return exact, feature_rank, population
-
-    return max(candidates, key=_rank)
 
 
 def _lookup_open_meteo_weather(*, location: str, days: int, language: str,
@@ -636,39 +467,21 @@ def _lookup_open_meteo_weather(*, location: str, days: int, language: str,
         })
     try:
         import requests
-        place = _known_weather_place(location)
-        if not place:
-            geo_resp = requests.get(
-                "https://geocoding-api.open-meteo.com/v1/search",
-                params={
-                    "name": _weather_geocoding_query(location),
-                    "count": 10,
-                    "language": _open_meteo_language(language),
-                    "format": "json",
-                },
-                timeout=15,
-                headers={"User-Agent": "LZCore/1.0 (+https://github.com/zhangh05/lzcore)"},
-            )
-            if geo_resp.status_code != 200:
-                return _result(_DummyInv(""), False, {
-                    "status": "geocoding_http_error",
-                    "errors": [f"open_meteo_geocoding_http_{geo_resp.status_code}"],
-                })
-            geo_data = geo_resp.json()
-            matches = geo_data.get("results") or []
-            if not matches:
-                return _result(_DummyInv(""), False, {
-                    "status": "location_not_found",
-                    "errors": ["open_meteo_location_not_found"],
-                })
-            place = _select_weather_place(location, matches)
-        latitude = place.get("latitude")
-        longitude = place.get("longitude")
-        if latitude is None or longitude is None:
+        from core.resolution import resolve_location
+
+        resolution = resolve_location(
+            location,
+            language=_open_meteo_language(language),
+        )
+        if not resolution.ok or resolution.resolved is None:
             return _result(_DummyInv(""), False, {
-                "status": "geocoding_missing_coordinates",
-                "errors": ["open_meteo_geocoding_missing_coordinates"],
+                "status": resolution.status,
+                "errors": [resolution.status],
+                "location_resolution": resolution.as_dict(),
             })
+        place = resolution.resolved
+        latitude = place.latitude
+        longitude = place.longitude
         forecast_params = {
             "latitude": latitude,
             "longitude": longitude,
@@ -734,7 +547,7 @@ def _lookup_open_meteo_weather(*, location: str, days: int, language: str,
                 "errors": ["open_meteo_forecast_empty"],
             })
         resolved_name = ", ".join(
-            str(v) for v in (place.get("name"), place.get("admin1"), place.get("country"))
+            str(v) for v in (place.canonical_name, place.admin1, place.country)
             if v
         )
         result = {
@@ -744,10 +557,13 @@ def _lookup_open_meteo_weather(*, location: str, days: int, language: str,
             "source_url": "https://open-meteo.com/",
             "location": location,
             "resolved_location": {
-                "name": resolved_name or place.get("name") or location,
+                "name": resolved_name or place.canonical_name or location,
                 "latitude": latitude,
                 "longitude": longitude,
                 "timezone": weather.get("timezone", ""),
+                "provider": place.provider,
+                "provider_id": place.provider_id,
+                "confidence": resolution.confidence,
             },
             "current": current,
             "forecast_daily": daily,
