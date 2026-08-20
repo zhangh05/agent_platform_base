@@ -217,3 +217,12 @@ class TestRunStoreWriteSafety:
         serialized = str(redacted)
         assert "/Users/" not in serialized
         assert "C:\\Users\\" not in serialized
+
+
+def test_storage_redaction_masks_bearer_sk_keys_with_hyphens():
+    from storage.redaction import redact_text
+
+    secret = "sk-test-secret-abcdefghijklmnopqrstuvwxyz"
+    redacted = redact_text(f"Authorization: Bearer {secret}")
+    assert secret not in redacted
+    assert "REDACTED" in redacted

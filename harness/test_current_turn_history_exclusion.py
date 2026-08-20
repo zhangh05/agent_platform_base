@@ -529,3 +529,29 @@ def test_ssot_runtime_uses_child_session_marker_to_disable_workspace_memory(
     assert result.ok is True
     assert seen["include_workspace_memory"] is False
     assert seen["session_id"] == "sub-abcdef12"
+
+
+def test_retrieved_context_redacts_sensitive_knowledge_before_model_projection(monkeypatch):
+    from agent.runtime.ssot_runtime import _build_retrieved_context_block
+
+    secret = "sk-test-secret-abcdefghijklmnopqrstuvwxyz"
+
+    class FakeRetriever:
+        def search_knowledge(self, _query, top_k=2):
+            assert top_k == 2
+            return [{"content": f"Authorization: Bearer {secret}"}]
+
+    monkeypatch.setattr(
+        "core.context.unified_retriever.get_retriever",
+        lambda _workspace_id: FakeRetriever(),
+    )
+    block = _build_retrieved_context_block(
+        workspace_id="ws-retrieved-redaction",
+        session_id="sub-redaction",
+        task_id="run-retrieved-redaction",
+        user_input="检查知识库",
+        include_workspace_memory=False,
+    )
+
+    assert secret not in block
+    assert "REDACTED" in block

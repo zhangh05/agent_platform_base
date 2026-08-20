@@ -17,7 +17,7 @@ _KEYWORD_PATTERNS = [
     r"(tacacs.*key)\s+\S+",
     r"(radius.*key)\s+\S+",
     r"(api[_-]?key[=:]\s*)\S+",
-    r"(authorization)\s+\S+",
+    r"(authorization\s*:\s*(?:bearer\s+)?)\S+",
     r"(token[=:]\s*)\S+",
     r"(OPENAI_API_KEY[=:]\s*)\S+",
     r"(DEEPSEEK_API_KEY[=:]\s*)\S+",
@@ -26,7 +26,7 @@ _KEYWORD_PATTERNS = [
 ]
 
 _FULL_MASK_PATTERNS = [
-    r"sk-[A-Za-z0-9]{20,}",
+    r"(?<![A-Za-z0-9_])sk-[A-Za-z0-9_-]{8,}",
     r"private[_-]?key",
 ]
 

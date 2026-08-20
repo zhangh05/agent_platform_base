@@ -240,3 +240,24 @@ def test_runtime_prompt_has_context_authority_contract():
     assert "Adaptive response mode" in normalized
     assert "immediately previous exchange" in normalized
     assert "Preserve exact technical notation" in normalized
+
+
+def test_unified_retriever_isolated_by_storage_principal(monkeypatch, tmp_path):
+    monkeypatch.setenv("LZCORE_WORKSPACE_ROOT", str(tmp_path))
+
+    from core.context.context_store import get_context_store
+    from core.context.unified_retriever import get_retriever
+    from storage.principal import storage_principal
+
+    workspace_id = "shared"
+    with storage_principal("alice"):
+        get_context_store(workspace_id).put({
+            "item_id": "alice-private-context",
+            "item_type": "knowledge_chunk",
+            "content": "alice private BGP topology evidence",
+            "scope": "workspace",
+        })
+        assert get_retriever(workspace_id).search_knowledge("BGP topology", top_k=2)
+
+    with storage_principal("bob"):
+        assert get_retriever(workspace_id).search_knowledge("BGP topology", top_k=2) == []

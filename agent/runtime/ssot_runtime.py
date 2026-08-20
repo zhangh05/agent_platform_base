@@ -1623,6 +1623,7 @@ def _build_retrieved_context_block(
                 "knowledge_hits": retriever.search_knowledge(user_input, top_k=2),
             }
         from core.runtime_engine.context_budget import truncate_text_to_tokens
+        from storage.redaction import redact_text
 
         lines: list[str] = []
         item_tokens = max(200, min(750, max_tokens // 3))
@@ -1633,20 +1634,20 @@ def _build_retrieved_context_block(
                 limit=8,
             )
             for rule in core_rules:
-                content = str(rule.get("content") or rule.get("summary") or "").strip()
+                content = redact_text(str(rule.get("content") or rule.get("summary") or "")).strip()
                 if content:
                     compacted, _ = truncate_text_to_tokens(content, min(item_tokens, 350))
                     lines.append(f"[core-rule scope=workspace authority=explicit-user] {compacted}")
         for hit in retrieved.get("memory_hits", [])[:3]:
             if str(hit.get("memory_type") or "") == "core_rule":
                 continue
-            content = str(hit.get("content") or hit.get("summary") or "").strip()
+            content = redact_text(str(hit.get("content") or hit.get("summary") or "")).strip()
             if content:
                 compacted, _ = truncate_text_to_tokens(content, item_tokens)
                 scope = str(hit.get("scope") or "workspace")
                 lines.append(f"[memory scope={scope}] {compacted}")
         for hit in retrieved.get("knowledge_hits", [])[:2]:
-            content = str(hit.get("content") or hit.get("summary") or "").strip()
+            content = redact_text(str(hit.get("content") or hit.get("summary") or "")).strip()
             if content:
                 compacted, _ = truncate_text_to_tokens(content, item_tokens)
                 lines.append(f"[knowledge scope=workspace] {compacted}")
