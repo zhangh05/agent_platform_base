@@ -201,7 +201,7 @@ class ToolExecutor:
             )
 
         # ── 7. Redact output ──
-        output = redact_tool_output(raw) if isinstance(raw, dict) else {"output": str(raw)}
+        output = redact_tool_output(raw) if isinstance(raw, dict) else redact_tool_output({"output": str(raw)})
 
         duration = int((time.time() - start_time) * 1000)
 

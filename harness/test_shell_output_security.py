@@ -186,3 +186,31 @@ def test_path_redaction_preserves_markdown_delimiters_and_spacing():
 
     stored_text = redact_text("file: `/home/user/work/out.csv` next")
     assert stored_text == "file: `[REDACTED_PATH]` next"
+
+
+def test_tool_executor_redacts_non_dict_handler_output_before_returning():
+    from core.tools.executor import ToolExecutor
+    from core.tools.registry import ToolRegistry
+    from core.tools.schemas import ToolInvocation, ToolSpec
+
+    registry = ToolRegistry()
+    registry.register_tool(
+        ToolSpec(
+            tool_id="test.text_output",
+            name="test text output",
+            description="test-only plain-text result",
+            category="tool",
+            risk_level="low",
+            requires_approval=False,
+            input_schema={"type": "object"},
+            permission_action="read",
+        ),
+        lambda _invocation: "token=sk-test-secret-abcdefghijklmnopqrstuvwxyz",
+    )
+
+    result = ToolExecutor(registry).execute(ToolInvocation(
+        tool_id="test.text_output", arguments={}, workspace_id="default",
+    ))
+    text = str(result.output.get("output") or "")
+    assert "sk-test-secret" not in text
+    assert "redacted" in text.lower()
