@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import pytest
+
 from core.resolution.location_models import LocationCandidate
 from core.resolution.location_providers import (
+    LocationProviderUnavailable,
     NominatimLocationProvider,
     PhotonLocationProvider,
     _open_meteo_get,
@@ -280,10 +283,33 @@ def test_nominatim_transport_retries_connection_failure(monkeypatch):
     monkeypatch.setattr(requests, "get", fake_get)
     monkeypatch.setattr("core.resolution.location_providers.time.sleep", lambda _seconds: None)
     monkeypatch.setattr(NominatimLocationProvider, "_last_request", 0.0)
+    monkeypatch.setattr(NominatimLocationProvider, "_circuit_open_until", 0.0)
 
     result = NominatimLocationProvider._get("https://example.invalid", params={})
 
     assert result.status_code == 200
+    assert len(calls) == 2
+
+
+def test_nominatim_transport_opens_circuit_after_retry_budget(monkeypatch):
+    import requests
+
+    calls = []
+
+    def unavailable(*_args, **_kwargs):
+        calls.append(1)
+        raise requests.ConnectTimeout("unreachable")
+
+    monkeypatch.setattr(requests, "get", unavailable)
+    monkeypatch.setattr("core.resolution.location_providers.time.sleep", lambda _seconds: None)
+    monkeypatch.setattr(NominatimLocationProvider, "_last_request", 0.0)
+    monkeypatch.setattr(NominatimLocationProvider, "_circuit_open_until", 0.0)
+
+    with pytest.raises(LocationProviderUnavailable, match="after retries"):
+        NominatimLocationProvider._get("https://example.invalid", params={})
+    with pytest.raises(LocationProviderUnavailable, match="circuit is open"):
+        NominatimLocationProvider._get("https://example.invalid", params={})
+
     assert len(calls) == 2
 
 

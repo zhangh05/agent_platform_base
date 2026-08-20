@@ -48,7 +48,7 @@ def _provider_get(
                 response = requests.get(
                     url,
                     params=params,
-                    timeout=15,
+                    timeout=(4, 8),
                     headers={"User-Agent": _USER_AGENT},
                 )
                 last_response = response
@@ -245,6 +245,7 @@ class NominatimLocationProvider:
     supports_reverse = True
     _lock = threading.Lock()
     _last_request = 0.0
+    _circuit_open_until = 0.0
 
     @classmethod
     def _get(cls, url: str, *, params: dict) -> object:
@@ -253,27 +254,30 @@ class NominatimLocationProvider:
         # The public endpoint requires a single request per second. Serialise
         # all fallback, reverse, and retry calls so a batch remains compliant.
         with cls._lock:
+            if cls._circuit_open_until > time.monotonic():
+                raise LocationProviderUnavailable("nominatim circuit is open")
             last_error: Exception | None = None
             last_response: object | None = None
-            for attempt in range(3):
+            for attempt in range(2):
                 remaining = 1.05 - (time.monotonic() - cls._last_request)
                 if remaining > 0:
                     time.sleep(remaining)
                 try:
                     response = requests.get(
-                        url, params=params, timeout=20,
+                        url, params=params, timeout=(2, 4),
                         headers={"User-Agent": _USER_AGENT},
                     )
                     last_response = response
                 except requests.RequestException as exc:
                     last_error = exc
                     cls._last_request = time.monotonic()
-                    if attempt == 2:
+                    if attempt == 1:
                         break
                     time.sleep(_retry_delay(None, attempt))
                     continue
                 cls._last_request = time.monotonic()
                 if response.status_code == 200:
+                    cls._circuit_open_until = 0.0
                     return response
                 if response.status_code not in _RETRYABLE_HTTP_STATUSES:
                     return response
@@ -283,6 +287,7 @@ class NominatimLocationProvider:
                 type(last_error).__name__
                 if last_error else getattr(last_response, "status_code", "unknown")
             )
+            cls._circuit_open_until = time.monotonic() + 60
             raise LocationProviderUnavailable(f"nominatim unavailable after retries: {detail}")
 
     @staticmethod
