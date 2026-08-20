@@ -14,6 +14,7 @@ Pipeline:
 """
 
 import time
+from copy import deepcopy
 from core.tools.schemas import ToolSpec, ToolInvocation, ToolResult, PolicyDecision
 from core.tools.registry import ToolRegistry
 from core.tools.policy import ToolPolicy
@@ -246,6 +247,17 @@ def _structured_summary(tool_id: str, output: dict, ok: bool) -> str:
         if count_key in output:
             return f"{tool_id} returned {output[count_key]} {noun}."
     return f"{tool_id} completed with structured output."
+
+
+def canonicalize_tool_arguments(arguments: dict, input_schema: dict) -> dict:
+    """Return a copied, default-expanded argument projection for one ToolSpec.
+
+    This is a pure schema projection: it neither authorizes nor executes a
+    tool.  ToolExecutor remains the only validation and execution gate.
+    """
+    canonical = deepcopy(arguments or {})
+    _validate_arguments(canonical, input_schema or {})
+    return canonical
 
 
 def _validate_arguments(arguments: dict, schema: dict) -> list:

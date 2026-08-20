@@ -37,6 +37,10 @@ def test_exact_approved_action_resumes_same_workflow_run(monkeypatch, tmp_path):
     waiting = execute_workflow("approval_ws", "approval_binding")
     assert waiting["status"] == "awaiting_approval"
     approval_id = waiting["nodes"][0]["approval_id"]
+    pending = get_approval_store("approval_ws").get_pending_request(approval_id, "approval_ws")
+    assert pending is not None
+    assert pending.arguments["target"] == "local"
+    assert pending.arguments["shell"] == "cmd"
     request = get_approval_store("approval_ws").resolve(
         approval_id, True, workspace_id="approval_ws", resolver="test",
     )

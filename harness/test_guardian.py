@@ -270,3 +270,27 @@ def test_sse_route_is_registered():
 if __name__ == "__main__":
     import pytest
     sys.exit(pytest.main([__file__, "-v"]))
+
+
+def test_resolved_approval_rejects_argument_subset(tmp_path):
+    from agent.approval import ApprovalStore
+
+    store = ApprovalStore(persist_path=tmp_path / "approvals.jsonl")
+    req = store.create(
+        session_id="session_exact",
+        tool_id="workspace.file",
+        arguments={"action": "delete", "path": "safe.txt", "recursive": False},
+        description="delete one file only",
+        risk_level="high",
+        workspace_id="ws_exact",
+        run_id="run_exact",
+    )
+    assert store.resolve(req.approval_id, True, workspace_id="ws_exact", resolver="user")
+
+    assert not store.validate_resolved_approval(
+        req.approval_id,
+        workspace_id="ws_exact",
+        tool_id="workspace.file",
+        arguments={"action": "delete", "path": "safe.txt"},
+        run_id="run_exact",
+    )

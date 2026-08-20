@@ -279,6 +279,8 @@ def execute_workflow(workspace_id: str, workflow_id: str, inputs: dict[str, Any]
                 entry = {"node_id": node_id, "tool_id": node["tool_id"], "status": "skipped", "started_at": now_iso(), "finished_at": now_iso()}
                 return entry, {}, True
             arguments = _resolve(node["arguments"], scope)
+            tool_client = _tool_client()
+            arguments = tool_client.canonicalize_arguments(node["tool_id"], arguments)
             if len(json.dumps(arguments, ensure_ascii=False, default=str).encode()) > 1_048_576:
                 raise WorkflowError(f"resolved arguments are too large: {node_id}")
         except Exception as exc:
@@ -306,7 +308,7 @@ def execute_workflow(workspace_id: str, workflow_id: str, inputs: dict[str, Any]
             return entry, {}, False
         from core.tools.context import ToolRuntimeContext
         try:
-            result = _tool_client().invoke(
+            result = tool_client.invoke(
                 node["tool_id"],
                 arguments,
                 context=ToolRuntimeContext(workspace_id=workspace_id, run_id=run_id, job_id=job_id or None, module="workflow", requested_by="job_runner", approval_id=approval_id or None),

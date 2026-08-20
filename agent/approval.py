@@ -692,9 +692,7 @@ class ApprovalStore:
             if str(record.get("run_id") or "") != str(run_id or ""):
                 return False
             stored_arguments = record.get("arguments") or {}
-            if not isinstance(stored_arguments, dict) or not all(
-                stored_arguments.get(key) == value for key, value in expected_arguments.items()
-            ):
+            if not isinstance(stored_arguments, dict) or stored_arguments != expected_arguments:
                 return False
             stored_metadata = record.get("metadata") or {}
             return all(stored_metadata.get(key) == value for key, value in expected_metadata.items())

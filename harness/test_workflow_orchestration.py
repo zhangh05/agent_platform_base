@@ -74,6 +74,9 @@ def test_continue_runs_independent_branch_but_skips_failed_dependents(monkeypatc
     seen = []
 
     class Client:
+        def canonicalize_arguments(self, _tool_id, arguments):
+            return dict(arguments)
+
         def list_tools(self):
             return [{"tool_id": "data.manage", "enabled": True}]
 

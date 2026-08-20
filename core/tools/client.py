@@ -20,7 +20,7 @@ from typing import Optional
 from core.tools.schemas import ToolSpec, ToolInvocation, ToolResult
 from core.tools.registry import ToolRegistry
 from core.tools.policy import ToolPolicy
-from core.tools.executor import ToolExecutor
+from core.tools.executor import ToolExecutor, canonicalize_tool_arguments
 from core.tools.context import ToolRuntimeContext
 
 _LOG = logging.getLogger(__name__)
@@ -37,6 +37,20 @@ class ToolRuntimeClient:
         self._registry = registry
         self._policy = policy or ToolPolicy()
         self._executor = ToolExecutor(self._registry, self._policy)
+
+    def canonicalize_arguments(self, tool_id: str, arguments: dict = None) -> dict:
+        """Project arguments using the exact ToolSpec used by this client.
+
+        Approval producers call this before persisting an approval so the
+        durable binding includes schema defaults inserted by ToolExecutor.
+        """
+        try:
+            from core.tools.tool_namespace import get_canonical_tool_id
+            tool_id = get_canonical_tool_id(tool_id)
+        except (KeyError, TypeError, ValueError):
+            _LOG.debug("tool id normalization failed for %r", tool_id, exc_info=True)
+        spec = self._registry.get_tool(tool_id)
+        return canonicalize_tool_arguments(arguments, spec.input_schema if spec else {})
 
     def invoke(
         self,

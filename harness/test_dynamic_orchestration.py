@@ -592,6 +592,9 @@ def test_saved_workflow_runs_independent_reads_in_parallel(monkeypatch, tmp_path
     max_active = 0
 
     class Client:
+        def canonicalize_arguments(self, _tool_id, arguments):
+            return dict(arguments)
+
         def list_tools(self):
             return [{"tool_id": "data.manage", "enabled": True}]
 
