@@ -375,13 +375,14 @@ def _validate_field(field: str, value, field_schema: dict, errors: list):
 
 
 def _failed_result(invocation_id: str, tool_id: str, error: str, duration_ms: int) -> ToolResult:
-    """Build a standard failure result."""
+    """Build a standard failure result with redacted error text."""
+    safe_error = str(redact_tool_output({"error": str(error or "")}).get("error") or "Tool execution failed")
     return ToolResult(
         invocation_id=invocation_id,
         tool_id=tool_id,
         status="failed",
-        summary=error[:200],
-        errors=[error[:200]],
+        summary=safe_error[:200],
+        errors=[safe_error[:200]],
         duration_ms=duration_ms,
         redacted=True,
     )

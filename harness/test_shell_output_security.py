@@ -214,3 +214,33 @@ def test_tool_executor_redacts_non_dict_handler_output_before_returning():
     text = str(result.output.get("output") or "")
     assert "sk-test-secret" not in text
     assert "redacted" in text.lower()
+
+
+def test_tool_executor_redacts_secret_in_handler_exception_before_returning():
+    from core.tools.executor import ToolExecutor
+    from core.tools.registry import ToolRegistry
+    from core.tools.schemas import ToolInvocation, ToolSpec
+
+    registry = ToolRegistry()
+    registry.register_tool(
+        ToolSpec(
+            tool_id="test.exception_output",
+            name="test exception output",
+            description="test-only failing handler",
+            category="tool",
+            risk_level="low",
+            requires_approval=False,
+            input_schema={"type": "object"},
+            permission_action="read",
+        ),
+        lambda _invocation: (_ for _ in ()).throw(
+            RuntimeError("provider token=sk-test-secret-abcdefghijklmnopqrstuvwxyz")
+        ),
+    )
+
+    result = ToolExecutor(registry).execute(ToolInvocation(
+        tool_id="test.exception_output", arguments={}, workspace_id="default",
+    ))
+    error_text = " ".join(str(item) for item in result.errors)
+    assert "sk-test-secret" not in error_text
+    assert "redacted" in error_text.lower()
