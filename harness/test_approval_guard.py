@@ -505,3 +505,49 @@ def test_resolve_rejects_same_workspace_different_session(client, reset_approval
         },
     )
     assert exact.status_code == 200
+
+
+def test_approval_sse_does_not_cross_storage_principals_with_shared_workspace(client, reset_approvals, monkeypatch, tmp_path):
+    import json
+    import agent.approval as approval_module
+    from agent.approval import get_approval_store
+    from storage.principal import storage_principal
+
+    monkeypatch.setenv("LZCORE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setattr(approval_module, "_APPROVALS_FILE", None)
+
+    with storage_principal("bob"):
+        response = client.get(
+            "/api/agent/approvals/sse?workspace_id=default",
+            buffered=False,
+        )
+    iterator = iter(response.response)
+    assert next(iterator) == b": connected\n\n"
+    assert json.loads(next(iterator).decode("utf-8").removeprefix("data: ").strip())["kind"] == "stream_ready"
+
+    with storage_principal("alice"):
+        alice = get_approval_store("default")
+        alice_request = alice.create(
+            "alice-session", "exec.run", {"command": "echo alice"},
+            workspace_id="default", risk_level="high",
+        )
+
+    with storage_principal("bob"):
+        bob = get_approval_store("default")
+        bob_request = bob.create(
+            "bob-session", "exec.run", {"command": "echo bob"},
+            workspace_id="default", risk_level="high",
+        )
+
+    event = json.loads(next(iterator).decode("utf-8").removeprefix("data: ").strip())
+    assert event["approval_id"] == bob_request.approval_id
+    assert event["session_id"] == "bob-session"
+    assert event["approval_id"] != alice_request.approval_id
+
+    with storage_principal("bob"):
+        assert bob.resolve(bob_request.approval_id, True, workspace_id="default") is not None
+    resolved_event = json.loads(next(iterator).decode("utf-8").removeprefix("data: ").strip())
+    response.close()
+    assert resolved_event["kind"] == "resolved"
+    assert resolved_event["approval_id"] == bob_request.approval_id
+    assert resolved_event["session_id"] == "bob-session"

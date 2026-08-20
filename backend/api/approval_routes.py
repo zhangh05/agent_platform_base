@@ -234,6 +234,9 @@ def register_approval_routes(app) -> None:
         ws_id, err = _validated_ws_id(request.args.get("workspace_id", ""))
         if err:
             return err
+        from storage.principal import current_storage_principal
+
+        subscriber_principal = current_storage_principal()
 
         # Per-connection queue: the bus puts events here, the SSE generator
         # yields them. A keepalive ping is emitted every 25s so proxies and
@@ -242,7 +245,7 @@ def register_approval_routes(app) -> None:
 
         def _on_event(event) -> None:
             try:
-                if event.workspace_id != ws_id:
+                if event.workspace_id != ws_id or event.principal != subscriber_principal:
                     return
                 q.put_nowait({
                     "kind": event.kind,

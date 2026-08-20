@@ -119,6 +119,7 @@ class ApprovalEvent:
     session_id: str
     tool_id: str
     workspace_id: str = ""
+    principal: str = ""
     allowed: bool = False
     payload: Dict[str, Any] = field(default_factory=dict)
 
@@ -212,7 +213,8 @@ class ApprovalStore:
     - Subscribers receive real-time events on create/resolve
     """
 
-    def __init__(self, persist_path: Optional[Path] = None) -> None:
+    def __init__(self, persist_path: Optional[Path] = None, principal: str = "") -> None:
+        self._principal = str(principal or "")
         self._pending: dict[str, ApprovalRequest] = {}
         self._lock = threading.Lock()
         self._persist_path = Path(persist_path) if persist_path else _default_persist_path()
@@ -471,6 +473,7 @@ class ApprovalStore:
                 kind="created", approval_id=req.approval_id,
                 session_id=req.session_id, tool_id=req.tool_id,
                 workspace_id=req.workspace_id,
+                principal=self._principal,
                 payload={
                     "risk_level": req.risk_level,
                     "description": req.description,
@@ -532,6 +535,7 @@ class ApprovalStore:
             kind="resolved", approval_id=approval_id,
             session_id=req.session_id, tool_id=req.tool_id,
             workspace_id=req.workspace_id,
+            principal=self._principal,
             allowed=allowed, payload={"resolver": resolver, "reason": reason},
         ))
         metric_status = "approved" if allowed else (
@@ -817,11 +821,14 @@ _approval_stores: dict[str, ApprovalStore] = {}
 
 def get_approval_store(workspace_id: str = "") -> ApprovalStore:
     """Return the approval store scoped to the current user and workspace."""
+    from storage.principal import current_storage_principal
+
+    principal = current_storage_principal()
     path = _default_persist_path(workspace_id)
     key = str(path)
     with _get_lock():
         if key not in _approval_stores:
-            _approval_stores[key] = ApprovalStore(persist_path=path)
+            _approval_stores[key] = ApprovalStore(persist_path=path, principal=principal)
         return _approval_stores[key]
 
 _appr_lock = None
