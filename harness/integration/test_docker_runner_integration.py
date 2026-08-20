@@ -8,7 +8,6 @@ import pytest
 
 from core.tools.python_runner import DockerStrongIsolationRunner
 
-
 pytestmark = pytest.mark.skipif(
     os.environ.get("LZCORE_RUN_DOCKER_INTEGRATION") != "1",
     reason="real Docker integration is opt-in",
@@ -38,20 +37,32 @@ result = {"sum": sum(input_data["values"])}
     assert result["network"] == "none"
     assert result["isolation_level"] == "strong_container"
     assert result["resource_limits"] == {
-        "memory": "128m", "cpus": "0.5", "pids": 16, "output_bytes": 1_048_576,
+        "memory": "128m",
+        "cpus": "0.5",
+        "pids": 16,
+        "output_bytes": 1_048_576,
     }
+    assert not list(tmp_path.rglob("script.py"))
 
 
-def test_network_and_host_write_code_is_rejected_before_container(monkeypatch, tmp_path):
+def test_network_and_host_write_code_is_rejected_before_container(
+    monkeypatch, tmp_path
+):
     monkeypatch.setenv("LZCORE_WORKSPACE_ROOT", str(tmp_path / "workspaces"))
     runner = _runner()
     network = runner.execute(
         code="import socket\nsocket.create_connection(('1.1.1.1', 53))",
-        workspace_id="docker_integration", run_id="network", timeout=2, input_data={},
+        workspace_id="docker_integration",
+        run_id="network",
+        timeout=2,
+        input_data={},
     )
     host_write = runner.execute(
         code="open('/workspace/host-write', 'w').write('escape')",
-        workspace_id="docker_integration", run_id="write", timeout=2, input_data={},
+        workspace_id="docker_integration",
+        run_id="write",
+        timeout=2,
+        input_data={},
     )
     assert "Forbidden import" in network["error"]
     assert "Forbidden function call" in host_write["error"]

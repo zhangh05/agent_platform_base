@@ -1,4 +1,5 @@
 """Focused tests for Python runner selection and fail-closed behavior."""
+
 from __future__ import annotations
 
 import subprocess
@@ -12,7 +13,9 @@ from core.tools.python_runner import (
 
 
 def _without_docker(monkeypatch):
-    monkeypatch.setattr(DockerStrongIsolationRunner, "available", staticmethod(lambda: None))
+    monkeypatch.setattr(
+        DockerStrongIsolationRunner, "available", staticmethod(lambda: None)
+    )
 
 
 def test_non_loopback_mode_requires_strong_runner(monkeypatch):
@@ -21,7 +24,9 @@ def test_non_loopback_mode_requires_strong_runner(monkeypatch):
     monkeypatch.delenv("LZCORE_TRUSTED_LOCAL_PYTHON_EXECUTION", raising=False)
     runner = select_python_runner()
     assert isinstance(runner, UnavailableStrongIsolationRunner)
-    result = runner.execute(code="print(1)", workspace_id="ws", run_id="r", timeout=1, input_data={})
+    result = runner.execute(
+        code="print(1)", workspace_id="ws", run_id="r", timeout=1, input_data={}
+    )
     assert result["ok"] is False
     assert result["isolation_level"] == "unavailable"
     assert "requires_strong_isolation" in result["error"]
@@ -51,25 +56,34 @@ def test_container_runner_requires_operator_pinned_image(monkeypatch):
 def test_container_runner_requires_pinned_image_to_exist_locally(monkeypatch):
     image = "python@example.invalid@sha256:" + "a" * 64
     monkeypatch.setenv("LZCORE_PYTHON_CONTAINER_IMAGE", image)
-    monkeypatch.setattr("core.tools.python_runner.shutil.which", lambda _name: "/usr/bin/docker")
+    monkeypatch.setattr(
+        "core.tools.python_runner.shutil.which", lambda _name: "/usr/bin/docker"
+    )
 
     def fake_run(command, **_kwargs):
         if command[1] == "version":
             return subprocess.CompletedProcess(command, 0, stdout="26.1.0\n", stderr="")
-        return subprocess.CompletedProcess(command, 1, stdout="", stderr="No such image")
+        return subprocess.CompletedProcess(
+            command, 1, stdout="", stderr="No such image"
+        )
 
     monkeypatch.setattr(subprocess, "run", fake_run)
     assert DockerStrongIsolationRunner.available() is None
 
 
-def test_container_runner_cleans_host_script_after_execution(monkeypatch, tmp_path):
+def test_container_runner_streams_script_without_host_bind_mount(monkeypatch, tmp_path):
     monkeypatch.setenv("LZCORE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("DOCKER_HOST", "unix:///run/docker.sock")
     runner = DockerStrongIsolationRunner(
         docker_bin="/usr/bin/docker",
         image="python@example.invalid@sha256:" + "a" * 64,
     )
 
-    def fake_run(command, **_kwargs):
+    invocation = {}
+
+    def fake_run(command, **kwargs):
+        invocation["command"] = command
+        invocation["kwargs"] = kwargs
         return subprocess.CompletedProcess(command, 0, stdout="done\n", stderr="")
 
     monkeypatch.setattr(subprocess, "run", fake_run)
@@ -81,5 +95,9 @@ def test_container_runner_cleans_host_script_after_execution(monkeypatch, tmp_pa
         input_data={"private": "value"},
     )
     assert result["ok"] is True
-    temp_root = tmp_path / "cleanup_ws" / "files" / "tmp" / "python_exec"
-    assert not temp_root.exists() or list(temp_root.iterdir()) == []
+    assert "--interactive" in invocation["command"]
+    assert "--mount" not in invocation["command"]
+    assert "print('done')" in invocation["kwargs"]["input"]
+    assert '"private": "value"' in invocation["kwargs"]["input"]
+    assert invocation["kwargs"]["env"]["DOCKER_HOST"] == "unix:///run/docker.sock"
+    assert not list(tmp_path.rglob("script.py"))
