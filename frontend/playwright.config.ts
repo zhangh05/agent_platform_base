@@ -68,6 +68,10 @@ const commonEnv = {
   LZCORE_LOGIN_USERNAME: "E2EAdmin",
   LZCORE_LOGIN_PASSWORD: ADMIN_PASSWORD,
   LZCORE_SESSION_SECRET: crypto.randomBytes(32).toString("hex"),
+  // Rate limiting has dedicated backend tests. Disabling it in this isolated
+  // functional suite prevents unrelated session-heavy scenarios from sharing
+  // one loopback-IP bucket and failing only because of execution order.
+  RATE_LIMIT_DISABLED: "true",
 };
 
 export default defineConfig({
