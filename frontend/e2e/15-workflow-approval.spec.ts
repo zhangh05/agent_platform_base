@@ -32,7 +32,12 @@ test("15. workflow approval can be rejected and audited", async ({ api, workspac
   expect(request?.approval_id).toBeTruthy();
 
   const resolved = await api.post(`/api/agent/approvals/${request.approval_id}/resolve`, {
-    data: { workspace_id: workspaceId, decision: "reject", reason: "E2E safety probe" },
+    data: {
+      workspace_id: workspaceId,
+      session_id: request.session_id,
+      decision: "reject",
+      reason: "E2E safety probe",
+    },
   });
   expect(resolved.ok()).toBeTruthy();
 
@@ -66,7 +71,12 @@ test("15. workflow approval can be rejected and audited", async ({ api, workspac
     (item: { run_id?: string }) => item.run_id === awaitingBody.run.run_id,
   );
   const approved = await api.post(`/api/agent/approvals/${approveRequest.approval_id}/resolve`, {
-    data: { workspace_id: workspaceId, decision: "approve", reason: "E2E exact binding" },
+    data: {
+      workspace_id: workspaceId,
+      session_id: approveRequest.session_id,
+      decision: "approve",
+      reason: "E2E exact binding",
+    },
   });
   expect(approved.ok()).toBeTruthy();
   const approvedBody = await approved.json();

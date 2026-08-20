@@ -182,6 +182,21 @@ export const ResultInline = memo(function ResultInline({
 
   return (
     <div className="chat-result-inline">
+      {isUnknownOutcome && (
+        <section className="unknown-outcome-alert" role="alert" data-testid="unknown-outcome-alert">
+          <strong>执行结果未知，系统已冻结后续写操作</strong>
+          <p>
+            外部写操作可能仍在执行。请先通过受控 read-back、运行审计或人工核对确认事实，
+            <b>不要重试原任务或换方案继续</b>。
+          </p>
+          <div className="unknown-outcome-facts">
+            {unknownOutcome?.tool_id && <span>工具：{unknownOutcome.tool_id}</span>}
+            {unknownOutcome?.call_id && <span>调用：{unknownOutcome.call_id}</span>}
+            {unknownOutcome?.error_code && <span>代码：{unknownOutcome.error_code}</span>}
+          </div>
+          <a className="unknown-outcome-link" href="/runs?view=audit">查看任务审计</a>
+        </section>
+      )}
       <details
         className="result-inline-disclosure"
         data-testid="result-inline-disclosure"
@@ -209,21 +224,6 @@ export const ResultInline = memo(function ResultInline({
       )}
         </summary>
         <div className="result-inline-details">
-      {isUnknownOutcome && (
-        <section className="unknown-outcome-alert" role="alert" data-testid="unknown-outcome-alert">
-          <strong>执行结果未知，系统已冻结后续写操作</strong>
-          <p>
-            外部写操作可能仍在执行。请先通过受控 read-back、运行审计或人工核对确认事实，
-            <b>不要重试原任务或换方案继续</b>。
-          </p>
-          <div className="unknown-outcome-facts">
-            {unknownOutcome?.tool_id && <span>工具：{unknownOutcome.tool_id}</span>}
-            {unknownOutcome?.call_id && <span>调用：{unknownOutcome.call_id}</span>}
-            {unknownOutcome?.error_code && <span>代码：{unknownOutcome.error_code}</span>}
-          </div>
-          <a className="unknown-outcome-link" href="/runs?view=audit">查看任务审计</a>
-        </section>
-      )}
       {cognitiveSummary && (
         <section className="cognitive-summary" data-testid="cognitive-summary">
           <IconBolt size={10} className="inline-icon-accent" />

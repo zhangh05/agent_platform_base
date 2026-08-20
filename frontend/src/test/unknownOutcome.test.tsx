@@ -31,6 +31,19 @@ const unknownResult: AgentResult = {
   },
 };
 
+const routineResult: AgentResult = {
+  ok: true,
+  final_response: "常规回答。",
+  events: [],
+  trace_id: "trace-routine",
+  session_id: "session-routine",
+  turn_id: "turn-routine",
+  tool_calls: [],
+  warnings: [],
+  errors: [],
+  metadata: { workspace_id: "default", execution_outcome: "complete" },
+};
+
 describe("unknown outcome result UI", () => {
   it("shows the durable uncertainty fact and suppresses unsafe retry actions", () => {
     const retryOriginal = vi.fn();
@@ -60,7 +73,7 @@ describe("unknown outcome result UI", () => {
 
 describe("result detail disclosure", () => {
   it("defaults to collapsed and expands only after an explicit user action", () => {
-    render(<ResultInline result={unknownResult} fallbackText="" />);
+    render(<ResultInline result={routineResult} fallbackText="" />);
 
     const disclosure = screen.getByTestId("result-inline-disclosure");
     expect(disclosure).not.toHaveAttribute("open");

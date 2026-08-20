@@ -127,7 +127,7 @@ def get_worker_state() -> dict:
                 value = json.loads(raw or "{}")
                 if isinstance(value, dict):
                     states.append(value)
-        except Exception:
+        except Exception:  # noqa: BLE001 - diagnostic Redis reads fall back to the durable runtime record
             _LOG.warning("unable to read Redis worker states", exc_info=True)
     if not states:
         state = read_runtime_record("jobs_worker_state") or {"status": "idle"}
@@ -172,7 +172,7 @@ def _write_state(state):
             digest = hashlib.sha256(str(state["worker_id"]).encode("utf-8")).hexdigest()[:24]
             client.set(f"lzcore:worker_state:{digest}", json.dumps(state, ensure_ascii=False), ex=600)
             return
-        except Exception:
+        except Exception:  # noqa: BLE001 - Redis publication failure must not terminate the worker
             _LOG.warning("unable to publish Redis worker state", exc_info=True)
     save_runtime_record("jobs_worker_state", state)
 

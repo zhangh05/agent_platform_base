@@ -12,7 +12,7 @@ def _probe(name: str, mode: str, callback: Callable[[], Any]) -> dict[str, Any]:
     try:
         details = callback()
         return {"name": name, "mode": mode, "status": "ok", "latency_ms": round((time.monotonic() - started) * 1000, 2), "details": details if isinstance(details, dict) else {}}
-    except Exception:
+    except Exception:  # noqa: BLE001 - readiness isolates arbitrary dependency adapters by design
         return {"name": name, "mode": mode, "status": "error", "latency_ms": round((time.monotonic() - started) * 1000, 2), "message": f"{name}_unavailable", "details": {}}
 
 

@@ -9,7 +9,7 @@ const STORAGE_ROOT = process.env.E2E_STORAGE_ROOT ?? "";
 const STORAGE_TOKEN = process.env.E2E_STORAGE_TOKEN ?? "";
 const ADMIN_PASSWORD = process.env.E2E_ADMIN_PASSWORD ?? "";
 
-async function cleanupOwnedStorage() {
+async function validateOwnedStorage() {
   if (!STORAGE_ROOT || !STORAGE_TOKEN) throw new Error("missing E2E storage ownership metadata");
   const resolvedRoot = await fs.realpath(STORAGE_ROOT);
   const resolvedTmp = await fs.realpath(os.tmpdir());
@@ -18,7 +18,12 @@ async function cleanupOwnedStorage() {
   if (path.dirname(resolvedRoot) !== resolvedTmp || !path.basename(resolvedRoot).startsWith("lzcore-e2e-") || markerToken !== STORAGE_TOKEN) {
     throw new Error(`refusing to remove unowned E2E storage root: ${resolvedRoot}`);
   }
-  await fs.rm(resolvedRoot, { recursive: true, force: true });
+  return resolvedRoot;
+}
+
+async function cleanupOwnedStorage() {
+  const resolvedRoot = await validateOwnedStorage();
+  await fs.rm(resolvedRoot, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
 }
 
 export default async function globalSetup() {
@@ -40,6 +45,9 @@ export default async function globalSetup() {
   }
 
   return async () => {
-    await cleanupOwnedStorage();
+    // Playwright invokes this callback while webServer children can still be
+    // finishing requests. Validate ownership here; the process exit hook in
+    // playwright.config.ts removes the directory after those children stop.
+    await validateOwnedStorage();
   };
 }

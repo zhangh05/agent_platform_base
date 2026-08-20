@@ -19,6 +19,6 @@ test("6. data center artifact view", async ({ page, api, workspaceId }) => {
   await selectWorkspace(page, workspaceId);
 
   await expect(page.getByTestId("page-data-center")).toBeVisible({ timeout: 6_000 });
-  await page.getByRole("button", { name: "证据与制品", exact: true }).click();
+  await page.getByRole("button", { name: "任务产出", exact: true }).click();
   await expect(page.getByText("e2e-artifact-view", { exact: true })).toBeVisible({ timeout: 6_000 });
 });

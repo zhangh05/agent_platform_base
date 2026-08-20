@@ -3317,8 +3317,8 @@ details.collapse[open] summary::before {
 
 .chat-bubble.user {
   color: var(--text);
-  background: #eef7fb;
-  border-color: rgba(128, 186, 220, 0.48);
+  background: var(--message-user);
+  border-color: var(--message-user-border);
   font-weight: 650;
 }
 
@@ -3335,8 +3335,8 @@ details.collapse[open] summary::before {
 .chat-bubble.assistant {
   width: 100%;
   padding: 14px 18px;
-  background: rgba(255, 255, 255, 0.82);
-  border-color: rgba(210, 222, 233, 0.86);
+  background: var(--message-assistant);
+  border-color: var(--message-assistant-border);
   border-radius: 10px;
   font-size: var(--fs-13);
   line-height: 1.55;

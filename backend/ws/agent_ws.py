@@ -425,7 +425,7 @@ def register_ws_routes(app):
                     try:
                         ws.send(json.dumps(event, ensure_ascii=True, default=str))
                         next_heartbeat_at = time.monotonic() + _WS_HEARTBEAT_INTERVAL_SECONDS
-                    except Exception:
+                    except Exception:  # noqa: BLE001 - transport failure must not cancel the detached business turn
                         # Do not cancel business execution merely because the
                         # transport disappeared (refresh, sleep, network flap).
                         transport_closed.set()
@@ -441,7 +441,7 @@ def register_ws_routes(app):
         except (ConnectionClosed, TimeoutError):
             # Normal browser close/refresh or an idle unauthenticated handshake.
             return
-        except Exception:
+        except Exception:  # noqa: BLE001 - WebSocket boundary converts transport failures into a stable client error
             _log.warning("WebSocket transport failed", exc_info=True)
             try:
                 ws.send(json.dumps({"type": "error", "message": "websocket_transport_error"}, ensure_ascii=True))

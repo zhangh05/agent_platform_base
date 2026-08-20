@@ -20,7 +20,11 @@ test("3. session create + switch", async ({ page, workspaceId }) => {
 
   // Click the first session — currentSessionId should be set in localStorage.
   await sessionButtons.first().click();
+  const selectedSession = await sessionButtons.first().getAttribute("data-testid");
+  expect(selectedSession).toBeTruthy();
   await page.reload();
-  // The same isolated workspace remains selectable after a full client reload.
-  await expect(page.locator(`[data-testid="ws-${workspaceId}"]`)).toHaveClass(/active/, { timeout: 6_000 });
+  // The product has one fixed workspace; the selected session is the state
+  // that must survive a full client reload.
+  await expect(page.getByTestId(String(selectedSession))).toBeVisible({ timeout: 6_000 });
+  await expect(page.getByTestId(String(selectedSession)).locator("..")).toHaveClass(/active/);
 });

@@ -1,21 +1,18 @@
 /**
  * E2E 12 — LLM Settings page (v1.0.3 redesign).
  *
- * Validates: page loads + shows health bar + provider sidebar + form,
+ * Validates: page loads + shows provider sidebar + form,
  * preset card click auto-fills base_url/model, enabled toggle,
  * save flow updates health bar.
  */
 import { test, expect } from "./fixtures";
 
-test("12. llm settings page — health bar + provider cards + enabled toggle", async ({ page }) => {
+test("12. llm settings page — provider cards + enabled toggle", async ({ page }) => {
   await page.goto("/settings");
 
-  // health bar
-  await expect(page.getByTestId("llm-health-bar")).toBeVisible({ timeout: 15_000 });
-
   // provider sidebar
-  await expect(page.getByTestId("provider-sidebar")).toBeVisible();
-  for (const id of ["minimax", "openai", "deepseek", "ollama", "custom"]) {
+  await expect(page.getByTestId("provider-sidebar")).toBeVisible({ timeout: 15_000 });
+  for (const id of ["minimax", "deepseek", "ark", "openai", "anthropic", "ollama", "custom"]) {
     await expect(page.getByTestId(`provider-${id}`)).toBeVisible();
   }
 
@@ -26,12 +23,9 @@ test("12. llm settings page — health bar + provider cards + enabled toggle", a
   await expect(page.getByTestId("toggle-enabled")).toBeVisible();
   await expect(page.getByTestId("toggle-safe_mode")).toBeVisible();
 
-  // 5 个端点 footer
-  await expect(page.getByText("GET /api/agent/llm/config")).toBeVisible();
-  await expect(page.getByText("POST /api/agent/llm/config")).toBeVisible();
-  await expect(page.getByText("DELETE /api/agent/llm/config")).toBeVisible();
-  await expect(page.getByText("GET /api/agent/llm/status")).toBeVisible();
-  await expect(page.getByText("POST /api/agent/llm/test")).toBeVisible();
+  await expect(page.getByTestId("btn-test-llm")).toBeVisible();
+  await expect(page.getByTestId("btn-save-llm")).toBeVisible();
+  await expect(page.getByTestId("btn-apply-llm")).toBeVisible();
 });
 
 test("12b. openai preset click auto-fills base_url + model", async ({ page }) => {

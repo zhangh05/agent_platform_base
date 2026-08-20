@@ -39,7 +39,9 @@ const cleanupOwnedStorage = () => {
     const ownedName = path.basename(resolvedRoot).startsWith("lzcore-e2e-");
     const underTmp = path.dirname(resolvedRoot) === resolvedTmp;
     const markerMatches = fs.readFileSync(STORAGE_MARKER, "utf8") === STORAGE_TOKEN;
-    if (ownedName && underTmp && markerMatches) fs.rmSync(resolvedRoot, { recursive: true, force: true });
+    if (ownedName && underTmp && markerMatches) {
+      fs.rmSync(resolvedRoot, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
+    }
   } catch {
     // The explicit global teardown reports cleanup errors. The exit hook is a
     // final best-effort guard for --list, startup failures and interruptions.
