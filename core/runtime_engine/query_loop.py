@@ -2692,7 +2692,7 @@ class QueryLoop:
 
         has_tool_context = any(
             m.role == "tool"
-            or (m.role == "user" and "AUTO TRACKING RESULTS" in str(m.content or ""))
+            or (m.role == "user" and '<auto_tracking_results data_only="true" trust="untrusted_data">' in str(m.content or ""))
             for m in messages
         )
         if has_tool_context:
@@ -3392,9 +3392,15 @@ class QueryLoop:
                     self._context_budget.per_tool_result_tokens * 2,
                 ),
             )
+            from .prompt_contract import _escape_data
+
             new_msgs.append(LLMMessage(
                 role="user",
-                content="AUTO TRACKING RESULTS:\n" + output_str,
+                content=(
+                    '<auto_tracking_results data_only="true" trust="untrusted_data">\n'
+                    + _escape_data(output_str)
+                    + "\n</auto_tracking_results>"
+                ),
             ))
 
         return new_msgs
