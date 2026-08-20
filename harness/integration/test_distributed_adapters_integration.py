@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import os
+import queue
+import threading
 import uuid
 
 import pytest
@@ -47,6 +49,44 @@ def test_redis_lease_reclaim_survives_new_queue_instance():
     retried = second.claim("worker-b")
     assert retried is not None and retried.attempt == 2
     second.ack(retried)
+
+
+def test_redis_event_bus_cross_instance_delivery():
+    from storage.event_bus import RedisEventBus
+
+    url = os.environ["LZCORE_EVENT_BUS_URL"]
+    first = RedisEventBus(url)
+    second = RedisEventBus(url)
+    topic = f"integration:{uuid.uuid4().hex}"
+    received: queue.Queue = queue.Queue(maxsize=1)
+    stop = threading.Event()
+    ready = threading.Event()
+    thread = threading.Thread(target=second.pump, args=(topic, received, stop, ready), daemon=True)
+    thread.start()
+    assert ready.wait(timeout=2)
+    try:
+        first.publish(topic, {"source": "first", "ok": True})
+        assert received.get(timeout=3) == {"source": "first", "ok": True}
+    finally:
+        stop.set()
+        thread.join(timeout=2)
+
+
+def test_redis_worker_states_are_kept_per_worker(monkeypatch):
+    import redis
+    from jobs.worker import _write_state, get_worker_state
+
+    client = redis.Redis.from_url(os.environ["LZCORE_QUEUE_URL"], decode_responses=True)
+    for key in client.scan_iter(match="lzcore:worker_state:*"):
+        client.delete(key)
+    monkeypatch.setenv("LZCORE_QUEUE_MODE", "redis")
+    _write_state({"status": "idle", "worker_id": "integration-worker-a"})
+    _write_state({"status": "running", "worker_id": "integration-worker-b"})
+    state = get_worker_state()
+    assert state["worker_count"] == 2
+    assert {item["worker_id"] for item in state["workers"]} == {
+        "integration-worker-a", "integration-worker-b",
+    }
 
 
 def test_s3_object_round_trip_through_two_clients():

@@ -18,6 +18,7 @@ import {
   traceEventType,
 } from "../utils/runTraceStats";
 import type { RuntimeEvent, RuntimeAuditTurn } from "../types";
+import { formatEventTime } from "../utils/runEvent";
 
 interface Props {
   traceEvents: RuntimeEvent[] | null;
@@ -172,7 +173,7 @@ export function TraceDetailPanel({ traceEvents, selectedRun }: Props) {
                     {e.summary || e.message || ""}
                   </span>
                   <span className="trace-event-time">
-                    {e.occurred_at ? String(e.occurred_at).substring(11, 19) : e.timestamp ? String(e.timestamp).substring(11, 19) : ""}
+                    {formatEventTime(e)}
                   </span>
                   <span className="trace-event-toggle">{open ? "▲" : "▼"}</span>
                 </div>

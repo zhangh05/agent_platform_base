@@ -4,16 +4,9 @@ import { ApprovalBubble } from "../components/ApprovalBubble";
 import { approvalApi } from "../api";
 import { useSessionStore } from "../stores/session";
 
-class HealthyEventSource {
-  onmessage: ((event: MessageEvent) => void) | null = null;
-  onerror: ((event: Event) => void) | null = null;
-  close = vi.fn();
-}
-
 describe("approval transport lifecycle", () => {
   beforeEach(() => {
     vi.useFakeTimers();
-    vi.stubGlobal("EventSource", HealthyEventSource);
     useSessionStore.getState().resetForUser("default");
     useSessionStore.getState().setCurrentSession("session-1");
   });
@@ -24,7 +17,7 @@ describe("approval transport lifecycle", () => {
     vi.restoreAllMocks();
   });
 
-  it("does not keep polling when the initial check is empty and SSE is healthy", async () => {
+  it("continues bounded polling when the initial check is empty", async () => {
     const pending = vi.spyOn(approvalApi, "pending").mockResolvedValue({
       ok: true,
       pending: [],
@@ -36,7 +29,7 @@ describe("approval transport lifecycle", () => {
     expect(pending).toHaveBeenCalledTimes(1);
 
     await act(async () => { vi.advanceTimersByTime(60_000); });
-    expect(pending).toHaveBeenCalledTimes(1);
+    expect(pending.mock.calls.length).toBeGreaterThan(1);
   });
 
   it("disables approval actions while a resolution is in flight", async () => {
@@ -104,7 +97,7 @@ describe("approval transport lifecycle", () => {
   });
 
 
-  it("starts fallback polling when SSE fails before the first pending request authorizes", async () => {
+  it("does not overlap a delayed poll and discovers approval on the next interval", async () => {
     let resolveInitial!: (value: { ok: boolean; pending: never[]; count: number }) => void;
     const pending = vi.spyOn(approvalApi, "pending")
       .mockImplementationOnce(() => new Promise((resolve) => { resolveInitial = resolve; }))
@@ -125,13 +118,6 @@ describe("approval transport lifecycle", () => {
         count: 1,
       });
 
-    class EarlyFailEventSource extends HealthyEventSource {
-      constructor() {
-        super();
-        queueMicrotask(() => this.onerror?.(new Event("error")));
-      }
-    }
-    vi.stubGlobal("EventSource", EarlyFailEventSource);
     render(<ApprovalBubble />);
     await act(async () => { await Promise.resolve(); });
     await act(async () => { resolveInitial({ ok: true, pending: [], count: 0 }); });

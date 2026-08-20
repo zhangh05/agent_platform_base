@@ -3,6 +3,36 @@ from __future__ import annotations
 from jobs.schemas import JobRecord
 
 
+def test_agent_job_failure_cannot_be_promoted_to_success(monkeypatch):
+    import agent.app.service as app_service
+    import jobs.runner as runner
+    from agent.runtime.result import AgentResult
+
+    record = JobRecord(
+        job_id="job_agentfail",
+        workspace_id="default",
+        job_type="agent_run",
+        status="running",
+        payload={"message": "fail safely"},
+    )
+
+    class _App:
+        def submit_user_message(self, **_kwargs):
+            return AgentResult(ok=False, errors=["provider failed"], metadata={"execution_outcome": "failed"})
+
+    failed = []
+    updates = []
+    monkeypatch.setattr(app_service, "get_default_agent_app", lambda: _App())
+    monkeypatch.setattr(runner, "update_job", lambda *_args, **kwargs: updates.append(kwargs or _args[-1]))
+    monkeypatch.setattr(runner, "append_event", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(runner, "mark_failed", lambda ws, jid, error: failed.append((ws, jid, error)))
+
+    runner._run_agent_job(record)
+
+    assert updates[-1]["result_summary"]["ok"] is False
+    assert failed == [("default", "job_agentfail", "provider failed")]
+
+
 def test_runner_does_not_overwrite_failed_terminal_state(monkeypatch):
     import jobs.runner as runner
 

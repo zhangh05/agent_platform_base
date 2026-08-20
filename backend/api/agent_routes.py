@@ -128,6 +128,8 @@ def agent_message():
 
     client_request_id = str(metadata.get("client_request_id") or "").strip()
     if session_id:
+        if not client_request_id:
+            return _json_error("CLIENT_REQUEST_ID_REQUIRED", "client_request_id is required", 400)
         try:
             from jobs.lifecycle import claim_session_turn
             turn_claim = claim_session_turn(
@@ -234,7 +236,8 @@ def agent_message():
         return jsonify(result_payload)
     except Exception as e:
         _log.exception("agent_message failed")
-        err_msg = str(e)[:500]
+        from storage.redaction import redact_text
+        safe_error = redact_text(str(e))[:500] or "agent_execution_failed"
         if session_id and client_request_id:
             try:
                 from jobs.lifecycle import finish_claimed_session_turn
@@ -244,7 +247,7 @@ def agent_message():
                     client_request_id=client_request_id,
                     job_id=turn_claim.job_id,
                     ok=False,
-                    error=str(e),
+                    error=safe_error,
                 )
             except Exception:
                 _log.exception("unable to record failed HTTP turn claim session=%s", session_id)
@@ -252,7 +255,6 @@ def agent_message():
             "INTERNAL_ERROR",
             "agent execution failed",
             500,
-            {"exception": err_msg, "type": type(e).__name__},
         )
 
 

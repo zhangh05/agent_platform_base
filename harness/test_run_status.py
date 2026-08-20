@@ -373,6 +373,21 @@ def test_trace_uses_recorded_parallel_steps_not_topological_layer_width():
     assert event["metadata"]["parallel_steps"] == []
 
 
+def test_projected_tool_events_share_canonical_call_lineage():
+    from agent.runtime.ssot_runtime import _project_events
+
+    tool_result = SimpleNamespace(
+        tool="system.manage", success=True, data={"summary": "ok"},
+        error="", latency_ms=12,
+    )
+    runtime_result = SimpleNamespace(metadata={}, node_results={"node-1": tool_result})
+    started, finished = _project_events(runtime_result, "trace", "turn")
+    assert started["event_id"] != finished["event_id"]
+    assert started["event_type"] == "tool_call"
+    assert finished["event_type"] == "tool_result"
+    assert started["call_id"] == finished["call_id"] == "node-1"
+
+
 def test_persist_run_record_uses_result_llm_metadata(monkeypatch, tmp_path):
     """Run-store llm_metadata must mirror AgentResult.metadata['llm']."""
     from agent.runtime.turn_persistence import persist_run_record

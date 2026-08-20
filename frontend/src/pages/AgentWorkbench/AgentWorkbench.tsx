@@ -1,7 +1,5 @@
 import React, { lazy, Suspense, useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo } from "react";
-import { jobsApi, sessionsApi, settingsApi, sseApi } from "../../api";
-import { getApiAccessToken, realtimeEndpoint } from "../../api/client";
-import type { SSEConnection } from "../../api/sse";
+import { jobsApi, sessionsApi, settingsApi } from "../../api";
 import { useSessionStore } from "../../stores/session";
 import { useWorkbenchStore, type ChatMsg } from "../../stores/workbench";
 import { useToastStore } from "../../stores/toast";
@@ -35,11 +33,6 @@ const EMPTY_CHAT_MESSAGES: ChatMsg[] = [];
 // Auto-send delay for prompts pulled out of sessionStorage (e.g. workbench_auto_prompt)
 // — short enough to feel responsive, long enough for the input frame to mount.
 const AUTO_SEND_DELAY_MS = 500;
-// Initial backoff for the system-WS reconnect loop; subsequent attempts grow
-// exponentially up to WS_RECONNECT_MAX_MS.
-const WS_RECONNECT_BASE_MS = 1000;
-// Cap on the exponential reconnect delay.
-const WS_RECONNECT_MAX_MS = 5000;
 // Health probes invoke the provider's real chat path. Retry only while the
 // provider is unavailable, with bounded backoff, so a backend warm-up cannot
 // leave the workbench permanently showing a stale unavailable state.
@@ -98,8 +91,8 @@ export function TaskWorkbench() {
     }
 
     // Resolve returns before the server-side continuation has finished. The
-    // normal session SSE remains the primary completion signal; this bounded
-    // read-only hydration is its disconnect-safe fallback.
+    // Resolve returns before the server-side continuation has finished. This
+    // bounded read-only hydration observes its durable result.
     const knownAssistantKeys = new Set(
       (useWorkbenchStore.getState().bySession[sessionId] ?? [])
         .filter((message) => message.role === "assistant")
@@ -193,7 +186,6 @@ export function TaskWorkbench() {
   // System and message streams use separate refs for system WebSocket and message WebSocket
   // to prevent race conditions where message streaming overwrites the
   // system WS reference and vice versa.
-  const systemWsRef = useRef<WebSocket | null>(null);
   const pendingAutoMetadataRef = useRef<Record<string, unknown> | null>(null);
   const onSendRef = useRef<(text?: string, metadata?: Record<string, unknown>) => void>(() => {});
 
@@ -262,65 +254,6 @@ export function TaskWorkbench() {
     };
   }, []);
 
-  // ── Persistent system WebSocket — replaces all polling ──
-  // Use systemWsRef for the persistent stream so message streaming cannot overwrite it.
-  useEffect(() => {
-    if (!currentWorkspaceId) return;
-    const wsUrl = realtimeEndpoint("/ws/agent");
-    let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
-    let closed = false;
-    let retryDelay = 1000; // start at 1s, exponential backoff capped at 30s
-
-    const connect = () => {
-      if (closed) return;
-      let ws: WebSocket | null = null;
-      try {
-        ws = new WebSocket(wsUrl);
-      } catch {
-        // constructor can throw (e.g. invalid URL); schedule reconnect
-        if (!closed) reconnectTimer = setTimeout(connect, WS_RECONNECT_MAX_MS);
-        return;
-      }
-      systemWsRef.current = ws;
-      ws.onopen = () => {
-        retryDelay = WS_RECONNECT_BASE_MS; // reset on successful connection
-        try {
-          ws?.send(JSON.stringify({
-            type: "ping",
-            workspace_id: currentWorkspaceId,
-            auth_token: getApiAccessToken(),
-          }));
-        } catch {}
-      };
-      ws.onmessage = (event) => {
-        try {
-          const msg = JSON.parse(event.data);
-          if (msg.type === "event") {
-            window.dispatchEvent(new CustomEvent("ws-event", { detail: msg }));
-          }
-        } catch {}
-      };
-      ws.onclose = () => {
-        systemWsRef.current = null;
-        if (!closed) {
-          reconnectTimer = setTimeout(connect, retryDelay);
-          retryDelay = Math.min(retryDelay * 2, WS_RECONNECT_MAX_MS * 6);
-        }
-      };
-      ws.onerror = () => {
-        // Browser will fire onclose after this; don't force-close.
-        // Just null the reference so onclose doesn't double-handle.
-      };
-    };
-
-    connect();
-    return () => {
-      closed = true;
-      if (reconnectTimer) clearTimeout(reconnectTimer);
-      try { systemWsRef.current?.close(); } catch {}
-      systemWsRef.current = null;
-    };
-  }, [currentWorkspaceId]);
   // Input remains fully controlled; persistence is batched so keypresses never
   // synchronously serialize to localStorage on the browser main thread.
   const draftKey = scopedLocalStorageKey("draft-" + (currentSessionId ?? "_scratch"));
@@ -473,35 +406,6 @@ export function TaskWorkbench() {
       .then((res) => { if (res.messages?.length) mergeFromBackend(currentSessionId, res.messages); })
       .catch(() => {});
     return () => ctrl.abort();
-  }, [currentSessionId, currentWorkspaceId]);
-
-  // SSE real-time timeline updates
-  useEffect(() => {
-    if (!currentSessionId || !currentWorkspaceId || typeof fetch === "undefined") return;
-    let closed = false;
-    let es: SSEConnection | null = null;
-    const refreshMessages = () => {
-      sessionsApi.messages(currentSessionId, currentWorkspaceId)
-        .then((res) => { if (res.messages?.length) mergeFromBackend(currentSessionId, res.messages); })
-        .catch(() => {});
-    };
-    sessionsApi.get(currentSessionId, currentWorkspaceId)
-      .then(() => {
-        if (closed) return;
-        es = sseApi.connect(currentSessionId, currentWorkspaceId);
-        es.addEventListener("turn_completed", refreshMessages);
-        es.addEventListener("error", refreshMessages);
-        es.onerror = () => { es?.close(); };
-      })
-      .catch(() => {});
-    return () => {
-      closed = true;
-      if (es) {
-        es.removeEventListener("turn_completed", refreshMessages);
-        es.removeEventListener("error", refreshMessages);
-        es.close();
-      }
-    };
   }, [currentSessionId, currentWorkspaceId]);
 
   useEffect(() => {

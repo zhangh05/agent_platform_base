@@ -30,7 +30,15 @@ function toolLabel(s: string): string {
 }
 function timeStr(evt: RuntimeEvent): string {
   const s = evt.occurred_at || evt.started_at || "";
-  return s.slice(11, 19) || s.slice(0, 10);
+  if (s) return s.slice(11, 19) || s.slice(0, 10);
+  if (typeof evt.timestamp === "number" && Number.isFinite(evt.timestamp)) {
+    return new Date(evt.timestamp * 1000).toLocaleTimeString("zh-CN", { hour12: false });
+  }
+  return "";
+}
+
+function eventCallId(evt: RuntimeEvent): string {
+  return String(evt.call_id || evt.node_id || "");
 }
 
 /* ── step label & colour ── */
@@ -119,6 +127,7 @@ const ResultBody: React.FC<{ result: AgentResult }> = React.memo(({ result }) =>
   // Merge tool calls into events
   const toolMap = new Map<string, ToolCallResult>();
   for (const tc of tools) { if (tc.call_id) toolMap.set(tc.call_id, tc); }
+  const renderedToolCalls = new Set<string>();
 
   return (
     <div className="rt-card-body">
@@ -136,13 +145,18 @@ const ResultBody: React.FC<{ result: AgentResult }> = React.memo(({ result }) =>
           const t = (evt.event_type || evt.type || "").toLowerCase();
           const isTool = t.startsWith("tool_call") || evt.tool_id;
           if (isTool) {
-            const match = toolMap.get(evt.tool_id || "") || toolMap.get(evt.event_id || "");
-            if (match) return <ToolChip key={`tc-${match.call_id || match.tool_id}`} tc={match} />;
+            const callId = eventCallId(evt);
+            const match = toolMap.get(callId);
+            if (match) {
+              if (renderedToolCalls.has(callId)) return null;
+              renderedToolCalls.add(callId);
+              return <ToolChip key={`tc-${callId}`} tc={match} />;
+            }
           }
-          return <StepRow key={`ev-${evt.event_id || evt.tool_id || evt.type || evt.name}`} evt={evt} />;
+          return <StepRow key={`ev-${evt.event_id || eventCallId(evt) || evt.type || evt.name}`} evt={evt} />;
         })}
         {/* tools without matching events */}
-        {tools.filter((tc) => !events.some((e) => e.event_id === tc.call_id || e.tool_id === tc.call_id)).map((tc) => (
+        {tools.filter((tc) => !renderedToolCalls.has(tc.call_id)).map((tc) => (
           <ToolChip key={`tc-orphan-${tc.call_id}`} tc={tc} />
         ))}
       </div>
@@ -307,7 +321,6 @@ const RunCard: React.FC<{ group: RunGroup; runIdx: number }> = React.memo(({ gro
   const ok = result ? result.ok : group.assistantMsg?.status !== "error";
   const cardId = (result?.turn_id ?? group.runId).slice(0, 8);
   const snippet = assistantText.slice(0, 50) || userText.slice(0, 50) || "";
-  const workspaceId = result?.metadata?.workspace_id;
   const hasResultBody = !!result;
 
   // When expanded and no result yet, fetch the full trace lazily.
@@ -353,7 +366,6 @@ const RunCard: React.FC<{ group: RunGroup; runIdx: number }> = React.memo(({ gro
       >
         <span className={`rt-card-dot ${ok ? "ok" : "err"}`} />
         <span className="rt-card-id">{cardId || `#${runIdx + 1}`}</span>
-        {workspaceId && <span className="rt-card-ws">{workspaceId}</span>}
         <span className="rt-card-snippet">{snippet}{snippet.length > 50 ? "…" : ""}</span>
         <span className="rt-card-chev">{open ? "▲ 收起" : "▼ 展开"}</span>
       </div>

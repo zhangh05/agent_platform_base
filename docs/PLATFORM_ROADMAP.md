@@ -60,7 +60,11 @@ longer bypass tenant scope. The 组织与成员 workbench exposes the control pl
 
 ## Further scale-out work
 
-The current adapters support multiple web and worker processes. Larger enterprise
+The PostgreSQL, S3, Redis queue and Redis workspace-event adapters support
+cross-process state, and Redis workers can execute concurrently under leases.
+The current live per-turn WebSocket and approval continuation coordinator still
+use a single web process; deployments must not scale the web service beyond one
+process until those coordinators move to a shared transport. Larger enterprise
 installations still need an external secret manager, OIDC/SSO, database-native
 schema migrations, and broader migration of workspace metadata from files to
 PostgreSQL. OIDC/SCIM, database row-level security, scheduler clustering, and a

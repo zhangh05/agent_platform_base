@@ -32,6 +32,10 @@ def check_configuration() -> list[str]:
         errors.append("production requires S3 object storage")
     if queue_mode() != "redis":
         errors.append("production requires Redis queue mode")
+    if os.environ.get("LZCORE_EVENT_BUS_MODE", "").strip().lower() != "redis":
+        errors.append("production requires Redis event bus mode")
+    if not (os.environ.get("LZCORE_EVENT_BUS_URL") or os.environ.get("LZCORE_QUEUE_URL")):
+        errors.append("production requires a Redis event bus URL")
     if not _truthy("LZCORE_IDENTITY_ENABLED"):
         errors.append("identity mode must be enabled")
     if not _truthy("LZCORE_SESSION_SECURE"):

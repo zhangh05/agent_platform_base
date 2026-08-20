@@ -86,8 +86,14 @@ class RedisEventBus:
                 try:
                     payload = json.loads(message.get("data") or "{}")
                     target.put_nowait(payload)
-                except (ValueError, queue.Full):
+                except ValueError:
                     continue
+                except queue.Full:
+                    try:
+                        target.get_nowait()
+                        target.put_nowait(payload)
+                    except (queue.Empty, queue.Full):
+                        continue
         finally:
             pubsub.close()
 

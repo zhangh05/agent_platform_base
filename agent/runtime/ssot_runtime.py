@@ -540,13 +540,15 @@ def run_ssot_turn(
                 (runtime_result.metadata or {}).get("output_truncation_reason") or ""
             ),
             "execution_outcome": str(
-                (runtime_result.metadata or {}).get("execution_outcome") or "complete"
+                (runtime_result.metadata or {}).get("execution_outcome")
+                or ("complete" if runtime_result.success else "failed")
             ),
             # Server-produced terminal errors are lifecycle facts for TaskState;
             # request metadata never contributes to this list.
             "runtime_errors": list(runtime_errors),
             "tool_execution_outcome": str(
-                (runtime_result.metadata or {}).get("tool_execution_outcome") or "complete"
+                (runtime_result.metadata or {}).get("tool_execution_outcome")
+                or ("complete" if runtime_result.success and not runtime_errors else "failed")
             ),
             # Read-only terminal facts for API/UI consumers. QueryLoop remains
             # the only owner of execution, recovery and write fencing.
@@ -618,6 +620,8 @@ def run_ssot_turn(
             metadata={
                 **context.metadata,
                 "runtime_engine": "ssot_runtime",
+                "execution_outcome": "failed",
+                "tool_execution_outcome": "failed",
                 "task_state_persistence": {"stage": "resolution", "status": "failed"},
                 "timeline_summary": {
                     "node_count": len(events),
@@ -631,19 +635,23 @@ def run_ssot_turn(
         )
     except Exception as exc:
         _LOG.exception("SSOT Runtime turn failed")
+        from storage.redaction import redact_text
+        safe_error = redact_text(str(exc))[:500] or "ssot_runtime_error"
         elapsed_ms = int((time.monotonic() - started) * 1000)
         events.append(_event("error", "SSOT Runtime error", trace_id, turn.turn_id, started_at=started))
         result = AgentResult(
             ok=False,
-            final_response=f"SSOT Runtime failed: {str(exc)[:300]}",
+            final_response="运行时处理失败，系统已安全停止。请稍后重试。",
             events=events,
             trace_id=trace_id,
             session_id=session_id,
             turn_id=turn.turn_id,
-            errors=[str(exc)[:500]],
+            errors=[safe_error],
             metadata={
                 **context.metadata,
                 "runtime_engine": "ssot_runtime",
+                "execution_outcome": "failed",
+                "tool_execution_outcome": "failed",
                 "timeline_summary": {
                     "node_count": len(events),
                     "total_duration_ms": elapsed_ms,
@@ -1466,20 +1474,26 @@ def _project_events(runtime_result, trace_id: str, turn_id: str) -> list[dict[st
             })
     for node_id, tr in (runtime_result.node_results or {}).items():
         events.append({
+            "event_id": f"tool-start-{turn_id}-{node_id}",
+            "event_type": "tool_call",
             "type": "tool_call",
             "name": "tool_call",
             "tool_id": tr.tool,
             "node_id": node_id,
+            "call_id": node_id,
             "trace_id": trace_id,
             "run_id": turn_id,
             "timestamp": time.time(),
             "status": "started",
         })
         events.append({
+            "event_id": f"tool-result-{turn_id}-{node_id}",
+            "event_type": "tool_result",
             "type": "tool_result",
             "name": "tool_result",
             "tool_id": tr.tool,
             "node_id": node_id,
+            "call_id": node_id,
             "trace_id": trace_id,
             "run_id": turn_id,
             "timestamp": time.time(),

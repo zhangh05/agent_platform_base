@@ -46,15 +46,10 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
     await use(await ctx.storageState());
     await ctx.dispose();
   },
-  workspaceId: [async ({ playwright }, use, workerInfo) => {
-    const workspaceId = `e2e_${process.pid}_${workerInfo.workerIndex}`;
-    const ctx = await authenticatedContext(playwright);
-    const created = await ctx.post("/api/workspaces", { data: { workspace_id: workspaceId } });
-    if (!created.ok()) {
-      throw new Error(`failed to create worker workspace ${workspaceId}: ${created.status()} ${await created.text()}`);
-    }
-    await use(workspaceId);
-    await ctx.dispose();
+  workspaceId: [async ({}, use) => {
+    // The product intentionally exposes one fixed workspace. User isolation is
+    // provided by the backend principal directory, not by a UI workspace picker.
+    await use("default");
   }, { scope: "worker" }],
   api: async ({ playwright }, use) => {
     const ctx = await authenticatedContext(playwright);
@@ -64,10 +59,9 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
 });
 
 export async function selectWorkspace(page: Page, workspaceId: string) {
-  const button = page.locator(`[data-testid="ws-${workspaceId}"]`);
-  await expect(button).toBeVisible({ timeout: 8_000 });
-  await button.click();
-  await expect(button).toHaveClass(/active/, { timeout: 5_000 });
+  expect(workspaceId).toBe("default");
+  await expect(page.getByTestId("btn-new-session")).toBeVisible({ timeout: 8_000 });
+  await expect(page.locator('[data-testid^="ws-"]')).toHaveCount(0);
 }
 
 export { expect };

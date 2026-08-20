@@ -12,8 +12,8 @@ def _probe(name: str, mode: str, callback: Callable[[], Any]) -> dict[str, Any]:
     try:
         details = callback()
         return {"name": name, "mode": mode, "status": "ok", "latency_ms": round((time.monotonic() - started) * 1000, 2), "details": details if isinstance(details, dict) else {}}
-    except Exception as exc:
-        return {"name": name, "mode": mode, "status": "error", "latency_ms": round((time.monotonic() - started) * 1000, 2), "message": str(exc)[:160], "details": {}}
+    except Exception:
+        return {"name": name, "mode": mode, "status": "error", "latency_ms": round((time.monotonic() - started) * 1000, 2), "message": f"{name}_unavailable", "details": {}}
 
 
 def _storage_probe() -> dict[str, Any]:
@@ -44,15 +44,26 @@ def _queue_probe() -> dict[str, Any]:
     return get_job_queue().health()
 
 
+def _event_bus_probe() -> dict[str, Any]:
+    from storage.event_bus import RedisEventBus, get_event_bus
+    bus = get_event_bus()
+    if isinstance(bus, RedisEventBus):
+        return {"redis": bool(bus.client.ping())}
+    return {"inprocess": True}
+
+
 def production_readiness() -> dict[str, Any]:
     from jobs.queue import queue_mode
     from storage.backend import backend_mode
     from storage.object_store import object_store_mode
     from jobs.worker import get_worker_state
+    import os
+    event_mode = os.environ.get("LZCORE_EVENT_BUS_MODE", "inprocess").strip().lower()
     components = [
         _probe("record_storage", backend_mode(), _storage_probe),
         _probe("object_storage", object_store_mode(), _object_probe),
         _probe("job_queue", queue_mode(), _queue_probe),
+        _probe("event_bus", event_mode, _event_bus_probe),
     ]
     worker = get_worker_state()
     worker_ok = worker.get("healthy", True) is not False

@@ -302,6 +302,9 @@ export interface RuntimeEvent {
   summary?: string;
   message?: string;
   tool_id?: string;
+  node_id?: string;
+  call_id?: string;
+  ok?: boolean;
   level?: string;
   error?: string;
   /** v2.1.3: Event timing and metadata */

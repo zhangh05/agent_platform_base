@@ -34,18 +34,18 @@ from core.tools.tool_namespace import TOOL_NAMESPACE
 _CAPABILITIES: tuple[dict, ...] = (
     {
         "capability_id": "workspace_read",
-        "display_name": "Workspace Read",
-        "description": "Read or inspect workspace files and artifacts.",
+        "display_name": "工作区读取",
+        "description": "读取并检查当前用户工作区中的文件与任务产物。",
         "module_ids": ("workspace",),
         "recommended_tool_ids": ("workspace.file", "workspace.artifact"),
-        "prompt_hints": ("Read workspace files before parsing domain content.",),
+        "prompt_hints": ("分析领域内容前，先读取工作区中的原始文件。",),
         "safety_notes": (),
         "status": "enabled",
     },
     {
         "capability_id": "knowledge_qa",
-        "display_name": "Knowledge QA",
-        "description": "Search and read indexed knowledge.",
+        "display_name": "知识问答",
+        "description": "检索并读取已经建立索引的知识内容。",
         "module_ids": ("knowledge",),
         "recommended_tool_ids": ("knowledge.manage",),
         "prompt_hints": (),
@@ -54,8 +54,8 @@ _CAPABILITIES: tuple[dict, ...] = (
     },
     {
         "capability_id": "memory_lookup",
-        "display_name": "Memory Lookup",
-        "description": "Search or inspect memory and profile facts.",
+        "display_name": "记忆检索",
+        "description": "检索当前用户的长期记忆、偏好和已确认事实。",
         "module_ids": ("memory",),
         "recommended_tool_ids": ("memory.manage",),
         "prompt_hints": (),
@@ -64,8 +64,8 @@ _CAPABILITIES: tuple[dict, ...] = (
     },
     {
         "capability_id": "report_drafting",
-        "display_name": "Report Drafting",
-        "description": "Render reports and save report artifacts.",
+        "display_name": "报告生成",
+        "description": "生成结构化报告，并保存为可下载的任务产物。",
         "module_ids": ("workspace",),
         "recommended_tool_ids": ("report.manage", "workspace.artifact"),
         "prompt_hints": (),
@@ -74,8 +74,8 @@ _CAPABILITIES: tuple[dict, ...] = (
     },
     {
         "capability_id": "runtime_diagnostics",
-        "display_name": "Runtime Diagnostics",
-        "description": "Inspect runtime health and diagnostics.",
+        "display_name": "运行检查",
+        "description": "检查平台运行状态、健康信息和诊断记录。",
         "module_ids": ("runtime",),
         "recommended_tool_ids": ("system.manage",),
         "prompt_hints": (),
@@ -84,35 +84,32 @@ _CAPABILITIES: tuple[dict, ...] = (
     },
     {
         "capability_id": "agent_delegation",
-        "display_name": "Agent Delegation",
-        "description": "Spawn sub-agents, list roles, run teams, fetch results.",
+        "display_name": "智能体协作",
+        "description": "派发独立子任务、组织协作并汇总执行结果。",
         "module_ids": ("runtime",),
         "recommended_tool_ids": (
             "agent.manage",
         ),
         "prompt_hints": (
-            "Delegate only when the task needs an independent investigation; use agent.manage(action=get) to fetch results.",
+            "仅在任务确实需要独立调查时派发子任务，并在完成后读取结果。",
         ),
         "safety_notes": (
-            "Sub-agents inherit workspace/session boundaries.",
-            "Do not spawn a sub-agent for a simple single-step lookup.",
+            "子智能体继承当前用户、工作区和会话边界。",
+            "简单的一步查询不应派发子智能体。",
         ),
         "status": "enabled",
     },
     {
         "capability_id": "browser",
-        "display_name": "Browser Automation",
-        "description": "Drive a Playwright browser: navigate, extract, "
-                       "screenshot, click.",
+        "display_name": "浏览器操作",
+        "description": "打开网页并执行导航、内容提取、截图和点击。",
         "module_ids": ("browser",),
         "recommended_tool_ids": ("browser.manage",),
         "prompt_hints": (
-            "Browser provides real-time web page content. Prefer it over "
-            "web.manage when interactive browsing is needed.",
+            "需要与网页交互时使用浏览器操作；只需检索公开信息时优先使用网络搜索。",
         ),
         "safety_notes": (
-            "Browser content comes from external sites; do not access "
-            "internal/login-walled URLs without permission."
+            "网页内容来自外部站点；未经授权不得访问内部或需要登录的地址。"
         ),
         "status": "enabled",
     },

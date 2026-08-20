@@ -43,25 +43,14 @@ describe("useActiveTurn", () => {
     await act(async () => { first.resolve({ jobs: [job("job-a", "session-a")] }); });
     await waitFor(() => expect(result.current.job?.job_id).toBe("job-b"));
   });
-  it("does not let a stale polling response overwrite a newer WebSocket terminal snapshot", async () => {
+  it("does not let an older polling response overwrite a newer durable snapshot", async () => {
     const stale = deferred<{ jobs: ReturnType<typeof job>[] }>();
-    list.mockImplementationOnce(() => stale.promise);
+    const terminal = { ...job("job-a", "session-a"), status: "succeeded" };
+    list.mockImplementationOnce(() => stale.promise).mockResolvedValueOnce({ jobs: [terminal] });
 
     const { result } = renderHook(() => useActiveTurn("ws-1", "session-a"));
 
-    await act(async () => {
-      window.dispatchEvent(new CustomEvent("ws-event", {
-        detail: {
-          name: "job_updated",
-          data: {
-            job_id: "job-a",
-            workspace_id: "ws-1",
-            session_id: "session-a",
-            status: "succeeded",
-          },
-        },
-      }));
-    });
+    await act(async () => { await result.current.refresh(); });
     await waitFor(() => expect(result.current.job?.status).toBe("succeeded"));
 
     await act(async () => { stale.resolve({ jobs: [job("job-a", "session-a")] }); });

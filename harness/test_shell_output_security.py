@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-PROJECT_ROOT = Path("/Users/zhangh01/Desktop/lzcore")
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_run_shell_blocks_api_keys_and_tokens():

@@ -13,8 +13,8 @@ const sampleResult: AgentResult = {
   final_response: "OSPF 是一种链路状态路由协议。",
   events: [
     { event_id: "evt-1", event_type: "turn_started", summary: "轮次启动" },
-    { event_id: "call-1", event_type: "tool_call", tool_id: "web.manage", summary: "搜索 OSPF 协议" },
-    { event_id: "evt-3", event_type: "tool_result", tool_id: "web.manage", summary: "Found 3 results" },
+    { event_id: "tool-start-turn_001-call-1", event_type: "tool_call", node_id: "call-1", call_id: "call-1", tool_id: "web.manage", summary: "搜索 OSPF 协议" },
+    { event_id: "tool-result-turn_001-call-1", event_type: "tool_result", node_id: "call-1", call_id: "call-1", tool_id: "web.manage", summary: "Found 3 results", timestamp: 1782612001 },
   ],
   trace_id: "trace_abc123",
   session_id: "sess_xyz",
@@ -94,8 +94,14 @@ describe("RuntimeEventTimeline", () => {
     expect(screen.getByTestId("timeline-empty")).toBeInTheDocument();
   });
 
-  it("shows workspace metadata", () => {
+  it("does not expose the fixed workspace label", () => {
     render(<RuntimeEventTimeline messages={messagesFor(sampleResult)} />);
-    expect(screen.getByText("default")).toBeInTheDocument();
+    expect(screen.queryByText("default")).not.toBeInTheDocument();
+  });
+
+  it("coalesces start and result events into one tool row", () => {
+    render(<RuntimeEventTimeline messages={messagesFor(sampleResult)} />);
+    fireEvent.click(screen.getByText(/turn_001/).closest(".rt-card-bar")!);
+    expect(screen.getAllByText("manage")).toHaveLength(1);
   });
 });

@@ -3,23 +3,28 @@
  *
  * 验证:
  *  1. 发一条消息 → 立刻看到用户气泡
- *  2. 模拟后端返回 (会经过 sessionsApi.messages)
- *  3. F5 刷新 → 同一个会话的历史仍在
- *
- * 当前 backend 有 bug: agent.run 完成后 run_id 不会被 append 到
- * session.run_ids, 所以 /api/sessions/<id>/messages 永远返回 [].
- * 但 plan-C 的 localStorage 持久化不依赖 backend — 这是
- * 核心要验证的不变量.
+ *  2. 模拟后端持久消息投影 (会经过 sessionsApi.messages)
+ *  3. F5 刷新 → 同一个会话从后端恢复历史
  */
 import { test, expect, selectWorkspace } from "./fixtures";
 
 test("10. workbench history persists across browser refresh", async ({ page, api, workspaceId }) => {
-  // 确保 /messages 不影响测试 (返回空, localStorage 兜底)
+  // Exercise the HTTP fallback deterministically; the request below is mocked
+  // and the persistence assertion is transport-independent.
+  await page.addInitScript(() => {
+    class UnavailableWebSocket {
+      constructor() { throw new Error("e2e websocket unavailable"); }
+    }
+    Object.defineProperty(window, "WebSocket", { value: UnavailableWebSocket, configurable: true });
+  });
+  const durableMessages: Array<Record<string, unknown>> = [];
+  // Emulate the backend-owned durable message projection. Refresh recovery
+  // must not depend on a browser-local copy.
   await page.route("**/api/sessions/**/messages**", async (route) => {
     await route.fulfill({
       status: 200,
       contentType: "application/json",
-      body: JSON.stringify({ ok: true, messages: [], count: 0 }),
+      body: JSON.stringify({ ok: true, messages: durableMessages, count: durableMessages.length }),
     });
   });
 
@@ -27,6 +32,17 @@ test("10. workbench history persists across browser refresh", async ({ page, api
   await page.route("**/api/agent/message**", async (route) => {
     const body = JSON.parse(route.request().postData() || "{}");
     const turnId = `turn-${Date.now()}`;
+    const createdAt = new Date().toISOString();
+    durableMessages.splice(0, durableMessages.length,
+      {
+        message_id: `${turnId}:user`, role: "user", content: body.message || "",
+        created_at: createdAt, run_id: turnId,
+      },
+      {
+        message_id: `${turnId}:assistant`, role: "assistant", content: `echo: ${body.message || ""}`,
+        created_at: createdAt, run_id: turnId, status: "ok",
+      },
+    );
     await route.fulfill({
       status: 200,
       contentType: "application/json",
@@ -76,15 +92,12 @@ test("10. workbench history persists across browser refresh", async ({ page, api
   await page.getByTestId("btn-send").click();
 
   // 等用户气泡出现
-  const userMsg = page.locator('.chat-msg.user').filter({ hasText: "这条消息刷新后应该还在" });
+  const userMsg = page.getByTestId("chat-user").filter({ hasText: "这条消息刷新后应该还在" });
   await expect(userMsg).toBeVisible({ timeout: 5_000 });
   // 等助手回应
-  const assistantMsg = page.locator(".chat-msg.assistant").last();
+  const assistantMsg = page.getByTestId("chat-assistant").last();
   await expect(assistantMsg).toBeVisible({ timeout: 5_000 });
   await expect(assistantMsg).toContainText("echo:");
-
-  // 检查持久化指示
-  await expect(page.getByTestId("wb-persisted-indicator")).toBeVisible();
 
   // F5 刷新
   await page.reload();
@@ -92,7 +105,5 @@ test("10. workbench history persists across browser refresh", async ({ page, api
   // 刷新后: 用户消息气泡仍可见
   await expect(userMsg).toBeVisible({ timeout: 8_000 });
   // 助手回应也仍在
-  await expect(page.locator(".chat-msg.assistant").filter({ hasText: "echo:" })).toBeVisible();
-  // 持久化指示仍显示
-  await expect(page.getByTestId("wb-persisted-indicator")).toBeVisible();
+  await expect(page.getByTestId("chat-assistant").filter({ hasText: "echo:" })).toBeVisible();
 });

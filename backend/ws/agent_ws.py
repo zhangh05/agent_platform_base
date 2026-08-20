@@ -20,12 +20,13 @@ Message protocol:
 
 import json
 import logging
+import os
 import queue
 import threading
 import time
-import traceback
 from flask import request
 from flask_sock import Sock
+from simple_websocket.errors import ConnectionClosed
 from backend.core.auth import is_allowed_browser_origin
 
 sock = Sock()
@@ -33,6 +34,39 @@ _log = logging.getLogger("ws.agent")
 _MAX_WS_INPUT_LENGTH = 262144  # 256KB — supports long user inputs
 _MAX_WS_METADATA_JSON = 16384
 _WS_HEARTBEAT_INTERVAL_SECONDS = 2.0
+_WS_FIRST_FRAME_TIMEOUT_SECONDS = max(1.0, float(os.getenv("LZCORE_WS_FIRST_FRAME_TIMEOUT", "5")))
+# The bundled synchronous web service has 16 request threads. Keep four free
+# for auth, polling and cancellation even under an active-turn surge.
+_WS_MAX_CONNECTIONS = max(1, int(os.getenv("LZCORE_WS_MAX_CONNECTIONS", "12")))
+_WS_MAX_CONNECTIONS_PER_IP = max(1, int(os.getenv("LZCORE_WS_MAX_CONNECTIONS_PER_IP", "8")))
+_ws_connection_counts: dict[str, int] = {}
+_ws_connection_total = 0
+_ws_connection_lock = threading.Lock()
+
+
+def _acquire_ws_slot(client_ip: str) -> bool:
+    global _ws_connection_total
+    key = str(client_ip or "unknown")
+    with _ws_connection_lock:
+        if _ws_connection_total >= _WS_MAX_CONNECTIONS:
+            return False
+        if _ws_connection_counts.get(key, 0) >= _WS_MAX_CONNECTIONS_PER_IP:
+            return False
+        _ws_connection_total += 1
+        _ws_connection_counts[key] = _ws_connection_counts.get(key, 0) + 1
+        return True
+
+
+def _release_ws_slot(client_ip: str) -> None:
+    global _ws_connection_total
+    key = str(client_ip or "unknown")
+    with _ws_connection_lock:
+        current = _ws_connection_counts.get(key, 0)
+        if current <= 1:
+            _ws_connection_counts.pop(key, None)
+        else:
+            _ws_connection_counts[key] = current - 1
+        _ws_connection_total = max(0, _ws_connection_total - 1)
 
 
 def _heartbeat_payload(started_at: float, now: float | None = None) -> dict:
@@ -200,6 +234,11 @@ def register_ws_routes(app):
             ws.send(json.dumps({"type": "error", "message": "csrf_origin_denied"}))
             return
 
+        client_ip = str(request.headers.get("X-Forwarded-For", "")).split(",", 1)[0].strip() or str(request.remote_addr or "")
+        if not _acquire_ws_slot(client_ip):
+            ws.send(json.dumps({"type": "error", "message": "connection_limit_exceeded"}))
+            return
+
         # When auth is enabled, enforce token on the first message
         _auth_checked = False
         authenticated_username = ""
@@ -209,10 +248,12 @@ def register_ws_routes(app):
         active_cancel_event = None
 
         try:
+            first_frame = True
             while True:
-                raw = ws.receive(timeout=300)
+                raw = ws.receive(timeout=_WS_FIRST_FRAME_TIMEOUT_SECONDS if first_frame else 300)
                 if raw is None:
                     break
+                first_frame = False
 
                 try:
                     msg = json.loads(raw)
@@ -325,6 +366,9 @@ def register_ws_routes(app):
                     metadata = {}
                 from backend.core.agent_contract import normalize_metadata
                 metadata = normalize_metadata(metadata, transport="websocket", stream_mode="live")
+                if session_id and not str(metadata.get("client_request_id") or "").strip():
+                    ws.send(json.dumps({"type": "error", "message": "client_request_id_required"}, ensure_ascii=True))
+                    continue
 
                 # Event queue for thread-safe communication
                 event_queue = queue.Queue(maxsize=1000)
@@ -394,14 +438,19 @@ def register_ws_routes(app):
                         pass
                 active_cancel_event = None
 
-        except Exception as e:
+        except (ConnectionClosed, TimeoutError):
+            # Normal browser close/refresh or an idle unauthenticated handshake.
+            return
+        except Exception:
+            _log.warning("WebSocket transport failed", exc_info=True)
             try:
-                ws.send(json.dumps({"type": "error", "message": f"WebSocket error: {str(e)[:200]}"}, ensure_ascii=True))
+                ws.send(json.dumps({"type": "error", "message": "websocket_transport_error"}, ensure_ascii=True))
             except Exception:
                 pass
         finally:
             if ws_key:
                 _drop_broadcast_client(ws_key, ws)
+            _release_ws_slot(client_ip)
 
     return app
 
@@ -703,8 +752,10 @@ def _run_agent_thread(
         })
 
     except Exception as e:
-        traceback.print_exc()
-        error_holder["error"] = str(e)[:500]
+        _log.exception("agent websocket turn failed")
+        from storage.redaction import redact_text
+        safe_error = redact_text(str(e))[:500] or "agent_runtime_error"
+        error_holder["error"] = "agent_runtime_error"
         if job_id:
             try:
                 from jobs.lifecycle import finish_claimed_session_turn, finish_session_turn_snapshot
@@ -714,7 +765,7 @@ def _run_agent_thread(
                     session_id,
                     client_request_id=client_request_id,
                     ok=False,
-                    error=str(e),
+                    error=safe_error,
                 )
                 finish_claimed_session_turn(
                     workspace_id,
@@ -722,11 +773,11 @@ def _run_agent_thread(
                     client_request_id=client_request_id,
                     job_id=job_id,
                     ok=False,
-                    error=str(e),
+                    error=safe_error,
                 )
             except Exception:
                 _log.exception("unable to persist failed live turn job=%s", job_id)
-        put_terminal({"type": "error", "message": str(e)[:500]})
+        put_terminal({"type": "error", "message": "agent_runtime_error"})
     finally:
         if job_id:
             with _active_turns_lock:

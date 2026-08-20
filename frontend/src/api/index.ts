@@ -218,9 +218,7 @@ export const sessionsApi = {
     ),
   /**
    * GET /api/sessions/<id>/messages — chat history reconstructed from
-   * run records. Used by the workbench for cross-device refresh
-   * (plan-C). Returns [] when no runs are linked to the session
-   * (current backend behaviour; see types.SessionMessage).
+   * durable message records. Used by the workbench for cross-device refresh.
    */
   messages: (
     session_id: string,

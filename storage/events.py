@@ -7,11 +7,13 @@ import queue
 import threading
 import time
 import uuid
+import logging
 from contextlib import contextmanager
 
 
 _lock = threading.RLock()
 _subscribers: dict[str, dict[str, queue.Queue]] = {}
+_log = logging.getLogger(__name__)
 
 
 def _workspace_event_key(workspace_id: str) -> str:
@@ -47,7 +49,7 @@ def publish(workspace_id: str, domain: str, action: str, entity_id: str = "") ->
         if not isinstance(bus, InProcessEventBus):
             bus.publish(f"workspace:{event_key}", json.loads(payload))
     except Exception:
-        pass
+        _log.warning("workspace event publish failed domain=%s action=%s", domain, action, exc_info=True)
 
 
 @contextmanager
@@ -88,6 +90,9 @@ def subscribe(workspace_id: str):
             with _lock:
                 _subscribers.setdefault(event_key, {})[subscriber_id] = subscriber
     except Exception:
+        import os
+        if os.environ.get("LZCORE_EVENT_BUS_MODE", "inprocess").strip().lower() == "redis":
+            raise
         with _lock:
             _subscribers.setdefault(event_key, {})[subscriber_id] = subscriber
     try:

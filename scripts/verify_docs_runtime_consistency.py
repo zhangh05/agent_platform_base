@@ -70,6 +70,11 @@ def main() -> int:
         check((ROOT / target).exists(), f"README link exists: {target}")
 
     combined_docs = "\n".join(read(path) for path in required_docs)
+    design = read("DESIGN.md")
+    production_compose = read("deployment/compose.production.yml")
+    check("当前 13 个能力" not in design, "DESIGN does not pin a stale capability count")
+    check("tool_execution_outcome" in design, "DESIGN separates task and tool outcomes")
+    check("LZCORE_EVENT_BUS_MODE: redis" in production_compose, "production profile enables Redis event bus")
     required_current_refs = [
         "/api/agent/message",
         "WebSocket",

@@ -1,20 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { jobsApi } from "../api";
-import type { ActiveTurnSnapshot, JobItem } from "../types";
-
-type JobBroadcast = {
-  type?: string;
-  name?: string;
-  data?: {
-    job_id?: string;
-    workspace_id?: string;
-    session_id?: string;
-    status?: string;
-    title?: string;
-    progress?: JobItem["progress"];
-    active_turn?: ActiveTurnSnapshot;
-  };
-};
+import type { JobItem } from "../types";
 
 function belongsToSession(job: JobItem, sessionId: string): boolean {
   return job.job_type === "agent_run"
@@ -24,9 +10,9 @@ function belongsToSession(job: JobItem, sessionId: string): boolean {
 /**
  * Keeps the current session's durable runtime snapshot in sync.
  *
- * WebSocket broadcasts provide immediate updates. A low-frequency fetch is
- * retained only while a job is running so refreshes and missed broadcasts
- * recover without replaying the user request.
+ * Durable job snapshots are authoritative. Polling is active only while a turn
+ * is running, which keeps refresh recovery reliable without holding a second
+ * page-lifetime WebSocket or SSE connection per browser tab.
  */
 export function useActiveTurn(workspaceId: string | null, sessionId: string | null) {
   const [job, setJob] = useState<JobItem | null>(null);
@@ -61,40 +47,6 @@ export function useActiveTurn(workspaceId: string | null, sessionId: string | nu
       refreshEpochRef.current += 1;
     };
   }, [refresh]);
-
-  useEffect(() => {
-    if (!workspaceId || !sessionId) return;
-    const onWsEvent = (event: Event) => {
-      const detail = (event as CustomEvent<JobBroadcast>).detail;
-      if (detail?.name !== "job_updated") return;
-      const data = detail.data || {};
-      if (data.workspace_id !== workspaceId || data.session_id !== sessionId) return;
-      // A WebSocket projection is newer than any already-dispatched list request.
-      // Invalidate those responses so a stale running snapshot cannot resurrect
-      // the turn after its terminal broadcast.
-      refreshEpochRef.current += 1;
-      setJob((current) => ({
-        ...(current || {
-          job_id: String(data.job_id || ""),
-          job_type: "agent_run",
-          title: String(data.title || ""),
-          status: String(data.status || "running"),
-          workspace_id: workspaceId,
-          created_at: new Date().toISOString(),
-          payload: { session_id: sessionId },
-        }),
-        job_id: String(data.job_id || current?.job_id || ""),
-        status: String(data.status || current?.status || "running"),
-        progress: data.progress ?? current?.progress,
-        metadata: {
-          ...(current?.metadata || {}),
-          active_turn: data.active_turn || current?.metadata?.active_turn,
-        },
-      }));
-    };
-    window.addEventListener("ws-event", onWsEvent);
-    return () => window.removeEventListener("ws-event", onWsEvent);
-  }, [sessionId, workspaceId]);
 
   useEffect(() => {
     if (job?.status !== "running") return;

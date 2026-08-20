@@ -304,8 +304,11 @@ def _merge_result_projection(run_id: str, ws_id: str, result, context) -> None:
         ):
             if key in context.metadata:
                 metadata.setdefault(key, context.metadata[key])
+    result_ok = bool(result_dict.get("ok", False)) and not bool(result_dict.get("errors"))
+    execution_outcome = str(metadata.get("execution_outcome") or ("complete" if result_ok else "failed"))
+    tool_execution_outcome = str(metadata.get("tool_execution_outcome") or ("complete" if result_ok else "failed"))
     record.update({
-        "ok": bool(result_dict.get("ok", True)),
+        "ok": result_ok,
         "run_id": result_dict.get("turn_id") or run_id,
         "turn_id": result_dict.get("turn_id") or run_id,
         "trace_id": result_dict.get("trace_id") or record.get("trace_id", ""),
@@ -316,17 +319,16 @@ def _merge_result_projection(run_id: str, ws_id: str, result, context) -> None:
         "timeline_summary": result_dict.get("timeline_summary") or metadata.get("timeline_summary") or {},
         "warnings": [redact_text(str(w))[:300] for w in list(result_dict.get("warnings") or [])[:20]],
         "warning_count": len(list(result_dict.get("warnings") or [])),
-        "execution_outcome": str(metadata.get("execution_outcome") or "complete"),
-        "tool_execution_outcome": str(metadata.get("tool_execution_outcome") or "complete"),
+        "execution_outcome": execution_outcome,
+        "tool_execution_outcome": tool_execution_outcome,
     })
     if isinstance(record.get("result_counts"), dict):
         record["result_counts"]["warnings"] = record["warning_count"]
     # v3.9.1: keep `status` consistent with `ok`. If the initial write (via
     # _safe_status) computed a wrong value because it read skill_results
     # instead of the real AgentResult, correct it now that we have the truth.
-    is_ok = bool(result_dict.get("ok", True))
+    is_ok = result_ok
     has_errors = bool(result_dict.get("errors"))
-    execution_outcome = str(metadata.get("execution_outcome") or "")
     if execution_outcome == "unknown":
         record["status"] = "unknown"
     elif not is_ok or has_errors:

@@ -40,9 +40,10 @@ class SessionManager:
     def _principal_key() -> str:
         from storage.principal import current_storage_principal, principal_storage_key
         principal = current_storage_principal()
-        # Unauthenticated/internal callers retain the legacy shared storage
-        # namespace. Authenticated callers use the same stable key as paths.py.
-        return principal_storage_key(principal) if principal else "__legacy__"
+        # Request paths always bind a real user or the explicit API-token
+        # principal. Direct maintenance/test invocations use a named internal
+        # scope rather than falling into a legacy user namespace.
+        return principal_storage_key(principal) if principal else "system-internal"
 
     def _key(self, session_id: str, workspace_id: str) -> tuple[str, str, str]:
         return (self._principal_key(), str(workspace_id), str(session_id))

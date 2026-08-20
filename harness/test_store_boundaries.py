@@ -208,9 +208,12 @@ class TestRunStoreWriteSafety:
         from storage.redaction import redact_text, redact_value
 
         unix_text = 'File "/Users/zhangh01/.workbuddy/python/lib/json/__init__.py", line 1'
+        server_text = 'File "/root/lzcore/backend/main.py", line 2; cache=/var/lib/lzcore/state.json'
         win_text = r'File "C:\Users\zhangh01\AppData\Local\Temp\run.py", line 1'
 
         assert "/Users/" not in redact_text(unix_text)
+        assert "/root/" not in redact_text(server_text)
+        assert "/var/" not in redact_text(server_text)
         assert "C:\\Users\\" not in redact_text(win_text)
 
         redacted = redact_value({"events": [{"traceback": unix_text}], "error": win_text})

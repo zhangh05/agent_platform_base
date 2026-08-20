@@ -201,7 +201,8 @@ def _claim_session_turn_request(
     """Claim exactly one durable execution right for a client request.
 
     The existing session lock serializes registry lookup and job snapshot
-    creation. Empty client ids deliberately retain legacy behaviour.
+    creation. Transport boundaries require an idempotency key; the empty-key
+    branch remains only for explicit in-process maintenance calls.
     """
     if not session_id:
         return SessionTurnClaim()

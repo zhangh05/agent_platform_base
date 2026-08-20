@@ -66,12 +66,11 @@ function trackingStats(result?: AgentResult) {
   };
 }
 
-function toolCallSummary(calls: ToolCallResult[]): string {
+function toolCallSummary(calls: ToolCallResult[], taskCompleted: boolean): string {
   const failed = calls.filter((tc) => !tc.ok).length;
-  const recovered = calls.some((tc) => !tc.ok && calls.some((other) => other.ok && other.tool_id === tc.tool_id));
   const primary = calls.find((tc) => tc.ok) ?? calls[0];
   const label = primary ? toolLabel(primary.tool_id) : "工具调用";
-  if (failed > 0 && recovered) return `${label}已完成，${failed} 次内部重试已自动恢复`;
+  if (failed > 0 && taskCompleted) return `${label}已完成；${failed} 次调用失败未影响任务结论`;
   if (failed > 0) return `${label}需要关注，${failed} 次调用未完成`;
   return `${label}已完成`;
 }
@@ -99,10 +98,7 @@ export const ResultInline = memo(function ResultInline({
   const tracking = trackingStats(result);
   const toolCalls = result?.tool_calls ?? [];
   const actionCount = toolCalls.length;
-  const recoveredToolIds = new Set(toolCalls.filter((tc) => tc.ok).map((tc) => tc.tool_id));
-  const failedToolCount = toolCalls.filter(
-    (tc) => !tc.ok && !recoveredToolIds.has(tc.tool_id),
-  ).length;
+  const failedToolCount = toolCalls.filter((tc) => !tc.ok).length;
   const successToolCount = toolCalls.filter((tc) => tc.ok).length;
   const contextCompacted = Boolean(result?.metadata?.context_compacted);
   const outputTruncated = Boolean(result?.metadata?.output_truncated);
@@ -205,7 +201,7 @@ export const ResultInline = memo(function ResultInline({
             </span>
           </div>
           <span className="result-overview-meta">
-            {isUnknownOutcome ? "写入已冻结，等待受控核对" : failedToolCount > 0 ? `${failedToolCount} 项需要跟进` : toolCalls.length > successToolCount ? `${successToolCount} 项执行成功，已自动恢复` : successToolCount > 0 ? `${successToolCount} 项执行成功` : "可将结论沉淀到记忆或知识库"}
+            {isUnknownOutcome ? "写入已冻结，等待受控核对" : failedToolCount > 0 && isFailed ? `${failedToolCount} 项需要跟进` : failedToolCount > 0 ? `${successToolCount} 项成功，${failedToolCount} 次失败未影响任务完成` : successToolCount > 0 ? `${successToolCount} 项执行成功` : "可将结论沉淀到记忆或知识库"}
           </span>
         </section>
       ) : (
@@ -250,7 +246,7 @@ export const ResultInline = memo(function ResultInline({
       {((result?.tool_calls) ?? []).length > 0 && (
         <div className="chat-tool-summary" data-testid="inline-tool-summary">
           <IconBolt size={10} className="inline-icon-accent" />
-          <span>{toolCallSummary(result?.tool_calls ?? [])}</span>
+          <span>{toolCallSummary(result?.tool_calls ?? [], Boolean(result?.ok && executionOutcome !== "unknown"))}</span>
           <details className="inline-technical-details">
             <summary>技术详情</summary>
             <div className="chat-tool-calls">
@@ -273,7 +269,7 @@ export const ResultInline = memo(function ResultInline({
             <span className="action-trace-title">动作跟踪</span>
             <span className="action-trace-pill">{actionCount} 个工具</span>
             <span className="action-trace-pill ok">{successToolCount} 成功</span>
-            {failedToolCount > 0 && <span className="action-trace-pill danger">{failedToolCount} 需关注</span>}
+            {failedToolCount > 0 && <span className={`action-trace-pill ${isFailed ? "danger" : "muted"}`}>{failedToolCount} 失败</span>}
             {retry.attempts > 0 && <span className="action-trace-pill warn">{retry.attempts} 次自动重试</span>}
             {validationCorrection.attempts > 0 && (
               <span className={`action-trace-pill ${validationCorrection.exhausted ? "danger" : "ok"}`}>

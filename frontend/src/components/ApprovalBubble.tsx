@@ -1,7 +1,6 @@
 import { memo, useEffect, useState, useRef, useCallback } from "react";
 import { useSessionStore } from "../stores/session";
-import { approvalApi, openApprovalStream } from "../api";
-import type { SSEConnection } from "../api/sse";
+import { approvalApi } from "../api";
 import { IconAlert, IconCheck, IconClose, IconClock } from "./Icon";
 import "./ApprovalBubble.css";
 
@@ -27,8 +26,8 @@ interface PendingApproval {
 /**
  * ApprovalBubble — small popup above the input bar for high-risk tool approval.
  *
- * SSE triggers immediate refreshes; a 5s poll remains as a disconnect-safe
- * fallback. The backend-provided expires_at value is authoritative; the
+ * A bounded poll discovers pending approvals without reserving a page-lifetime
+ * SSE worker. The backend-provided expires_at value is authoritative; the
  * browser never turns a display timer into an approval decision.
  */
 export const ApprovalBubble = memo(function ApprovalBubble({ onResolved }: { onResolved?: (decision: "approve" | "reject") => void }) {
@@ -59,17 +58,14 @@ export const ApprovalBubble = memo(function ApprovalBubble({ onResolved }: { onR
     setSecondsLeft(0);
   }, [currentSessionId, currentWorkspaceId]);
 
-  // SSE gives immediate invalidation; low-frequency polling survives disconnects.
+  // Approval discovery is intentionally HTTP polling. A persistent stream per
+  // tab consumed scarce synchronous web workers even when no approval existed.
   useEffect(() => {
     if (!currentSessionId || !currentWorkspaceId) return;
 
     let cancelled = false;
-    let es: SSEConnection | null = null;
     let pollTimer: ReturnType<typeof setInterval> | null = null;
     let pollInFlight = false;
-    let authorized = false;
-    let streamDegraded = false;
-    let streamSyncRequested = false;
 
     const stopPoll = () => {
       if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
@@ -79,13 +75,6 @@ export const ApprovalBubble = memo(function ApprovalBubble({ onResolved }: { onR
       if (!pollTimer) pollTimer = setInterval(() => { void poll(); }, 5000);
     };
 
-    const requestSnapshot = () => {
-      streamSyncRequested = true;
-      if (!pollInFlight) {
-        streamSyncRequested = false;
-        void poll();
-      }
-    };
     const poll = async () => {
       if (pollInFlight) return;
       pollInFlight = true;
@@ -96,8 +85,6 @@ export const ApprovalBubble = memo(function ApprovalBubble({ onResolved }: { onR
         }
         const data = await approvalApi.pending(currentSessionId, currentWorkspaceId);
         if (cancelled) return;
-        authorized = true;
-        if (streamDegraded) startPoll();
         if (data.ok && data.pending?.length > 0) {
           const p = (data.pending as unknown as PendingApproval[]).find((item) => (
             item.session_id === currentSessionId && !resolvedIdsRef.current.has(item.approval_id)
@@ -124,32 +111,17 @@ export const ApprovalBubble = memo(function ApprovalBubble({ onResolved }: { onR
           : 0;
         if (status === 401) stopPoll();
       }
-      finally {
-        pollInFlight = false;
-        if (!cancelled && streamSyncRequested) {
-          streamSyncRequested = false;
-          void poll();
-        }
-      }
+      finally { pollInFlight = false; }
     };
 
-    // Initial check. Healthy SSE events trigger later checks; polling is only
-    // a fallback while an approval is active or the stream is disconnected.
+    // Poll continuously while the workbench session is open. Five seconds is
+    // fast enough for a human approval gate and does not pin a server thread.
     void poll();
-    try {
-      es = openApprovalStream(currentWorkspaceId, (event) => {
-        if (!resolvingRef.current && event.workspace_id === currentWorkspaceId && (event.kind === "stream_ready" || event.session_id === currentSessionId)) {
-          requestSnapshot();
-        }
-      }, () => { streamDegraded = true; if (authorized) startPoll(); });
-    } catch {
-      es = null;
-    }
+    startPoll();
 
     return () => {
       cancelled = true;
       stopPoll();
-      es?.close();
     };
   }, [currentSessionId, currentWorkspaceId]);
 

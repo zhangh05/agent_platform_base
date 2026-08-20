@@ -6,6 +6,7 @@ import time, sys, os, traceback
 from jobs.schemas import JobRecord, JobEvent
 from jobs.store import get_job, update_job, append_event, append_log, claim_job_for_execution
 from jobs.manager import mark_succeeded, mark_failed, mark_cancelled, update_progress
+from storage.redaction import redact_text
 
 
 def run_job(ws_id: str, job_id: str):
@@ -36,7 +37,7 @@ def run_job(ws_id: str, job_id: str):
             "artifact_count": len(final.output_artifacts) if final else 0,
         })
     except Exception as e:
-        error_msg = str(e)[:300]
+        error_msg = redact_text(str(e))[:300] or "job_execution_failed"
         mark_failed(ws_id, job_id, error_msg)
         append_log(ws_id, job_id, f"Job failed: {error_msg}", level="error")
 
@@ -59,17 +60,29 @@ def _run_agent_job(rec: JobRecord):
         metadata={"intent": payload.pop("intent", ""), "job_id": jid},
     )
     result_dict = result.to_dict()
+    result_ok = bool(result_dict.get("ok")) and not bool(result_dict.get("errors"))
     # Update job with run info
     update_job(ws, jid, {
         "run_ids": [result_dict.get("run_id", "")],
         "trace_ids": [result_dict.get("trace_id", "")],
         "output_artifacts": result_dict.get("output_artifacts", []),
         "report_artifacts": result_dict.get("report_artifacts", []),
-        "result_summary": {"ok": result_dict.get("ok")},
+        "result_summary": {
+            "ok": result_ok,
+            "execution_outcome": str((result_dict.get("metadata") or {}).get("execution_outcome") or ("complete" if result_ok else "failed")),
+            "tool_execution_outcome": str((result_dict.get("metadata") or {}).get("tool_execution_outcome") or ("complete" if result_ok else "failed")),
+        },
     })
-    append_event(ws, jid, JobEvent(job_id=jid, workspace_id=ws,
-                 event_type="job_run_finished", run_id=result_dict.get("run_id", ""),
-                 message=f"Agent run completed"))
+    append_event(ws, jid, JobEvent(
+        job_id=jid,
+        workspace_id=ws,
+        event_type="job_run_finished" if result_ok else "job_run_failed",
+        run_id=result_dict.get("run_id", ""),
+        message="Agent run completed" if result_ok else "Agent run failed",
+    ))
+    if not result_ok:
+        raw_error = str((result_dict.get("errors") or ["agent_run_failed"])[0])
+        mark_failed(ws, jid, redact_text(raw_error)[:300] or "agent_run_failed")
 
 def _run_export_report(rec: JobRecord):
     ws = rec.workspace_id
@@ -103,7 +116,7 @@ def _run_export_report(rec: JobRecord):
         else:
             mark_failed(ws, jid, result.error)
     except Exception as e:
-        mark_failed(ws, jid, str(e))
+        mark_failed(ws, jid, redact_text(str(e))[:300] or "report_generation_failed")
 
 
 def _run_knowledge_index(rec: JobRecord):

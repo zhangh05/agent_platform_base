@@ -102,3 +102,18 @@ def test_worker_fences_reclaimed_user_job_under_creator_principal(monkeypatch, t
     assert queue.acked and queue.acked[0].principal == "alice"
     assert current and current.status == "failed"
     assert current.metadata["active_turn"]["unknown_outcome"]["error_code"] == "WORKER_LEASE_EXPIRED"
+
+
+def test_redis_worker_does_not_take_global_filesystem_lock(monkeypatch):
+    import jobs.worker as worker
+
+    class _IdleQueue:
+        def reclaim_stale(self, _seconds): return 0
+        def claim(self, _worker_id): return None
+
+    monkeypatch.setenv("LZCORE_QUEUE_MODE", "redis")
+    monkeypatch.setattr("jobs.queue.get_job_queue", lambda: _IdleQueue())
+    monkeypatch.setattr(worker, "FileLock", lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("global file lock used")))
+    monkeypatch.setattr(worker, "_write_state", lambda _state: None)
+
+    assert worker.run_once()["status"] == "idle"
