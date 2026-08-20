@@ -3340,12 +3340,12 @@ class QueryLoop:
                 extra_results.append(r)
                 continue
             # v3.11: ensure errors are visible to the LLM even when r.output is empty
-            tool_payload = dict(r.output) if r.output else {}
+            tool_payload = redact_tool_output(dict(r.output) if r.output else {})
             if not tool_payload.get("ok", True) and r.error and not tool_payload.get("errors"):
-                tool_payload["errors"] = [r.error]
+                tool_payload["errors"] = [_redact_tool_error(r.error)]
             if tool_payload.get("ok", True) and r.error:
                 tool_payload["ok"] = False
-                tool_payload["errors"] = [r.error]
+                tool_payload["errors"] = [_redact_tool_error(r.error)]
             canonical_tool_name = r.tool_name.replace("__", ".")
             is_complete_text_artifact = (
                 tool_payload.get("content_complete") is True
@@ -3392,6 +3392,7 @@ class QueryLoop:
                 }
                 for r in extra_results
             ]
+            payload = redact_tool_output(payload)
             output_str = _json_compact(
                 payload,
                 max_chars=min(

@@ -262,3 +262,22 @@ def test_streaming_tool_executor_redacts_secret_in_direct_runtime_exception():
     ).execute([LLMToolCall(id="call-1", name="web.manage", arguments={})]))[0]
     assert "sk-test-secret" not in str(result.error)
     assert "redacted" in str(result.error).lower()
+
+
+def test_queryloop_redacts_tool_result_again_before_model_message():
+    from agent.llm.schemas import LLMToolCall
+    from core.runtime_engine.models import SSOTRuntimeConfig
+    from core.runtime_engine.query_loop import QueryLoop, StreamingToolResult
+
+    loop = QueryLoop(SSOTRuntimeConfig(), {}, None)
+    messages = loop._append_tool_round(
+        [],
+        [LLMToolCall(id="call-1", name="web.manage", arguments={})],
+        [StreamingToolResult(
+            tool_name="web.manage", call_id="call-1", ok=True,
+            output={"ok": True, "body": "token=sk-test-secret-abcdefghijklmnopqrstuvwxyz"},
+        )],
+    )
+    content = str(messages[-1].content)
+    assert "sk-test-secret" not in content
+    assert "redacted" in content.lower()
