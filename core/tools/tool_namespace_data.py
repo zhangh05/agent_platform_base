@@ -74,7 +74,7 @@ NS_DATA = [
     ),
     (
         "web.manage", "web", "research", "multi", "Web 搜索/网页", "web.manage",
-        "Use proactively for current external facts, versions, standards, vendor behavior and vulnerabilities. Select authority_profile; search finds candidates, fetch verifies page content, deep_search combines both. Weather uses one precise location per call: resolve broad/all scopes explicitly and reconcile every requested location. Cite source titles and URLs, surface degraded results and disclose partial coverage.",
+        "Use proactively for current external facts, versions, standards, vendor behavior and vulnerabilities. Select authority_profile; search finds candidates, fetch verifies content, and deep_search combines both. Cite source titles and URLs; surface degraded results and partial coverage. Weather accepts one location or weather_batch with 2-10 explicit locations; partition larger scopes and reconcile every requested location.",
         "Do not use search snippets alone for precise operational claims or treat unattributed public content as authoritative.",
         "web.manage",
     ),

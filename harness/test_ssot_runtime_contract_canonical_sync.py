@@ -32,8 +32,9 @@ def test_web_weather_contract_exposes_forecast_arguments():
 
     schema = get_contract("web.manage").input_schema
     props = schema["properties"]
-    assert props["action"]["enum"] == ["search", "fetch", "weather", "deep_search"]
+    assert props["action"]["enum"] == ["search", "fetch", "weather", "weather_batch", "deep_search"]
     assert "location" in props
+    assert props["locations"]["maxItems"] == 10
     assert "days" in props
     assert props["days"]["description"].lower().find("forecast") >= 0
 

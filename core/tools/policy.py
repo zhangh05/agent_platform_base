@@ -146,11 +146,15 @@ class ToolPolicy:
         # Tool-level manifests supply defaults. A canonical action contract may
         # intentionally refine those defaults without being treated as drift.
         if manifest:
-            expected_risk = action_contract.get("risk_level", manifest.risk_level)
-            if spec.risk_level and expected_risk and spec.risk_level != expected_risk:
+            expected_tool_risk = manifest.risk_level
+            expected_action_risk = action_contract.get("risk_level", "")
+            allowed_declared_risks = {
+                value for value in (expected_tool_risk, expected_action_risk) if value
+            }
+            if spec.risk_level and spec.risk_level not in allowed_declared_risks:
                 _warn(
                     f"Tool {spec.tool_id}: ToolSpec risk={spec.risk_level} "
-                    f"!= canonical risk={expected_risk}"
+                    f"not in canonical risks={sorted(allowed_declared_risks)}"
                 )
             effective_risk = manifest.risk_level or spec.risk_level or "low"
             effective_approval = manifest.requires_approval

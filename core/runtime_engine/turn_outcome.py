@@ -8,9 +8,15 @@ def derive_tool_execution_outcome(tool_results: list[Any]) -> str:
     """Aggregate tool-attempt facts without claiming the user task outcome."""
     if any(bool(getattr(result, "execution_may_continue", False)) for result in tool_results):
         return "unknown"
+    partial_success = any(
+        bool((getattr(result, "output", None) or {}).get("partial"))
+        or str((getattr(result, "output", None) or {}).get("coverage_status") or "").lower() == "partial"
+        for result in tool_results
+        if isinstance(getattr(result, "output", None), dict)
+    )
     successful = sum(1 for result in tool_results if bool(getattr(result, "ok", False)))
     failed = len(tool_results) - successful
-    if successful and failed:
+    if partial_success or (successful and failed):
         return "partial"
     if failed:
         return "failed"

@@ -147,6 +147,10 @@ class BudgetController:
         )
         return max(0.0, min(total_remaining, tool_remaining) / 1000.0)
 
+    def remaining_node_capacity(self) -> int:
+        """Return how many execution nodes may still be reserved this turn."""
+        return max(0, int(self._budget.max_nodes) - int(self._nodes_used))
+
     def begin_execution(self) -> None:
         """Start a tool stage without charging prior LLM/context time."""
         if self._tool_stage_started_at is None:

@@ -79,6 +79,62 @@ def test_batch_compiler_uses_tool_declared_contract_and_preserves_scope():
     assert events == []
 
 
+def test_batch_compiler_collects_contiguous_scalar_arguments_in_bounded_chunks():
+    from core.runtime_engine.batch_compiler import compile_batchable_calls
+
+    registry = {"web.manage": {"metadata": {"batching": [{
+        "source_action": "weather",
+        "target_action": "weather_batch",
+        "group_by": ["days"],
+        "collect_arg": "location",
+        "collection_arg": "locations",
+        "max_batch_size": 3,
+    }]}}}
+    calls = [
+        LLMToolCall(
+            id=f"weather_{index}", name="web.manage",
+            arguments={"action": "weather", "location": city, "days": 10},
+        )
+        for index, city in enumerate(["上海", "南京", "杭州", "合肥", "宁波"])
+    ]
+
+    compiled, events = compile_batchable_calls(calls, registry)
+
+    assert [call.arguments for call in compiled] == [
+        {"action": "weather_batch", "days": 10, "locations": ["上海", "南京", "杭州"]},
+        {"action": "weather_batch", "days": 10, "locations": ["合肥", "宁波"]},
+    ]
+    assert [event["source_call_count"] for event in events] == [3, 2]
+
+    interleaved = [calls[0], LLMToolCall(
+        id="search", name="web.manage", arguments={"action": "search", "query": "天气"},
+    ), calls[1]]
+    unchanged, events = compile_batchable_calls(interleaved, registry)
+    assert unchanged == interleaved
+    assert events == []
+
+
+def test_canonical_weather_contract_compiles_25_locations_to_three_calls():
+    from agent.runtime.ssot_runtime import _build_ssot_runtime_tool_registry
+    from core.runtime_engine.batch_compiler import compile_batchable_calls
+
+    registry = _build_ssot_runtime_tool_registry(["web.manage"])
+    calls = [
+        LLMToolCall(
+            id=f"city_{index}", name="web.manage",
+            arguments={"action": "weather", "location": f"城市{index}", "days": 10},
+        )
+        for index in range(25)
+    ]
+
+    compiled, events = compile_batchable_calls(calls, registry)
+
+    assert len(compiled) == 3
+    assert [len(call.arguments["locations"]) for call in compiled] == [10, 10, 5]
+    assert all(call.arguments["action"] == "weather_batch" for call in compiled)
+    assert sum(event["source_call_count"] for event in events) == 25
+
+
 def test_response_quality_rejects_denial_of_delivered_visual_evidence():
     from core.runtime_engine.response_quality import validate_response_quality
 

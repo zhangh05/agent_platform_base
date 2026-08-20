@@ -236,6 +236,9 @@ def _handle_web(inv: ToolInvocation) -> dict:
     if action == "weather":
         days = int(args.get("days") or 1)
         return handle_weather_forecast(inv) if days > 1 else handle_weather_current(inv)
+    if action == "weather_batch":
+        from core.tools.general_tools.web_tools import handle_weather_batch
+        return handle_weather_batch(inv)
     if action == "fetch":
         from core.tools.general_tools.web_content import fetch_and_extract
         return fetch_and_extract(
@@ -647,6 +650,10 @@ _WEB_ARGS = {
             "explicit location set; never silently replace the requested scope with representative cities."
         ),
     },
+    "locations": {
+        "type": "array", "items": {"type": "string"}, "minItems": 2, "maxItems": 10,
+        "description": "Two to ten explicit weather locations for one bounded batch lookup.",
+    },
     "days": {"type": "integer", "minimum": 1, "maximum": 10, "description": "Forecast horizon in days (1-10)."},
     "language": {"type": "string"}, "units": {"type": "string", "enum": ["metric", "imperial"]},
     "recency": {"type": "string"},
@@ -714,7 +721,16 @@ _RAW_REGISTRY: list[CanonicalToolEntry] = [
         "action": {"type": "string", "enum": ["shell", "python", "slash"], "default": "shell"},
     }, required=["action"], risk="medium", permission="exec", description="Local shell, slash, and Python data processing. Python uses the policy-selected runner: trusted local mode is explicitly best-effort, while network or multi-user mode requires strong container isolation."),
     _entry("browser.manage", _handle_browser, {**_COMMON, **_BROWSER_ARGS, "action": {"type": "string", "enum": ["navigate", "snapshot", "screenshot", "click", "type", "extract", "scroll", "hover", "press_key", "select_option", "evaluate", "wait", "tabs", "network", "console", "navigate_back", "close"]}}, required=["action"], risk="medium", description="Browser automation. navigate/extract require url; click/hover require selector or ref; type requires text and selector/ref."),
-    _entry("web.manage", _handle_web, {**_COMMON, **_WEB_ARGS, "action": {"type": "string", "enum": ["search", "fetch", "weather", "deep_search"]}}, required=["action"], description="Current external evidence via search/fetch/weather. Use proactively for time-sensitive facts, official technical references, versions and vulnerabilities. search finds candidates; fetch verifies page content; deep_search does both for top sources. Weather accepts one precise location per call: resolve broad/all scopes explicitly and report exact coverage rather than silently choosing representative locations. Select authority_profile and cite returned titles/URLs."),
+    _entry("web.manage", _handle_web, {**_COMMON, **_WEB_ARGS, "action": {"type": "string", "enum": ["search", "fetch", "weather", "weather_batch", "deep_search"]}}, required=["action"], description="Current external evidence via search/fetch/weather. Use proactively for time-sensitive facts, official technical references, versions and vulnerabilities. search finds candidates; fetch verifies page content; deep_search does both for top sources. Weather accepts one precise location; weather_batch accepts 2-10 explicit locations. Resolve broad/all scopes explicitly and report exact coverage rather than silently choosing representative locations. Select authority_profile and cite returned titles/URLs.", execution_contract={
+        "batching": [{
+            "source_action": "weather",
+            "target_action": "weather_batch",
+            "group_by": ["days", "language", "units"],
+            "collect_arg": "location",
+            "collection_arg": "locations",
+            "max_batch_size": 10,
+        }],
+    }),
     _entry("data.manage", _handle_data, {**_COMMON, **_DATA_ARGS, "action": {"type": "string", "enum": ["parse", "stats", "distinct", "aggregate", "filter", "sort", "render", "pivot", "join"]}}, required=["action"], description="Structured data processing. Supply text or rows; action-specific columns/options are declared in the schema."),
     _entry("report.manage", _handle_report, {**_COMMON, "action": {"type": "string", "enum": ["save", "diff", "document"]}, "title": {"type": "string"}, "content": {"type": "string"}, "summary": {"type": "string"}, "text_a": {"type": "string"}, "text_b": {"type": "string"}}, required=["action"], description="Report operations. save requires content; diff requires text_a/text_b; document requires summary."),
     _entry("knowledge.manage", _handle_knowledge, {**_COMMON, "action": {"type": "string", "enum": ["search", "read", "list", "chunk", "import", "reindex"]}, "query": {"type": "string"}, "limit": {"type": "integer", "minimum": 1}, "artifact_id": {"type": "string"}, "level": {"type": "string", "enum": ["chunk", "source"]}, "chunk_id": {"type": "string"}, "source_id": {"type": "string"}, "chunk_type": {"type": "string"}, "scope": {"type": "string"}, "include_disabled": {"type": "boolean"}, "include_deleted": {"type": "boolean"}}, required=["action"], risk="medium", description="Knowledge operations. search requires query; read requires chunk_id or source_id; list lists sources; chunk lists chunks; import requires artifact_id; reindex requires source_id."),

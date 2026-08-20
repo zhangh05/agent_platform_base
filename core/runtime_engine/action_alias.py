@@ -194,7 +194,7 @@ _CANONICAL_ACTIONS: Final[dict[str, frozenset[str]]] = {
         "scroll", "hover", "press_key", "select_option", "evaluate", "wait",
         "tabs", "network", "console", "navigate_back", "close",
     }),
-    "web.manage": frozenset({"search", "fetch", "weather", "deep_search"}),
+    "web.manage": frozenset({"search", "fetch", "weather", "weather_batch", "deep_search"}),
     "data.manage": frozenset({
         "parse", "stats", "distinct", "aggregate", "filter",
         "sort", "render", "pivot", "join",

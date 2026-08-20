@@ -14,9 +14,10 @@ def compile_batchable_calls(
 ) -> tuple[list[LLMToolCall], list[dict[str, Any]]]:
     """Use tool-declared batching contracts without embedding tool ids here.
 
-    Only independent, unreferenced calls with contiguous integer indexes are
-    compiled. Calls participating in dependency/result-binding graphs retain
-    their exact scalar semantics.
+    Only independent, unreferenced, contiguous calls are compiled.  Contracts
+    may either collapse a contiguous integer range or collect one scalar
+    argument into a bounded list. Calls participating in
+    dependency/result-binding graphs retain their exact scalar semantics.
     """
     referenced_ids = {
         dependency
@@ -41,9 +42,13 @@ def compile_batchable_calls(
             if str(args.get("action") or "") != str(contract.get("source_action") or ""):
                 continue
             index_arg = str(contract.get("index_arg") or "")
-            try:
-                index_value = int(args.get(index_arg))
-            except (TypeError, ValueError):
+            collect_arg = str(contract.get("collect_arg") or "")
+            if index_arg:
+                try:
+                    int(args.get(index_arg))
+                except (TypeError, ValueError):
+                    continue
+            elif collect_arg and args.get(collect_arg) in (None, ""):
                 continue
             group_by = tuple(str(value) for value in contract.get("group_by") or [])
             group_values = tuple(_freeze(args.get(key)) for key in group_by)
@@ -58,14 +63,17 @@ def compile_batchable_calls(
         grouped.sort(key=lambda item: item[0])
         runs: list[list[tuple[int, LLMToolCall, dict[str, Any]]]] = []
         for item in grouped:
-            index_arg = str(item[2]["index_arg"])
-            index_value = int(item[1].arguments[index_arg])
             if not runs:
                 runs.append([item])
                 continue
             previous = runs[-1][-1]
-            previous_value = int(previous[1].arguments[str(previous[2]["index_arg"])])
-            if item[0] == previous[0] + 1 and index_value == previous_value + 1:
+            contiguous = item[0] == previous[0] + 1
+            index_arg = str(item[2].get("index_arg") or "")
+            if index_arg:
+                index_value = int(item[1].arguments[index_arg])
+                previous_value = int(previous[1].arguments[index_arg])
+                contiguous = contiguous and index_value == previous_value + 1
+            if contiguous:
                 runs[-1].append(item)
             else:
                 runs.append([item])
@@ -80,11 +88,19 @@ def compile_batchable_calls(
                 first_call = chunk[0][1]
                 args = dict(first_call.arguments or {})
                 args["action"] = str(contract["target_action"])
-                args.pop(str(contract["index_arg"]), None)
-                args[str(contract.get("start_arg") or "start_index")] = int(
-                    first_call.arguments[str(contract["index_arg"])]
-                )
-                args[str(contract.get("limit_arg") or "limit")] = len(chunk)
+                index_arg = str(contract.get("index_arg") or "")
+                collect_arg = str(contract.get("collect_arg") or "")
+                if index_arg:
+                    args.pop(index_arg, None)
+                    args[str(contract.get("start_arg") or "start_index")] = int(
+                        first_call.arguments[index_arg]
+                    )
+                    args[str(contract.get("limit_arg") or "limit")] = len(chunk)
+                else:
+                    args.pop(collect_arg, None)
+                    args[str(contract.get("collection_arg") or f"{collect_arg}s")] = [
+                        item[1].arguments[collect_arg] for item in chunk
+                    ]
                 compiled = LLMToolCall(
                     id=first_call.id,
                     name=first_call.name,
@@ -123,8 +139,12 @@ def _freeze(value: Any) -> Any:
 def _validated_contract(raw: object) -> dict[str, Any] | None:
     if not isinstance(raw, dict):
         return None
-    required = ("source_action", "target_action", "index_arg")
+    required = ("source_action", "target_action")
     if any(not str(raw.get(key) or "").strip() for key in required):
+        return None
+    index_arg = str(raw.get("index_arg") or "").strip()
+    collect_arg = str(raw.get("collect_arg") or "").strip()
+    if bool(index_arg) == bool(collect_arg):
         return None
     try:
         max_batch_size = int(raw.get("max_batch_size") or 8)
@@ -136,6 +156,7 @@ def _validated_contract(raw: object) -> dict[str, Any] | None:
         **raw,
         "source_action": str(raw["source_action"]),
         "target_action": str(raw["target_action"]),
-        "index_arg": str(raw["index_arg"]),
+        "index_arg": index_arg,
+        "collect_arg": collect_arg,
         "max_batch_size": max_batch_size,
     }

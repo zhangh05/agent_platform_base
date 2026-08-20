@@ -19,6 +19,21 @@ def test_failure_recovery_nudge_treats_tool_error_as_data_not_instruction():
     assert 'Do not repeat an unchanged failed call.' in nudge
 
 
+def test_failed_subagent_recovery_forbids_parent_wholesale_replay():
+    nudge = QueryLoop._build_tool_failure_recovery_nudge([
+        StreamingToolResult(
+            tool_name="agent.manage",
+            call_id="child",
+            output={"status": "failed", "subtask_id": "sub-12345678"},
+            ok=False,
+            error="Subagent LLM call failed",
+        ),
+    ])
+
+    assert "must not be copied or replayed wholesale" in nudge
+    assert "smaller bounded alternative" in nudge
+
+
 def test_auto_tracking_results_are_escaped_as_untrusted_data():
     from agent.llm.schemas import LLMToolCall
     from agent.llm.schemas import LLMMessage

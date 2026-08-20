@@ -178,6 +178,11 @@ class SSOTRuntimeConfig:
     single_node_timeout_ms: int = 120_000
     planner_timeout_ms: int = 20_000
     max_query_loop_iterations: int = 20
+    # Maximum executable nodes accepted from one model response.  This is a
+    # per-round planning boundary, distinct from ``max_nodes`` for the whole
+    # turn.  Oversized plans are sent back to the model for bounded replanning
+    # before any handler runs.
+    max_tool_calls_per_iteration: int = 8
     max_nodes: int = 30
     max_depth: int = 8
     max_global_concurrency: int = 8

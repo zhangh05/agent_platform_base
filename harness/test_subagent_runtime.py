@@ -189,8 +189,11 @@ class TestSubagentRuntime:
             trace_id="t1",
             requested_by="subagent",
             max_query_loop_iterations=3,
+            max_tool_nodes=3,
         )
         assert engine._config.max_query_loop_iterations == 3
+        assert engine._config.max_nodes == 3
+        assert engine._config.max_tool_calls_per_iteration == 3
 
     def test_timeout_is_failed_not_user_cancelled(self, monkeypatch):
         monkeypatch.setattr(

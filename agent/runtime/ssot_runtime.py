@@ -433,6 +433,7 @@ def run_ssot_turn(
             emitter=emitter,
             prebuilt_registry=ssot_registry,
             max_query_loop_iterations=metadata_in.get("max_steps"),
+            max_tool_nodes=metadata_in.get("max_steps"),
             context_budget=runtime_context_budget,
             approved_tool_grant=metadata_in.get("__approved_tool_continuation"),
             approval_run_id=(
@@ -849,6 +850,7 @@ def _build_engine(
     emitter: Any | None = None,
     prebuilt_registry: dict[str, dict[str, Any]] | None = None,
     max_query_loop_iterations: int | None = None,
+    max_tool_nodes: int | None = None,
     context_budget=None,
     approved_tool_grant=None,
     approval_run_id: str = "",
@@ -870,6 +872,10 @@ def _build_engine(
         max_query_loop_iterations=max(
             1,
             min(int(max_query_loop_iterations or 20), 20),
+        ),
+        max_nodes=max(1, min(int(max_tool_nodes or 30), 30)),
+        max_tool_calls_per_iteration=max(
+            1, min(int(max_tool_nodes or 8), 8),
         ),
         context_window_tokens=int(getattr(context_budget, "context_window_tokens", 0) or 0),
         max_input_tokens=int(getattr(context_budget, "max_input_tokens", 48_000) or 48_000),

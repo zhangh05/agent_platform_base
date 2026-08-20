@@ -197,6 +197,93 @@ def test_execution_budget_rejects_oversized_batch_before_any_handler_runs():
     assert {result.output["error_code"] for result in results} == {"TOOL_NODES_EXCEEDED"}
 
 
+def test_queryloop_replans_oversized_model_round_before_any_handler_runs():
+    from agent.llm.schemas import LLMResponse
+    from core.runtime_engine.engine import SSOTRuntimeEngine
+    from core.runtime_engine.tool_runtime import ToolRuntime
+
+    responses = [
+        LLMResponse(tool_calls=[
+            LLMToolCall(
+                id=f"too-many-{index}", name="data.manage",
+                arguments={"action": "parse", "text": str(index)},
+            )
+            for index in range(3)
+        ]),
+        LLMResponse(tool_calls=[LLMToolCall(
+            id="bounded", name="data.manage",
+            arguments={"action": "parse", "text": "bounded"},
+        )]),
+        LLMResponse(content="已完成有界处理"),
+    ]
+    received = []
+    prompts = []
+
+    def llm(**kwargs):
+        prompts.append(kwargs["messages"])
+        return responses.pop(0)
+
+    def handler(arguments):
+        received.append(dict(arguments))
+        return {"ok": True, "text": arguments["text"]}
+
+    config = SSOTRuntimeConfig(
+        max_query_loop_iterations=4,
+        max_tool_calls_per_iteration=2,
+    )
+    runtime = ToolRuntime(config)
+    runtime.register("data.manage", handler)
+    registry = {"data.manage": {
+        "description": "data",
+        "args_schema": {
+            "type": "object", "required": ["action"],
+            "properties": {
+                "action": {"type": "string", "enum": ["parse"]},
+                "text": {"type": "string"},
+            },
+        },
+    }}
+    engine = SSOTRuntimeEngine(
+        config=config, llm_invoke=llm, tool_registry=registry, tool_runtime=runtime,
+    )
+
+    result = asyncio.run(engine.run(
+        "bounded work", workspace_id="default", session_id="session",
+    ))
+
+    assert result.success is True
+    assert result.final_response == "已完成有界处理"
+    assert received == [{"action": "parse", "text": "bounded"}]
+    assert result.metadata["batch_replans"] == 1
+    assert any("RUNTIME PLAN BOUNDARY" in message.content for message in prompts[1])
+
+
+def test_read_only_parallel_timeout_is_failed_not_unknown():
+    from core.runtime_engine.budget_controller import BudgetController
+
+    class Runtime:
+        def invoke_raw(self, _tool_id, _arguments):
+            time.sleep(0.08)
+            return {"ok": True}
+
+    config = SSOTRuntimeConfig(
+        max_total_seconds=5,
+        max_tool_seconds=5,
+        parallel_layer_timeout_ms=20,
+    )
+    calls = [LLMToolCall(
+        id="slow-read", name="data.manage",
+        arguments={"action": "parse", "text": "x"},
+    )]
+    result = asyncio.run(StreamingToolExecutor(Runtime(), config).execute(
+        calls, ctx=_ctx(), budget=BudgetController(config),
+    ))[0]
+
+    assert result.ok is False
+    assert result.error_code == "PARALLEL_LAYER_TIMEOUT"
+    assert result.execution_may_continue is False
+
+
 def test_execution_budget_rejects_graph_deeper_than_limit():
     from core.runtime_engine.budget_controller import BudgetController
 

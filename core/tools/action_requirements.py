@@ -24,6 +24,7 @@ ACTION_REQUIRED_ALL: dict[tuple[str, str], tuple[str, ...]] = {
     ("web.manage", "deep_search"): ("query",),
     ("web.manage", "fetch"): ("url",),
     ("web.manage", "weather"): ("location",),
+    ("web.manage", "weather_batch"): ("locations",),
     ("data.manage", "distinct"): ("column",),
     ("data.manage", "filter"): ("conditions",),
     ("data.manage", "sort"): ("by",),
@@ -115,6 +116,9 @@ def _contracts(tool_id: str, actions: tuple[str, ...], contract: dict) -> dict[t
 
 
 ACTION_EXECUTION_CONTRACTS: dict[tuple[str, str], dict] = {}
+ACTION_EXECUTION_CONTRACTS.update(_contracts(
+    "web.manage", ("search", "fetch", "weather", "weather_batch", "deep_search"), _READ,
+))
 ACTION_EXECUTION_CONTRACTS.update(_contracts(
     "workspace.file",
     ("list", "read", "read_image", "extract_document", "extract_document_image", "extract_document_images", "glob"),

@@ -6,6 +6,7 @@ from storage.ids import validate_workspace_id
 import re
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 
 from core.tools.general_tools.shared import _caller_workspace, _contract, _error, _error_inv, _ok, _result, _safe_preview, _unavailable, _workspace_path
 from core.tools.general_tools.shared_web import *  # has __all__ — 21 functions, all needed
@@ -657,6 +658,152 @@ def handle_weather_forecast(inv: ToolInvocation) -> dict:
         extra={"location": location, "days": days, "units": units, "language": language},
     )
 
+
+def handle_weather_batch(inv: ToolInvocation) -> dict:
+    """Resolve a bounded explicit set of locations as one canonical call.
+
+    QueryLoop's generic batch compiler can collapse repeated scalar weather
+    calls into this action.  Keeping the fan-out inside the handler gives the
+    runtime one truthful outcome, bounded concurrency, compact evidence, and
+    exact requested/resolved/failed coverage instead of dozens of synthetic
+    failures when a model emits a large parallel layer.
+    """
+    args = inv.arguments or {}
+    raw_locations = args.get("locations")
+    if not isinstance(raw_locations, list):
+        return _error_inv(inv, "locations must be an array of 2-10 location strings")
+
+    locations: list[str] = []
+    seen: set[str] = set()
+    for value in raw_locations:
+        location = str(value or "").strip()
+        key = location.casefold()
+        if not location or key in seen:
+            continue
+        seen.add(key)
+        locations.append(location)
+    if not 2 <= len(locations) <= 10:
+        return _error_inv(inv, "locations must contain 2-10 unique non-empty locations")
+
+    # Match scalar web.manage(action=weather): omitted days means current
+    # weather, so compilation never changes the model's requested semantics.
+    days = _coerce_int(args.get("days", 1), default=1, min_value=1, max_value=10)
+    language = str(args.get("language") or "zh-CN").strip() or "zh-CN"
+    units = str(args.get("units") or "metric").strip().lower()
+
+    def lookup(location: str) -> dict:
+        child = ToolInvocation(
+            tool_id=inv.tool_id,
+            arguments={
+                **args,
+                "action": "weather",
+                "location": location,
+                "days": days,
+                "language": language,
+                "units": units,
+            },
+            workspace_id=inv.workspace_id,
+            session_id=inv.session_id,
+            run_id=inv.run_id,
+            task_id=inv.task_id,
+            job_id=inv.job_id,
+            dry_run=inv.dry_run,
+            requested_by=inv.requested_by,
+            approval_id=inv.approval_id,
+        )
+        child.arguments.pop("locations", None)
+        try:
+            return handle_weather_forecast(child) if days > 1 else handle_weather_current(child)
+        except Exception as exc:  # handler boundary: isolate one failed location
+            return {
+                "ok": False,
+                "error": f"weather_lookup_exception:{type(exc).__name__}",
+            }
+
+    with ThreadPoolExecutor(max_workers=min(5, len(locations))) as pool:
+        outcomes = list(pool.map(lookup, locations))
+
+    forecasts: list[dict] = []
+    failed_locations: list[dict] = []
+    resolved_locations: list[str] = []
+    for location, outcome in zip(locations, outcomes):
+        has_structured_weather = bool(
+            outcome.get("current") or outcome.get("forecast_daily")
+        )
+        if bool(outcome.get("ok")) and has_structured_weather:
+            resolved = str(
+                (outcome.get("resolved_location") or {}).get("name") or location
+            )
+            resolved_locations.append(resolved)
+            forecasts.append({
+                "requested_location": location,
+                "resolved_location": outcome.get("resolved_location") or {"name": resolved},
+                "current": outcome.get("current") or {},
+                "forecast_daily": outcome.get("forecast_daily") or [],
+                "summary": outcome.get("summary") or "",
+            })
+        else:
+            failed_locations.append({
+                "location": location,
+                "error": str(
+                    ("structured_weather_unavailable" if outcome.get("ok") else outcome.get("error"))
+                    or (outcome.get("errors") or ["weather lookup failed"])[0]
+                )[:200],
+            })
+
+    succeeded = len(forecasts)
+    if not succeeded:
+        return _result(inv, False, {
+            "status": "failed",
+            "error": "weather_batch_failed",
+            "summary": f"天气批量查询失败：0/{len(locations)} 个地点成功。",
+            "requested_locations": locations,
+            "failed_locations": failed_locations,
+            "coverage": {
+                "requested_locations": locations,
+                "resolved_locations": [],
+                "failed_locations": [item["location"] for item in failed_locations],
+                "location_count": len(locations),
+                "successful_location_count": 0,
+                "forecast_days": days,
+            },
+        })
+
+    complete = succeeded == len(locations)
+    return _result(inv, True, {
+        "coverage_status": "complete" if complete else "partial",
+        "partial": not complete,
+        "source_type": "structured_weather_batch",
+        "provider": "open_meteo",
+        "source_url": "https://open-meteo.com/",
+        "citation": "[1] open-meteo.com",
+        "results": [{
+            "rank": 1,
+            "title": "Open-Meteo weather forecast API",
+            "url": "https://open-meteo.com/",
+            "domain": "open-meteo.com",
+            "citation": "[1] open-meteo.com",
+            "source_quality": "public_data_api",
+        }],
+        "forecasts": forecasts,
+        "failed_locations": failed_locations,
+        "coverage": {
+            "requested_locations": locations,
+            "resolved_locations": resolved_locations,
+            "failed_locations": [item["location"] for item in failed_locations],
+            "location_count": len(locations),
+            "successful_location_count": succeeded,
+            "forecast_days": days,
+        },
+        "summary": f"天气批量查询完成：{succeeded}/{len(locations)} 个地点成功。",
+        "warnings": (["partial_location_coverage"] if not complete else []),
+        "answer_hint": (
+            "逐项核对 coverage 后回答。先总结跨地点趋势、温度区间和显著降水日；"
+            "明确披露 failed_locations，不得把部分覆盖写成全部完成。引用 [1] open-meteo.com，"
+            "并说明预报会变化。用户未明确要求时，不要把全部地点和日期铺成超宽表格。"
+        ),
+    })
+
 def handle_news_search(inv: ToolInvocation) -> dict:
     """News lookup backed by the public web search provider."""
     args = inv.arguments
@@ -743,4 +890,11 @@ def handle_web_official_doc_search(inv: ToolInvocation) -> dict:
         result["results_markdown"] = f"[1] {vendor} documentation index: {base}"
     return _result(inv, bool(result.get("results")), result)
 
-__all__ = ['handle_web_search', 'handle_weather_current', 'handle_weather_forecast', 'handle_news_search', 'handle_web_official_doc_search']
+__all__ = [
+    "handle_news_search",
+    "handle_weather_batch",
+    "handle_weather_current",
+    "handle_weather_forecast",
+    "handle_web_official_doc_search",
+    "handle_web_search",
+]
