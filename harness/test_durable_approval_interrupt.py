@@ -190,3 +190,50 @@ class TestRedaction:
         assert args.get("api_key") == "[REDACTED]"
         assert args.get("password") == "[REDACTED]"
         assert args.get("cmd") == "ls"
+
+
+def test_edit_args_persists_only_redacted_audit_projection():
+    from agent.runtime.durable.interrupt import interrupt_before_tool, resume_after_approval
+
+    ws = f"ws_edit_args_redaction_{uuid.uuid4().hex[:8]}"
+    sid = f"s_{uuid.uuid4().hex[:4]}"
+    task = TaskState.new(workspace_id=ws, session_id=sid)
+    task.update_status("running")
+    save_task(task)
+    interrupted = interrupt_before_tool(
+        task_id=task.task_id,
+        ws_id=ws,
+        session_id=sid,
+        run_id="r1",
+        step_id="s-edited-secret",
+        tool_invocation={"tool_id": "exec.run", "arguments": {"cmd": "echo safe"}},
+        risk_decision={"risk_level": "high", "reason": "test"},
+    )
+    secret = "sk-test-secret-abcdefghijklmnopqrstuvwxyz"
+    result = resume_after_approval(
+        task.task_id,
+        ws,
+        interrupted["approval_id"],
+        "edit_args",
+        edited_args={
+            "cmd": "echo safe",
+            "headers": {"Authorization": f"Bearer {secret}"},
+            "api_key": secret,
+        },
+    )
+
+    assert result["ok"] is True
+    persisted = get_task(ws, task.task_id)
+    serialized = str(persisted.to_dict())
+    assert secret not in serialized
+    assert "[REDACTED]" in serialized
+
+
+def test_interrupt_argument_fingerprint_is_stable_sha256():
+    import hashlib
+
+    from agent.runtime.durable.interrupt import _hash_args
+
+    expected = hashlib.sha256(b'{"a":"one","b":2}').hexdigest()
+    assert _hash_args({"b": 2, "a": "one"}) == f"sha256:{expected}"
+    assert _hash_args({"a": "one", "b": 2}) == f"sha256:{expected}"

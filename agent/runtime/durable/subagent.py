@@ -8,11 +8,43 @@ import re
 import threading
 import uuid, time as _time
 from agent.runtime.utils import now_iso
+from storage.redaction import redact_text
 
 # ── Re-export for convenience ──
 # Domain-neutral profiles are the single source of truth for built-in subagent types.
 
 def _now(): return now_iso()
+
+
+# All terminal text crosses this boundary before durable task state, timeline,
+# memory candidates, or the parent tool result can observe it.
+def _redact_terminal_text(value: object, *, limit: int) -> str:
+    return redact_text(str(value or "").replace("\x00", ""))[:max(1, int(limit))]
+
+
+def _sanitize_terminal_result(result: "SubagentResult") -> None:
+    result.summary = _redact_terminal_text(result.summary, limit=4000)
+    result.findings = [
+        _redact_terminal_text(item, limit=1000)
+        for item in list(result.findings or [])[:20]
+    ]
+    result.tool_results = [
+        {
+            "tool_id": _redact_terminal_text(item.get("tool_id", ""), limit=120),
+            "ok": bool(item.get("ok", False)),
+            "summary": _redact_terminal_text(item.get("summary", ""), limit=200),
+        }
+        for item in list(result.tool_results or [])[:20]
+        if isinstance(item, dict)
+    ]
+    result.errors = [
+        _redact_terminal_text(item, limit=300)
+        for item in list(result.errors or [])[:20]
+    ]
+    result.warnings = [
+        _redact_terminal_text(item, limit=300)
+        for item in list(result.warnings or [])[:20]
+    ]
 def _sid(): return f"sub-{uuid.uuid4().hex[:8]}"
 
 # ── Profiles ──
@@ -384,6 +416,7 @@ def run_subagent_task(subtask_id: str, ws_id: str) -> dict:
         ):
             result.status = "cancelled"
             result.summary = "Subagent cancelled by user"
+        _sanitize_terminal_result(result)
         task.status = result.status
         task.summary = result.summary[:4000]
         task.errors = list(result.errors[:20])
@@ -430,6 +463,7 @@ def run_subagent_task(subtask_id: str, ws_id: str) -> dict:
     except Exception as e:
         result.warnings.append(f"Memory candidate write failed: {str(e)[:100]}")
 
+    _sanitize_terminal_result(result)
     payload = {
         "ok": result.status == "succeeded",
         "subtask_id": subtask_id,

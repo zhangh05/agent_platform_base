@@ -646,3 +646,28 @@ def test_subagent_result_artifact_persistence_failure_is_not_reported_as_success
     assert task["status"] == "failed"
     assert not task["result_artifact_id"]
     assert any("artifact" in error.lower() for error in completed["errors"])
+
+
+def test_subagent_secret_response_is_not_persisted_when_artifact_is_rejected(monkeypatch):
+    from agent.runtime.durable.subagent import get_subagent_task
+
+    secret = "sk-test-secret-abcdefghijklmnopqrstuvwxyz"
+    monkeypatch.setattr(
+        "agent.runtime.ssot_runtime.run_ssot_turn",
+        lambda *args, **kwargs: type("Result", (), {
+            "ok": True,
+            "final_response": f"诊断结果：token={secret}",
+            "events": [],
+            "tool_calls": [],
+            "trace_id": "trace_secret_artifact_rejection",
+        })(),
+    )
+
+    ws = f"ws_subagent_secret_{uuid.uuid4().hex[:8]}"
+    created = create_subagent_task("parent", ws, "s1", "research_agent", "Research")
+    completed = run_subagent_task(created["subtask_id"], ws)
+    task = get_subagent_task(ws, created["subtask_id"])
+
+    assert completed["ok"] is False
+    assert secret not in str(completed)
+    assert secret not in str(task)

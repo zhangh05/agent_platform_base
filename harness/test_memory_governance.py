@@ -439,3 +439,25 @@ class TestLifecycle:
         assert confirm_memory("ws_lifecycle", pending.memory_id)["status"] == "active"
         assert reject_memory("ws_lifecycle", pending.memory_id)["status"] == "rejected"
         assert expire_memory("ws_lifecycle", pending.memory_id)["status"] == "expired"
+
+
+def test_memory_gate_redacts_structured_provenance_before_persistence(isolated_memory):
+    raw_path = "/Users/zhangh01/private/network-config.txt"
+    record = MemoryRecord(
+        workspace_id="ws_structured_redaction",
+        memory_type="knowledge_note",
+        source="user",
+        content="网络变更记录应保留可审计的来源。",
+        summary="网络变更来源规则",
+        source_ref=raw_path,
+        citations=[{"path": raw_path}],
+        metadata={"source_path": raw_path, "origin": {"path": raw_path}},
+    )
+
+    result = MemoryWriteGate().write(record)
+
+    assert result["ok"] is True
+    persisted = MemoryStore().get("ws_structured_redaction", record.memory_id)
+    serialized = json.dumps(persisted.to_dict(), ensure_ascii=False)
+    assert raw_path not in serialized
+    assert "[REDACTED_PATH]" in serialized

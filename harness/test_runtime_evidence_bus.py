@@ -164,3 +164,29 @@ def test_query_loop_delivers_pending_evidence_on_any_llm_scope_once():
     assert response.content == "看到了图片"
     assert captured["extra"]["evidence_parts"][0]["evidence_id"] == evidence_ids[0]
     assert pending_llm_evidence(extras) == []
+
+
+def test_evidence_ledger_rejects_inline_data_before_llm_delivery():
+    from core.runtime_engine.evidence import (
+        evidence_summary,
+        pending_llm_evidence,
+        register_evidence_parts,
+    )
+
+    secret = "sk-test-secret-abcdefghijklmnopqrstuvwxyz"
+    extras = {}
+    registered = register_evidence_parts(
+        extras,
+        [{
+            "kind": "text",
+            "reference": {"kind": "inline", "content": f"token={secret}"},
+            "consumer": "llm",
+        }],
+        source_tool="web.manage",
+        source_call_id="call_untrusted",
+    )
+
+    assert registered == []
+    assert pending_llm_evidence(extras) == []
+    assert secret not in str(extras)
+    assert evidence_summary(extras)["rejected"] == 1

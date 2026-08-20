@@ -6,30 +6,26 @@ All approval is task_id/step_id-bound. No guessing by session or tool_id.
 
 from __future__ import annotations
 from typing import Optional, Literal
+import hashlib
 import uuid, time as _time, json
 from agent.runtime.utils import now_iso
+from core.tools.redaction import redact_tool_output
 
 Decision = Literal["approve", "reject", "edit_args", "respond", "respond_with_feedback"]
 
 def _now(): return now_iso()
 def _next_id(prefix: str) -> str: return f"{prefix}-{uuid.uuid4().hex[:8]}"
 
-_SECRET_PATTERNS = {"password", "token", "api_key", "secret", "credential",
-                     "private_key", "access_key", "auth", "authorization",
-                     "x-api-token", "x-admin-token", "bearer"}
 
 
 def _redact_args(args: dict) -> dict:
-    if not isinstance(args, dict):
-        return {}
+    """Build a bounded audit projection without retaining executable secrets."""
+    safe_args = redact_tool_output(args) if isinstance(args, dict) else {}
     out = {}
-    for k, v in args.items():
-        kl = k.lower()
-        if any(s in kl for s in _SECRET_PATTERNS):
-            out[k] = "[REDACTED]"
-        elif isinstance(v, str) and len(v) > 256:
+    for k, v in safe_args.items():
+        if isinstance(v, str) and len(v) > 256:
             out[k] = v[:256] + "..."
-        elif isinstance(v, (int, float, bool, type(None))):
+        elif isinstance(v, (int, float, bool, type(None), str)):
             out[k] = v
         elif isinstance(v, list):
             out[k] = f"[{len(v)} items]"
@@ -41,9 +37,11 @@ def _redact_args(args: dict) -> dict:
 
 
 def _hash_args(args: dict) -> str:
+    """Return a stable audit fingerprint independent of Python hash randomization."""
     try:
-        return f"sha256:{hash(json.dumps(args, sort_keys=True, default=str))}"
-    except Exception:
+        canonical = json.dumps(args if isinstance(args, dict) else {}, sort_keys=True, separators=(",", ":"), default=str)
+        return "sha256:" + hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+    except (TypeError, ValueError):
         return "hash_error"
 
 
@@ -244,13 +242,13 @@ def resume_after_approval(
         task.pending_approval_id = None
         task.pending_action_id = ""
         try:
-            task.tool_results.append({"__edited_args__": edited_args, "step_id": step_id})
+            task.tool_results.append({"__edited_args_redacted__": _redact_args(edited_args), "step_id": step_id})
         except Exception as e:
             task.warnings.append(f"Failed to store edited_args: {str(e)[:100]}")
         for s in task.steps:
             if s.step_id == step_id:
                 s.status = "running"
-                s.summary = f"Args edited: {str(edited_args)[:100]}"
+                s.summary = f"Args edited: keys={list(_redact_args(edited_args).keys())[:12]}"
         save_task(task)
 
         append_event(RuntimeEvent(

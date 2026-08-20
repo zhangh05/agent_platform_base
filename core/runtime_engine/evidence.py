@@ -13,8 +13,8 @@ import json
 from collections.abc import Iterable
 from typing import Any
 
-EVIDENCE_KINDS = frozenset({"text", "image", "file", "structured_data"})
-REFERENCE_KINDS = frozenset({"managed_file", "workspace_path", "artifact", "inline"})
+EVIDENCE_KINDS = frozenset({"image"})
+REFERENCE_KINDS = frozenset({"managed_file"})
 
 
 def managed_image_evidence(
@@ -191,11 +191,11 @@ def _normalize_part(
         return {}, "invalid_evidence_reference_kind"
     if reference_kind == "managed_file" and not str(reference.get("file_id") or "").strip():
         return {}, "managed_file_id_required"
-    if reference_kind == "workspace_path" and not str(reference.get("path") or "").strip():
-        return {}, "workspace_path_required"
     consumer = str(raw.get("consumer") or "llm").strip()
     if consumer not in {"llm", "tool", "frontend"}:
         return {}, "invalid_evidence_consumer"
+    if consumer != "llm":
+        return {}, "unsupported_evidence_consumer"
     coverage = raw.get("coverage") or {}
     if not isinstance(coverage, dict):
         return {}, "invalid_evidence_coverage"
