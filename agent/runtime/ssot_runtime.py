@@ -1599,6 +1599,7 @@ def _current_model_name() -> str:
 # ── Conversation history block builder ──────────────────────────────
 
 _HISTORY_RECENT_MESSAGES = 30
+_HISTORY_BASELINE_EXCHANGES = 6
 _HISTORY_REFERENCE_PATTERNS = (
     "前面", "之前", "上次", "刚才", "还记得", "记得",
     "上一轮", "前一轮", "前面的", "之前的", "刚才的",
@@ -1757,28 +1758,32 @@ def _select_history_messages(
 ) -> tuple[list[dict[str, str]], list[dict[str, str]], bool]:
     """Select only history that can help the current turn.
 
-    Every same-session turn receives the immediately preceding complete
-    exchange. This is the minimum conversational contract: short or implicit
-    replies must never see an empty history merely because a keyword classifier
-    missed them. Explicit references can widen the bounded window, while
-    lexical matching may add older relevant exchanges.
+    Every same-session turn receives a bounded window of recent complete
+    exchanges. This is the minimum conversational contract: short or implicit
+    replies must never see an empty or one-turn-only history merely because a
+    keyword classifier missed them. Lexical matching may add older relevant
+    exchanges without displacing the recent window.
     """
     if not messages:
         return [], [], False
     text = str(user_input or "").strip()
-    immediate = _latest_complete_history_exchange(messages)
+    baseline = _latest_complete_history_window(messages)
     if _is_immediate_followup(text):
-        return immediate, [], False
+        return baseline, [], False
     if any(pattern in text for pattern in _HISTORY_REFERENCE_PATTERNS):
+        recent_count = min(
+            _HISTORY_BASELINE_EXCHANGES * 2,
+            _HISTORY_RECENT_MESSAGES,
+        )
         return (
-            messages[-min(8, _HISTORY_RECENT_MESSAGES):],
-            messages[:-min(8, _HISTORY_RECENT_MESSAGES)],
+            messages[-recent_count:],
+            messages[:-recent_count],
             True,
         )
 
     query_terms = _history_terms(text)
     if not query_terms:
-        return immediate, [], False
+        return baseline, [], False
     recent_pool = messages[-_HISTORY_RECENT_MESSAGES:]
     matched_indexes = {
         index
@@ -1786,7 +1791,7 @@ def _select_history_messages(
         if _message_matches_history_terms(message.get("content", ""), query_terms)
     }
     if not matched_indexes:
-        return immediate, [], False
+        return baseline, [], False
 
     # Keep the adjacent half of a matched user/assistant exchange so evidence
     # and its response are not separated.
@@ -1797,24 +1802,31 @@ def _select_history_messages(
             selected_indexes.add(index - 1)
         elif role == "user" and index + 1 < len(recent_pool):
             selected_indexes.add(index + 1)
-    immediate_ids = {id(item) for item in immediate}
+    baseline_ids = {id(item) for item in baseline}
     for index, message in enumerate(recent_pool):
-        if id(message) in immediate_ids:
+        if id(message) in baseline_ids:
             selected_indexes.add(index)
-    selected = [recent_pool[index] for index in sorted(selected_indexes)][-8:]
+    selected = [recent_pool[index] for index in sorted(selected_indexes)][
+        -(_HISTORY_BASELINE_EXCHANGES * 2):
+    ]
     return selected, [], False
 
 
-def _latest_complete_history_exchange(
+def _latest_complete_history_window(
     messages: list[dict[str, str]],
 ) -> list[dict[str, str]]:
-    """Return the newest adjacent user/assistant pair in chronological order."""
-    for index in range(len(messages) - 1, 0, -1):
+    """Return the newest bounded set of complete adjacent exchanges."""
+    exchanges: list[list[dict[str, str]]] = []
+    index = len(messages) - 1
+    while index > 0 and len(exchanges) < _HISTORY_BASELINE_EXCHANGES:
         user = messages[index - 1]
         assistant = messages[index]
         if user.get("role") == "user" and assistant.get("role") == "assistant":
-            return [user, assistant]
-    return []
+            exchanges.append([user, assistant])
+            index -= 2
+            continue
+        index -= 1
+    return [message for exchange in reversed(exchanges) for message in exchange]
 
 
 def _is_immediate_followup(text: str) -> bool:

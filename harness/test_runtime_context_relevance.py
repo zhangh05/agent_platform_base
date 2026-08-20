@@ -32,7 +32,7 @@ def test_new_topic_still_receives_immediately_previous_exchange():
     assert retrieved is False
 
 
-def test_all_scope_followup_keeps_only_immediate_exchange():
+def test_all_scope_followup_keeps_bounded_recent_exchanges():
     messages = [
         _message("user", "分析交换机配置"),
         _message("assistant", "很长的设备配置分析"),
@@ -43,6 +43,8 @@ def test_all_scope_followup_keeps_only_immediate_exchange():
     recent, older, retrieved = _select_history_messages(messages, "全部")
 
     assert [item["content"] for item in recent] == [
+        "分析交换机配置",
+        "很长的设备配置分析",
         "查看未来十天长三角天气",
         "希望查询哪个城市，或者几个主要城市？",
     ]
@@ -141,7 +143,7 @@ def test_historical_attachment_is_reused_for_immediate_followup(monkeypatch):
     ]
 
 
-def test_quantity_only_continuation_keeps_immediate_exchange_constraints():
+def test_quantity_only_continuation_keeps_recent_context_and_latest_constraints():
     messages = [
         _message("user", "连续输出24条企业网络值班检查项；每条完整中文，使用编号，不调用工具。"),
         _message("assistant", "1. 核对交接班日志。\n2. 检查核心链路。"),
@@ -154,6 +156,10 @@ def test_quantity_only_continuation_keeps_immediate_exchange_constraints():
     recent, older, retrieved = _select_history_messages(messages, "再来30条")
 
     assert [item["content"] for item in recent] == [
+        "连续输出24条企业网络值班检查项；每条完整中文，使用编号，不调用工具。",
+        "1. 核对交接班日志。\n2. 检查核心链路。",
+        "查询杭州天气",
+        "杭州今天有阵雨。",
         "连续输出24条企业网络值班检查项；每条完整中文，使用编号，不调用工具。",
         "1. 检查监控平台。\n2. 核对告警状态。",
     ]
@@ -196,3 +202,18 @@ def test_short_repair_projects_previous_exchange_into_prompt_history(monkeypatch
 
     assert "写一篇不少于800字的作文" in block
     assert "当前版本只有642字，需要继续补足" in block
+
+
+def test_short_session_keeps_six_complete_exchanges():
+    messages = []
+    for index in range(1, 8):
+        messages.extend([
+            _message("user", f"用户请求 {index}"),
+            _message("assistant", f"助手回复 {index}"),
+        ])
+
+    recent, _, _ = _select_history_messages(messages, "补充")
+
+    assert len(recent) == 12
+    assert recent[0]["content"] == "用户请求 2"
+    assert recent[-1]["content"] == "助手回复 7"
