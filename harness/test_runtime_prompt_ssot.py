@@ -46,6 +46,7 @@ def test_runtime_prompt_is_compact_capable_and_destructive_only():
     assert "never route a class of user requests around this loop" in RUNTIME_SYSTEM_PROMPT
     assert "cite the verified source inline" in RUNTIME_SYSTEM_PROMPT
     assert "Emit valid, readable Markdown" in RUNTIME_SYSTEM_PROMPT
+    assert "never claim the session is new" in RUNTIME_SYSTEM_PROMPT
 
 
 def test_turn_message_separates_history_context_and_current_request():

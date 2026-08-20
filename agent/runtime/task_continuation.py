@@ -50,7 +50,21 @@ def _read_unlocked(path: Path) -> dict[str, Any]:
         return {}
     if not isinstance(value, dict) or value.get("schema") != _SCHEMA:
         return {}
+    active_task = value.get("active_task")
+    if isinstance(active_task, dict) and not _persisted_delivery_is_user_requested(active_task):
+        return {}
     return value
+
+
+def _persisted_delivery_is_user_requested(active_task: dict[str, Any]) -> bool:
+    """Reject legacy contracts inferred only from incidental model numbering."""
+    delivery = active_task.get("delivery_contract")
+    if not isinstance(delivery, dict):
+        return False
+    if delivery.get("requested_count") is not None or str(delivery.get("prefix") or ""):
+        return True
+    request = str(active_task.get("goal") or "")
+    return any(marker in request for marker in ("编号", "序号", "每条", "逐条"))
 
 
 def load_task_continuation(workspace_id: str, session_id: str) -> dict[str, Any]:
@@ -81,7 +95,12 @@ def _delivery_contract(user_input: str, assistant_response: str) -> dict[str, An
         requested_prefix = prefix_match.group("prefix")
     if not requested_prefix and items:
         requested_prefix = str(items[0]["prefix"] or "")
-    requires_numbering = bool(items) or any(marker in request for marker in ("编号", "序号", "每条", "逐条"))
+    # The contract belongs to the user's requested delivery shape. A model may
+    # choose to number ordinary prose or offer several next-step choices; those
+    # incidental numbers must never create or replace durable task state.
+    requires_numbering = expected_count is not None or bool(requested_prefix) or any(
+        marker in request for marker in ("编号", "序号", "每条", "逐条")
+    )
     if not requires_numbering and expected_count is None:
         return None
     ordinals = [int(item["ordinal"]) for item in items]

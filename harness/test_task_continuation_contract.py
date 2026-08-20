@@ -103,6 +103,51 @@ def test_new_topic_does_not_bind_to_active_task(monkeypatch, tmp_path):
     ) is None
 
 
+def test_model_numbered_choices_do_not_create_a_user_delivery_contract(monkeypatch, tmp_path):
+    monkeypatch.setenv("LZCORE_WORKSPACE_ROOT", str(tmp_path))
+
+    record = commit_task_continuation(
+        workspace_id="default",
+        session_id="session_incidental_choices",
+        run_id="run_choices",
+        user_input="你不是有上下文吗？",
+        assistant_response="1. 继续扩写\n2. 严格改写\n3. 先保存当前版本",
+        run_ok=True,
+    )
+
+    assert record is None
+
+
+def test_legacy_incidental_numbering_state_is_rejected(monkeypatch, tmp_path):
+    import json
+
+    from storage.records import workspace_record_file
+
+    monkeypatch.setenv("LZCORE_WORKSPACE_ROOT", str(tmp_path))
+    path = workspace_record_file(
+        "default", "sessions", "session_legacy_choices", "task_continuation.json",
+    )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({
+        "schema": "runtime.task_continuation.v1",
+        "revision": 3,
+        "active_task": {
+            "task_id": "task_legacy",
+            "goal": "你不是有上下文吗？",
+            "delivery_contract": {
+                "kind": "enumerated_items",
+                "requested_count": None,
+                "numbered": True,
+                "prefix": "",
+                "produced_count": 3,
+                "last_ordinal": 3,
+            },
+        },
+    }), encoding="utf-8")
+
+    assert load_task_continuation("default", "session_legacy_choices") == {}
+
+
 def test_commit_rejects_stale_continuation_contract(monkeypatch, tmp_path):
     monkeypatch.setenv("LZCORE_WORKSPACE_ROOT", str(tmp_path))
     commit_task_continuation(

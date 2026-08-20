@@ -1757,17 +1757,18 @@ def _select_history_messages(
 ) -> tuple[list[dict[str, str]], list[dict[str, str]], bool]:
     """Select only history that can help the current turn.
 
-    Short deictic follow-ups need the immediately preceding exchange, while an
-    explicit long-range reference can use the bounded historical summary.  A
-    standalone topic receives only lexically related prior messages; unrelated
-    turns are omitted instead of consuming context merely because they share a
-    session.
+    Every same-session turn receives the immediately preceding complete
+    exchange. This is the minimum conversational contract: short or implicit
+    replies must never see an empty history merely because a keyword classifier
+    missed them. Explicit references can widen the bounded window, while
+    lexical matching may add older relevant exchanges.
     """
     if not messages:
         return [], [], False
     text = str(user_input or "").strip()
+    immediate = _latest_complete_history_exchange(messages)
     if _is_immediate_followup(text):
-        return messages[-2:], [], False
+        return immediate, [], False
     if any(pattern in text for pattern in _HISTORY_REFERENCE_PATTERNS):
         return (
             messages[-min(8, _HISTORY_RECENT_MESSAGES):],
@@ -1777,7 +1778,7 @@ def _select_history_messages(
 
     query_terms = _history_terms(text)
     if not query_terms:
-        return [], [], False
+        return immediate, [], False
     recent_pool = messages[-_HISTORY_RECENT_MESSAGES:]
     matched_indexes = {
         index
@@ -1785,7 +1786,7 @@ def _select_history_messages(
         if _message_matches_history_terms(message.get("content", ""), query_terms)
     }
     if not matched_indexes:
-        return [], [], False
+        return immediate, [], False
 
     # Keep the adjacent half of a matched user/assistant exchange so evidence
     # and its response are not separated.
@@ -1796,8 +1797,24 @@ def _select_history_messages(
             selected_indexes.add(index - 1)
         elif role == "user" and index + 1 < len(recent_pool):
             selected_indexes.add(index + 1)
+    immediate_ids = {id(item) for item in immediate}
+    for index, message in enumerate(recent_pool):
+        if id(message) in immediate_ids:
+            selected_indexes.add(index)
     selected = [recent_pool[index] for index in sorted(selected_indexes)][-8:]
     return selected, [], False
+
+
+def _latest_complete_history_exchange(
+    messages: list[dict[str, str]],
+) -> list[dict[str, str]]:
+    """Return the newest adjacent user/assistant pair in chronological order."""
+    for index in range(len(messages) - 1, 0, -1):
+        user = messages[index - 1]
+        assistant = messages[index]
+        if user.get("role") == "user" and assistant.get("role") == "assistant":
+            return [user, assistant]
+    return []
 
 
 def _is_immediate_followup(text: str) -> bool:
@@ -1806,6 +1823,10 @@ def _is_immediate_followup(text: str) -> bool:
     value = str(text or "").strip()
     if not value or len(value) > 80:
         return False
+    from agent.runtime.task_relation_policy import classify_task_relation
+
+    if classify_task_relation(value) is not None:
+        return True
     if re.fullmatch(
         r"(?:全部|所有|全都|都要|这些|以上|它们|每个|每一个)[。.!！?？\s]*",
         value,
