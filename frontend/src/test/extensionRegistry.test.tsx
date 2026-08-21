@@ -5,7 +5,7 @@ import { ExtensionRegistryProvider, useExtensionRegistry } from "../extensions/r
 
 function Probe() {
   const registry = useExtensionRegistry();
-  return <div>{registry.ready ? registry.navItems.map((item) => item.label).join(",") : "loading"}</div>;
+  return <div>{registry.ready ? <><span>{registry.navItems.map((item) => item.label).join(",")}</span><span data-testid="extension-routes">{registry.routes.map((route) => route.path).join(",")}</span></> : "loading"}</div>;
 }
 
 test("builds navigation from an installed bundled extension", async () => {
@@ -28,6 +28,28 @@ test("builds navigation from an installed bundled extension", async () => {
   });
   render(<ExtensionRegistryProvider><Probe /></ExtensionRegistryProvider>);
   await waitFor(() => expect(screen.getByText("扩展示例")).toBeInTheDocument());
+});
+
+test("registers the bundled network operations route", async () => {
+  vi.spyOn(extensionsApi, "list").mockResolvedValue({
+    ok: true,
+    count: 1,
+    extensions: [{
+      extension_id: "network.operations",
+      name: "网络巡检",
+      version: "1.2.0",
+      description: "",
+      capabilities: ["network_inspection"],
+      tools: ["network.operations.inspection"],
+      frontend_routes: [{
+        path: "/extensions/network.operations/overview",
+        module: "frontend/NetworkOperations.tsx",
+        label: "网络巡检",
+      }],
+    }],
+  });
+  render(<ExtensionRegistryProvider><Probe /></ExtensionRegistryProvider>);
+  await waitFor(() => expect(screen.getByTestId("extension-routes")).toHaveTextContent("/extensions/network.operations/overview"));
 });
 
 test("does not expose routes from a disabled extension", async () => {
