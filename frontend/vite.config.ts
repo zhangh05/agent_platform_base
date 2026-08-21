@@ -42,6 +42,8 @@ export default defineConfig(({ mode }) => {
         react: resolve(process.cwd(), "node_modules/react"),
         "react-dom": resolve(process.cwd(), "node_modules/react-dom"),
         zustand: resolve(process.cwd(), "node_modules/zustand"),
+        "@lzcore-extension/network-operations": resolve(process.cwd(), "../extensions/network_operations/frontend/NetworkOperations.tsx"),
+        "@lzcore-extension/reference-insights": resolve(process.cwd(), "../extensions/reference_insights/frontend/ReferenceInsights.tsx"),
       },
       dedupe: ["react", "react-dom", "zustand"],
     },

@@ -31,14 +31,14 @@ const bundledManifests = {
   ...import.meta.glob("../../../extensions/*/extension.json", { eager: true, import: "default" }),
   ...import.meta.glob("../../../plugins/*/extension.json", { eager: true, import: "default" }),
 } as Record<string, BundledManifest>;
-const bundledModuleKeys: Record<string, string> = {
-  "network.operations:frontend/NetworkOperations.tsx": "../../../extensions/network_operations/frontend/NetworkOperations.tsx",
-  "reference.insights:frontend/ReferenceInsights.tsx": "../../../extensions/reference_insights/frontend/ReferenceInsights.tsx",
+const bundledModuleLoaders: Record<string, Loader> = {
+  "network.operations:frontend/NetworkOperations.tsx": () => import("@lzcore-extension/network-operations"),
+  "reference.insights:frontend/ReferenceInsights.tsx": () => import("@lzcore-extension/reference-insights"),
 };
 
 function loaderFor(extensionId: string, modulePath: string): Loader | undefined {
-  const explicitKey = bundledModuleKeys[`${extensionId}:${modulePath}`];
-  if (explicitKey && moduleLoaders[explicitKey]) return moduleLoaders[explicitKey];
+  const bundledLoader = bundledModuleLoaders[`${extensionId}:${modulePath}`];
+  if (bundledLoader) return bundledLoader;
   const manifestEntry = Object.entries(bundledManifests).find(([, manifest]) => manifest.extension_id === extensionId);
   if (!manifestEntry) return undefined;
   const directory = manifestEntry[0].replace(/\/extension\.json$/, "");
