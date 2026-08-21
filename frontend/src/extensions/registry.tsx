@@ -1,6 +1,7 @@
 import {
   createContext,
   lazy,
+  useCallback,
   useContext,
   useEffect,
   useMemo,
@@ -14,7 +15,7 @@ import type { NavItem } from "../config/nav";
 
 type Loader = () => Promise<{ default: ComponentType }>;
 type ExtensionRoute = { path: string; Component: React.LazyExoticComponent<ComponentType> };
-type RegistryState = { ready: boolean; extensions: InstalledExtension[]; navItems: NavItem[]; routes: ExtensionRoute[] };
+type RegistryState = { ready: boolean; extensions: InstalledExtension[]; navItems: NavItem[]; routes: ExtensionRoute[]; reload: () => Promise<void> };
 type BundledManifest = { extension_id?: string };
 
 /*
@@ -45,20 +46,26 @@ function loaderFor(extensionId: string, modulePath: string): Loader | undefined 
   return moduleLoaders[`${directory}/${modulePath}`];
 }
 
-const ExtensionRegistryContext = createContext<RegistryState>({ ready: false, extensions: [], navItems: [], routes: [] });
+const ExtensionRegistryContext = createContext<RegistryState>({ ready: false, extensions: [], navItems: [], routes: [], reload: async () => {} });
 
 export function ExtensionRegistryProvider({ children }: { children: ReactNode }) {
   const [extensions, setExtensions] = useState<InstalledExtension[]>([]);
   const [ready, setReady] = useState(false);
+  const reload = useCallback(async (signal?: AbortSignal) => {
+    try {
+      const response = await extensionsApi.list(signal);
+      if (!signal?.aborted) setExtensions(response.extensions || []);
+    } catch {
+      if (!signal?.aborted) setExtensions([]);
+    } finally {
+      if (!signal?.aborted) setReady(true);
+    }
+  }, []);
   useEffect(() => {
     const controller = new AbortController();
-    let active = true;
-    extensionsApi.list(controller.signal)
-      .then((response) => { if (active) setExtensions(response.extensions || []); })
-      .catch(() => { if (active) setExtensions([]); })
-      .finally(() => { if (active) setReady(true); });
-    return () => { active = false; controller.abort(); };
-  }, []);
+    void reload(controller.signal);
+    return () => controller.abort();
+  }, [reload]);
   const value = useMemo<RegistryState>(() => {
     const records = extensions
       .filter((extension) => extension.lifecycle?.enabled !== false)
@@ -72,8 +79,9 @@ export function ExtensionRegistryProvider({ children }: { children: ReactNode })
       extensions,
       navItems: records.map(({ extension, route }) => ({ to: route.path, label: route.label || extension.name, testid: `nav-extension-${extension.extension_id.replace(/[^a-z0-9]+/gi, "-")}`, Icon: IconBox })),
       routes: records.map(({ route, Component }) => ({ path: route.path, Component })),
+      reload: () => reload(),
     };
-  }, [extensions, ready]);
+  }, [extensions, ready, reload]);
   return <ExtensionRegistryContext.Provider value={value}>{children}</ExtensionRegistryContext.Provider>;
 }
 

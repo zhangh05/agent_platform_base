@@ -477,9 +477,14 @@ def execute_workflow(workspace_id: str, workflow_id: str, inputs: dict[str, Any]
     else:
         record.pop("finished_at", None)
     _save_run(record)
+    if record.get("status") == "failed":
+        try:
+            from storage.review_store import record_workflow_failure_review
+            record_workflow_failure_review(record)
+        except Exception:
+            # Review intake is supplementary and must not alter the canonical run result.
+            pass
     return record
-
-
 
 def _create_workflow_approval(*, workspace_id: str, workflow_id: str, run_id: str, job_id: str, node: dict[str, Any], arguments: dict[str, Any], risk_level: str, description: str) -> str:
     """Create a durable Guardian approval from a canonical policy decision."""

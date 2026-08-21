@@ -10,7 +10,7 @@ import hashlib
 import uuid
 from typing import Any
 
-from flask import jsonify, request
+from flask import jsonify, request, session
 
 from storage.ids import validate_workspace_id
 from storage.time_utils import now_iso
@@ -80,6 +80,9 @@ def _with_defaults(workspace_id: str, artifact_id: str, item: dict[str, Any]) ->
         "requires_human_review": bool(item.get("requires_human_review", True)),
         "status": status if status in _REVIEW_STATUSES else "pending",
         "user_note": str(item.get("user_note") or "")[:4000],
+        "reviewed_by": str(item.get("reviewed_by") or "")[:120],
+        "reviewed_at": str(item.get("reviewed_at") or ""),
+        "history": [dict(value) for value in (item.get("history") or []) if isinstance(value, dict)][-100:],
         "created_at": str(item.get("created_at") or now),
         "updated_at": str(item.get("updated_at") or now),
     }
@@ -122,37 +125,36 @@ def _create_review_item(workspace_id: str, payload: dict[str, Any]) -> dict[str,
     return {"ok": True, "item": item}
 
 
-def _update_review_item(workspace_id: str, artifact_id: str, item_id: str, status: str, user_note: str) -> dict[str, Any]:
+def _update_review_item(workspace_id: str, artifact_id: str, item_id: str, status: str, user_note: str, actor: str) -> dict[str, Any]:
     if status not in _REVIEW_STATUSES:
         return {"ok": False, "errors": ["invalid_status"]}
     try:
-        from storage.review_store import load_sidecar, save_sidecar
-        sidecar = load_sidecar(workspace_id, artifact_id)
-    except (OSError, ValueError):
+        from storage.review_store import mutate_sidecar
+        def mutate(sidecar: dict[str, Any]) -> dict[str, Any]:
+            key = "items" if isinstance(sidecar.get("items"), list) else (
+                "review_items" if isinstance(sidecar.get("review_items"), list) else (
+                    "manual_review" if isinstance(sidecar.get("manual_review"), list) else "items"
+                )
+            )
+            items = _sidecar_items(sidecar)
+            for index, item in enumerate(items):
+                normalized = _with_defaults(workspace_id, artifact_id, item)
+                if normalized["item_id"] != item_id:
+                    items[index] = normalized
+                    continue
+                timestamp = now_iso()
+                note = str(user_note or "")[:4000]
+                history = [dict(value) for value in normalized.get("history") or [] if isinstance(value, dict)]
+                history.append({"status": status, "user_note": note, "actor": actor[:120], "at": timestamp})
+                normalized.update({"status": status, "user_note": note, "reviewed_by": actor[:120], "reviewed_at": timestamp, "history": history[-100:], "updated_at": timestamp})
+                items[index] = normalized
+                sidecar[key] = items
+                sidecar["updated_at"] = timestamp
+                return {"ok": True, "item": normalized}
+            return {"ok": False, "errors": ["item_not_found"]}
+        return mutate_sidecar(workspace_id, artifact_id, mutate)
+    except (OSError, ValueError, TimeoutError):
         return {"ok": False, "errors": ["artifact_not_found"]}
-    if not isinstance(sidecar, dict):
-        return {"ok": False, "errors": ["artifact_not_found"]}
-    key = "items" if isinstance(sidecar.get("items"), list) else (
-        "review_items" if isinstance(sidecar.get("review_items"), list) else (
-            "manual_review" if isinstance(sidecar.get("manual_review"), list) else "items"
-        )
-    )
-    items = _sidecar_items(sidecar)
-    updated = None
-    for index, item in enumerate(items):
-        normalized = _with_defaults(workspace_id, artifact_id, item)
-        if normalized["item_id"] != item_id:
-            items[index] = normalized
-            continue
-        normalized.update({"status": status, "user_note": str(user_note or "")[:4000], "updated_at": now_iso()})
-        items[index] = normalized
-        updated = normalized
-    if updated is None:
-        return {"ok": False, "errors": ["item_not_found"]}
-    sidecar[key] = items
-    sidecar["updated_at"] = now_iso()
-    save_sidecar(workspace_id, artifact_id, sidecar)
-    return {"ok": True, "item": updated}
 
 
 def register_review_routes(app):
@@ -202,7 +204,8 @@ def register_review_routes(app):
         status = data.get("status")
         if not status:
             return jsonify({"ok": False, "error": "status required"}), 400
-        result = _update_review_item(ws_id, artifact_id, item_id, status, data.get("user_note", ""))
+        actor = str(session.get("lzcore_user") or "system")
+        result = _update_review_item(ws_id, artifact_id, item_id, status, data.get("user_note", ""), actor)
         if not result.get("ok"):
             error = (result.get("errors") or ["unknown_error"])[0]
             code = 404 if error in {"artifact_not_found", "item_not_found"} else 400

@@ -2,10 +2,12 @@ import { useCallback, useEffect, useState } from "react";
 import { Link } from "../../router";
 import { extensionsApi, type ExtensionPackageRecord, type InstalledExtension } from "../../api";
 import { useSessionStore } from "../../stores/session";
+import { useExtensionRegistry } from "../../extensions/registry";
 
 /** Platform extension catalog with direct routes into enabled business capabilities. */
 export function ExtensionCenter() {
   const workspaceId = useSessionStore((state) => state.currentWorkspaceId);
+  const { reload: reloadRegistry } = useExtensionRegistry();
   const [items, setItems] = useState<InstalledExtension[]>([]);
   const [packages, setPackages] = useState<ExtensionPackageRecord[]>([]);
   const [busy, setBusy] = useState("");
@@ -20,7 +22,7 @@ export function ExtensionCenter() {
 
   async function changeState(item: InstalledExtension) {
     setBusy(item.extension_id); setError("");
-    try { if (item.lifecycle?.enabled === false) await extensionsApi.enable(item.extension_id); else await extensionsApi.disable(item.extension_id); await load(); }
+    try { if (item.lifecycle?.enabled === false) await extensionsApi.enable(item.extension_id); else await extensionsApi.disable(item.extension_id); await Promise.all([load(), reloadRegistry()]); }
     catch (err) { setError(String((err as { message?: string })?.message || "扩展状态更新失败")); }
     finally { setBusy(""); }
   }
@@ -41,14 +43,14 @@ export function ExtensionCenter() {
     const current = items.find((candidate) => candidate.extension_id === item.extension_id);
     const key = `${item.extension_id}@${item.version}`;
     setBusy(key); setError("");
-    try { await extensionsApi.install(item.extension_id, item.version, Boolean(current)); await load(); }
+    try { await extensionsApi.install(item.extension_id, item.version, Boolean(current)); await Promise.all([load(), reloadRegistry()]); }
     catch (err) { setError(String((err as { message?: string })?.message || "扩展安装失败")); }
     finally { setBusy(""); }
   }
   async function uninstall(item: InstalledExtension) {
     if (!window.confirm(`确认卸载“${item.name}”？扩展会移入可恢复区，数据不会删除。`)) return;
     setBusy(item.extension_id); setError("");
-    try { await extensionsApi.uninstall(item.extension_id); await load(); }
+    try { await extensionsApi.uninstall(item.extension_id); await Promise.all([load(), reloadRegistry()]); }
     catch (err) { setError(String((err as { message?: string })?.message || "扩展卸载失败")); }
     finally { setBusy(""); }
   }

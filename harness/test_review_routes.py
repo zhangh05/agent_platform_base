@@ -83,7 +83,10 @@ def test_user_can_create_and_update_a_manual_review_item(monkeypatch, tmp_path):
         json={"status": "accepted", "user_note": "已安排窗口复核。"},
     )
     assert updated.status_code == 200
-    assert updated.get_json()["item"]["user_note"] == "已安排窗口复核。"
+    item = updated.get_json()["item"]
+    assert item["user_note"] == "已安排窗口复核。"
+    assert item["reviewed_by"] == "system"
+    assert item["history"][-1]["status"] == "accepted"
 
 
 def test_failed_workflow_is_written_once_to_human_review_inbox(monkeypatch, tmp_path):

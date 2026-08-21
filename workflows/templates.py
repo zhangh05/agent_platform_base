@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from uuid import uuid4
 from typing import Any
 
 from storage.time_utils import now_iso
@@ -66,7 +67,7 @@ def instantiate_workflow_template(workspace_id: str, template_id: str, *, name: 
     if not template:
         raise ValueError("workflow_template_not_found")
     from workflows.service import save_workflow
-    suffix = now_iso().replace("-", "").replace(":", "").replace("+", "").replace("T", "")[:14]
+    suffix = f"{now_iso().replace("-", "").replace(":", "").replace("+", "").replace("T", "")[:14]}-{uuid4().hex[:8]}"
     definition = deepcopy(template["definition"])
     workflow = save_workflow(workspace_id, {
         "workflow_id": f"{template_id}-{suffix}",

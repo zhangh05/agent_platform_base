@@ -65,6 +65,9 @@ def test_missing_runtime_input_is_recorded_as_a_failed_node(monkeypatch, tmp_pat
     assert run["status"] == "failed"
     assert run["nodes"][0]["status"] == "failed"
     assert "not found" in run["nodes"][0]["errors"][0]
+    from storage.review_store import load_sidecar
+    review = load_sidecar("default", f"workflow-{run['run_id']}")
+    assert review and review["items"][0]["source_key"] == f"workflow-run:{run['run_id']}"
 
 
 def test_continue_runs_independent_branch_but_skips_failed_dependents(monkeypatch, tmp_path):
