@@ -147,6 +147,14 @@ export interface WorkflowRun {
   run_id: string; workflow_id: string; status: string; started_at: string; finished_at?: string;
   nodes: Array<{ node_id: string; tool_id: string; status: string; summary?: string; duration_ms?: number; orchestration?: { layer?: number; parallel?: boolean; depends_on?: string[] } }>;
 }
+export interface WorkflowTemplate {
+  template_id: string;
+  name: string;
+  description: string;
+  audience: string;
+  expected_result: string;
+  input_example: Record<string, unknown>;
+}
 export const workflowsApi = {
   list: (workspace_id: string) => apiRequest<{ ok: boolean; workflows: WorkflowDefinition[] }>({ method: "GET", url: "/workflows", params: { workspace_id } }),
   save: (workspace_id: string, workflow: Partial<WorkflowDefinition>) => apiRequest<{ ok: boolean; workflow: WorkflowDefinition }>({ method: "POST", url: "/workflows", data: { ...workflow, workspace_id } }),
@@ -821,6 +829,16 @@ export const artifactsApi = {
     ),
 };
 
+export const workflowTemplatesApi = {
+  list: (signal?: AbortSignal): Promise<{ templates: WorkflowTemplate[] }> =>
+    apiRequest<{ templates: WorkflowTemplate[] }>({ method: "GET", url: "/workflow-templates" }, signal),
+  instantiate: (workspace_id: string, template_id: string, name?: string, signal?: AbortSignal): Promise<{ workflow: WorkflowDefinition; template: WorkflowTemplate }> =>
+    apiRequest<{ workflow: WorkflowDefinition; template: WorkflowTemplate }>({
+      method: "POST",
+      url: `/workflow-templates/${template_id}/instantiate`,
+      data: { workspace_id, ...(name ? { name } : {}) },
+    }, signal),
+};
 export const reviewsApi = {
   /**
    * GET /api/workspaces/<ws_id>/review-items — workspace-level aggregated list.
@@ -837,6 +855,16 @@ export const reviewsApi = {
         url: `/workspaces/${workspace_id}/review-items`,
         params: status ? { status } : undefined,
       },
+      signal,
+    ),
+  /** POST /api/workspaces/<ws_id>/review-items — create a durable user review. */
+  create: (
+    workspace_id: string,
+    draft: { title: string; category?: string; severity: "info" | "warning" | "error"; reason: string },
+    signal?: AbortSignal,
+  ): Promise<{ ok: boolean; item: ReviewItem }> =>
+    apiRequest<{ ok: boolean; item: ReviewItem }>(
+      { method: "POST", url: `/workspaces/${workspace_id}/review-items`, data: draft },
       signal,
     ),
   /**

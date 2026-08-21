@@ -533,6 +533,7 @@ export interface ReviewItem {
   item_id: string;
   workspace_id: string;
   artifact_id: string;
+  title?: string;
   severity: "info" | "warning" | "error";
   category: string;
   line_no: number | null;

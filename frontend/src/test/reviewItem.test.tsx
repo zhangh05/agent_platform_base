@@ -54,7 +54,8 @@ describe("ReviewCenter — review item status", () => {
     enqueue("/workspaces/ws-1/review-items", { status: 200, data: { items: [] } });
     render(<ReviewCenter />);
 
-    expect(await screen.findByTestId("review-empty-state")).toHaveTextContent("当前没有待处理评审");
-    expect(screen.getByText("2. 有风险的任务产出会自动进入这里")).toBeInTheDocument();
+    expect(await screen.findByTestId("review-empty-state")).toHaveTextContent("当前没有待处理复核");
+    expect(screen.getAllByRole("button", { name: "发起复核" })).toHaveLength(2);
+    expect(screen.getByText(/流程运行失败时也会自动进入这里/)).toBeInTheDocument();
   });
 });

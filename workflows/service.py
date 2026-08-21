@@ -632,6 +632,12 @@ def cancel_run(workspace_id: str, run_id: str) -> dict[str, Any]:
     if record.get("status") in {"running", "queued"}:
         record["cancel_requested"] = True
         _save_run(record)
+    try:
+        from storage.review_store import record_workflow_failure_review
+        record_workflow_failure_review(record)
+    except Exception:
+        # Review intake is supplementary; it must not change canonical run state.
+        pass
     return record
 
 
