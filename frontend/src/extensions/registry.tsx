@@ -31,17 +31,14 @@ const bundledManifests = {
   ...import.meta.glob("../../../extensions/*/extension.json", { eager: true, import: "default" }),
   ...import.meta.glob("../../../plugins/*/extension.json", { eager: true, import: "default" }),
 } as Record<string, BundledManifest>;
-const bundledModuleSuffixes: Record<string, string> = {
-  "network.operations:frontend/NetworkOperations.tsx": "/network_operations/frontend/NetworkOperations.tsx",
-  "reference.insights:frontend/ReferenceInsights.tsx": "/reference_insights/frontend/ReferenceInsights.tsx",
+const bundledModuleKeys: Record<string, string> = {
+  "network.operations:frontend/NetworkOperations.tsx": "../../../extensions/network_operations/frontend/NetworkOperations.tsx",
+  "reference.insights:frontend/ReferenceInsights.tsx": "../../../extensions/reference_insights/frontend/ReferenceInsights.tsx",
 };
 
 function loaderFor(extensionId: string, modulePath: string): Loader | undefined {
-  const explicitSuffix = bundledModuleSuffixes[`${extensionId}:${modulePath}`];
-  if (explicitSuffix) {
-    const match = Object.entries(moduleLoaders).find(([candidate]) => candidate.endsWith(explicitSuffix));
-    if (match) return match[1];
-  }
+  const explicitKey = bundledModuleKeys[`${extensionId}:${modulePath}`];
+  if (explicitKey && moduleLoaders[explicitKey]) return moduleLoaders[explicitKey];
   const manifestEntry = Object.entries(bundledManifests).find(([, manifest]) => manifest.extension_id === extensionId);
   if (!manifestEntry) return undefined;
   const directory = manifestEntry[0].replace(/\/extension\.json$/, "");
