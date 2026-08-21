@@ -33,6 +33,15 @@ _FULL_MASK_PATTERNS = [
 MASK = "[REDACTED_SECRET]"
 PATH_MASK = "[REDACTED_PATH]"
 
+_SENSITIVE_FIELD_NAMES = frozenset({
+    "password", "passwd", "passphrase", "secret", "api_secret", "client_secret",
+    "key", "api_key", "apikey", "token", "access_token", "refresh_token",
+    "id_token", "auth_token", "community", "authorization", "auth_header",
+    "credential", "private_key",
+})
+_SENSITIVE_FIELD_SUFFIXES = tuple(f"_{name}" for name in _SENSITIVE_FIELD_NAMES)
+_SAFE_REFERENCE_SUFFIXES = ("_ref", "_reference", "_id")
+
 _ABSOLUTE_PATH_PATTERNS = [
     # Local Unix/macOS paths. Stop at JSON/string delimiters and common
     # traceback separators so file names are not allowed to leak the user home.
@@ -67,18 +76,23 @@ def redact_value(value):
     return value
 
 
+def is_sensitive_field(key: str) -> bool:
+    """Classify credential-bearing fields without masking ordinary metadata."""
+    normalized = str(key or "").strip().lower().replace("-", "_")
+    if not normalized or normalized in {"memory_key", "authority", "authority_rank"}:
+        return False
+    if normalized.endswith(_SAFE_REFERENCE_SUFFIXES):
+        return False
+    return normalized in _SENSITIVE_FIELD_NAMES or normalized.endswith(_SENSITIVE_FIELD_SUFFIXES)
+
+
 def redact_dict(data: dict) -> dict:
     if not data:
         return data
     result = {}
     for key, value in data.items():
         normalized_key = str(key).lower().replace("-", "_")
-        if normalized_key in {"memory_key", "authority", "authority_rank"}:
-            result[key] = redact_value(value)
-        elif any(marker in normalized_key for marker in [
-            "password", "secret", "key", "token", "community",
-            "authorization", "auth", "credential",
-        ]):
+        if is_sensitive_field(normalized_key):
             result[key] = MASK
         else:
             result[key] = redact_value(value)

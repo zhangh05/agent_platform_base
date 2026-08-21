@@ -231,6 +231,8 @@ def baseline(invocation):
 
 
 def register():
+    from extensions.network_operations.workflow_templates import workflow_templates
+
     common = {"workspace_id": {"type": "string"}}
     return {
         "tools": [
@@ -355,4 +357,5 @@ def register():
         ],
         "register_routes": register_routes,
         "migrations": [(1, lambda store: store.root())],
+        "workflow_templates": workflow_templates(),
     }

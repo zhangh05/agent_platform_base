@@ -25,18 +25,54 @@ def _definition():
     }
 
 
-def test_cross_extension_dag_executes_and_persists_redacted_inputs(monkeypatch, tmp_path):
+def test_cross_extension_dag_executes_and_persists_inputs(monkeypatch, tmp_path):
     monkeypatch.setenv("LZCORE_WORKSPACE_ROOT", str(tmp_path / "workspaces"))
     from extensions.runtime import reset_extension_cache_for_tests
     from core.tools.integration import reset_default_client_for_tests
     reset_extension_cache_for_tests(); reset_default_client_for_tests()
     saved = save_workflow("default", _definition())
     assert saved["execution_order"] == ["first", "second"]
-    run = execute_workflow("default", "cross_extension", {"text": "alpha beta", "api_token": "must-not-persist"})
+    run = execute_workflow("default", "cross_extension", {"text": "alpha beta"})
     assert run["status"] == "succeeded"
     assert [item["status"] for item in run["nodes"]] == ["succeeded", "succeeded"]
     assert run["nodes"][1]["output"]["summary"] == "上一步：alpha beta"
-    assert run["inputs"]["api_token"] == "[REDACTED_SECRET]"
+    assert run["inputs"] == {"text": "alpha beta"}
+
+
+def test_workflow_rejects_raw_runtime_secrets_before_persistence(monkeypatch, tmp_path):
+    monkeypatch.setenv("LZCORE_WORKSPACE_ROOT", str(tmp_path / "workspaces"))
+    from extensions.runtime import reset_extension_cache_for_tests
+    from core.tools.integration import reset_default_client_for_tests
+
+    reset_extension_cache_for_tests()
+    reset_default_client_for_tests()
+    save_workflow("default", _definition())
+
+    with pytest.raises(WorkflowError, match="cannot contain raw secrets"):
+        execute_workflow(
+            "default",
+            "cross_extension",
+            {"text": "alpha beta", "api_token": "must-not-persist"},
+        )
+
+
+def test_workflow_accepts_non_secret_token_metadata(monkeypatch, tmp_path):
+    monkeypatch.setenv("LZCORE_WORKSPACE_ROOT", str(tmp_path / "workspaces"))
+    from extensions.runtime import reset_extension_cache_for_tests
+    from core.tools.integration import reset_default_client_for_tests
+
+    reset_extension_cache_for_tests()
+    reset_default_client_for_tests()
+    save_workflow("default", _definition())
+
+    run = execute_workflow(
+        "default",
+        "cross_extension",
+        {"text": "alpha beta", "token_count": 42, "max_tokens": 1024},
+    )
+
+    assert run["status"] == "succeeded"
+    assert run["inputs"]["token_count"] == 42
 
 
 def test_workflow_validation_rejects_cycles_and_unknown_tools(monkeypatch, tmp_path):
@@ -129,6 +165,43 @@ def test_workflow_job_runs_through_durable_job_lifecycle(monkeypatch, tmp_path):
     assert completed.result_summary["workflow_run_id"].startswith("wfrun_")
 
 
+def test_progress_save_cannot_erase_a_concurrent_cancel_request(monkeypatch, tmp_path):
+    monkeypatch.setenv("LZCORE_WORKSPACE_ROOT", str(tmp_path / "workspaces"))
+    from workflows.service import _save_run, cancel_run, get_run
+
+    initial = {
+        "workspace_id": "default",
+        "run_id": "cancel_race",
+        "workflow_id": "cross_extension",
+        "status": "running",
+        "nodes": [],
+    }
+    _save_run(initial)
+    stale_progress = dict(get_run("default", "cancel_race") or {})
+    cancel_run("default", "cancel_race")
+    _save_run(stale_progress)
+
+    assert get_run("default", "cancel_race")["cancel_requested"] is True
+
+
+def test_awaiting_approval_workflow_can_be_cancelled(monkeypatch, tmp_path):
+    monkeypatch.setenv("LZCORE_WORKSPACE_ROOT", str(tmp_path / "workspaces"))
+    from workflows.service import _save_run, cancel_run
+
+    _save_run({
+        "workspace_id": "default",
+        "run_id": "cancel_waiting",
+        "workflow_id": "cross_extension",
+        "status": "awaiting_approval",
+        "nodes": [],
+    })
+    cancelled = cancel_run("default", "cancel_waiting")
+
+    assert cancelled["status"] == "cancelled"
+    assert cancelled["cancel_requested"] is True
+    assert cancelled["finished_at"]
+
+
 def test_organization_workspace_isolation_and_workflow_roles(monkeypatch, tmp_path):
     monkeypatch.setenv("LZCORE_WORKSPACE_ROOT", str(tmp_path / "workspaces"))
     monkeypatch.setenv("LZCORE_IDENTITY_ENABLED", "true")
@@ -180,3 +253,31 @@ def test_organization_workspace_isolation_and_workflow_roles(monkeypatch, tmp_pa
     from backend.core.identity import assign_workspace
     with pytest.raises(ValueError, match="another organization"):
         assign_workspace("org_c", "team_a")
+
+
+def test_queued_workflow_rejects_raw_secrets_before_job_persistence(monkeypatch, tmp_path):
+    monkeypatch.setenv("LZCORE_WORKSPACE_ROOT", str(tmp_path / "workspaces"))
+    monkeypatch.setenv("LZCORE_IDENTITY_ENABLED", "false")
+    from extensions.runtime import reset_extension_cache_for_tests
+    from core.tools.integration import reset_default_client_for_tests
+
+    reset_extension_cache_for_tests()
+    reset_default_client_for_tests()
+    save_workflow("default", _definition())
+    from backend.main import create_app
+
+    app = create_app()
+    app.config.update(TESTING=True)
+    response = app.test_client().post(
+        "/api/workflows/cross_extension/runs",
+        json={
+            "workspace_id": "default",
+            "enqueue": True,
+            "inputs": {"text": "alpha beta", "api_token": "must-not-persist"},
+        },
+        headers={"Origin": "http://localhost:5273"},
+    )
+
+    assert response.status_code == 400
+    assert "cannot contain raw secrets" in response.get_json()["error"]
+    assert not list((tmp_path / "workspaces").rglob("job_*.json"))

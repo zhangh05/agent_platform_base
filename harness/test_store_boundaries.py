@@ -229,3 +229,19 @@ def test_storage_redaction_masks_bearer_sk_keys_with_hyphens():
     redacted = redact_text(f"Authorization: Bearer {secret}")
     assert secret not in redacted
     assert "REDACTED" in redacted
+
+
+def test_storage_redaction_distinguishes_secret_fields_from_token_metadata():
+    from storage.redaction import MASK, redact_dict
+
+    redacted = redact_dict({
+        "api_token": "secret-value",
+        "token_count": 42,
+        "max_tokens": 1024,
+        "credential_ref": "vault-entry-1",
+    })
+
+    assert redacted["api_token"] == MASK
+    assert redacted["token_count"] == 42
+    assert redacted["max_tokens"] == 1024
+    assert redacted["credential_ref"] == "vault-entry-1"

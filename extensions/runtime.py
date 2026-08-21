@@ -20,6 +20,7 @@ class LoadedExtension:
     tools: tuple[tuple[ToolSpec, Callable[[ToolInvocation], dict]], ...] = ()
     register_routes: Callable[[Any], None] | None = None
     migrations: tuple[tuple[int, Callable], ...] = ()
+    workflow_templates: tuple[dict[str, Any], ...] = ()
 
 
 _CACHE: tuple[LoadedExtension, ...] | None = None
@@ -174,6 +175,45 @@ def _build_tools(manifest: ExtensionManifest, contribution: dict[str, Any]) -> t
     return tuple(built)
 
 
+def _build_workflow_templates(
+    manifest: ExtensionManifest,
+    contribution: dict[str, Any],
+) -> tuple[dict[str, Any], ...]:
+    """Validate workflow templates against the owning extension manifest."""
+    declared = set(manifest.workflow_templates)
+    built: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for raw in contribution.get("workflow_templates") or ():
+        if not isinstance(raw, dict):
+            raise ExtensionValidationError("workflow template contribution must be an object")
+        template = dict(raw)
+        template_id = str(template.get("template_id") or "").strip()
+        if template_id not in declared:
+            raise ExtensionValidationError(
+                f"undeclared workflow template contribution: {template_id}"
+            )
+        if template_id in seen:
+            raise ExtensionValidationError(
+                f"duplicate workflow template contribution: {template_id}"
+            )
+        if not str(template.get("name") or "").strip():
+            raise ExtensionValidationError(
+                f"workflow template name is required: {template_id}"
+            )
+        if not isinstance(template.get("definition"), dict):
+            raise ExtensionValidationError(
+                f"workflow template definition is required: {template_id}"
+            )
+        seen.add(template_id)
+        built.append(template)
+    missing = declared - seen
+    if missing:
+        raise ExtensionValidationError(
+            f"declared workflow templates have no contribution: {sorted(missing)}"
+        )
+    return tuple(built)
+
+
 def load_extensions(*, registry: ExtensionRegistry | None = None, refresh: bool = False) -> tuple[LoadedExtension, ...]:
     global _CACHE
     use_default_registry = registry is None
@@ -201,6 +241,7 @@ def load_extensions(*, registry: ExtensionRegistry | None = None, refresh: bool 
             tools=_build_tools(manifest, contribution),
             register_routes=route_registrar,
             migrations=tuple(contribution.get("migrations") or ()),
+            workflow_templates=_build_workflow_templates(manifest, contribution),
         ))
     result = tuple(loaded)
     # Validate the aggregate extension surface while loading, so a deployment
@@ -220,6 +261,19 @@ def load_extensions(*, registry: ExtensionRegistry | None = None, refresh: bool 
         if core_conflicts:
             problems.append(f"extension tools conflict with core tools: {core_conflicts}")
         raise ExtensionValidationError("; ".join(problems))
+    template_ids = [
+        str(template.get("template_id") or "")
+        for extension in result
+        for template in extension.workflow_templates
+    ]
+    duplicate_template_ids = sorted(
+        template_id for template_id in set(template_ids)
+        if template_ids.count(template_id) > 1
+    )
+    if duplicate_template_ids:
+        raise ExtensionValidationError(
+            f"duplicate extension workflow template ids: {duplicate_template_ids}"
+        )
     if use_default_registry and not refresh:
         _CACHE = result
     return result
@@ -318,6 +372,7 @@ def public_extension_catalog() -> list[dict[str, Any]]:
         "capabilities": list(manifest.capabilities),
         "tools": list(manifest.tools),
         "frontend_routes": list(manifest.frontend_routes),
+        "workflow_templates": list(manifest.workflow_templates),
         "permissions": list(manifest.permissions),
         "metadata": {key: value for key, value in manifest.metadata.items() if key in {"minimum_role", "minimum_write_role", "quotas"}},
         "source": "bundled" if _manifest_root(registry, manifest.extension_id).parent.name == "extensions" else "installed",

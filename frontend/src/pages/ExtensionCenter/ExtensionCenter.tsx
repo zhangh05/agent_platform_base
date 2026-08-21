@@ -7,7 +7,8 @@ import { useExtensionRegistry } from "../../extensions/registry";
 /** Platform extension catalog with direct routes into enabled business capabilities. */
 export function ExtensionCenter() {
   const workspaceId = useSessionStore((state) => state.currentWorkspaceId);
-  const { reload: reloadRegistry } = useExtensionRegistry();
+  const { ready: registryReady, reload: reloadRegistry, routes: registeredRoutes } = useExtensionRegistry();
+  const registeredRoutePaths = new Set(registeredRoutes.map((route) => route.path));
   const [items, setItems] = useState<InstalledExtension[]>([]);
   const [packages, setPackages] = useState<ExtensionPackageRecord[]>([]);
   const [busy, setBusy] = useState("");
@@ -66,13 +67,15 @@ export function ExtensionCenter() {
       <div className="extension-center-grid">
         {items.map((item) => {
           const enabled = item.lifecycle?.enabled !== false;
-          const routes = item.frontend_routes || [];
+          const declaredRoutes = item.frontend_routes || [];
+          const routes = declaredRoutes.filter((route) => registeredRoutePaths.has(route.path));
+          const missingFrontend = registryReady && enabled && declaredRoutes.length > routes.length;
           return <article className="extension-card" key={item.extension_id}>
             <div className="extension-card-head"><div><h2>{item.name}</h2><p>{item.extension_id} · v{item.version}</p></div><span className={`extension-state ${enabled ? item.lifecycle?.status || "ready" : "disabled"}`}>{enabled ? item.lifecycle?.status || "ready" : "disabled"}</span></div>
             <p className="extension-description">{item.description}</p>
             <dl className="extension-contract"><div><dt>可用工具</dt><dd>{item.tools.length}</dd></div><div><dt>业务页面</dt><dd>{routes.length}</dd></div><div><dt>写入角色</dt><dd>{item.metadata?.minimum_write_role || "developer"}</dd></div><div><dt>故障次数</dt><dd>{item.lifecycle?.failure_count || 0}</dd></div></dl>
             {item.lifecycle?.last_error ? <p className="extension-error">{item.lifecycle.last_error}</p> : null}
-            {enabled && routes.length > 0 ? <div className="extension-use-links">{routes.map((route) => <Link key={route.path} className="btn primary" to={route.path} viewTransition data-testid={`open-extension-${item.extension_id}`}>打开{route.label || item.name}</Link>)}</div> : <p className="text-sm muted">{enabled ? "该扩展尚未提供可视化业务入口。" : "启用后才能进入业务功能。"}</p>}
+            {enabled && routes.length > 0 ? <div className="extension-use-links">{routes.map((route) => <Link key={route.path} className="btn primary" to={route.path} viewTransition data-testid={`open-extension-${item.extension_id}`}>打开{route.label || item.name}</Link>)}</div> : <p className="text-sm muted">{!enabled ? "启用后才能进入业务功能。" : !registryReady && declaredRoutes.length ? "正在加载业务入口…" : missingFrontend ? "该扩展的前端模块未包含在当前平台构建中，不能直接打开。" : "该扩展尚未提供可视化业务入口。"}</p>}
             <details className="collapse extension-maintenance"><summary>维护操作</summary><div className="extension-card-actions">{item.source === "installed" ? <button className="btn danger" onClick={() => void uninstall(item)} disabled={busy === item.extension_id}>卸载</button> : null}<button className="btn secondary" onClick={() => void migrate(item)} disabled={!enabled || busy === item.extension_id}>迁移当前工作区</button><button className={`btn ${enabled ? "danger" : "primary"}`} onClick={() => void changeState(item)} disabled={busy === item.extension_id}>{enabled ? "停用" : "启用"}</button></div><p className="text-xs muted mt-2">启停或安装可能需要服务重载；仅在确认业务影响后执行。</p></details>
           </article>;
         })}

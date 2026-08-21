@@ -19,6 +19,18 @@ def test_reference_extension_loads_tool_and_frontend_contract():
     assert [spec.tool_id for spec, _ in reference.tools] == ["reference.insights.summarize"]
 
 
+def test_network_workflow_templates_are_owned_by_the_extension():
+    reset_extension_cache_for_tests()
+    loaded = load_extensions(refresh=True)
+    network = next(item for item in loaded if item.manifest.extension_id == "network.operations")
+    declared = set(network.manifest.workflow_templates)
+    contributed = {item["template_id"] for item in network.workflow_templates}
+    assert declared == contributed == {
+        "network-operations-asset-inventory",
+        "network-operations-readonly-inspection",
+    }
+
+
 def test_version_endpoint_uses_the_platform_package_version():
     from agent import __version__
     from backend.api.version import get_version
@@ -87,6 +99,13 @@ def test_manifest_rejects_contributions_outside_its_namespace():
             "name": "Sample",
             "version": "1.0.0",
             "routes": ["/api/health"],
+        })
+    with pytest.raises(ExtensionValidationError, match="workflow template ids must start"):
+        ExtensionManifest.from_dict({
+            "extension_id": "vendor.sample",
+            "name": "Sample",
+            "version": "1.0.0",
+            "workflow_templates": ["network-inventory"],
         })
 
 

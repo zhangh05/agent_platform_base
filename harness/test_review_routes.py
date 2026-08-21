@@ -96,7 +96,7 @@ def test_failed_workflow_is_written_once_to_human_review_inbox(monkeypatch, tmp_
     record = {
         "workspace_id": "default",
         "run_id": "run-123",
-        "workflow_id": "network-readonly-inspection",
+        "workflow_id": "network-operations-readonly-inspection",
         "status": "failed",
         "finished_at": "2026-08-21T12:00:00+00:00",
         "nodes": [{"node_id": "start", "tool_id": "network.operations.inspection", "status": "failed", "summary": "设备认证失败"}],

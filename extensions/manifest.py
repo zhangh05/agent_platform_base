@@ -27,6 +27,7 @@ class ExtensionManifest:
     routes: tuple[str, ...] = ()
     frontend_modules: tuple[str, ...] = ()
     frontend_routes: tuple[dict[str, Any], ...] = ()
+    workflow_templates: tuple[str, ...] = ()
     entrypoint: str = ""
     min_platform_version: str = ""
     max_platform_version: str = ""
@@ -40,12 +41,17 @@ class ExtensionManifest:
             raise ExtensionValidationError("name and version are required")
         if not re.fullmatch(r"(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:[-+][0-9A-Za-z.-]+)?", self.version):
             raise ExtensionValidationError("version must use semantic versioning")
-        for label, values in (("capabilities", self.capabilities), ("tools", self.tools), ("permissions", self.permissions)):
+        for label, values in (
+            ("capabilities", self.capabilities),
+            ("tools", self.tools),
+            ("permissions", self.permissions),
+            ("workflow_templates", self.workflow_templates),
+        ):
             if len(set(values)) != len(values):
                 raise ExtensionValidationError(f"{label} contains duplicates")
             if any(not str(value).strip() for value in values):
                 raise ExtensionValidationError(f"{label} contains an empty value")
-        if not self.tools and not self.capabilities and not self.routes:
+        if not self.tools and not self.capabilities and not self.routes and not self.workflow_templates:
             raise ExtensionValidationError("an extension must declare a capability, tool, or route")
         if self.api_version != PLATFORM_EXTENSION_API_VERSION:
             raise ExtensionValidationError(
@@ -55,6 +61,15 @@ class ExtensionManifest:
         if any(not tool_id.startswith(tool_prefix) for tool_id in self.tools):
             raise ExtensionValidationError(
                 f"tool ids must start with {tool_prefix}"
+            )
+        template_prefix = f"{self.extension_id.replace('.', '-')}-"
+        if any(
+            not re.fullmatch(r"[A-Za-z0-9_-]{1,80}", template_id)
+            or not template_id.startswith(template_prefix)
+            for template_id in self.workflow_templates
+        ):
+            raise ExtensionValidationError(
+                f"workflow template ids must start with {template_prefix}"
             )
         route_prefix = f"/api/extensions/{self.extension_id}"
         if any(not route.startswith(route_prefix) for route in self.routes):
@@ -92,6 +107,14 @@ class ExtensionManifest:
     def from_dict(cls, data: dict[str, Any]) -> "ExtensionManifest":
         known = {field for field in cls.__dataclass_fields__}
         values = {key: value for key, value in data.items() if key in known}
-        for key in ("capabilities", "tools", "permissions", "routes", "frontend_modules", "frontend_routes"):
+        for key in (
+            "capabilities",
+            "tools",
+            "permissions",
+            "routes",
+            "frontend_modules",
+            "frontend_routes",
+            "workflow_templates",
+        ):
             values[key] = tuple(values.get(key) or ())
         return cls(**values).validate()

@@ -5,7 +5,7 @@ import { extensionsApi, toolsApi, workflowsApi, workflowTemplatesApi } from "../
 import { WorkflowStudio } from "../pages/WorkflowStudio/WorkflowStudio";
 
 const template = {
-  template_id: "network-asset-inventory",
+  template_id: "network-operations-asset-inventory",
   name: "网络资产清单核对",
   description: "读取当前工作区已登记的网络设备资产。",
   audience: "网络运维",
@@ -14,7 +14,7 @@ const template = {
 };
 
 const workflow = {
-  workflow_id: "network-asset-inventory-20260821",
+  workflow_id: "network-operations-asset-inventory-20260821",
   name: "网络资产清单核对",
   description: template.description,
   version: 1,
@@ -34,7 +34,7 @@ test("creates a user-facing workflow from a business template", async () => {
   expect(await screen.findByText("网络资产清单核对")).toBeInTheDocument();
   await userEvent.click(screen.getByRole("button", { name: "创建并打开" }));
 
-  await waitFor(() => expect(instantiate).toHaveBeenCalledWith("default", "network-asset-inventory"));
+  await waitFor(() => expect(instantiate).toHaveBeenCalledWith("default", "network-operations-asset-inventory"));
   expect(screen.getByDisplayValue("网络资产清单核对")).toBeInTheDocument();
   expect(screen.getByPlaceholderText("步骤名称")).toHaveValue("读取网络资产");
   expect(screen.getByRole("option", { name: "读取网络资产" })).toBeInTheDocument();

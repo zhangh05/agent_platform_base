@@ -150,16 +150,47 @@ def _validate_references(nodes: list[dict[str, Any]]) -> None:
 
 
 def _reject_static_secrets(value: Any, node_id: str, key: str = "") -> None:
+    from storage.redaction import is_sensitive_field
+
     if isinstance(value, dict):
         for item_key, item in value.items(): _reject_static_secrets(item, node_id, str(item_key))
         return
     if isinstance(value, list):
         for item in value: _reject_static_secrets(item, node_id, key)
         return
-    normalized = key.lower().replace("-", "_")
-    secret_key = any(marker in normalized for marker in ("password", "api_key", "token", "authorization", "private_key")) and not normalized.endswith("_ref")
-    if secret_key and not (isinstance(value, str) and _TEMPLATE.search(value)):
-        raise WorkflowError(f"node {node_id} contains a static secret; use runtime input or a secret reference")
+    if is_sensitive_field(key) and not (isinstance(value, str) and _TEMPLATE.search(value)):
+        raise WorkflowError(
+            f"node {node_id} contains a static secret; use a secret reference or a preconfigured asset"
+        )
+
+
+def _reject_runtime_secrets(value: Any, key: str = "") -> None:
+    """Keep raw secrets out of durable, resumable workflow state."""
+    from storage.redaction import is_sensitive_field
+
+    if isinstance(value, dict):
+        for item_key, item in value.items():
+            _reject_runtime_secrets(item, str(item_key))
+        return
+    if isinstance(value, list):
+        for item in value:
+            _reject_runtime_secrets(item, key)
+        return
+    if is_sensitive_field(key) and value is not None and value != "":
+        raise WorkflowError(
+            "workflow inputs cannot contain raw secrets; use a secret reference or a preconfigured asset"
+        )
+
+
+def validate_workflow_inputs(inputs: dict[str, Any] | None) -> dict[str, Any]:
+    """Validate workflow inputs before any durable run or queue record is created."""
+    normalized = inputs or {}
+    if not isinstance(normalized, dict):
+        raise WorkflowError("workflow inputs must be an object")
+    _reject_runtime_secrets(normalized)
+    if len(json.dumps(normalized, ensure_ascii=False, default=str).encode()) > 1_048_576:
+        raise WorkflowError("workflow inputs are too large")
+    return dict(normalized)
 
 
 def save_workflow(workspace_id: str, payload: dict[str, Any]) -> dict[str, Any]:
@@ -209,10 +240,7 @@ def execute_workflow(workspace_id: str, workflow_id: str, inputs: dict[str, Any]
     if not definition or definition.get("status") != "active":
         raise WorkflowError("workflow not found or inactive")
     definition = validate_definition(definition)
-    if not isinstance(inputs or {}, dict):
-        raise WorkflowError("workflow inputs must be an object")
-    if len(json.dumps(inputs or {}, ensure_ascii=False, default=str).encode()) > 1_048_576:
-        raise WorkflowError("workflow inputs are too large")
+    inputs = validate_workflow_inputs(inputs)
     requested_run_id = str(run_id or "")
     run_id = _id(requested_run_id or f"wfrun_{uuid.uuid4().hex[:12]}", "run_id")
     from core.runtime_engine.budget_controller import BudgetController
@@ -608,6 +636,18 @@ def _save_run(record: dict[str, Any]) -> None:
     record["updated_at"] = now_iso()
     path = _run_path(record["workspace_id"], record["run_id"])
     with FileLock(path.with_suffix(".lock")):
+        # Cancellation is a monotonic signal written by another request. A
+        # workflow step may still hold an older in-memory snapshot, so merge
+        # the durable flag while holding the same run lock before replacing
+        # the record. Otherwise a normal progress save can resurrect a run
+        # immediately after the user cancelled it.
+        if path.is_file():
+            try:
+                current = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                current = {}
+            if isinstance(current, dict) and current.get("cancel_requested"):
+                record["cancel_requested"] = True
         atomic_write_json(path, record)
 
 
@@ -636,6 +676,11 @@ def cancel_run(workspace_id: str, run_id: str) -> dict[str, Any]:
     if not record: raise WorkflowError("workflow run not found")
     if record.get("status") in {"running", "queued"}:
         record["cancel_requested"] = True
+        _save_run(record)
+    elif record.get("status") == "awaiting_approval":
+        record["cancel_requested"] = True
+        record["status"] = "cancelled"
+        record["finished_at"] = now_iso()
         _save_run(record)
     try:
         from storage.review_store import record_workflow_failure_review

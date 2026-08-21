@@ -3,6 +3,8 @@
 
 import re
 
+from storage.redaction import is_sensitive_field
+
 REDACTED_CONFIG = "[REDACTED_CONFIG]"
 REDACTED_SECRET = "[REDACTED_SECRET]"
 REDACTED_PROMPT = "[REDACTED_PROMPT]"
@@ -77,7 +79,7 @@ def _deep_sanitize(obj, for_api=False):
         result = {}
         for k, v in obj.items():
             kl = k.lower().replace("-", "_")
-            if kl in SENSITIVE_KEYS:
+            if kl in SENSITIVE_KEYS or is_sensitive_field(kl):
                 # Replace with summary ref
                 result[k] = _content_ref(obj, k)
             elif kl in PROMPT_KEYS:

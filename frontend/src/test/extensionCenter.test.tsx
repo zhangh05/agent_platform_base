@@ -2,6 +2,7 @@ import { render, screen, waitFor } from "@testing-library/react";
 import { vi } from "vitest";
 import { extensionsApi } from "../api";
 import { ExtensionCenter } from "../pages/ExtensionCenter/ExtensionCenter";
+import { ExtensionRegistryProvider } from "../extensions/registry";
 import { MemoryRouter } from "../router";
 
 test("shows installed extensions and verified repository packages", async () => {
@@ -60,7 +61,36 @@ test("links an enabled extension to its user-facing business page", async () => 
   });
   vi.spyOn(extensionsApi, "repository").mockResolvedValue({ ok: true, packages: [] });
 
-  render(<MemoryRouter initialEntries={["/extensions"]}><ExtensionCenter /></MemoryRouter>);
+  render(<MemoryRouter initialEntries={["/extensions"]}><ExtensionRegistryProvider><ExtensionCenter /></ExtensionRegistryProvider></MemoryRouter>);
   const link = await screen.findByRole("link", { name: "打开网络巡检" });
   expect(link).toHaveAttribute("href", "/extensions/network.operations/overview");
+});
+
+test("does not link a runtime extension whose frontend was not bundled", async () => {
+  vi.spyOn(extensionsApi, "list").mockResolvedValue({
+    ok: true,
+    count: 1,
+    extensions: [{
+      extension_id: "vendor.runtime",
+      name: "运行时扩展",
+      version: "1.0.0",
+      description: "后端已安装，前端未编入当前构建",
+      capabilities: ["runtime"],
+      tools: ["vendor.runtime.read"],
+      frontend_routes: [{
+        path: "/extensions/vendor.runtime/overview",
+        module: "frontend/Overview.tsx",
+        label: "运行时扩展",
+      }],
+      source: "installed",
+      lifecycle: { enabled: true, status: "ready", failure_count: 0, last_error: "", updated_at: "2026-08-21T00:00:00+00:00" },
+    }],
+  });
+  vi.spyOn(extensionsApi, "repository").mockResolvedValue({ ok: true, packages: [] });
+
+  render(<MemoryRouter initialEntries={["/extensions"]}><ExtensionRegistryProvider><ExtensionCenter /></ExtensionRegistryProvider></MemoryRouter>);
+
+  await screen.findByText("运行时扩展");
+  await waitFor(() => expect(screen.getByText("该扩展的前端模块未包含在当前平台构建中，不能直接打开。")).toBeInTheDocument());
+  expect(screen.queryByRole("link", { name: "打开运行时扩展" })).not.toBeInTheDocument();
 });

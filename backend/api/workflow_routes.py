@@ -65,20 +65,24 @@ def register_workflow_routes(app) -> None:
 
     @app.route("/api/workflows/<workflow_id>/runs", methods=["GET", "POST"])
     def workflow_runs(workflow_id):
-        from workflows.service import WorkflowError, execute_workflow, list_runs
+        from workflows.service import WorkflowError, execute_workflow, list_runs, validate_workflow_inputs
         data = request.get_json(silent=True) or {}
         workspace_id = _workspace_id(request.args.get("workspace_id") or data.get("workspace_id"))
         if not workspace_id:
             return jsonify({"ok": False, "error": "workspace_id is required"}), 400
         if request.method == "GET":
             return jsonify({"ok": True, "runs": list_runs(workspace_id, workflow_id)})
+        try:
+            inputs = validate_workflow_inputs(data.get("inputs") or {})
+        except WorkflowError as exc:
+            return jsonify({"ok": False, "error": str(exc)}), 400
         if data.get("enqueue"):
             from jobs.manager import create_job
             from jobs.redaction import sanitize_job_record_for_api
-            job = create_job(workspace_id, "workflow_run", f"Workflow: {workflow_id}", {"workflow_id": workflow_id, "inputs": data.get("inputs") or {}, "approvals": data.get("approvals") or {}})
+            job = create_job(workspace_id, "workflow_run", f"Workflow: {workflow_id}", {"workflow_id": workflow_id, "inputs": inputs, "approvals": data.get("approvals") or {}})
             return jsonify({"ok": True, "queued": True, "job": sanitize_job_record_for_api(job.as_dict())}), 202
         try:
-            run = execute_workflow(workspace_id, workflow_id, data.get("inputs") or {}, approvals=data.get("approvals") or {})
+            run = execute_workflow(workspace_id, workflow_id, inputs, approvals=data.get("approvals") or {})
         except WorkflowError as exc:
             return jsonify({"ok": False, "error": str(exc)}), 400
         return jsonify({"ok": run["status"] == "succeeded", "run": run}), 200 if run["status"] == "succeeded" else 409

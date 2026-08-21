@@ -14,12 +14,16 @@ def test_workflow_templates_are_listed_and_instantiated(monkeypatch, tmp_path):
     listed = client.get("/api/workflow-templates")
     assert listed.status_code == 200
     templates = listed.get_json()["templates"]
-    asset_template = next(template for template in templates if template["template_id"] == "network-asset-inventory")
+    asset_template = next(
+        template
+        for template in templates
+        if template["template_id"] == "network-operations-asset-inventory"
+    )
     assert asset_template["input_example"] == {}
     assert "definition" not in asset_template
 
     created = client.post(
-        "/api/workflow-templates/network-asset-inventory/instantiate",
+        "/api/workflow-templates/network-operations-asset-inventory/instantiate",
         json={"workspace_id": "default"},
     )
     assert created.status_code == 201

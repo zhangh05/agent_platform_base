@@ -27,6 +27,10 @@
     "/api/extensions/network.operations/diff"
   ],
   "frontend_modules": ["frontend/NetworkOperations.tsx"],
+  "workflow_templates": [
+    "network-operations-asset-inventory",
+    "network-operations-readonly-inspection"
+  ],
   "frontend_routes": [
     {
       "path": "/extensions/network.operations/overview",
