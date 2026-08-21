@@ -59,3 +59,16 @@
 .network-scripts-layout { display:grid; grid-template-columns:minmax(280px,360px) minmax(0,1fr); gap:14px; }.network-script-form { display:flex; flex-direction:column; gap:12px; padding:18px; background:var(--surface); border:1px solid var(--line-2); border-radius:var(--r-8); }.network-script-form label { display:flex; flex-direction:column; gap:5px; }.network-script-form label > span { color:var(--text-3); font-size:var(--fs-11); font-weight:650; }.network-script-form input,.network-script-form select,.network-script-form textarea { width:100%; padding:0 10px; color:var(--text-1); background:var(--surface); border:1px solid var(--line-2); border-radius:6px; }.network-script-form input,.network-script-form select { height:36px; }.network-script-form textarea { min-height:128px; padding:9px 10px; resize:vertical; font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; font-size:var(--fs-11); line-height:1.5; }
 .network-script-row { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:16px; padding:14px 18px; border-bottom:1px solid var(--line-2); }.network-script-row > div:first-child { display:flex; min-width:0; flex-direction:column; gap:4px; }.network-script-row strong { color:var(--text-1); font-size:var(--fs-13); }.network-script-row span,.network-script-row p { margin:0; color:var(--text-4); font-size:var(--fs-11); }.network-script-row code { display:block; max-height:120px; overflow:auto; padding:8px; color:var(--text-3); white-space:pre-wrap; background:var(--surface-2); border-radius:5px; font-size:var(--fs-11); line-height:1.45; }
 @media (max-width:900px) { .network-scripts-layout { grid-template-columns:1fr; }.network-script-row { grid-template-columns:1fr; } }
+
+/* A very short desktop viewport must prioritize the active business content.
+   The shell navigation, page heading, and summary otherwise consume nearly all
+   available height before the device assets section can be reached. */
+@media (max-height: 440px) {
+  body:has(.network-ops-page) .app-shell { grid-template-rows: 0 minmax(0, 1fr); }
+  body:has(.network-ops-page) .app-header { display: none; }
+  .network-ops-page > .page-header,
+  .network-ops-summary { display: none; }
+  .network-ops-body { gap: 8px; padding: 8px 16px 12px; }
+  .network-ops-tabs { padding: 3px; }
+  .network-ops-tabs button { padding: 5px 10px; }
+}
