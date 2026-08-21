@@ -239,3 +239,43 @@ def test_extension_routes_cover_asset_and_inspection_flow(monkeypatch, tmp_path)
     listed = client.get("/api/extensions/network.operations/assets?workspace_id=default")
     assert listed.status_code == 200
     assert listed.get_json()["assets"][0]["name"] == "R1"
+
+
+def test_inspection_scripts_are_validated_and_snapshotted(monkeypatch, tmp_path):
+    _setup(monkeypatch, tmp_path)
+    builtins = service.list_inspection_scripts("default")
+    assert any(item["script_id"] == "builtin-h3c-health" for item in builtins)
+    try:
+        service.save_inspection_script("default", {"name": "危险脚本", "vendors": ["h3c"], "commands": ["reboot"]})
+    except ValueError as exc:
+        assert str(exc) == "commands_must_be_read_only"
+    else:
+        raise AssertionError("write command must be rejected")
+    script = service.save_inspection_script("default", {"name": "核心检查", "description": "读取版本和接口", "vendors": ["h3c"], "commands": ["display version", "display interface brief"]})
+    assert script["readonly"] is True
+    asset = service.save_asset("default", {"name": "Core-1", "host": "10.0.0.1", "username": "ops", "password": "secret", "vendor": "h3c"})
+    task = service.start_inspection("default", [asset["asset_id"]], script_id=script["script_id"], collector=lambda _asset, commands: {command: "ok" for command in commands}, background=False)
+    assert task["status"] == "succeeded"
+    assert task["script"]["script_id"] == script["script_id"]
+    assert task["results"][asset["asset_id"]]["commands"] == ["display version", "display interface brief"]
+    huawei = service.save_asset("default", {"name": "Agg-1", "host": "10.0.0.2", "username": "ops", "password": "secret", "vendor": "huawei"})
+    try:
+        service.start_inspection("default", [huawei["asset_id"]], script_id=script["script_id"], background=False)
+    except ValueError as exc:
+        assert str(exc) == "script_not_supported_for_vendor:huawei"
+    else:
+        raise AssertionError("vendor mismatch must be rejected")
+
+def test_inspection_script_http_routes(monkeypatch, tmp_path):
+    _setup(monkeypatch, tmp_path)
+    monkeypatch.setenv("LZCORE_LOGIN_ENABLED", "false")
+    from extensions.runtime import reset_extension_cache_for_tests
+    reset_extension_cache_for_tests()
+    from backend.main import create_app
+    client = create_app().test_client()
+    listed = client.get("/api/extensions/network.operations/scripts?workspace_id=default")
+    assert listed.status_code == 200
+    assert any(item["builtin"] for item in listed.get_json()["scripts"])
+    created = client.post("/api/extensions/network.operations/scripts", json={"workspace_id": "default", "name": "接口核查", "vendors": ["h3c"], "commands": ["display interface brief"]})
+    assert created.status_code == 201
+    assert created.get_json()["script"]["name"] == "接口核查"

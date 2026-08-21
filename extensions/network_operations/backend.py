@@ -74,7 +74,7 @@ def register_routes(app):
             return jsonify({"ok": True, "inspections": service.list_inspections(ws)})
         data = _payload()
         try:
-            task = service.start_inspection(ws, data.get("asset_ids"), data.get("commands"), background=True)
+            task = service.start_inspection(ws, data.get("asset_ids"), data.get("commands"), script_id=str(data.get("script_id") or ""), background=True)
             return jsonify({"ok": True, "task": task}), 202
         except ValueError as exc:
             return jsonify({"ok": False, "error": str(exc)}), 400
@@ -89,6 +89,25 @@ def register_routes(app):
     def network_inspection_cancel(task_id):
         ws = _workspace()
         return jsonify({"ok": service.cancel_inspection(ws, task_id) if ws else False})
+    @app.route("/api/extensions/network.operations/scripts", methods=["GET", "POST"])
+    def network_inspection_scripts():
+        ws = _workspace()
+        if not ws: return jsonify({"ok": False, "error": "workspace_id is required"}), 400
+        if request.method == "GET": return jsonify({"ok": True, "scripts": service.list_inspection_scripts(ws)})
+        try: return jsonify({"ok": True, "script": service.save_inspection_script(ws, _payload())}), 201
+        except ValueError as exc: return jsonify({"ok": False, "error": str(exc)}), 400
+    @app.route("/api/extensions/network.operations/scripts/<script_id>", methods=["GET", "PUT", "DELETE"])
+    def network_inspection_script(script_id):
+        ws = _workspace()
+        if not ws: return jsonify({"ok": False, "error": "workspace_id is required"}), 400
+        if request.method == "GET":
+            script = service.get_inspection_script(ws, script_id)
+            return jsonify({"ok": True, "script": script}) if script else (jsonify({"ok": False, "error": "inspection_script_not_found"}), 404)
+        if request.method == "DELETE":
+            try: return jsonify({"ok": service.delete_inspection_script(ws, script_id)})
+            except ValueError as exc: return jsonify({"ok": False, "error": str(exc)}), 400
+        try: return jsonify({"ok": True, "script": service.save_inspection_script(ws, {**_payload(), "script_id": script_id})})
+        except ValueError as exc: return jsonify({"ok": False, "error": str(exc)}), 400
 
     @app.route("/api/extensions/network.operations/baselines", methods=["GET", "POST"])
     def network_baselines():
@@ -206,7 +225,7 @@ def inspection(invocation):
     args = invocation.arguments or {}
     action = str(args.get("action") or "list")
     if action == "run":
-        return {"ok": True, "task": service.start_inspection(invocation.workspace_id, args.get("asset_ids"), args.get("commands"), background=True)}
+        return {"ok": True, "task": service.start_inspection(invocation.workspace_id, args.get("asset_ids"), args.get("commands"), script_id=str(args.get("script_id") or ""), background=True)}
     if action == "get":
         task_id = str(args.get("task_id") or "")
         task = service.get_inspection(invocation.workspace_id, task_id)
@@ -325,6 +344,7 @@ def register():
                         "action": {"type": "string", "enum": ["run", "list", "get", "cancel"]},
                         "asset_ids": {"type": "array", "items": {"type": "string"}},
                         "commands": {"type": "array", "items": {"type": "string"}},
+                        "script_id": {"type": "string"},
                         "task_id": {"type": "string"},
                     },
                     "required": ["action"],

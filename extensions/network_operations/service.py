@@ -34,6 +34,68 @@ _TASK_CANCEL: dict[str, threading.Event] = {}
 _TASK_LOCK = threading.Lock()
 
 
+BUILTIN_SCRIPTS: tuple[dict[str, Any], ...] = (
+    {"script_id": "builtin-device-baseline", "name": "设备状态基础采集", "description": "采集版本、时间、接口摘要和路由摘要，用于日常状态核对。", "vendors": ["all"], "commands": ["display version", "display clock", "display interface brief", "display ip routing-table"], "readonly": True, "builtin": True, "version": 1},
+    {"script_id": "builtin-h3c-health", "name": "H3C 健康巡检", "description": "采集 H3C 设备版本、CPU、内存、接口和日志摘要。", "vendors": ["h3c"], "commands": ["display version", "display cpu-usage", "display memory", "display interface brief", "display logbuffer | include ERROR|WARN"], "readonly": True, "builtin": True, "version": 1},
+    {"script_id": "builtin-huawei-health", "name": "华为健康巡检", "description": "采集华为设备版本、CPU、内存、接口和日志摘要。", "vendors": ["huawei"], "commands": ["display version", "display cpu-usage", "display memory-usage", "display interface brief", "display logbuffer | include ERROR|WARN"], "readonly": True, "builtin": True, "version": 1},
+    {"script_id": "builtin-cisco-health", "name": "Cisco 健康巡检", "description": "采集 Cisco 设备版本、CPU、内存、接口和日志摘要。", "vendors": ["cisco"], "commands": ["show version", "show processes cpu", "show memory statistics", "show ip interface brief", "show logging | include ERROR|WARN"], "readonly": True, "builtin": True, "version": 1},
+)
+
+def _script_safe(record: dict[str, Any]) -> dict[str, Any]:
+    return {key: record.get(key) for key in ("script_id", "name", "description", "vendors", "commands", "readonly", "builtin", "version", "created_at", "updated_at") if key in record}
+
+def _script_id(value: str) -> str:
+    result = str(value or "").strip()
+    if not re.fullmatch(r"[A-Za-z0-9_-]{1,80}", result):
+        raise ValueError("invalid script_id")
+    return result
+
+def _script_from_builtin(script_id: str) -> dict[str, Any] | None:
+    return next((dict(item) for item in BUILTIN_SCRIPTS if item["script_id"] == script_id), None)
+
+def list_inspection_scripts(workspace_id: str) -> list[dict[str, Any]]:
+    custom = [_script_safe(item) for item in _store(workspace_id).list("scripts", limit=200)]
+    return [*_SCRIPT_BUILTINS(), *custom]
+
+def _SCRIPT_BUILTINS() -> list[dict[str, Any]]:
+    return [_script_safe(dict(item)) for item in BUILTIN_SCRIPTS]
+
+def get_inspection_script(workspace_id: str, script_id: str) -> dict[str, Any] | None:
+    identifier = _script_id(script_id)
+    builtin = _script_from_builtin(identifier)
+    if builtin:
+        return builtin
+    record = _store(workspace_id).get("scripts", identifier)
+    return _script_safe(record) if record else None
+
+def save_inspection_script(workspace_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+    script_id = _script_id(str(payload.get("script_id") or _id("script")))
+    if _script_from_builtin(script_id):
+        raise ValueError("builtin_script_is_read_only")
+    name = str(payload.get("name") or "").strip()
+    description = str(payload.get("description") or "").strip()
+    vendors = [str(item).strip().lower() for item in (payload.get("vendors") or ["all"]) if str(item).strip()]
+    allowed = {"all", "h3c", "huawei", "cisco", "generic"}
+    if not name or len(name) > 80: raise ValueError("script name is required and must be at most 80 characters")
+    if not vendors or any(item not in allowed for item in vendors): raise ValueError("invalid script vendors")
+    commands = normalize_read_only_commands(payload.get("commands"))
+    existing = _store(workspace_id).get("scripts", script_id) or {}
+    record = {"script_id": script_id, "name": name, "description": description[:300], "vendors": sorted(set(vendors)), "commands": commands, "readonly": True, "builtin": False, "version": int(existing.get("version") or 0) + 1, "created_at": str(existing.get("created_at") or now_iso()), "updated_at": now_iso()}
+    _store(workspace_id).save("scripts", script_id, record)
+    return _script_safe(record)
+
+def delete_inspection_script(workspace_id: str, script_id: str) -> bool:
+    identifier = _script_id(script_id)
+    if _script_from_builtin(identifier): raise ValueError("builtin_script_is_read_only")
+    return _store(workspace_id).delete("scripts", identifier)
+
+def _resolve_script(workspace_id: str, script_id: str | None) -> dict[str, Any] | None:
+    if not script_id: return None
+    script = get_inspection_script(workspace_id, str(script_id))
+    if not script: raise ValueError("inspection_script_not_found")
+    return script
+
+
 def _store(workspace_id: str) -> ExtensionDataStore:
     return ExtensionDataStore(EXTENSION_ID, workspace_id)
 
@@ -147,8 +209,15 @@ def _valid_host(host: str) -> bool:
         return bool(re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9.-]{0,252}[A-Za-z0-9]", host))
 
 
-def commands_for(asset: dict[str, Any], commands: list[str] | None = None) -> list[str]:
-    selected = commands or DEFAULT_COMMANDS.get(str(asset.get("vendor") or "generic").lower(), DEFAULT_COMMANDS["generic"])
+def commands_for(asset: dict[str, Any], commands: list[str] | None = None, script: dict[str, Any] | None = None) -> list[str]:
+    vendor = str(asset.get("vendor") or "generic").lower()
+    if script:
+        vendors = set(script.get("vendors") or ["all"])
+        if "all" not in vendors and vendor not in vendors:
+            raise ValueError(f"script_not_supported_for_vendor:{vendor}")
+        selected = script.get("commands") or []
+    else:
+        selected = commands or DEFAULT_COMMANDS.get(vendor, DEFAULT_COMMANDS["generic"])
     return normalize_read_only_commands(selected)
 
 
@@ -210,6 +279,7 @@ def start_inspection(
     workspace_id: str,
     asset_ids: list[str] | None = None,
     commands: list[str] | None = None,
+    script_id: str = "",
     *,
     collector: Callable[[dict[str, Any], list[str]], dict[str, str]] | None = None,
     background: bool = True,
@@ -219,19 +289,22 @@ def start_inspection(
     assets = [item for item in assets if item]
     if not assets:
         raise ValueError("no assets selected")
+    script = _resolve_script(workspace_id, script_id)
+    for asset in assets:
+        commands_for(asset, commands, script)
     task_id = _id("inspection")
     task = {
         "task_id": task_id,
         "status": "queued" if background else "running",
         "asset_ids": [item["asset_id"] for item in assets],
         "total": len(assets), "completed": 0, "succeeded": 0, "failed": 0,
-        "results": {}, "artifact_id": "", "created_at": now_iso(), "updated_at": now_iso(),
+        "results": {}, "artifact_id": "", "script": _script_safe(script) if script else {"script_id": "legacy-default", "name": "厂商默认命令", "commands": commands or []}, "created_at": now_iso(), "updated_at": now_iso(),
     }
     _store(workspace_id).save("inspections", task_id, task)
     cancel = threading.Event()
     with _TASK_LOCK:
         _TASK_CANCEL[task_id] = cancel
-    args = (workspace_id, task_id, assets, commands, collector or collect_ssh, cancel)
+    args = (workspace_id, task_id, assets, commands, collector or collect_ssh, cancel, script)
     if background:
         threading.Thread(target=_execute_inspection, args=args, name=f"inspection-{task_id}", daemon=True).start()
     else:
@@ -239,7 +312,7 @@ def start_inspection(
     return get_inspection(workspace_id, task_id) or task
 
 
-def _execute_inspection(workspace_id: str, task_id: str, assets: list[dict[str, Any]], commands: list[str] | None, collector: Callable, cancel: threading.Event) -> None:
+def _execute_inspection(workspace_id: str, task_id: str, assets: list[dict[str, Any]], commands: list[str] | None, collector: Callable, cancel: threading.Event, script: dict[str, Any] | None = None) -> None:
     store = _store(workspace_id)
     task = store.get("inspections", task_id) or {}
     task.update({"status": "running", "started_at": now_iso(), "updated_at": now_iso()})
@@ -248,7 +321,7 @@ def _execute_inspection(workspace_id: str, task_id: str, assets: list[dict[str, 
     def run_one(asset: dict[str, Any]) -> tuple[str, dict[str, Any]]:
         if cancel.is_set():
             return asset["asset_id"], {"status": "cancelled", "name": asset["name"]}
-        selected = commands_for(asset, commands)
+        selected = commands_for(asset, commands, script)
         started = time.monotonic()
         try:
             raw = collector(asset, selected)

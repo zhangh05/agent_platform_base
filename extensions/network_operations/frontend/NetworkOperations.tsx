@@ -8,13 +8,14 @@ type Asset = {
   vendor: string; region: string; auth_method?: string; credential_configured: boolean; host_key_trusted?: boolean;
 };
 type Inspection = {
-  task_id: string; status: string; total: number; completed: number;
+  task_id: string; status: string; script?: { name?: string; script_id?: string }; total: number; completed: number;
   succeeded: number; failed: number; created_at: string; artifact_id?: string;
 };
 type Baseline = {
   baseline_id: string; task_id: string; confirmed: boolean; current: boolean; created_at: string;
 };
-type Tab = "assets" | "inspections" | "baselines";
+type InspectionScript = { script_id: string; name: string; description: string; vendors: string[]; commands: string[]; builtin?: boolean; version?: number };
+type Tab = "assets" | "scripts" | "inspections" | "baselines";
 
 const base = "/extensions/network.operations";
 
@@ -24,23 +25,29 @@ export default function NetworkOperations() {
   const [assets, setAssets] = useState<Asset[]>([]);
   const [inspections, setInspections] = useState<Inspection[]>([]);
   const [baselines, setBaselines] = useState<Baseline[]>([]);
+  const [scripts, setScripts] = useState<InspectionScript[]>([]);
+  const [scriptId, setScriptId] = useState("");
   const [selected, setSelected] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [probeStatus, setProbeStatus] = useState<Record<string, string>>({});
   const [form, setForm] = useState({ name: "", host: "", port: "22", username: "", password: "", private_key: "", key_passphrase: "", auth_method: "password", vendor: "h3c", region: "" });
+  const [scriptForm, setScriptForm] = useState({ name: "", description: "", vendors: "all", commands: "" });
 
   const load = useCallback(async () => {
     const params = { workspace_id: workspaceId };
-    const [assetRes, inspectionRes, baselineRes] = await Promise.all([
+    const [assetRes, inspectionRes, baselineRes, scriptRes] = await Promise.all([
       apiRequest<{ assets: Asset[] }>({ method: "GET", url: `${base}/assets`, params }),
       apiRequest<{ inspections: Inspection[] }>({ method: "GET", url: `${base}/inspections`, params }),
       apiRequest<{ baselines: Baseline[] }>({ method: "GET", url: `${base}/baselines`, params }),
+      apiRequest<{ scripts: InspectionScript[] }>({ method: "GET", url: `${base}/scripts`, params }),
     ]);
     setAssets(assetRes.assets || []);
     setInspections(inspectionRes.inspections || []);
     setBaselines(baselineRes.baselines || []);
-  }, [workspaceId]);
+    setScripts(scriptRes.scripts || []);
+    if (!scriptId && scriptRes.scripts?.length) setScriptId(scriptRes.scripts[0].script_id);
+  }, [workspaceId, scriptId]);
 
   useEffect(() => {
     load().catch(() => setError("网络巡检数据暂时无法读取"));
@@ -80,9 +87,10 @@ export default function NetworkOperations() {
   }
 
   async function runInspection() {
+    if (!scriptId) { setError("请先选择巡检脚本。"); setTab("scripts"); return; }
     setBusy(true); setError("");
     try {
-      await apiRequest({ method: "POST", url: `${base}/inspections`, data: { workspace_id: workspaceId, asset_ids: selected } });
+      await apiRequest({ method: "POST", url: `${base}/inspections`, data: { workspace_id: workspaceId, asset_ids: selected, script_id: scriptId } });
       setTab("inspections");
       await load();
     } catch (err) {
@@ -110,6 +118,20 @@ export default function NetworkOperations() {
     } finally { setBusy(false); }
   }
 
+  async function saveScript(event: React.FormEvent) {
+    event.preventDefault(); setBusy(true); setError("");
+    try {
+      const result = await apiRequest<{ script: InspectionScript }>({ method: "POST", url: `${base}/scripts`, data: { workspace_id: workspaceId, name: scriptForm.name, description: scriptForm.description, vendors: scriptForm.vendors.split(",").map((item) => item.trim()).filter(Boolean), commands: scriptForm.commands.split("\n").map((item) => item.trim()).filter(Boolean) } });
+      setScriptId(result.script.script_id); setScriptForm({ name: "", description: "", vendors: "all", commands: "" }); await load();
+    } catch (err) { setError(String((err as { message?: string })?.message || "脚本保存失败")); } finally { setBusy(false); }
+  }
+  async function removeScript(script: InspectionScript) {
+    if (script.builtin || !window.confirm(`确定删除巡检脚本“${script.name}”吗？`)) return;
+    setBusy(true); setError("");
+    try { await apiRequest({ method: "DELETE", url: `${base}/scripts/${script.script_id}`, params: { workspace_id: workspaceId } }); if (scriptId === script.script_id) setScriptId(""); await load(); }
+    catch (err) { setError(String((err as { message?: string })?.message || "脚本删除失败")); } finally { setBusy(false); }
+  }
+
   async function createBaseline() {
     if (!latestCompleted) return;
     setBusy(true);
@@ -129,7 +151,7 @@ export default function NetworkOperations() {
         </div>
         <div className="network-ops-actions">
           <button className="btn secondary" onClick={() => void load()} disabled={busy}>刷新</button>
-          <button className="btn primary" onClick={runInspection} disabled={busy || assets.length === 0}>发起巡检</button>
+          <button className="btn primary" onClick={runInspection} disabled={busy || assets.length === 0 || !scriptId}>发起巡检</button>
         </div>
       </header>
 
@@ -137,13 +159,14 @@ export default function NetworkOperations() {
         {error ? <div className="network-ops-error" role="alert">{error}</div> : null}
         <section className="network-ops-summary">
           <div><strong>{assets.length}</strong><span>设备资产</span></div>
-          <div><strong>{inspections.length}</strong><span>巡检任务</span></div>
+          <div><strong>{scripts.length}</strong><span>巡检脚本</span></div>
           <div><strong>{currentBaseline ? "已确认" : "未建立"}</strong><span>当前基线</span></div>
           <div><strong>{inspections[0]?.status || "暂无"}</strong><span>最近状态</span></div>
         </section>
 
         <nav className="network-ops-tabs" aria-label="网络巡检视图">
           <button className={tab === "assets" ? "active" : ""} onClick={() => setTab("assets")}>设备资产</button>
+          <button className={tab === "scripts" ? "active" : ""} onClick={() => setTab("scripts")}>巡检脚本</button>
           <button className={tab === "inspections" ? "active" : ""} onClick={() => setTab("inspections")}>巡检记录</button>
           <button className={tab === "baselines" ? "active" : ""} onClick={() => setTab("baselines")}>状态基线</button>
         </nav>
@@ -151,6 +174,7 @@ export default function NetworkOperations() {
         {tab === "assets" ? (
           <div className="network-assets-layout">
             <form className="network-asset-form" onSubmit={saveAsset}>
+              <div className="network-script-select"><b>本次巡检脚本</b><select value={scriptId} onChange={(event) => setScriptId(event.target.value)}><option value="">请选择脚本</option>{scripts.map((script) => <option key={script.script_id} value={script.script_id}>{script.name}</option>)}</select><button type="button" className="network-link" onClick={() => setTab("scripts")}>管理脚本</button></div>
               <div className="network-section-head"><h2>添加设备</h2><p>凭据只写入加密密钥库</p></div>
               <label><span>设备名称</span><input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required /></label>
               <div className="network-form-row">
@@ -193,12 +217,28 @@ export default function NetworkOperations() {
           </div>
         ) : null}
 
+        {tab === "scripts" ? (
+          <div className="network-scripts-layout">
+            <form className="network-script-form" onSubmit={saveScript}>
+              <div className="network-section-head"><h2>新建只读巡检脚本</h2><p>每行一条命令；系统会拒绝配置、重启、删除等高风险命令。</p></div>
+              <label><span>脚本名称</span><input value={scriptForm.name} onChange={(event) => setScriptForm({ ...scriptForm, name: event.target.value })} placeholder="例如：核心交换机健康检查" required /></label>
+              <label><span>适用厂商</span><select value={scriptForm.vendors} onChange={(event) => setScriptForm({ ...scriptForm, vendors: event.target.value })}><option value="all">所有厂商</option><option value="h3c">H3C</option><option value="huawei">华为</option><option value="cisco">Cisco</option><option value="generic">通用主机</option></select></label>
+              <label><span>说明（可选）</span><input value={scriptForm.description} onChange={(event) => setScriptForm({ ...scriptForm, description: event.target.value })} placeholder="说明这份巡检要检查什么" /></label>
+              <label><span>只读命令</span><textarea value={scriptForm.commands} onChange={(event) => setScriptForm({ ...scriptForm, commands: event.target.value })} placeholder={"display version\ndisplay interface brief"} rows={7} required /></label>
+              <button className="btn primary" type="submit" disabled={busy}>保存脚本</button>
+            </form>
+            <section className="network-list-panel">
+              <div className="network-section-head"><h2>脚本库</h2><p>发起巡检前先选择一份脚本；内置脚本不可修改。</p></div>
+              {scripts.length === 0 ? <div className="network-empty">暂无可用脚本</div> : scripts.map((script) => <article className="network-script-row" key={script.script_id}><div><strong>{script.name}</strong><span>{script.vendors.join("、")} · {script.commands.length} 条只读命令{script.builtin ? " · 内置" : ""}</span><p>{script.description || "未填写说明"}</p><code>{script.commands.join("\n")}</code></div><div className="network-row-actions"><button className="network-link" onClick={() => { setScriptId(script.script_id); setTab("assets"); }}>用于巡检</button>{!script.builtin ? <button className="network-delete" onClick={() => void removeScript(script)} disabled={busy}>删除</button> : null}</div></article>)}
+            </section>
+          </div>
+        ) : null}
         {tab === "inspections" ? (
           <section className="network-list-panel full">
             <div className="network-section-head"><h2>巡检记录</h2><p>最多并发 5 台，任务可取消</p></div>
             {inspections.length === 0 ? <div className="network-empty">暂无巡检记录</div> : inspections.map((task) => (
               <article className="network-task-row" key={task.task_id}>
-                <div><strong>{task.task_id}</strong><span>{new Date(task.created_at).toLocaleString()}</span></div>
+                <div><strong>{task.script?.name || "未记录脚本"}</strong><span>{new Date(task.created_at).toLocaleString()} · {task.task_id}</span></div>
                 <div className="network-progress"><span style={{ width: `${task.total ? Math.round(task.completed / task.total * 100) : 0}%` }} /></div>
                 <div className="network-counts"><span>完成 {task.completed}/{task.total}</span><span className="ok">成功 {task.succeeded}</span><span className={task.failed ? "danger" : ""}>失败 {task.failed}</span></div>
                 <span className={`network-status ${task.status}`}>{task.status}</span>

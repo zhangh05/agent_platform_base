@@ -31,14 +31,14 @@ _TEMPLATES: tuple[dict[str, Any], ...] = (
         "description": "对指定的已登记设备发起只读 SSH 巡检任务，不会下发配置。",
         "audience": "网络运维",
         "expected_result": "创建可追踪的巡检任务；请在“网络巡检”页面查看设备级证据和最终结果。",
-        "input_example": {"asset_ids": ["填写已登记的设备 ID"]},
+        "input_example": {"asset_ids": ["选择已登记设备"], "script_id": "选择巡检脚本"},
         "definition": {
             "failure_policy": "fail_fast",
             "nodes": [{
                 "node_id": "start_inspection",
                 "name": "发起只读巡检",
                 "tool_id": "network.operations.inspection",
-                "arguments": {"action": "run", "asset_ids": "${input.asset_ids}"},
+                "arguments": {"action": "run", "asset_ids": "${input.asset_ids}", "script_id": "${input.script_id}"},
                 "depends_on": [],
             }],
         },
