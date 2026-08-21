@@ -35,7 +35,6 @@ _TASK_LOCK = threading.Lock()
 
 
 BUILTIN_SCRIPTS: tuple[dict[str, Any], ...] = (
-    {"script_id": "builtin-device-baseline", "name": "设备状态基础采集", "description": "采集版本、时间、接口摘要和路由摘要，用于日常状态核对。", "vendors": ["all"], "commands": ["display version", "display clock", "display interface brief", "display ip routing-table"], "readonly": True, "builtin": True, "version": 1},
     {"script_id": "builtin-h3c-health", "name": "H3C 健康巡检", "description": "采集 H3C 设备版本、CPU、内存、接口和日志摘要。", "vendors": ["h3c"], "commands": ["display version", "display cpu-usage", "display memory", "display interface brief", "display logbuffer | include ERROR|WARN"], "readonly": True, "builtin": True, "version": 1},
     {"script_id": "builtin-huawei-health", "name": "华为健康巡检", "description": "采集华为设备版本、CPU、内存、接口和日志摘要。", "vendors": ["huawei"], "commands": ["display version", "display cpu-usage", "display memory-usage", "display interface brief", "display logbuffer | include ERROR|WARN"], "readonly": True, "builtin": True, "version": 1},
     {"script_id": "builtin-cisco-health", "name": "Cisco 健康巡检", "description": "采集 Cisco 设备版本、CPU、内存、接口和日志摘要。", "vendors": ["cisco"], "commands": ["show version", "show processes cpu", "show memory statistics", "show ip interface brief", "show logging | include ERROR|WARN"], "readonly": True, "builtin": True, "version": 1},
