@@ -55,8 +55,12 @@ export function ExtensionRegistryProvider({ children }: { children: ReactNode })
   const [ready, setReady] = useState(false);
   useEffect(() => {
     const controller = new AbortController();
-    extensionsApi.list(controller.signal).then((response) => setExtensions(response.extensions || [])).catch(() => setExtensions([])).finally(() => setReady(true));
-    return () => controller.abort();
+    let active = true;
+    extensionsApi.list(controller.signal)
+      .then((response) => { if (active) setExtensions(response.extensions || []); })
+      .catch(() => { if (active) setExtensions([]); })
+      .finally(() => { if (active) setReady(true); });
+    return () => { active = false; controller.abort(); };
   }, []);
   const value = useMemo<RegistryState>(() => {
     const records = extensions
