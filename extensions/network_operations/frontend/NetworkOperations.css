@@ -64,9 +64,6 @@
    The shell navigation, page heading, and summary otherwise consume nearly all
    available height before the device assets section can be reached. */
 @media (max-height: 440px) {
-  body:has(.network-ops-page) .app-shell { grid-template-rows: 0 minmax(0, 1fr); }
-  /* Keep the header as the first grid item: display:none would move app-main into the zero-height row. */
-  body:has(.network-ops-page) .app-header { min-height: 0; height: 0; padding: 0; overflow: hidden; visibility: hidden; border: 0; }
   .network-ops-page > .page-header,
   .network-ops-summary { display: none; }
   .network-ops-body { gap: 8px; padding: 8px 16px 12px; }
