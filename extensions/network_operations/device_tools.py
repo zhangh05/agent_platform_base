@@ -16,6 +16,20 @@ READ_ONLY_DENY = re.compile(
 )
 MAX_READ_ONLY_COMMANDS = 20
 
+_NETWORK_READ_COMMAND = re.compile(
+    r"^(display|show)\s+[A-Za-z0-9_./:() -]+"
+    r"(?:\s+\|\s+(?:include|exclude|begin)\s+[A-Za-z0-9_./:()\[\]{}^$*+?\\|-]+)?$",
+    re.IGNORECASE,
+)
+_GENERIC_READ_COMMANDS = (
+    re.compile(r"^uname(?:\s+-[A-Za-z]+)?$", re.IGNORECASE),
+    re.compile(r"^uptime$", re.IGNORECASE),
+    re.compile(r"^df(?:\s+-[A-Za-z]+)?$", re.IGNORECASE),
+    re.compile(r"^ip\s+(?:address|addr|link|route)(?:\s+(?:show|list))?$", re.IGNORECASE),
+    re.compile(r"^hostname$", re.IGNORECASE),
+    re.compile(r"^date$", re.IGNORECASE),
+)
+
 PAGING_COMMANDS = {
     "h3c": "screen-length disable",
     "huawei": "screen-length 0 temporary",
@@ -47,17 +61,31 @@ def fingerprint_for_key(key: Any) -> str:
     return f"SHA256:{digest}"
 
 
-def is_read_only_command(command: str) -> bool:
+def is_read_only_command(command: str, vendor: str = "") -> bool:
     value = str(command or "").strip()
-    return bool(value and "\n" not in value and "\r" not in value and ";" not in value and not READ_ONLY_DENY.search(value))
+    if not value or any(marker in value for marker in ("\n", "\r", ";", "&&", "`", "$(", ">", "<")):
+        return False
+    if READ_ONLY_DENY.search(value):
+        return False
+    normalized_vendor = str(vendor or "").strip().lower()
+    network_match = _NETWORK_READ_COMMAND.fullmatch(value)
+    if normalized_vendor in {"h3c", "huawei"}:
+        return bool(network_match and value.lower().startswith("display "))
+    if normalized_vendor == "cisco":
+        return bool(network_match and value.lower().startswith("show "))
+    if normalized_vendor == "generic":
+        return any(pattern.fullmatch(value) for pattern in _GENERIC_READ_COMMANDS)
+    return bool(network_match) or any(pattern.fullmatch(value) for pattern in _GENERIC_READ_COMMANDS)
 
 
-def normalize_read_only_commands(commands: list[str] | None) -> list[str]:
+def normalize_read_only_commands(commands: list[str] | tuple[str, ...] | None, vendor: str = "") -> list[str]:
     """Validate the shared read-only command boundary for every probe path."""
-    selected = [str(command).strip() for command in (commands or [])]
+    if not isinstance(commands, (list, tuple)) or any(not isinstance(command, str) for command in commands):
+        raise ValueError("commands must be an array of strings")
+    selected = [command.strip() for command in commands]
     if not selected or len(selected) > MAX_READ_ONLY_COMMANDS:
         raise ValueError("commands must contain 1 to 20 read-only commands")
-    if any(not is_read_only_command(command) for command in selected):
+    if any(not is_read_only_command(command, vendor) for command in selected):
         raise ValueError("commands_must_be_read_only")
     return selected
 
@@ -168,7 +196,7 @@ def probe_target(
             return _result(True, stages, started, fingerprint=fingerprint)
 
         try:
-            safe_commands = normalize_read_only_commands(commands)
+            safe_commands = normalize_read_only_commands(commands, target.vendor)
         except ValueError as exc:
             stages.append(_stage("read", "failed"))
             return _result(False, stages, started, error=str(exc), fingerprint=fingerprint)

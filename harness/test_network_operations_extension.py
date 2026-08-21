@@ -8,6 +8,7 @@ from extensions.network_operations.backend import assets_read, assets_write, ins
 from extensions.network_operations.device_tools import (
     MAX_READ_ONLY_COMMANDS,
     is_read_only_command as device_is_read_only_command,
+    normalize_read_only_commands,
 )
 
 
@@ -98,7 +99,25 @@ def test_write_commands_are_rejected():
     assert service.is_read_only_command("system-view") is False
     assert service.is_read_only_command("reload") is False
     assert service.is_read_only_command("display version; reboot") is False
+    assert service.is_read_only_command("display version && reboot", "h3c") is False
+    assert service.is_read_only_command("display $(reboot)", "h3c") is False
+    assert service.is_read_only_command("rm -rf /", "generic") is False
+    assert service.is_read_only_command("show version", "h3c") is False
+    assert service.is_read_only_command("display version", "cisco") is False
+    assert service.is_read_only_command("ip address", "generic") is True
     assert service.is_read_only_command is device_is_read_only_command
+
+
+def test_read_only_command_boundary_requires_an_array_and_matches_vendor():
+    for invalid in ("display version", ["display version", 1], None):
+        try:
+            normalize_read_only_commands(invalid)  # type: ignore[arg-type]
+        except ValueError as exc:
+            assert str(exc) == "commands must be an array of strings"
+        else:
+            raise AssertionError("malformed command collections must fail closed")
+    for starter in service.STARTER_SCRIPTS:
+        assert normalize_read_only_commands(starter["commands"], starter["vendors"][0]) == starter["commands"]
 
 
 def test_read_only_command_limit_is_shared_and_enforced():
@@ -255,6 +274,13 @@ def test_inspection_scripts_are_validated_and_snapshotted(monkeypatch, tmp_path)
         assert str(exc) == "commands_must_be_read_only"
     else:
         raise AssertionError("write command must be rejected")
+    for invalid_vendors in ("h3c", [{"name": "h3c"}], ["all"]):
+        try:
+            service.save_inspection_script("default", {"name": "无效厂商", "vendors": invalid_vendors, "commands": ["display version"]})
+        except ValueError as exc:
+            assert "vendors" in str(exc)
+        else:
+            raise AssertionError("invalid vendor declarations must fail closed")
     script = service.save_inspection_script("default", {"name": "核心检查", "description": "读取版本和接口", "vendors": ["h3c"], "commands": ["display version", "display interface brief"]})
     assert script["readonly"] is True
     asset = service.save_asset("default", {"name": "Core-1", "host": "10.0.0.1", "username": "ops", "password": "secret", "vendor": "h3c"})

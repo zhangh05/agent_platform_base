@@ -32,7 +32,7 @@ export default function NetworkOperations() {
   const [error, setError] = useState("");
   const [probeStatus, setProbeStatus] = useState<Record<string, string>>({});
   const [form, setForm] = useState({ name: "", host: "", port: "22", username: "", password: "", private_key: "", key_passphrase: "", auth_method: "password", vendor: "h3c", region: "" });
-  const [scriptForm, setScriptForm] = useState({ name: "", description: "", vendors: "all", commands: "" });
+  const [scriptForm, setScriptForm] = useState({ name: "", description: "", vendors: "h3c", commands: "" });
   const [editingScriptId, setEditingScriptId] = useState("");
 
   const load = useCallback(async () => {
@@ -123,7 +123,7 @@ export default function NetworkOperations() {
     event.preventDefault(); setBusy(true); setError("");
     try {
       const result = await apiRequest<{ script: InspectionScript }>({ method: "POST", url: `${base}/scripts`, data: { workspace_id: workspaceId, script_id: editingScriptId || undefined, name: scriptForm.name, description: scriptForm.description, vendors: scriptForm.vendors.split(",").map((item) => item.trim()).filter(Boolean), commands: scriptForm.commands.split("\n").map((item) => item.trim()).filter(Boolean) } });
-      setScriptId(result.script.script_id); setEditingScriptId(""); setScriptForm({ name: "", description: "", vendors: "all", commands: "" }); await load();
+      setScriptId(result.script.script_id); setEditingScriptId(""); setScriptForm({ name: "", description: "", vendors: "h3c", commands: "" }); await load();
     } catch (err) { setError(String((err as { message?: string })?.message || "脚本保存失败")); } finally { setBusy(false); }
   }
   async function removeScript(script: InspectionScript) {
@@ -223,10 +223,10 @@ export default function NetworkOperations() {
             <form className="network-script-form" onSubmit={saveScript}>
               <div className="network-section-head"><h2>{editingScriptId ? "编辑只读巡检脚本" : "新建只读巡检脚本"}</h2><p>每行一条命令；系统会拒绝配置、重启、删除等高风险命令。</p></div>
               <label><span>脚本名称</span><input value={scriptForm.name} onChange={(event) => setScriptForm({ ...scriptForm, name: event.target.value })} placeholder="例如：核心交换机健康检查" required /></label>
-              <label><span>适用厂商</span><select value={scriptForm.vendors} onChange={(event) => setScriptForm({ ...scriptForm, vendors: event.target.value })}><option value="all">所有厂商</option><option value="h3c">H3C</option><option value="huawei">华为</option><option value="cisco">Cisco</option><option value="generic">通用主机</option></select></label>
+              <label><span>适用厂商</span><select value={scriptForm.vendors} onChange={(event) => setScriptForm({ ...scriptForm, vendors: event.target.value })}><option value="h3c">H3C</option><option value="huawei">华为</option><option value="cisco">Cisco</option><option value="generic">通用主机</option></select></label>
               <label><span>说明（可选）</span><input value={scriptForm.description} onChange={(event) => setScriptForm({ ...scriptForm, description: event.target.value })} placeholder="说明这份巡检要检查什么" /></label>
               <label><span>只读命令</span><textarea value={scriptForm.commands} onChange={(event) => setScriptForm({ ...scriptForm, commands: event.target.value })} placeholder={"display version\ndisplay interface brief"} rows={7} required /></label>
-              <div className="network-form-row"><button className="btn primary" type="submit" disabled={busy}>保存脚本</button>{editingScriptId ? <button className="btn secondary" type="button" onClick={() => { setEditingScriptId(""); setScriptForm({ name: "", description: "", vendors: "all", commands: "" }); }}>取消编辑</button> : null}</div>
+              <div className="network-form-row"><button className="btn primary" type="submit" disabled={busy}>保存脚本</button>{editingScriptId ? <button className="btn secondary" type="button" onClick={() => { setEditingScriptId(""); setScriptForm({ name: "", description: "", vendors: "h3c", commands: "" }); }}>取消编辑</button> : null}</div>
             </form>
             <section className="network-list-panel">
               <div className="network-section-head"><h2>脚本库</h2><p>基础脚本是本工作区的初始模板，可直接修改或删除。</p></div>

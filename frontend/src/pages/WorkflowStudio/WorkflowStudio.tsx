@@ -3,16 +3,11 @@ import { workflowsApi, workflowTemplatesApi, type WorkflowDefinition, type Workf
 import { apiRequest } from "../../api/client";
 import { useSessionStore } from "../../stores/session";
 
-type Asset = { asset_id: string; name: string; host: string; port: number; vendor?: string; credential_configured?: boolean };
-type InspectionScript = { script_id: string; name: string; vendors: string[]; commands: string[] };
+type InputValue = string | string[];
+type InputOption = { value: string; label: string; detail: string };
 
-function isInspection(workflow: WorkflowDefinition) {
-  return workflow.nodes.some((node) => node.tool_id === "network.operations.inspection");
-}
-function workflowKind(workflow: WorkflowDefinition) {
-  if (isInspection(workflow)) return "批量只读巡检";
-  if (workflow.nodes.some((node) => node.tool_id === "network.operations.assets_read")) return "资产清单核对";
-  return "自动化流程";
+function workflowKind(workflow: WorkflowDefinition, templates: WorkflowTemplate[]) {
+  return templates.find((template) => template.template_id === workflow.template_id)?.name || "自动化流程";
 }
 function statusText(status?: string) {
   return ({ succeeded: "已完成", failed: "执行失败", cancelled: "已取消", awaiting_approval: "等待审批", running: "执行中", queued: "排队中" } as Record<string, string>)[status || ""] || status || "未运行";
@@ -22,11 +17,9 @@ export function WorkflowStudio() {
   const workspaceId = useSessionStore((state) => state.currentWorkspaceId);
   const [workflows, setWorkflows] = useState<WorkflowDefinition[]>([]);
   const [templates, setTemplates] = useState<WorkflowTemplate[]>([]);
-  const [assets, setAssets] = useState<Asset[]>([]);
-  const [scripts, setScripts] = useState<InspectionScript[]>([]);
-  const [selectedScriptId, setSelectedScriptId] = useState("");
   const [selectedId, setSelectedId] = useState("");
-  const [selectedAssetIds, setSelectedAssetIds] = useState<string[]>([]);
+  const [inputValues, setInputValues] = useState<Record<string, InputValue>>({});
+  const [inputOptions, setInputOptions] = useState<Record<string, InputOption[]>>({});
   const [lastRun, setLastRun] = useState<WorkflowRun | null>(null);
   const [showNew, setShowNew] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -34,22 +27,49 @@ export function WorkflowStudio() {
 
   const load = useCallback(async () => {
     try {
-      const [flowData, templateData, assetData, scriptData] = await Promise.all([
+      const [flowData, templateData] = await Promise.all([
         workflowsApi.list(workspaceId),
         workflowTemplatesApi.list(),
-        apiRequest<{ assets: Asset[] }>({ method: "GET", url: "/extensions/network.operations/assets", params: { workspace_id: workspaceId } }),
-        apiRequest<{ scripts: InspectionScript[] }>({ method: "GET", url: "/extensions/network.operations/scripts", params: { workspace_id: workspaceId } }),
       ]);
       setWorkflows(flowData.workflows || []);
       setTemplates(templateData.templates || []);
-      setAssets(assetData.assets || []);
-      setScripts(scriptData.scripts || []);
-      if (!selectedScriptId && scriptData.scripts?.length) setSelectedScriptId(scriptData.scripts[0].script_id);
     } catch (reason) { setError(reason instanceof Error ? reason.message : "页面数据读取失败"); }
-  }, [workspaceId, selectedScriptId]);
+  }, [workspaceId]);
   useEffect(() => { void load(); }, [load]);
 
   const selected = useMemo(() => workflows.find((item) => item.workflow_id === selectedId) || null, [workflows, selectedId]);
+  const selectedTemplate = useMemo(
+    () => templates.find((template) => template.template_id === selected?.template_id) || null,
+    [selected, templates],
+  );
+
+  useEffect(() => {
+    let active = true;
+    const fields = selectedTemplate?.input_fields || [];
+    setInputOptions({});
+    const sourcedFields = fields.filter((field) => field.source);
+    if (!sourcedFields.length) return () => { active = false; };
+    void Promise.all(sourcedFields.map(async (field) => {
+      const source = field.source!;
+      const response = await apiRequest<Record<string, unknown>>({
+        method: "GET",
+        url: source.url.replace(/^\/api/, ""),
+        params: { workspace_id: workspaceId },
+      });
+      const records = Array.isArray(response[source.collection]) ? response[source.collection] as Array<Record<string, unknown>> : [];
+      const options = records.map((record) => ({
+        value: String(record[source.value_field] ?? ""),
+        label: String(record[source.label_field] ?? record[source.value_field] ?? ""),
+        detail: (source.detail_fields || []).map((key) => record[key]).filter((value) => value !== undefined && value !== "").map(String).join(" · "),
+      })).filter((option) => option.value);
+      return [field.name, options] as const;
+    })).then((entries) => {
+      if (active) setInputOptions(Object.fromEntries(entries));
+    }).catch((reason) => {
+      if (active) setError(reason instanceof Error ? reason.message : "流程运行条件读取失败");
+    });
+    return () => { active = false; };
+  }, [selectedTemplate, workspaceId]);
 
   async function create(template: WorkflowTemplate) {
     setBusy(true); setError("");
@@ -57,8 +77,7 @@ export function WorkflowStudio() {
       const result = await workflowTemplatesApi.instantiate(workspaceId, template.template_id);
       await load();
       setSelectedId(result.workflow.workflow_id);
-      setSelectedAssetIds([]);
-      setSelectedScriptId("");
+      setInputValues({});
       setLastRun(null);
       setShowNew(false);
     } catch (reason) { setError(reason instanceof Error ? reason.message : "创建任务失败"); }
@@ -67,18 +86,18 @@ export function WorkflowStudio() {
 
   async function run() {
     if (!selected) return;
-    if (isInspection(selected) && !selectedAssetIds.length) {
-      setError("请至少选择一台设备后再开始巡检。");
-      return;
-    }
-    if (isInspection(selected) && !selectedScriptId) {
-      setError("请先选择巡检脚本。");
+    const missing = (selectedTemplate?.input_fields || []).find((field) => {
+      if (!field.required) return false;
+      const value = inputValues[field.name];
+      return Array.isArray(value) ? value.length === 0 : !String(value || "").trim();
+    });
+    if (missing) {
+      setError(`请填写${missing.label}。`);
       return;
     }
     setBusy(true); setError("");
     try {
-      const inputs = isInspection(selected) ? { asset_ids: selectedAssetIds, script_id: selectedScriptId } : {};
-      const result = await workflowsApi.run(workspaceId, selected.workflow_id, inputs);
+      const result = await workflowsApi.run(workspaceId, selected.workflow_id, inputValues);
       setLastRun(result.run);
     } catch (reason) { setError(reason instanceof Error ? reason.message : "任务启动失败"); }
     finally { setBusy(false); }
@@ -91,7 +110,7 @@ export function WorkflowStudio() {
     try {
       await workflowsApi.remove(workspaceId, workflow.workflow_id);
       setWorkflows((items) => items.filter((item) => item.workflow_id !== workflow.workflow_id));
-      if (selectedId === workflow.workflow_id) { setSelectedId(""); setSelectedAssetIds([]); setLastRun(null); }
+      if (selectedId === workflow.workflow_id) { setSelectedId(""); setInputValues({}); setLastRun(null); }
     } catch (reason) { setError(reason instanceof Error ? reason.message : "删除失败" ); }
     finally { setBusy(false); }
   }
@@ -102,11 +121,11 @@ export function WorkflowStudio() {
       {error ? <div className="workflow-error" role="alert">{error}</div> : null}
       {showNew ? <section className="workflow-new-menu" aria-label="新建流程"><p>选择要完成的工作：</p>{templates.map((template) => <button type="button" key={template.template_id} disabled={busy} onClick={() => void create(template)}><b>{template.name}</b><span>{template.description}</span></button>)}</section> : null}
       <div className="workflow-task-layout">
-        <aside className="workflow-task-list"><div>我的流程 <span>{workflows.length}</span></div>{workflows.length ? workflows.map((workflow) => <article className={selectedId === workflow.workflow_id ? "selected" : ""} key={workflow.workflow_id}><button type="button" onClick={() => { setSelectedId(workflow.workflow_id); setSelectedAssetIds([]); setSelectedScriptId(""); setLastRun(null); setError(""); }}><b>{workflow.name}</b><small>{workflowKind(workflow)}</small></button><button className="workflow-delete" type="button" disabled={busy} onClick={() => void remove(workflow)}>删除</button></article>) : <p>还没有流程。</p>}</aside>
+        <aside className="workflow-task-list"><div>我的流程 <span>{workflows.length}</span></div>{workflows.length ? workflows.map((workflow) => <article className={selectedId === workflow.workflow_id ? "selected" : ""} key={workflow.workflow_id}><button type="button" onClick={() => { setSelectedId(workflow.workflow_id); setInputValues({}); setLastRun(null); setError(""); }}><b>{workflow.name}</b><small>{workflowKind(workflow, templates)}</small></button><button className="workflow-delete" type="button" disabled={busy} onClick={() => void remove(workflow)}>删除</button></article>) : <p>还没有流程。</p>}</aside>
         <main className="workflow-task-detail">
           {!selected ? <div className="workflow-task-empty"><h2>选择一个流程</h2><p>点击左侧流程，或点右上角“新建流程”。</p></div> : <>
-            <header><div><h2>{selected.name}</h2><p>{workflowKind(selected)}</p></div><button className="btn primary" type="button" disabled={busy} onClick={() => void run()}>{busy ? "正在启动…" : "开始运行"}</button></header>
-            {isInspection(selected) ? <section className="workflow-device-picker"><h3>选择巡检脚本和设备</h3><p>仅执行只读巡检，不会下发配置。</p><label className="workflow-script-picker">巡检脚本<select value={selectedScriptId} onChange={(event) => setSelectedScriptId(event.target.value)}><option value="">请选择脚本</option>{scripts.map((script) => <option key={script.script_id} value={script.script_id}>{script.name}（{script.vendors.join("、")}）</option>)}</select></label>{assets.length ? <div>{assets.map((asset) => <label key={asset.asset_id}><input type="checkbox" checked={selectedAssetIds.includes(asset.asset_id)} onChange={(event) => setSelectedAssetIds((ids) => event.target.checked ? [...ids, asset.asset_id] : ids.filter((id) => id !== asset.asset_id))} /><span><b>{asset.name}</b><small>{asset.host}:{asset.port}{asset.vendor ? ` · ${asset.vendor}` : ""}{asset.credential_configured ? "" : " · 未配置凭据"}</small></span></label>)}</div> : <div className="workflow-no-assets">还没有可巡检设备。请先到“网络巡检”添加设备。</div>}</section> : <section className="workflow-task-summary"><h3>将执行</h3><p>{selected.nodes.map((node) => node.name || node.node_id).join("、")}</p><p>此流程不需要填写额外参数。</p></section>}
+            <header><div><h2>{selected.name}</h2><p>{workflowKind(selected, templates)}</p></div><button className="btn primary" type="button" disabled={busy} onClick={() => void run()}>{busy ? "正在启动…" : "开始运行"}</button></header>
+            {(selectedTemplate?.input_fields || []).length ? <section className="workflow-device-picker"><h3>填写运行条件</h3><p>运行条件由流程所属扩展提供，平台不会替扩展猜测业务参数。</p>{selectedTemplate!.input_fields!.map((field) => field.type === "text" ? <label className="workflow-script-picker" key={field.name}>{field.label}<input value={String(inputValues[field.name] || "")} onChange={(event) => setInputValues((values) => ({ ...values, [field.name]: event.target.value }))} /></label> : field.type === "select" ? <label className="workflow-script-picker" key={field.name}>{field.label}<select value={String(inputValues[field.name] || "")} onChange={(event) => setInputValues((values) => ({ ...values, [field.name]: event.target.value }))}><option value="">请选择{field.label}</option>{(inputOptions[field.name] || []).map((option) => <option key={option.value} value={option.value}>{option.label}{option.detail ? `（${option.detail}）` : ""}</option>)}</select></label> : <div key={field.name}><h4>{field.label}</h4>{(inputOptions[field.name] || []).length ? (inputOptions[field.name] || []).map((option) => { const selectedValues = Array.isArray(inputValues[field.name]) ? inputValues[field.name] as string[] : []; return <label key={option.value}><input type="checkbox" checked={selectedValues.includes(option.value)} onChange={(event) => setInputValues((values) => ({ ...values, [field.name]: event.target.checked ? [...selectedValues, option.value] : selectedValues.filter((value) => value !== option.value) }))} /><span><b>{option.label}</b>{option.detail ? <small>{option.detail}</small> : null}</span></label>; }) : <div className="workflow-no-assets">暂无可选项</div>}</div>)}</section> : <section className="workflow-task-summary"><h3>将执行</h3><p>{selected.nodes.map((node) => node.name || node.node_id).join("、")}</p><p>此流程不需要填写额外参数。</p></section>}
             {lastRun ? <section className={`workflow-task-result ${lastRun.status}`}><h3>{statusText(lastRun.status)}</h3><p>运行编号：{lastRun.run_id}</p>{lastRun.nodes.map((node) => <span key={node.node_id}>{node.node_id}：{statusText(node.status)}</span>)}</section> : null}
           </>}
         </main>

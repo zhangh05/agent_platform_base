@@ -204,6 +204,53 @@ def _build_workflow_templates(
             raise ExtensionValidationError(
                 f"workflow template definition is required: {template_id}"
             )
+        fields = template.get("input_fields") or []
+        if not isinstance(fields, list):
+            raise ExtensionValidationError(
+                f"workflow template input_fields must be a list: {template_id}"
+            )
+        field_names: set[str] = set()
+        route_prefix = f"/api/extensions/{manifest.extension_id}"
+        for field in fields:
+            if not isinstance(field, dict):
+                raise ExtensionValidationError(
+                    f"workflow template input field must be an object: {template_id}"
+                )
+            field_name = str(field.get("name") or "").strip()
+            field_type = str(field.get("type") or "").strip()
+            if not re.fullmatch(r"[A-Za-z][A-Za-z0-9_]{0,79}", field_name):
+                raise ExtensionValidationError(
+                    f"invalid workflow template input field: {template_id}"
+                )
+            if field_name in field_names:
+                raise ExtensionValidationError(
+                    f"duplicate workflow template input field: {field_name}"
+                )
+            if field_type not in {"text", "select", "multi_select"}:
+                raise ExtensionValidationError(
+                    f"unsupported workflow template input type: {field_type}"
+                )
+            if not str(field.get("label") or "").strip():
+                raise ExtensionValidationError(
+                    f"workflow template input label is required: {field_name}"
+                )
+            source = field.get("source")
+            if field_type in {"select", "multi_select"}:
+                if not isinstance(source, dict):
+                    raise ExtensionValidationError(
+                        f"workflow template option source is required: {field_name}"
+                    )
+                source_url = str(source.get("url") or "").strip()
+                if not source_url.startswith(route_prefix) or source_url not in manifest.routes:
+                    raise ExtensionValidationError(
+                        f"workflow template option source must be a declared extension route: {field_name}"
+                    )
+                for key in ("collection", "value_field", "label_field"):
+                    if not re.fullmatch(r"[A-Za-z][A-Za-z0-9_]{0,79}", str(source.get(key) or "")):
+                        raise ExtensionValidationError(
+                            f"invalid workflow template option source {key}: {field_name}"
+                        )
+            field_names.add(field_name)
         seen.add(template_id)
         built.append(template)
     missing = declared - seen

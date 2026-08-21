@@ -96,7 +96,7 @@ def validate_definition(payload: dict[str, Any]) -> dict[str, Any]:
     if status not in {"draft", "active", "archived"}:
         raise WorkflowError("workflow status must be draft, active, or archived")
     _validate_references(normalized)
-    return {
+    result = {
         "workflow_id": workflow_id,
         "name": name[:120],
         "description": str(payload.get("description") or "")[:1000],
@@ -107,6 +107,10 @@ def validate_definition(payload: dict[str, Any]) -> dict[str, Any]:
         "execution_order": order,
         "execution_layers": layers,
     }
+    template_id = str(payload.get("template_id") or "").strip()
+    if template_id:
+        result["template_id"] = _id(template_id, "template_id")
+    return result
 
 
 def _topological_order(nodes: list[dict[str, Any]]) -> list[str]:
@@ -233,7 +237,7 @@ def delete_workflow(workspace_id: str, workflow_id: str) -> dict[str, Any]:
     current = get_workflow(workspace_id, workflow_id)
     if not current:
         raise WorkflowError("workflow not found")
-    runs = list_runs(workspace_id, workflow_id, limit=500)
+    runs = _all_runs_for_workflow(workspace_id, workflow_id)
     if any(run.get("status") in {"queued", "running", "awaiting_approval"} for run in runs):
         raise WorkflowError("workflow_has_active_runs")
     definition_path = _definition_path(workspace_id, workflow_id)
@@ -684,6 +688,19 @@ def list_runs(workspace_id: str, workflow_id: str = "", limit: int = 100) -> lis
         value = get_run(workspace_id, path.stem)
         if value and (not workflow_id or value.get("workflow_id") == workflow_id): records.append(value)
         if len(records) >= max(1, min(limit, 500)): break
+    return records
+
+
+def _all_runs_for_workflow(workspace_id: str, workflow_id: str) -> list[dict[str, Any]]:
+    """Return every matching run for hard deletion; user-facing list limits do not apply."""
+    root = workspace_record_dir(workspace_id, "workflows", "runs", create=False)
+    if not root.is_dir():
+        return []
+    records: list[dict[str, Any]] = []
+    for path in root.glob("*.json"):
+        value = get_run(workspace_id, path.stem)
+        if value and value.get("workflow_id") == workflow_id:
+            records.append(value)
     return records
 
 

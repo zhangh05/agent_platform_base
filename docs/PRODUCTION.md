@@ -54,10 +54,12 @@ by container uid/gid `10001`:
 printf 'LZCORE_DOCKER_SOCKET_GID=%s\n' \
   "$(stat -c '%g' /var/run/docker.sock)" > deployment/.env
 chown -R 10001:10001 workspaces config/providers
-docker compose -f deployment/compose.server.yml config
-docker compose -f deployment/compose.server.yml up -d --build --remove-orphans
+scripts/deploy_server_compose.sh
 docker compose -f deployment/compose.server.yml ps
 ```
+
+服务器更新必须使用上述脚本。它会统一重建 backend、worker 和 frontend，校验
+backend/worker 使用同一镜像，并在返回成功前检查前后端就绪接口；不要只更新部分服务。
 
 Do not run `start.sh` or retain screen-managed backend/frontend processes on
 the same ports while this Compose project is active.

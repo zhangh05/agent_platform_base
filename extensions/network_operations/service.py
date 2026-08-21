@@ -76,11 +76,17 @@ def save_inspection_script(workspace_id: str, payload: dict[str, Any]) -> dict[s
     script_id = _script_id(str(payload.get("script_id") or _id("script")))
     name = str(payload.get("name") or "").strip()
     description = str(payload.get("description") or "").strip()
-    vendors = [str(item).strip().lower() for item in (payload.get("vendors") or ["all"]) if str(item).strip()]
-    allowed = {"all", "h3c", "huawei", "cisco", "generic"}
+    raw_vendors = payload.get("vendors")
+    if not isinstance(raw_vendors, list) or any(not isinstance(item, str) for item in raw_vendors):
+        raise ValueError("script vendors must be an array")
+    vendors = [item.strip().lower() for item in raw_vendors if item.strip()]
+    allowed = {"h3c", "huawei", "cisco", "generic"}
     if not name or len(name) > 80: raise ValueError("script name is required and must be at most 80 characters")
     if not vendors or any(item not in allowed for item in vendors): raise ValueError("invalid script vendors")
-    commands = normalize_read_only_commands(payload.get("commands"))
+    raw_commands = payload.get("commands")
+    commands = normalize_read_only_commands(raw_commands)
+    for vendor in set(vendors):
+        normalize_read_only_commands(commands, vendor)
     existing = _store(workspace_id).get("scripts", script_id) or {}
     record = {"script_id": script_id, "name": name, "description": description[:300], "vendors": sorted(set(vendors)), "commands": commands, "readonly": True, "builtin": False, "source": str(existing.get("source") or "custom"), "version": int(existing.get("version") or 0) + 1, "created_at": str(existing.get("created_at") or now_iso()), "updated_at": now_iso()}
     _store(workspace_id).save("scripts", script_id, record)
@@ -213,13 +219,13 @@ def _valid_host(host: str) -> bool:
 def commands_for(asset: dict[str, Any], commands: list[str] | None = None, script: dict[str, Any] | None = None) -> list[str]:
     vendor = str(asset.get("vendor") or "generic").lower()
     if script:
-        vendors = set(script.get("vendors") or ["all"])
-        if "all" not in vendors and vendor not in vendors:
+        vendors = set(script.get("vendors") or [])
+        if vendor not in vendors:
             raise ValueError(f"script_not_supported_for_vendor:{vendor}")
         selected = script.get("commands") or []
     else:
         selected = commands or DEFAULT_COMMANDS.get(vendor, DEFAULT_COMMANDS["generic"])
-    return normalize_read_only_commands(selected)
+    return normalize_read_only_commands(selected, vendor)
 
 
 def _target_for(asset: dict[str, Any]) -> DeviceTarget:

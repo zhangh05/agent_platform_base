@@ -59,6 +59,7 @@ Before committing:
 - Check registry, namespace, manifest, and contracts expose the same canonical IDs.
 - Run focused tests for the changed layer.
 - Inspect status and stage only intended source/docs/tests.
+- Server delivery uses `scripts/deploy_server_compose.sh`; partial Compose service updates are not a valid deployment.
 
 Useful checks:
 

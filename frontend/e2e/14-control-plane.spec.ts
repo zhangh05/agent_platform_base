@@ -17,6 +17,6 @@ test("14. approvals, extensions and workflows use the isolated workspace", async
   await page.goto("/extensions");
   await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
   await page.goto("/workflows");
-  await expect(page.getByRole("heading", { name: /应用编排/ })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "流程", exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "新建流程" })).toBeVisible();
 });

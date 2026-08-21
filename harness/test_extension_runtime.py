@@ -7,7 +7,11 @@ from core.tools.integration import reset_default_client_for_tests, get_default_t
 from core.tools.context import ToolRuntimeContext
 from extensions.manifest import ExtensionManifest, ExtensionValidationError
 from extensions.registry import ExtensionRegistry
-from extensions.runtime import load_extensions, reset_extension_cache_for_tests
+from extensions.runtime import (
+    _build_workflow_templates,
+    load_extensions,
+    reset_extension_cache_for_tests,
+)
 from evaluation.runner import GoldenCase, evaluate_case
 
 
@@ -29,6 +33,46 @@ def test_network_workflow_templates_are_owned_by_the_extension():
         "network-operations-asset-inventory",
         "network-operations-readonly-inspection",
     }
+    inspection = next(
+        item
+        for item in network.workflow_templates
+        if item["template_id"] == "network-operations-readonly-inspection"
+    )
+    assert [field["name"] for field in inspection["input_fields"]] == [
+        "script_id",
+        "asset_ids",
+    ]
+
+
+def test_workflow_template_inputs_can_only_read_declared_owner_routes():
+    manifest = ExtensionManifest.from_dict({
+        "extension_id": "vendor.sample",
+        "name": "Sample",
+        "version": "1.0.0",
+        "routes": ["/api/extensions/vendor.sample/options"],
+        "workflow_templates": ["vendor-sample-run"],
+    })
+    contribution = {
+        "workflow_templates": [{
+            "template_id": "vendor-sample-run",
+            "name": "Sample run",
+            "definition": {"nodes": [{}]},
+            "input_fields": [{
+                "name": "option_id",
+                "label": "Option",
+                "type": "select",
+                "source": {
+                    "url": "/api/extensions/another.extension/options",
+                    "collection": "options",
+                    "value_field": "id",
+                    "label_field": "name",
+                },
+            }],
+        }],
+    }
+
+    with pytest.raises(ExtensionValidationError, match="declared extension route"):
+        _build_workflow_templates(manifest, contribution)
 
 
 def test_version_endpoint_uses_the_platform_package_version():

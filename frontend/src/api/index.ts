@@ -141,6 +141,7 @@ export interface WorkflowNode {
 export interface WorkflowDefinition {
   workflow_id: string; name: string; description: string; version: number; status: string;
   failure_policy: "fail_fast" | "continue"; nodes: WorkflowNode[]; execution_order?: string[]; execution_layers?: string[][];
+  template_id?: string;
   created_at?: string; updated_at?: string;
 }
 export interface WorkflowRun {
@@ -154,6 +155,19 @@ export interface WorkflowTemplate {
   audience: string;
   expected_result: string;
   input_example: Record<string, unknown>;
+  input_fields?: Array<{
+    name: string;
+    label: string;
+    type: "text" | "select" | "multi_select";
+    required?: boolean;
+    source?: {
+      url: string;
+      collection: string;
+      value_field: string;
+      label_field: string;
+      detail_fields?: string[];
+    };
+  }>;
 }
 export const workflowsApi = {
   list: (workspace_id: string) => apiRequest<{ ok: boolean; workflows: WorkflowDefinition[] }>({ method: "GET", url: "/workflows", params: { workspace_id } }),

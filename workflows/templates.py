@@ -44,6 +44,7 @@ def instantiate_workflow_template(workspace_id: str, template_id: str, *, name: 
     definition = deepcopy(template["definition"])
     workflow = save_workflow(workspace_id, {
         "workflow_id": f"{template_id}-{suffix}",
+        "template_id": template_id,
         "name": str(name or template["name"]).strip()[:120] or template["name"],
         "description": template["description"],
         "version": 1,

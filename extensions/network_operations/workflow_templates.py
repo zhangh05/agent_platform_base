@@ -32,6 +32,34 @@ _TEMPLATES: tuple[dict[str, Any], ...] = (
         "audience": "网络运维",
         "expected_result": "创建可追踪的巡检任务；请在“网络巡检”页面查看设备级证据和最终结果。",
         "input_example": {"asset_ids": ["选择已登记设备"], "script_id": "选择巡检脚本"},
+        "input_fields": [
+            {
+                "name": "script_id",
+                "label": "巡检脚本",
+                "type": "select",
+                "required": True,
+                "source": {
+                    "url": "/api/extensions/network.operations/scripts",
+                    "collection": "scripts",
+                    "value_field": "script_id",
+                    "label_field": "name",
+                    "detail_fields": ["vendors"],
+                },
+            },
+            {
+                "name": "asset_ids",
+                "label": "巡检设备",
+                "type": "multi_select",
+                "required": True,
+                "source": {
+                    "url": "/api/extensions/network.operations/assets",
+                    "collection": "assets",
+                    "value_field": "asset_id",
+                    "label_field": "name",
+                    "detail_fields": ["host", "port", "vendor", "credential_configured"],
+                },
+            },
+        ],
         "definition": {
             "failure_policy": "fail_fast",
             "nodes": [{

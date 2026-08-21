@@ -19,7 +19,7 @@ describe("Empty state", () => {
     enqueue("/workspaces/ws-1/review-items", { status: 200, data: { items: [] } });
     render(<ReviewCenter />);
     const empty = await screen.findByTestId("review-empty-state");
-    expect(empty.textContent).toContain("当前没有待处理评审");
-    expect(empty.textContent).toContain("这里只收集需要人工确认的结果");
+    expect(empty.textContent).toContain("当前没有待处理复核");
+    expect(empty.textContent).toContain("流程运行失败时也会自动进入这里");
   });
 });
