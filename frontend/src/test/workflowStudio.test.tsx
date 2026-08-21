@@ -32,10 +32,12 @@ test("creates a user-facing workflow from a business template", async () => {
 
   render(<WorkflowStudio />);
   expect(await screen.findByText("网络资产清单核对")).toBeInTheDocument();
-  await userEvent.click(screen.getByRole("button", { name: "创建并打开" }));
+  await userEvent.click(screen.getByRole("button", { name: "使用此模板" }));
 
   await waitFor(() => expect(instantiate).toHaveBeenCalledWith("default", "network-operations-asset-inventory"));
+  expect(screen.getAllByRole("heading", { name: "网络资产清单核对" })).toHaveLength(2);
+  expect(screen.getByText("读取网络资产")).toBeInTheDocument();
+  await userEvent.click(screen.getAllByRole("button", { name: "高级编辑" }).at(-1)!);
   expect(screen.getByDisplayValue("网络资产清单核对")).toBeInTheDocument();
   expect(screen.getByPlaceholderText("步骤名称")).toHaveValue("读取网络资产");
-  expect(screen.getByRole("option", { name: "读取网络资产" })).toBeInTheDocument();
 });

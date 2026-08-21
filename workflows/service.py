@@ -224,11 +224,14 @@ def list_workflows(workspace_id: str) -> list[dict[str, Any]]:
     return records
 
 
-def archive_workflow(workspace_id: str, workflow_id: str) -> dict[str, Any]:
+def archive_workflow(workspace_id: str, workflow_id: str, *, archived_by: str = "system") -> dict[str, Any]:
     current = get_workflow(workspace_id, workflow_id)
     if not current: raise WorkflowError("workflow not found")
+    timestamp = now_iso()
     current["status"] = "archived"
-    current["updated_at"] = now_iso()
+    current["archived_at"] = timestamp
+    current["archived_by"] = str(archived_by or "system")[:120]
+    current["updated_at"] = timestamp
     path = _definition_path(workspace_id, workflow_id)
     with FileLock(path.with_suffix(".lock")):
         atomic_write_json(path, current)

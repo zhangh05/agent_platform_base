@@ -1,5 +1,5 @@
 """Workspace workflow definition, template and execution APIs."""
-from flask import jsonify, request
+from flask import jsonify, request, session
 
 
 def _workspace_id(value) -> str:
@@ -57,8 +57,12 @@ def register_workflow_routes(app) -> None:
         if request.method == "GET":
             workflow = get_workflow(workspace_id, workflow_id)
             return (jsonify({"ok": True, "workflow": workflow}), 200) if workflow else (jsonify({"ok": False, "error": "workflow not found"}), 404)
+        if request.method == "DELETE" and data.get("confirm") is not True:
+            return jsonify({"ok": False, "error": "workflow_archive_confirmation_required"}), 400
         try:
-            workflow = archive_workflow(workspace_id, workflow_id) if request.method == "DELETE" else save_workflow(workspace_id, {**data, "workflow_id": workflow_id})
+            workflow = archive_workflow(
+                workspace_id, workflow_id, archived_by=str(session.get("lzcore_user") or "system"),
+            ) if request.method == "DELETE" else save_workflow(workspace_id, {**data, "workflow_id": workflow_id})
         except WorkflowError as exc:
             return jsonify({"ok": False, "error": str(exc)}), 400
         return jsonify({"ok": True, "workflow": workflow})
