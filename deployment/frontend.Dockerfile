@@ -3,6 +3,7 @@ WORKDIR /src
 COPY frontend/package.json frontend/package-lock.json ./frontend/
 RUN npm --prefix frontend ci
 COPY frontend ./frontend
+COPY extensions ./extensions
 RUN npm --prefix frontend run build
 
 FROM nginxinc/nginx-unprivileged:1.29-alpine
