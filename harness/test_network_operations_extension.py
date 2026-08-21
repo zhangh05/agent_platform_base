@@ -243,8 +243,12 @@ def test_extension_routes_cover_asset_and_inspection_flow(monkeypatch, tmp_path)
 
 def test_inspection_scripts_are_validated_and_snapshotted(monkeypatch, tmp_path):
     _setup(monkeypatch, tmp_path)
-    builtins = service.list_inspection_scripts("default")
-    assert any(item["script_id"] == "builtin-h3c-health" for item in builtins)
+    starters = service.list_inspection_scripts("default")
+    starter = next(item for item in starters if item["script_id"] == "starter-h3c-health")
+    assert starter["builtin"] is False
+    edited = service.save_inspection_script("default", {"script_id": starter["script_id"], "name": "核心 H3C 健康检查", "description": "用户调整后的默认脚本", "vendors": ["h3c"], "commands": ["display version", "display cpu-usage"]})
+    assert edited["name"] == "核心 H3C 健康检查"
+    assert edited["version"] == 2
     try:
         service.save_inspection_script("default", {"name": "危险脚本", "vendors": ["h3c"], "commands": ["reboot"]})
     except ValueError as exc:
@@ -275,7 +279,10 @@ def test_inspection_script_http_routes(monkeypatch, tmp_path):
     client = create_app().test_client()
     listed = client.get("/api/extensions/network.operations/scripts?workspace_id=default")
     assert listed.status_code == 200
-    assert any(item["builtin"] for item in listed.get_json()["scripts"])
+    scripts = listed.get_json()["scripts"]
+    assert len(scripts) == 3
+    assert all(item["builtin"] is False for item in scripts)
+    assert any(item["script_id"] == "starter-huawei-health" for item in scripts)
     created = client.post("/api/extensions/network.operations/scripts", json={"workspace_id": "default", "name": "接口核查", "vendors": ["h3c"], "commands": ["display interface brief"]})
     assert created.status_code == 201
     assert created.get_json()["script"]["name"] == "接口核查"

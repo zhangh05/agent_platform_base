@@ -34,10 +34,10 @@ _TASK_CANCEL: dict[str, threading.Event] = {}
 _TASK_LOCK = threading.Lock()
 
 
-BUILTIN_SCRIPTS: tuple[dict[str, Any], ...] = (
-    {"script_id": "builtin-h3c-health", "name": "H3C 健康巡检", "description": "采集 H3C 设备版本、CPU、内存、接口和日志摘要。", "vendors": ["h3c"], "commands": ["display version", "display cpu-usage", "display memory", "display interface brief", "display logbuffer | include ERROR|WARN"], "readonly": True, "builtin": True, "version": 1},
-    {"script_id": "builtin-huawei-health", "name": "华为健康巡检", "description": "采集华为设备版本、CPU、内存、接口和日志摘要。", "vendors": ["huawei"], "commands": ["display version", "display cpu-usage", "display memory-usage", "display interface brief", "display logbuffer | include ERROR|WARN"], "readonly": True, "builtin": True, "version": 1},
-    {"script_id": "builtin-cisco-health", "name": "Cisco 健康巡检", "description": "采集 Cisco 设备版本、CPU、内存、接口和日志摘要。", "vendors": ["cisco"], "commands": ["show version", "show processes cpu", "show memory statistics", "show ip interface brief", "show logging | include ERROR|WARN"], "readonly": True, "builtin": True, "version": 1},
+STARTER_SCRIPTS: tuple[dict[str, Any], ...] = (
+    {"script_id": "starter-h3c-health", "name": "H3C 健康巡检", "description": "采集 H3C 设备版本、CPU、内存、接口和日志摘要。", "vendors": ["h3c"], "commands": ["display version", "display cpu-usage", "display memory", "display interface brief", "display logbuffer | include ERROR|WARN"], "readonly": True, "builtin": True, "version": 1},
+    {"script_id": "starter-huawei-health", "name": "华为健康巡检", "description": "采集华为设备版本、CPU、内存、接口和日志摘要。", "vendors": ["huawei"], "commands": ["display version", "display cpu-usage", "display memory-usage", "display interface brief", "display logbuffer | include ERROR|WARN"], "readonly": True, "builtin": True, "version": 1},
+    {"script_id": "starter-cisco-health", "name": "Cisco 健康巡检", "description": "采集 Cisco 设备版本、CPU、内存、接口和日志摘要。", "vendors": ["cisco"], "commands": ["show version", "show processes cpu", "show memory statistics", "show ip interface brief", "show logging | include ERROR|WARN"], "readonly": True, "builtin": True, "version": 1},
 )
 
 def _script_safe(record: dict[str, Any]) -> dict[str, Any]:
@@ -49,28 +49,31 @@ def _script_id(value: str) -> str:
         raise ValueError("invalid script_id")
     return result
 
-def _script_from_builtin(script_id: str) -> dict[str, Any] | None:
-    return next((dict(item) for item in BUILTIN_SCRIPTS if item["script_id"] == script_id), None)
+def _ensure_starter_scripts(workspace_id: str) -> None:
+    """Create editable per-workspace starter scripts only once.
+
+    The marker deliberately prevents deleted templates from being recreated.
+    """
+    store = _store(workspace_id)
+    if store.get("script_meta", "starter_scripts_initialized"):
+        return
+    for template in STARTER_SCRIPTS:
+        record = {**dict(template), "readonly": True, "builtin": False, "source": "starter", "created_at": now_iso(), "updated_at": now_iso()}
+        store.save("scripts", record["script_id"], record)
+    store.save("script_meta", "starter_scripts_initialized", {"initialized_at": now_iso()})
 
 def list_inspection_scripts(workspace_id: str) -> list[dict[str, Any]]:
-    custom = [_script_safe(item) for item in _store(workspace_id).list("scripts", limit=200)]
-    return [*_SCRIPT_BUILTINS(), *custom]
-
-def _SCRIPT_BUILTINS() -> list[dict[str, Any]]:
-    return [_script_safe(dict(item)) for item in BUILTIN_SCRIPTS]
+    _ensure_starter_scripts(workspace_id)
+    return [_script_safe(item) for item in _store(workspace_id).list("scripts", limit=200)]
 
 def get_inspection_script(workspace_id: str, script_id: str) -> dict[str, Any] | None:
+    _ensure_starter_scripts(workspace_id)
     identifier = _script_id(script_id)
-    builtin = _script_from_builtin(identifier)
-    if builtin:
-        return builtin
     record = _store(workspace_id).get("scripts", identifier)
     return _script_safe(record) if record else None
 
 def save_inspection_script(workspace_id: str, payload: dict[str, Any]) -> dict[str, Any]:
     script_id = _script_id(str(payload.get("script_id") or _id("script")))
-    if _script_from_builtin(script_id):
-        raise ValueError("builtin_script_is_read_only")
     name = str(payload.get("name") or "").strip()
     description = str(payload.get("description") or "").strip()
     vendors = [str(item).strip().lower() for item in (payload.get("vendors") or ["all"]) if str(item).strip()]
@@ -79,14 +82,13 @@ def save_inspection_script(workspace_id: str, payload: dict[str, Any]) -> dict[s
     if not vendors or any(item not in allowed for item in vendors): raise ValueError("invalid script vendors")
     commands = normalize_read_only_commands(payload.get("commands"))
     existing = _store(workspace_id).get("scripts", script_id) or {}
-    record = {"script_id": script_id, "name": name, "description": description[:300], "vendors": sorted(set(vendors)), "commands": commands, "readonly": True, "builtin": False, "version": int(existing.get("version") or 0) + 1, "created_at": str(existing.get("created_at") or now_iso()), "updated_at": now_iso()}
+    record = {"script_id": script_id, "name": name, "description": description[:300], "vendors": sorted(set(vendors)), "commands": commands, "readonly": True, "builtin": False, "source": str(existing.get("source") or "custom"), "version": int(existing.get("version") or 0) + 1, "created_at": str(existing.get("created_at") or now_iso()), "updated_at": now_iso()}
     _store(workspace_id).save("scripts", script_id, record)
     return _script_safe(record)
 
 def delete_inspection_script(workspace_id: str, script_id: str) -> bool:
-    identifier = _script_id(script_id)
-    if _script_from_builtin(identifier): raise ValueError("builtin_script_is_read_only")
-    return _store(workspace_id).delete("scripts", identifier)
+    _ensure_starter_scripts(workspace_id)
+    return _store(workspace_id).delete("scripts", _script_id(script_id))
 
 def _resolve_script(workspace_id: str, script_id: str | None) -> dict[str, Any] | None:
     if not script_id: return None
