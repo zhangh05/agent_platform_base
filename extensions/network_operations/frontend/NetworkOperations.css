@@ -1,4 +1,6 @@
-.network-ops-body { display: flex; flex-direction: column; gap: 14px; background: var(--bg); }
+.network-ops-body { display: flex; flex: 1 1 auto; flex-direction: column; gap: 14px; min-height: 0; overflow-y: auto; overscroll-behavior: contain; background: var(--bg); }
+/* Extension pages run inside a height-constrained console shell. Keep the body as the explicit scroll owner so device assets cannot be clipped below the viewport. */
+.network-ops-page { min-height: 0; }
 .network-ops-actions { display: flex; gap: 8px; }
 .network-ops-error { padding: 10px 14px; border: 1px solid var(--danger); border-radius: var(--r-8); color: var(--danger); background: color-mix(in srgb, var(--danger) 7%, var(--surface)); }
 .network-ops-summary { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); overflow: hidden; border: 1px solid var(--line-2); border-radius: var(--r-8); background: var(--surface); }
