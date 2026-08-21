@@ -60,6 +60,9 @@ export const WorkflowStudio = lazyWithPreload(() =>
 export const UserManagement = lazyWithPreload(() =>
   import("./pages/UserManagement/UserManagement").then((m) => ({ default: m.UserManagement })),
 );
+export const AdvancedCenter = lazyWithPreload(() =>
+  import("./pages/AdvancedCenter/AdvancedCenter").then((m) => ({ default: m.AdvancedCenter })),
+);
 // Path → preload thunk. Keys match `NAV_ITEMS.to` plus the secondary routes.
 const PRELOAD: Record<string, () => PageModule> = {
   "/workbench": () => Promise.resolve({ default: TaskWorkbench }),
@@ -74,6 +77,7 @@ const PRELOAD: Record<string, () => PageModule> = {
   "/extensions": ExtensionCenter.preload,
   "/workflows": WorkflowStudio.preload,
   "/users": UserManagement.preload,
+  "/advanced": AdvancedCenter.preload,
 };
 
 const ROUTE_PATHS = Object.keys(PRELOAD);

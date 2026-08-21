@@ -440,6 +440,43 @@
   opacity: 1;
   transform: translateY(0);
 }
+
+.app-settings-menu {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+.app-settings-menu > summary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  color: var(--text-3);
+  border-radius: 6px;
+  cursor: pointer;
+  list-style: none;
+}
+.app-settings-menu > summary::-webkit-details-marker { display: none; }
+.app-settings-menu > summary:hover,
+.app-settings-menu > summary:focus-visible,
+.app-settings-menu.active > summary {
+  color: var(--text);
+  background: var(--surface-3);
+  outline: none;
+}
+.app-settings-menu > .app-nav-menu {
+  top: calc(100% + 6px);
+  right: 0;
+  left: auto;
+  pointer-events: none;
+}
+.app-settings-menu[open] > .app-nav-menu {
+  visibility: visible;
+  pointer-events: auto;
+  opacity: 1;
+  transform: translateY(0);
+}
 .mobile-nav-advanced {
   margin-top: 10px;
   padding-top: 10px;

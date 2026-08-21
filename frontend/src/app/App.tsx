@@ -16,6 +16,7 @@ import {
   IconChevronLeft,
   IconChevronRight,
   IconLayers,
+  IconSettings,
   IconMoon,
   IconSun,
   IconMenu,
@@ -36,6 +37,7 @@ import {
   ExtensionCenter,
   WorkflowStudio,
   UserManagement,
+  AdvancedCenter,
   preloadRoute,
 } from "../routes";
 
@@ -128,22 +130,22 @@ const NavGroupItem = memo(function NavGroupItem({ group, currentPath }: { group:
   );
 });
 
-const AdvancedNav = memo(function AdvancedNav({ items, currentPath }: { items: NavItem[]; currentPath: string }) {
+const SettingsNav = memo(function SettingsNav({ items, currentPath }: { items: NavItem[]; currentPath: string }) {
   if (items.length === 0) return null;
   const active = items.some((item) => item.to === currentPath);
   const closeMenu = (event: MouseEvent<HTMLAnchorElement>) => {
     event.currentTarget.closest("details")?.removeAttribute("open");
   };
   return (
-    <details className={"app-nav-advanced" + (active ? " active" : "")}>
-      <summary className="app-nav-item app-nav-advanced-trigger" aria-label="打开高级功能">
-        <IconLayers size={14} />
-        <span>高级</span>
+    <details className={"app-settings-menu" + (active ? " active" : "")}>
+      <summary className="settings-nav-trigger" aria-label="打开设置菜单" data-testid="btn-settings-menu">
+        <IconSettings size={15} />
+        <span className="sr-only">设置</span>
       </summary>
-      <div className="app-nav-menu" role="menu" aria-label="高级功能">
+      <div className="app-nav-menu" role="menu" aria-label="设置菜单">
         <div className="app-nav-menu-head">
-          <strong>高级功能</strong>
-          <span>低频治理、编排与平台管理操作</span>
+          <strong>设置</strong>
+          <span>模型配置、工作区设置与用户权限</span>
         </div>
         {items.map((item) => {
           const Icon = item.Icon;
@@ -168,6 +170,7 @@ const AdvancedNav = memo(function AdvancedNav({ items, currentPath }: { items: N
     </details>
   );
 });
+
 /** Per-route skeleton shown while a lazily-loaded page chunk is fetched, so
  *  navigation feels instant instead of flashing an empty spinner. */
 const SKELETON_BY_PATH: Record<string, "list" | "table"> = {
@@ -205,6 +208,7 @@ function AppRoutes({ canManageUsers }: { canManageUsers: boolean }) {
     "/capabilities": <ErrorBoundary><CapabilityCenter /></ErrorBoundary>,
     "/diagnostics": <ErrorBoundary><Diagnostics /></ErrorBoundary>,
     "/settings": <ErrorBoundary><Settings /></ErrorBoundary>,
+    "/advanced": <ErrorBoundary><AdvancedCenter /></ErrorBoundary>,
     "/runs": <ErrorBoundary><OperationsPage /></ErrorBoundary>,
     "/audit": <Navigate to="/runs?view=audit" replace />,
     "/reviews": <ErrorBoundary><ReviewCenter /></ErrorBoundary>,
@@ -337,8 +341,9 @@ function AppShell({ canLogout, onLogout, session }: { canLogout: boolean; onLogo
   const extensionRegistry = useExtensionRegistry();
   const canManageUsers = session?.platform_admin === true;
   const availableNavigationItems = [...NAV_ITEMS.filter((item) => !item.adminOnly || canManageUsers), ...extensionRegistry.navItems];
-  const navigationItems = availableNavigationItems.filter((item) => !item.advanced);
+  const navigationItems = availableNavigationItems.filter((item) => !item.advanced && !item.utility);
   const advancedNavigationItems = availableNavigationItems.filter((item) => item.advanced);
+  const settingsNavigationItems = availableNavigationItems.filter((item) => item.utility === "settings");
   const navigationGroups = useMemo(() => buildNavGroups(navigationItems), [navigationItems]);
 
   useEffect(() => {
@@ -398,10 +403,21 @@ function AppShell({ canLogout, onLogout, session }: { canLogout: boolean; onLogo
 
         <nav className="app-nav" aria-label="主导航">
           {navigationGroups.map((group) => <NavGroupItem key={group.id} group={group} currentPath={location.pathname} />)}
-          <AdvancedNav items={advancedNavigationItems} currentPath={location.pathname} />
+          <NavLink
+            to="/advanced"
+            data-testid="nav-advanced"
+            className={({ isActive }) => "app-nav-item" + (isActive ? " active" : "")}
+            onMouseEnter={() => preloadRoute("/advanced")}
+            onFocus={() => preloadRoute("/advanced")}
+            viewTransition
+          >
+            <IconLayers size={14} />
+            <span>高级</span>
+          </NavLink>
         </nav>
 
         <div className="app-actions" aria-label="页面操作">
+          <SettingsNav items={settingsNavigationItems} currentPath={location.pathname} />
           <button
             type="button"
             className="collapse-btn"
@@ -442,7 +458,7 @@ function AppShell({ canLogout, onLogout, session }: { canLogout: boolean; onLogo
         {/* AppLayout renders the persistent sidebar + main grid once; the
             Suspense boundary keeps it visible while a route's chunk loads,
             so navigation never tears down the shell. */}
-        <AppLayout navigationItems={navigationItems} advancedNavigationItems={advancedNavigationItems}>
+        <AppLayout navigationItems={navigationItems} advancedNavigationItems={advancedNavigationItems} settingsNavigationItems={settingsNavigationItems}>
           <AppRoutes canManageUsers={canManageUsers} />
         </AppLayout>
       </div>

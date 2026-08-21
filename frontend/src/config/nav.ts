@@ -17,6 +17,8 @@ export interface NavItem {
   testid: string;
   Icon: ComponentType<{ size?: string | number }>;
   adminOnly?: boolean;
+  /** Render this route from a compact utility menu instead of the main nav. */
+  utility?: "settings";
   /** Keep low-frequency governance and build features out of the default nav. */
   advanced?: boolean;
 }
@@ -40,11 +42,19 @@ export const NAV_ITEMS: NavItem[] = [
   { to: "/data", label: "文件与数据", testid: "nav-data", Icon: IconBox },
   { to: "/memory", label: "记忆", testid: "nav-memory", Icon: IconBrain },
   { to: "/diagnostics", label: "系统状态", testid: "nav-diagnostics", Icon: IconProbe },
-  { to: "/settings", label: "设置", testid: "nav-settings", Icon: IconSettings },
+  { to: "/settings", label: "设置", testid: "nav-settings", Icon: IconSettings, utility: "settings" },
   { to: "/extensions", label: "扩展管理", testid: "nav-extensions", Icon: IconLayers, advanced: true },
   { to: "/workflows", label: "流程编排", testid: "nav-workflows", Icon: IconLayers, advanced: true },
-  { to: "/users", label: "用户与权限", testid: "nav-users", Icon: IconSettings, adminOnly: true, advanced: true },
+  { to: "/users", label: "用户与权限", testid: "nav-users", Icon: IconSettings, adminOnly: true, utility: "settings" },
 ];
+
+/** Page-level entry for the low-frequency governance and build surface. */
+export const ADVANCED_HOME_NAV_ITEM: NavItem = {
+  to: "/advanced",
+  label: "高级",
+  testid: "nav-advanced",
+  Icon: IconLayers,
+};
 
 const GROUP_META: Omit<NavGroup, "items">[] = [
   { id: "workbench", label: "工作台", description: "开始对话、上传材料、获取结果", to: "/workbench", testid: "nav-group-workbench", Icon: IconChat },

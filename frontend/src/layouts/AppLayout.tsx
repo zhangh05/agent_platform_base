@@ -4,12 +4,13 @@ import { NavLink, useLocation } from "../router";
 import { useUIStore } from "../stores/session";
 import { Sidebar } from "./Sidebar";
 import { preloadRoute } from "../routes";
-import type { NavItem } from "../config/nav";
+import { ADVANCED_HOME_NAV_ITEM, type NavItem } from "../config/nav";
 
 interface AppLayoutProps {
   children: ReactNode;
   navigationItems: NavItem[];
   advancedNavigationItems: NavItem[];
+  settingsNavigationItems: NavItem[];
 }
 
 const MobileNavItem = memo(function MobileNavItem({ to, label, testid, Icon }: NavItem) {
@@ -42,7 +43,7 @@ const MobileNavItem = memo(function MobileNavItem({ to, label, testid, Icon }: N
  *
  * v3.9: Inspector panel removed — diagnostics moved inline to Timeline.
  */
-export function AppLayout({ children, navigationItems, advancedNavigationItems }: AppLayoutProps) {
+export function AppLayout({ children, navigationItems, advancedNavigationItems, settingsNavigationItems }: AppLayoutProps) {
   const sidebarOpen = useUIStore((s) => s.sidebarOpen);
   const mobileNavOpen = useUIStore((s) => s.mobileNavOpen);
   const setMobileNavOpen = useUIStore((s) => s.setMobileNavOpen);
@@ -141,12 +142,21 @@ export function AppLayout({ children, navigationItems, advancedNavigationItems }
           <div className="sidebar-scroll">
             <nav className="mobile-nav" aria-label="页面导航">
               {navigationItems.map((item) => <MobileNavItem key={item.to} {...item} />)}
+              <MobileNavItem {...ADVANCED_HOME_NAV_ITEM} />
             </nav>
             {advancedNavigationItems.length > 0 ? (
               <section className="mobile-nav-advanced" aria-label="高级功能">
                 <span className="mobile-nav-section-label">高级功能</span>
                 <nav className="mobile-nav" aria-label="高级页面导航">
                   {advancedNavigationItems.map((item) => <MobileNavItem key={item.to} {...item} />)}
+                </nav>
+              </section>
+            ) : null}
+            {settingsNavigationItems.length > 0 ? (
+              <section className="mobile-nav-advanced" aria-label="设置">
+                <span className="mobile-nav-section-label">设置</span>
+                <nav className="mobile-nav" aria-label="设置页面导航">
+                  {settingsNavigationItems.map((item) => <MobileNavItem key={item.to} {...item} />)}
                 </nav>
               </section>
             ) : null}
