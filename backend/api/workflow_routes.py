@@ -49,7 +49,7 @@ def register_workflow_routes(app) -> None:
 
     @app.route("/api/workflows/<workflow_id>", methods=["GET", "PUT", "DELETE"])
     def workflow_detail(workflow_id):
-        from workflows.service import WorkflowError, archive_workflow, get_workflow, save_workflow
+        from workflows.service import WorkflowError, delete_workflow, get_workflow, save_workflow
         data = request.get_json(silent=True) or {}
         workspace_id = _workspace_id(request.args.get("workspace_id") or data.get("workspace_id"))
         if not workspace_id:
@@ -57,12 +57,17 @@ def register_workflow_routes(app) -> None:
         if request.method == "GET":
             workflow = get_workflow(workspace_id, workflow_id)
             return (jsonify({"ok": True, "workflow": workflow}), 200) if workflow else (jsonify({"ok": False, "error": "workflow not found"}), 404)
-        if request.method == "DELETE" and data.get("confirm") is not True:
-            return jsonify({"ok": False, "error": "workflow_archive_confirmation_required"}), 400
+        if request.method == "DELETE":
+            if data.get("confirm") != "delete":
+                return jsonify({"ok": False, "error": "workflow_delete_confirmation_required"}), 400
+            try:
+                deleted = delete_workflow(workspace_id, workflow_id)
+            except WorkflowError as exc:
+                status = 409 if str(exc) == "workflow_has_active_runs" else 400
+                return jsonify({"ok": False, "error": str(exc)}), status
+            return jsonify({"ok": True, "deleted": deleted})
         try:
-            workflow = archive_workflow(
-                workspace_id, workflow_id, archived_by=str(session.get("lzcore_user") or "system"),
-            ) if request.method == "DELETE" else save_workflow(workspace_id, {**data, "workflow_id": workflow_id})
+            workflow = save_workflow(workspace_id, {**data, "workflow_id": workflow_id})
         except WorkflowError as exc:
             return jsonify({"ok": False, "error": str(exc)}), 400
         return jsonify({"ok": True, "workflow": workflow})

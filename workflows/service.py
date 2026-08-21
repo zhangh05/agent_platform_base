@@ -224,18 +224,31 @@ def list_workflows(workspace_id: str) -> list[dict[str, Any]]:
     return records
 
 
-def archive_workflow(workspace_id: str, workflow_id: str, *, archived_by: str = "system") -> dict[str, Any]:
+def delete_workflow(workspace_id: str, workflow_id: str) -> dict[str, Any]:
+    """Permanently remove one inactive workflow and its completed run records.
+
+    Active executions are protected so the unified worker never loses its
+    canonical definition while running. Global Job records remain platform audit data.
+    """
     current = get_workflow(workspace_id, workflow_id)
-    if not current: raise WorkflowError("workflow not found")
-    timestamp = now_iso()
-    current["status"] = "archived"
-    current["archived_at"] = timestamp
-    current["archived_by"] = str(archived_by or "system")[:120]
-    current["updated_at"] = timestamp
-    path = _definition_path(workspace_id, workflow_id)
-    with FileLock(path.with_suffix(".lock")):
-        atomic_write_json(path, current)
-    return current
+    if not current:
+        raise WorkflowError("workflow not found")
+    runs = list_runs(workspace_id, workflow_id, limit=500)
+    if any(run.get("status") in {"queued", "running", "awaiting_approval"} for run in runs):
+        raise WorkflowError("workflow_has_active_runs")
+    definition_path = _definition_path(workspace_id, workflow_id)
+    removable_runs = [_run_path(workspace_id, str(run["run_id"])) for run in runs if run.get("run_id")]
+    with FileLock(definition_path.with_suffix(".lock")):
+        if not definition_path.is_file():
+            raise WorkflowError("workflow not found")
+        definition_path.unlink()
+    removed_runs = 0
+    for run_path in removable_runs:
+        with FileLock(run_path.with_suffix(".lock")):
+            if run_path.is_file():
+                run_path.unlink()
+                removed_runs += 1
+    return {"workflow_id": workflow_id, "removed_runs": removed_runs}
 
 
 def execute_workflow(workspace_id: str, workflow_id: str, inputs: dict[str, Any] | None = None, *, approvals: dict[str, str] | None = None, job_id: str = "", run_id: str = "") -> dict[str, Any]:

@@ -48,7 +48,7 @@ def test_workflow_template_rejects_unknown_template(monkeypatch, tmp_path):
     assert response.get_json()["error"] == "workflow_template_not_found"
 
 
-def test_workflow_archive_requires_confirmation_and_preserves_audit_metadata(monkeypatch, tmp_path):
+def test_workflow_delete_requires_confirmation_and_removes_definition(monkeypatch, tmp_path):
     _setup(monkeypatch, tmp_path)
     from backend.main import create_app
     client = create_app().test_client()
@@ -60,15 +60,13 @@ def test_workflow_archive_requires_confirmation_and_preserves_audit_metadata(mon
     workflow_id = created.get_json()["workflow"]["workflow_id"]
     blocked = client.delete(f"/api/workflows/{workflow_id}", json={"workspace_id": "default"})
     assert blocked.status_code == 400
-    assert blocked.get_json()["error"] == "workflow_archive_confirmation_required"
-    archived = client.delete(
+    assert blocked.get_json()["error"] == "workflow_delete_confirmation_required"
+    deleted = client.delete(
         f"/api/workflows/{workflow_id}",
-        json={"workspace_id": "default", "confirm": True},
+        json={"workspace_id": "default", "confirm": "delete"},
     )
-    assert archived.status_code == 200
-    record = archived.get_json()["workflow"]
-    assert record["status"] == "archived"
-    assert record["archived_by"] == "system"
-    assert record["archived_at"]
+    assert deleted.status_code == 200
+    assert deleted.get_json()["deleted"] == {"workflow_id": workflow_id, "removed_runs": 0}
+    assert client.get(f"/api/workflows/{workflow_id}", query_string={"workspace_id": "default"}).status_code == 404
     listed = client.get("/api/workflows", query_string={"workspace_id": "default"})
     assert listed.get_json()["workflows"] == []

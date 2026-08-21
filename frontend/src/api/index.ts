@@ -159,7 +159,7 @@ export const workflowsApi = {
   list: (workspace_id: string) => apiRequest<{ ok: boolean; workflows: WorkflowDefinition[] }>({ method: "GET", url: "/workflows", params: { workspace_id } }),
   save: (workspace_id: string, workflow: Partial<WorkflowDefinition>) => apiRequest<{ ok: boolean; workflow: WorkflowDefinition }>({ method: "POST", url: "/workflows", data: { ...workflow, workspace_id } }),
   update: (workspace_id: string, workflow: WorkflowDefinition) => apiRequest<{ ok: boolean; workflow: WorkflowDefinition }>({ method: "PUT", url: `/workflows/${workflow.workflow_id}`, data: { ...workflow, workspace_id } }),
-  archive: (workspace_id: string, workflowId: string) => apiRequest<{ ok: boolean; workflow: WorkflowDefinition }>({ method: "DELETE", url: `/workflows/${workflowId}`, data: { workspace_id, confirm: true } }),
+  remove: (workspace_id: string, workflowId: string) => apiRequest<{ ok: boolean; deleted: { workflow_id: string; removed_runs: number } }>({ method: "DELETE", url: `/workflows/${workflowId}`, data: { workspace_id, confirm: "delete" } }),
   run: (workspace_id: string, workflowId: string, inputs: Record<string, unknown>) => apiRequest<{ ok: boolean; run: WorkflowRun }>({ method: "POST", url: `/workflows/${workflowId}/runs`, data: { workspace_id, inputs } }),
   runs: (workspace_id: string, workflowId: string) => apiRequest<{ ok: boolean; runs: WorkflowRun[] }>({ method: "GET", url: `/workflows/${workflowId}/runs`, params: { workspace_id } }),
 };
