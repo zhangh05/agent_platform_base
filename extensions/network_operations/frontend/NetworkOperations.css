@@ -23,10 +23,10 @@
 .network-list-panel { min-width: 0; overflow: hidden; }
 .network-list-panel.full { flex: 1; }
 .network-empty { display: grid; min-height: 180px; place-items: center; color: var(--text-4); }
-.network-asset-row { display: grid; grid-template-columns: auto minmax(160px, 1fr) minmax(170px, auto) auto; align-items: center; gap: 12px; padding: 12px 16px; border-bottom: 1px solid var(--line-2); }
+.network-asset-row { display: grid; grid-template-columns: auto minmax(0, 1fr) minmax(0, 0.78fr) auto; align-items: center; gap: 12px; padding: 12px 16px; border-bottom: 1px solid var(--line-2); }
 .network-asset-main, .network-asset-meta, .network-task-row > div:first-child, .network-baseline-row > div:first-child { display: flex; min-width: 0; flex-direction: column; gap: 3px; }
-.network-asset-main strong, .network-task-row strong, .network-baseline-row strong { color: var(--text-1); font-size: var(--fs-13); }
-.network-asset-main span, .network-asset-meta span, .network-task-row span, .network-baseline-row span { color: var(--text-4); font-size: var(--fs-11); }
+.network-asset-main strong, .network-task-row strong, .network-baseline-row strong { color: var(--text-1); font-size: var(--fs-13); overflow-wrap: anywhere; }
+.network-asset-main span, .network-asset-meta span, .network-task-row span, .network-baseline-row span { color: var(--text-4); font-size: var(--fs-11); overflow-wrap: anywhere; }
 .network-asset-meta .ok, .network-counts .ok { color: var(--ok); }
 .network-asset-meta .warn { color: var(--warning); }
 .network-row-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
@@ -59,10 +59,24 @@
    The shell navigation, page heading, and summary otherwise consume nearly all
    available height before the device assets section can be reached. */
 @media (max-height: 440px) {
-  .network-ops-page > .page-header,
-    .network-ops-body { gap: 8px; padding: 8px 16px 12px; }
+  .network-ops-page > .page-header { display: none; }
+  .network-ops-body { gap: 8px; padding: 8px 16px 12px; }
   .network-ops-tabs { padding: 3px; }
   .network-ops-tabs button { padding: 5px 10px; }
+}
+
+/* Device rows are cards, not a horizontal table: narrow screens must reflow all
+   metadata and actions instead of relying on the rounded panel's hidden overflow. */
+@media (max-width: 720px) {
+  .network-asset-row { grid-template-columns: auto minmax(0, 1fr); align-items: start; }
+  .network-asset-meta, .network-row-actions, .network-probe-status { grid-column: 2; }
+  .network-row-actions { justify-content: flex-start; }
+}
+@media (max-width: 460px) {
+  .network-asset-row { gap: 9px; padding: 12px; }
+  .network-asset-meta, .network-row-actions, .network-probe-status { grid-column: 1 / -1; }
+  .network-asset-meta { padding-left: 28px; }
+  .network-row-actions { justify-content: flex-start; }
 }
 
 .network-task-row.selected { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 6%, var(--surface)); }
