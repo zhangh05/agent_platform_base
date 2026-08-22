@@ -340,6 +340,20 @@ def create_app():
                 "[job startup] reconcile failed: %s", exc, exc_info=True,
             )
         try:
+            from extensions.network_operations.service import reconcile_interrupted_inspections
+            reconciled_inspections = reconcile_interrupted_inspections()
+            if reconciled_inspections:
+                import logging as _inspection_log
+                _inspection_log.getLogger(__name__).warning(
+                    "[inspection startup] marked interrupted tasks terminal: %s",
+                    reconciled_inspections,
+                )
+        except Exception as exc:
+            import logging as _inspection_log
+            _inspection_log.getLogger(__name__).warning(
+                "[inspection startup] reconcile failed: %s", exc, exc_info=True,
+            )
+        try:
             from agent.runtime.durable.subagent import reconcile_subagent_tasks
             reconciled = reconcile_subagent_tasks(started_before=_backend_started_at)
             if reconciled:

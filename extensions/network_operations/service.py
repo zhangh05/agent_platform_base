@@ -457,6 +457,51 @@ def get_inspection(workspace_id: str, task_id: str) -> dict[str, Any] | None:
     return _store(workspace_id).get("inspections", task_id)
 
 
+def retry_inspection(workspace_id: str, task_id: str) -> dict[str, Any]:
+    task = get_inspection(workspace_id, task_id)
+    if not task or task.get("status") not in {"failed", "cancelled", "partial"}:
+        raise ValueError("retryable inspection task is required")
+    script_id = str((task.get("script") or {}).get("script_id") or "")
+    retried = enqueue_inspection(workspace_id, list(task.get("asset_ids") or []), script_id=script_id, created_by="retry")
+    retried["retry_of_task_id"] = task_id
+    _store(workspace_id).save("inspections", retried["task_id"], retried)
+    return retried
+
+
+def reconcile_interrupted_inspections() -> int:
+    """Mirror canonical reconciled job state back to inspection task state."""
+    from backend.core.identity import get_user
+    from jobs.store import get_job
+    from storage.principal import known_storage_principals, storage_principal
+    from storage.workspace_store import list_workspace_ids
+    reconciled = 0
+    workspace_ids = list_workspace_ids(include_system=False) or ["default"]
+    for principal in known_storage_principals() or [""]:
+        identity = get_user(principal)
+        scoped_workspaces = list(identity.get("workspace_ids") or []) if isinstance(identity, dict) else workspace_ids
+        with storage_principal(principal):
+            for workspace_id in sorted(set(scoped_workspaces)):
+                store = _store(workspace_id)
+                for task in store.list("inspections", limit=200):
+                    if task.get("status") not in {"queued", "running"}:
+                        continue
+                    job_id = str(task.get("job_id") or "")
+                    if not job_id:
+                        continue
+                    job = get_job(workspace_id, job_id)
+                    if not job or job.status not in {"failed", "cancelled"}:
+                        continue
+                    task.update({
+                        "status": "cancelled" if job.status == "cancelled" else "failed",
+                        "error": "" if job.status == "cancelled" else str(job.error or "backend_restart_during_job"),
+                        "finished_at": str(job.finished_at or now_iso()),
+                        "updated_at": now_iso(),
+                    })
+                    store.save("inspections", task["task_id"], task)
+                    reconciled += 1
+    return reconciled
+
+
 def list_inspection_schedules(workspace_id: str) -> list[dict[str, Any]]:
     return _store(workspace_id).list("schedules", limit=200)
 

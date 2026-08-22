@@ -90,6 +90,16 @@ def register_routes(app):
         ws = _workspace()
         return jsonify({"ok": service.cancel_inspection(ws, task_id) if ws else False})
 
+    @app.route("/api/extensions/network.operations/inspections/<task_id>/retry", methods=["POST"])
+    def network_inspection_retry(task_id):
+        ws = _workspace()
+        if not ws:
+            return jsonify({"ok": False, "error": "workspace_id is required"}), 400
+        try:
+            return jsonify({"ok": True, "task": service.retry_inspection(ws, task_id)}), 202
+        except ValueError as exc:
+            return jsonify({"ok": False, "error": str(exc)}), 400
+
     @app.route("/api/extensions/network.operations/inspections/<task_id>/evidence")
     def network_inspection_evidence(task_id):
         ws = _workspace()

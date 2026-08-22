@@ -23,6 +23,7 @@
     "/api/extensions/network.operations/inspections/<task_id>",
     "/api/extensions/network.operations/inspections/<task_id>/cancel",
     "/api/extensions/network.operations/inspections/<task_id>/evidence",
+    "/api/extensions/network.operations/inspections/<task_id>/retry",
     "/api/extensions/network.operations/scripts",
     "/api/extensions/network.operations/scripts/<script_id>",
     "/api/extensions/network.operations/schedules",
