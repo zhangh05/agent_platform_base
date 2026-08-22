@@ -1901,10 +1901,29 @@ class QueryLoop:
                 # Convert to LLMToolCall objects
                 tool_calls = self._parse_tool_calls(response.tool_calls)
                 tool_calls = self._unique_call_ids(tool_calls, iterations, used_call_ids)
-                from .batch_compiler import compile_batchable_calls
+                from .batch_compiler import (
+                    compile_batchable_calls,
+                    contains_disallowed_batch_action,
+                    user_requires_individual_tool_calls,
+                )
+                explicit_individual_calls = user_requires_individual_tool_calls(ctx.user_input)
+                if explicit_individual_calls and contains_disallowed_batch_action(
+                    tool_calls,
+                    self._tool_registry,
+                ):
+                    messages = self._append_turn_nudge(
+                        messages,
+                        "系统约束：用户明确要求每个目标使用独立工具调用。当前计划包含已声明的"
+                        "批量 action，不能替代该要求。请改为保留原始 scalar action，并按单轮"
+                        "调用上限分批规划；不得使用 batch action。",
+                    )
+                    ctx.extras.setdefault("explicit_individual_call_replans", 0)
+                    ctx.extras["explicit_individual_call_replans"] += 1
+                    continue
                 tool_calls, batch_compile_events = compile_batchable_calls(
                     tool_calls,
                     self._tool_registry,
+                    allow_batching=not explicit_individual_calls,
                 )
                 if batch_compile_events:
                     ctx.extras.setdefault("batch_compile_events", []).extend(batch_compile_events)
@@ -2549,6 +2568,7 @@ class QueryLoop:
                 delivery_quality_codes = {
                     "PROCESS_ONLY_RESPONSE",
                     "USER_LANGUAGE_MISMATCH",
+                    "EXPLICIT_WEATHER_DELIVERY_INCOMPLETE",
                 }
                 safety_blocking_issues = [
                     issue for issue in quality_issues

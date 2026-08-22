@@ -141,6 +141,10 @@ def validate_response_quality(
             ),
         ))
 
+    explicit_weather_delivery_issue = _validate_explicit_weather_delivery(value, str(user_input or ""))
+    if explicit_weather_delivery_issue:
+        issues.append(explicit_weather_delivery_issue)
+
     if _has_weather_evidence(tool_results) and re.search(
         r"防务提示|中等毛毛雨|大毛毛雨|雷暴伴小冰�",
         value,
@@ -268,6 +272,61 @@ def _validate_task_continuation_output(
             + ". Regenerate the complete continuation and satisfy this contract exactly."
         ),
     )
+
+
+def _validate_explicit_weather_delivery(text: str, user_input: str) -> ResponseQualityIssue | None:
+    """Block false success for an explicitly requested per-city daily forecast."""
+    request = str(user_input or "")
+    response = str(text or "")
+    requires_per_city_daily = (
+        ("每个城市" in request or "逐城市" in request)
+        and ("逐日" in request or "每日" in request)
+    )
+    if not requires_per_city_daily:
+        return None
+    incomplete_markers = (
+        "逐日明细因响应体较大被截断",
+        "逐日明细被截断",
+        "批量已获取",
+    )
+    if any(marker in response for marker in incomplete_markers):
+        return ResponseQualityIssue(
+            code="EXPLICIT_WEATHER_DELIVERY_INCOMPLETE",
+            message=(
+                "The user explicitly requested per-city daily weather output, but the draft admits missing or "
+                "truncated daily details. Continue with bounded individual evidence retrieval or report a non-success "
+                "partial outcome; do not mark this task complete."
+            ),
+        )
+    city_count = _explicit_weather_city_count(request)
+    day_count = _explicit_weather_day_count(request)
+    if city_count and day_count:
+        required_daily_rows = city_count * day_count
+        date_count = len(re.findall(r"(?<!\d)(?:20\d{2}[-/]\d{1,2}[-/]\d{1,2}|\d{1,2}/\d{1,2})(?!\d)", response))
+        if date_count < required_daily_rows:
+            return ResponseQualityIssue(
+                code="EXPLICIT_WEATHER_DAILY_COVERAGE_INCOMPLETE",
+                message=(
+                    f"The user requested {city_count} cities with {day_count} daily entries each, but the draft "
+                    f"contains only {date_count} dated daily entries. Return every requested city/day or report a "
+                    "non-success partial outcome; do not mark this task complete."
+                ),
+            )
+    return None
+
+
+def _explicit_weather_city_count(request: str) -> int:
+    match = re.search(r"(?:以下|共|覆盖)\s*(\d{1,3})\s*个城市", request)
+    if not match:
+        return 0
+    return max(0, int(match.group(1)))
+
+
+def _explicit_weather_day_count(request: str) -> int:
+    match = re.search(r"未来\s*(\d{1,2})\s*天", request)
+    if not match:
+        return 0
+    return max(0, int(match.group(1)))
 
 
 def _markdown_table_widths(text: str) -> list[int]:

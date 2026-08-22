@@ -829,3 +829,99 @@ def test_unstarted_write_budget_exhaustion_closes_operation_ledger(monkeypatch, 
         workspace_record_file("default", "operations", f"{op_id}.json").read_text()
     )
     assert record["status"] == "blocked"
+
+
+def test_explicit_individual_weather_calls_disable_batch_compilation():
+    from agent.llm.schemas import LLMToolCall
+    from core.runtime_engine.batch_compiler import (
+        compile_batchable_calls,
+        user_requires_individual_tool_calls,
+    )
+
+    registry = {
+        "web.manage": {"metadata": {"batching": [{
+            "source_action": "weather",
+            "target_action": "weather_batch",
+            "group_by": ["days"],
+            "collect_arg": "location",
+            "collection_arg": "locations",
+            "max_batch_size": 10,
+        }]}}
+    }
+    calls = [
+        LLMToolCall(id=f"city-{index}", name="web.manage", arguments={
+            "action": "weather", "location": f"城市{index}", "days": 10,
+        })
+        for index in range(3)
+    ]
+
+    assert user_requires_individual_tool_calls("每个城市都必须使用独立调用。") is True
+    compiled, events = compile_batchable_calls(calls, registry, allow_batching=False)
+    assert compiled == calls
+    assert events == []
+
+
+def test_queryloop_replans_explicit_weather_batch_before_any_handler_runs():
+    import asyncio
+
+    from agent.llm.schemas import LLMResponse, LLMToolCall
+    from core.runtime_engine.engine import SSOTRuntimeEngine
+    from core.runtime_engine.models import SSOTRuntimeConfig
+    from core.runtime_engine.tool_runtime import ToolRuntime
+
+    responses = [
+        LLMResponse(tool_calls=[LLMToolCall(
+            id="illegal-batch", name="web.manage", arguments={
+                "action": "weather_batch", "locations": ["上海", "南京"], "days": 10,
+            },
+        )]),
+        LLMResponse(tool_calls=[
+            LLMToolCall(id="city-a", name="web.manage", arguments={
+                "action": "weather", "location": "上海", "days": 10,
+            }),
+            LLMToolCall(id="city-b", name="web.manage", arguments={
+                "action": "weather", "location": "南京", "days": 10,
+            }),
+        ]),
+        LLMResponse(content="已按单城市调用返回结果。"),
+    ]
+    prompts = []
+    received = []
+
+    def llm(**kwargs):
+        prompts.append(kwargs["messages"])
+        return responses.pop(0)
+
+    def handler(arguments):
+        received.append(dict(arguments))
+        return {"ok": True, "source_type": "structured_weather", "forecast_daily": []}
+
+    config = SSOTRuntimeConfig(max_query_loop_iterations=5, max_tool_calls_per_iteration=2)
+    runtime = ToolRuntime(config)
+    runtime.register("web.manage", handler)
+    registry = {"web.manage": {
+        "description": "weather",
+        "args_schema": {"type": "object", "required": ["action"], "properties": {
+            "action": {"type": "string", "enum": ["weather", "weather_batch"]},
+            "location": {"type": "string"}, "locations": {"type": "array"},
+            "days": {"type": "integer"},
+        }},
+        "metadata": {"batching": [{
+            "source_action": "weather", "target_action": "weather_batch",
+            "group_by": ["days"], "collect_arg": "location",
+            "collection_arg": "locations", "max_batch_size": 10,
+        }]},
+    }}
+    engine = SSOTRuntimeEngine(
+        config=config, llm_invoke=llm, tool_registry=registry, tool_runtime=runtime,
+    )
+
+    result = asyncio.run(engine.run(
+        "每个城市都必须使用独立调用。请查询上海和南京未来十天天气，并逐日返回。",
+        workspace_id="default", session_id="individual-weather",
+    ))
+
+    assert result.success is True
+    assert [item["action"] for item in received] == ["weather", "weather"]
+    assert all("locations" not in item for item in received)
+    assert any("不得使用 batch action" in message.content for message in prompts[1])

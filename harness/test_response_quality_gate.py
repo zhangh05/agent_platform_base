@@ -312,3 +312,31 @@ def test_quality_gate_accepts_space_delimited_scope_contract_output():
         task_continuation_contract=contract,
     )
     assert issues == []
+
+
+def test_quality_gate_rejects_explicit_per_city_daily_weather_delivery_when_truncated():
+    from types import SimpleNamespace
+
+    from core.runtime_engine.response_quality import validate_response_quality
+
+    issues = validate_response_quality(
+        "已完成查询。南通的逐日明细因响应体较大被截断；扬州为（批量已获取）。",
+        user_input="每个城市都必须使用独立调用，并逐日返回未来十天天气。",
+        tool_results=[SimpleNamespace(ok=True, output={"source_type": "structured_weather"})],
+    )
+
+    assert [issue.code for issue in issues] == ["EXPLICIT_WEATHER_DELIVERY_INCOMPLETE"]
+
+
+def test_quality_gate_rejects_explicit_weather_daily_answer_without_all_dated_rows():
+    from types import SimpleNamespace
+
+    from core.runtime_engine.response_quality import validate_response_quality
+
+    issues = validate_response_quality(
+        "已完成。| 城市 | 日期 | 天气 |\n| --- | --- | --- |\n| 上海 | 8/23 | 晴 |",
+        user_input="必须覆盖以下 2 个城市：上海、南京。每个城市必须逐日返回未来 2 天的天气。",
+        tool_results=[SimpleNamespace(ok=True, output={"source_type": "structured_weather"})],
+    )
+
+    assert [issue.code for issue in issues] == ["EXPLICIT_WEATHER_DAILY_COVERAGE_INCOMPLETE"]

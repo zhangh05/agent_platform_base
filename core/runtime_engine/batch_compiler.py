@@ -8,9 +8,40 @@ from typing import Any
 from agent.llm.schemas import LLMToolCall
 
 
+def user_requires_individual_tool_calls(user_input: str) -> bool:
+    """Return true only for an explicit user prohibition on batch execution."""
+    value = str(user_input or "").casefold()
+    markers = (
+        "必须使用独立调用",
+        "必须独立调用",
+        "要求独立调用",
+        "必须单独调用",
+        "one call per",
+        "individual tool call",
+    )
+    return any(marker in value for marker in markers)
+
+
+def contains_disallowed_batch_action(
+    calls: list[LLMToolCall],
+    tool_registry: dict[str, dict[str, Any]],
+) -> bool:
+    """Identify declared batch actions so QueryLoop can preserve user intent."""
+    for call in calls:
+        tool_id = call.name.replace("__", ".")
+        metadata = (tool_registry.get(tool_id) or {}).get("metadata") or {}
+        for raw_contract in metadata.get("batching") or []:
+            contract = _validated_contract(raw_contract)
+            if contract and str(call.arguments.get("action") or "") == str(contract["target_action"]):
+                return True
+    return False
+
+
 def compile_batchable_calls(
     calls: list[LLMToolCall],
     tool_registry: dict[str, dict[str, Any]],
+    *,
+    allow_batching: bool = True,
 ) -> tuple[list[LLMToolCall], list[dict[str, Any]]]:
     """Use tool-declared batching contracts without embedding tool ids here.
 
@@ -19,6 +50,8 @@ def compile_batchable_calls(
     argument into a bounded list. Calls participating in
     dependency/result-binding graphs retain their exact scalar semantics.
     """
+    if not allow_batching:
+        return calls, []
     referenced_ids = {
         dependency
         for call in calls
