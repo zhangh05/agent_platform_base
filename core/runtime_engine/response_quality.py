@@ -287,6 +287,9 @@ def _validate_explicit_weather_delivery(text: str, user_input: str) -> ResponseQ
     incomplete_markers = (
         "逐日明细因响应体较大被截断",
         "逐日明细被截断",
+        "数据截断",
+        "数据未完整展示",
+        "部分详细预报",
         "批量已获取",
     )
     if any(marker in response for marker in incomplete_markers):

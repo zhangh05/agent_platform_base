@@ -340,3 +340,17 @@ def test_quality_gate_rejects_explicit_weather_daily_answer_without_all_dated_ro
     )
 
     assert [issue.code for issue in issues] == ["EXPLICIT_WEATHER_DAILY_COVERAGE_INCOMPLETE"]
+
+
+def test_quality_gate_rejects_explicit_weather_daily_delivery_with_generic_truncation_marker():
+    from types import SimpleNamespace
+
+    from core.runtime_engine.response_quality import validate_response_quality
+
+    issues = validate_response_quality(
+        "已完成。扬州数据未完整展示，金华数据截断。",
+        user_input="每个城市必须逐日返回未来十天天气，不得批量调用。",
+        tool_results=[SimpleNamespace(ok=True, output={"source_type": "structured_weather"})],
+    )
+
+    assert [issue.code for issue in issues] == ["EXPLICIT_WEATHER_DELIVERY_INCOMPLETE"]

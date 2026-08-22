@@ -994,3 +994,80 @@ def test_queryloop_replans_repairable_read_only_length_error():
     assert result.success is True
     assert received == [{"action": "resolve_batch", "queries": ["上海", "南京"]}]
     assert any("allows at most 20" in message.content for message in prompts[1])
+
+
+def test_queryloop_replans_batch_introduced_after_initial_constraint_check(monkeypatch):
+    import asyncio
+
+    from agent.llm.schemas import LLMResponse, LLMToolCall
+    from core.runtime_engine.engine import SSOTRuntimeEngine
+    from core.runtime_engine.models import SSOTRuntimeConfig
+    from core.runtime_engine.tool_runtime import ToolRuntime
+
+    responses = [
+        LLMResponse(tool_calls=[LLMToolCall(
+            id="scalar-first", name="web.manage", arguments={
+                "action": "weather", "location": "上海", "days": 10,
+            },
+        )]),
+        LLMResponse(tool_calls=[LLMToolCall(
+            id="scalar-replanned", name="web.manage", arguments={
+                "action": "weather", "location": "上海", "days": 10,
+            },
+        )]),
+        LLMResponse(content="已按独立调用返回结果。"),
+    ]
+    prompts = []
+    received = []
+
+    def llm(**kwargs):
+        prompts.append(kwargs["messages"])
+        return responses.pop(0)
+
+    def handler(arguments):
+        received.append(dict(arguments))
+        return {"ok": True, "source_type": "structured_weather", "forecast_daily": []}
+
+    config = SSOTRuntimeConfig(max_query_loop_iterations=5, max_tool_calls_per_iteration=2)
+    runtime = ToolRuntime(config)
+    runtime.register("web.manage", handler)
+    registry = {"web.manage": {
+        "description": "weather",
+        "args_schema": {"type": "object", "required": ["action"], "properties": {
+            "action": {"type": "string", "enum": ["weather", "weather_batch"]},
+            "location": {"type": "string"}, "locations": {"type": "array"},
+            "days": {"type": "integer"},
+        }},
+        "metadata": {"batching": [{
+            "source_action": "weather", "target_action": "weather_batch",
+            "group_by": ["days"], "collect_arg": "location",
+            "collection_arg": "locations", "max_batch_size": 10,
+        }]},
+    }}
+    engine = SSOTRuntimeEngine(
+        config=config, llm_invoke=llm, tool_registry=registry, tool_runtime=runtime,
+    )
+    from core.runtime_engine.query_loop import QueryLoop
+
+    original_prepare = QueryLoop._prepare_tool_calls
+    prepare_calls = {"count": 0}
+
+    def introduce_batch_once(self, ctx, calls):
+        prepare_calls["count"] += 1
+        if prepare_calls["count"] == 1:
+            return {"ok": True, "tool_calls": [LLMToolCall(
+                id="normalized-batch", name="web.manage", arguments={
+                    "action": "weather_batch", "locations": ["上海", "南京"], "days": 10,
+                },
+            )]}
+        return original_prepare(self, ctx, calls)
+
+    monkeypatch.setattr(QueryLoop, "_prepare_tool_calls", introduce_batch_once)
+    result = asyncio.run(engine.run(
+        "每个城市都必须使用独立调用，不得批量调用。请逐日返回天气。",
+        workspace_id="default", session_id="post-normalization-guard",
+    ))
+
+    assert result.success is True
+    assert received == [{"action": "weather", "location": "上海", "days": 10}]
+    assert any("规范化后的计划仍包含批量 action" in message.content for message in prompts[1])

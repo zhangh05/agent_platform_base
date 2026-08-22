@@ -2122,6 +2122,23 @@ class QueryLoop:
                     # Don't count these as successful tool calls
                     continue
                 tool_calls = gate["tool_calls"]
+                # Semantic repair and canonical argument normalization may have
+                # changed an otherwise scalar proposal. Recheck the final
+                # executable calls so an explicit user no-batch constraint is
+                # never bypassed by a later normalization stage.
+                if explicit_individual_calls and contains_disallowed_batch_action(
+                    tool_calls,
+                    self._tool_registry,
+                ):
+                    messages = self._append_turn_nudge(
+                        messages,
+                        "系统约束：规范化后的计划仍包含批量 action，但用户明确禁止批量并"
+                        "要求每个目标独立调用。请改为不超过单轮调用上限的 scalar action；"
+                        "不得执行该批量 action。",
+                    )
+                    ctx.extras.setdefault("explicit_individual_call_replans", 0)
+                    ctx.extras["explicit_individual_call_replans"] += 1
+                    continue
 
                 # Deduplicate only after deterministic alias/argument repair.
                 # This lets the model recover with changed arguments while

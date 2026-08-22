@@ -16,6 +16,8 @@ def user_requires_individual_tool_calls(user_input: str) -> bool:
         "必须独立调用",
         "要求独立调用",
         "必须单独调用",
+        "不得批量调用",
+        "禁止批量调用",
         "one call per",
         "individual tool call",
     )
