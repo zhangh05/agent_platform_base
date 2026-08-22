@@ -227,13 +227,6 @@ export default function NetworkOperations() {
 
       <div className="page-body network-ops-body">
         {error ? <div className="network-ops-error" role="alert">{error}</div> : null}
-        <section className="network-ops-summary">
-          <div><strong>{assets.length}</strong><span>设备资产</span></div>
-          <div><strong>{scripts.length}</strong><span>巡检脚本</span></div>
-          <div><strong>{currentBaseline ? "已确认" : "未建立"}</strong><span>当前基线</span></div>
-          <div><strong>{inspections[0]?.status || "暂无"}</strong><span>最近状态</span></div>
-        </section>
-
         <nav className="network-ops-tabs" aria-label="网络巡检视图">
           <button className={tab === "assets" ? "active" : ""} onClick={() => setTab("assets")}>设备资产</button>
           <button className={tab === "scripts" ? "active" : ""} onClick={() => setTab("scripts")}>巡检脚本</button>
