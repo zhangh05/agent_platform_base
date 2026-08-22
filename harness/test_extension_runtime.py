@@ -15,12 +15,12 @@ from extensions.runtime import (
 from evaluation.runner import GoldenCase, evaluate_case
 
 
-def test_reference_extension_loads_tool_and_frontend_contract():
+def test_network_extension_loads_tool_and_frontend_contract():
     reset_extension_cache_for_tests()
     extensions = load_extensions(refresh=True)
-    reference = next(item for item in extensions if item.manifest.extension_id == "reference.insights")
-    assert reference.manifest.frontend_routes[0]["path"] == "/extensions/reference.insights/overview"
-    assert [spec.tool_id for spec, _ in reference.tools] == ["reference.insights.summarize"]
+    network = next(item for item in extensions if item.manifest.extension_id == "network.operations")
+    assert network.manifest.frontend_routes[0]["path"] == "/extensions/network.operations/overview"
+    assert "network.operations.inspection" in {spec.tool_id for spec, _ in network.tools}
 
 
 def test_network_workflow_templates_are_owned_by_the_extension():
@@ -83,31 +83,31 @@ def test_version_endpoint_uses_the_platform_package_version():
     assert get_version()["product_ready"] is True
 
 
-def test_reference_tool_runs_through_default_tool_runtime():
+def test_network_read_tool_runs_through_default_tool_runtime():
     reset_extension_cache_for_tests()
     reset_default_client_for_tests()
     client = get_default_tool_runtime_client()
     result = client.invoke(
-        "reference.insights.summarize",
-        {"text": "alpha beta\nsecond line"},
+        "network.operations.assets_read",
+        {},
         context=ToolRuntimeContext(workspace_id="default", requested_by="turn_runner"),
     )
     assert result.status == "succeeded"
-    assert result.output["workspace_id"] == "default"
-    assert result.output["metrics"] == {"characters": 22, "words": 4, "non_empty_lines": 2}
+    assert result.output["ok"] is True
+    assert result.output["assets"] == []
     gate = evaluate_case(
         GoldenCase(
-            "extension-text-insight",
-            "统计这段文本",
-            required_tools=("reference.insights.summarize",),
-            required_terms=("alpha beta",),
+            "network-assets-read",
+            "读取网络设备资产",
+            required_tools=("network.operations.assets_read",),
+            required_terms=("assets",),
         ),
         {"tool_ids": [result.tool_id], "final_response": result.summary},
     )
     assert gate["passed"] is True
     missing_scope = client.invoke(
-        "reference.insights.summarize",
-        {"text": "no workspace"},
+        "network.operations.assets_read",
+        {},
         context=ToolRuntimeContext(requested_by="turn_runner"),
     )
     assert missing_scope.status == "failed"
@@ -123,10 +123,10 @@ def test_extension_routes_and_catalog_are_registered():
     client = app.test_client()
     catalog = client.get("/api/extensions")
     assert catalog.status_code == 200
-    assert "reference.insights" in {item["extension_id"] for item in catalog.get_json()["extensions"]}
-    status = client.get("/api/extensions/reference.insights/status?workspace_id=default")
-    assert status.status_code == 200
-    assert status.get_json()["status"] == "ready"
+    assert "network.operations" in {item["extension_id"] for item in catalog.get_json()["extensions"]}
+    overview = client.get("/api/extensions/network.operations/overview?workspace_id=default")
+    assert overview.status_code == 200
+    assert overview.get_json()["ok"] is True
 
 
 def test_manifest_rejects_contributions_outside_its_namespace():

@@ -22,8 +22,11 @@
     "/api/extensions/network.operations/inspections",
     "/api/extensions/network.operations/inspections/<task_id>",
     "/api/extensions/network.operations/inspections/<task_id>/cancel",
+    "/api/extensions/network.operations/inspections/<task_id>/evidence",
     "/api/extensions/network.operations/scripts",
     "/api/extensions/network.operations/scripts/<script_id>",
+    "/api/extensions/network.operations/schedules",
+    "/api/extensions/network.operations/schedules/<schedule_id>",
     "/api/extensions/network.operations/baselines",
     "/api/extensions/network.operations/baselines/<baseline_id>/confirm",
     "/api/extensions/network.operations/diff"

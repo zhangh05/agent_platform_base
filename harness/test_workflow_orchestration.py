@@ -7,35 +7,26 @@ from workflows.service import WorkflowError, execute_workflow, save_workflow
 
 def _definition():
     return {
-        "workflow_id": "cross_extension",
-        "name": "跨扩展文本流程",
-        "nodes": [
-            {
-                "node_id": "first",
-                "tool_id": "reference.insights.summarize",
-                "arguments": {"text": "${input.text}"},
-            },
-            {
-                "node_id": "second",
-                "tool_id": "reference.insights.summarize",
-                "depends_on": ["first"],
-                "arguments": {"text": "上一步：${nodes.first.output.summary}"},
-            },
-        ],
+        "workflow_id": "network_asset_read",
+        "name": "网络资产只读流程",
+        "nodes": [{
+            "node_id": "list_assets",
+            "tool_id": "network.operations.assets_read",
+            "arguments": {},
+        }],
     }
 
-
-def test_cross_extension_dag_executes_and_persists_inputs(monkeypatch, tmp_path):
+def test_network_asset_read_dag_executes_and_persists_inputs(monkeypatch, tmp_path):
     monkeypatch.setenv("LZCORE_WORKSPACE_ROOT", str(tmp_path / "workspaces"))
     from extensions.runtime import reset_extension_cache_for_tests
     from core.tools.integration import reset_default_client_for_tests
     reset_extension_cache_for_tests(); reset_default_client_for_tests()
     saved = save_workflow("default", _definition())
-    assert saved["execution_order"] == ["first", "second"]
-    run = execute_workflow("default", "cross_extension", {"text": "alpha beta"})
+    assert saved["execution_order"] == ["list_assets"]
+    run = execute_workflow("default", "network_asset_read", {"text": "alpha beta"})
     assert run["status"] == "succeeded"
-    assert [item["status"] for item in run["nodes"]] == ["succeeded", "succeeded"]
-    assert run["nodes"][1]["output"]["summary"] == "上一步：alpha beta"
+    assert [item["status"] for item in run["nodes"]] == ["succeeded"]
+    assert run["nodes"][0]["output"]["assets"] == []
     assert run["inputs"] == {"text": "alpha beta"}
 
 
@@ -51,7 +42,7 @@ def test_workflow_rejects_raw_runtime_secrets_before_persistence(monkeypatch, tm
     with pytest.raises(WorkflowError, match="cannot contain raw secrets"):
         execute_workflow(
             "default",
-            "cross_extension",
+            "network_asset_read",
             {"text": "alpha beta", "api_token": "must-not-persist"},
         )
 
@@ -67,7 +58,7 @@ def test_workflow_accepts_non_secret_token_metadata(monkeypatch, tmp_path):
 
     run = execute_workflow(
         "default",
-        "cross_extension",
+        "network_asset_read",
         {"text": "alpha beta", "token_count": 42, "max_tokens": 1024},
     )
 
@@ -78,6 +69,7 @@ def test_workflow_accepts_non_secret_token_metadata(monkeypatch, tmp_path):
 def test_workflow_validation_rejects_cycles_and_unknown_tools(monkeypatch, tmp_path):
     monkeypatch.setenv("LZCORE_WORKSPACE_ROOT", str(tmp_path / "workspaces"))
     cyclic = _definition()
+    cyclic["nodes"].append({"node_id": "second", "tool_id": "network.operations.assets_read", "arguments": {}, "depends_on": ["list_assets"]})
     cyclic["nodes"][0]["depends_on"] = ["second"]
     with pytest.raises(WorkflowError, match="cycle"):
         save_workflow("default", cyclic)
@@ -96,8 +88,10 @@ def test_missing_runtime_input_is_recorded_as_a_failed_node(monkeypatch, tmp_pat
     from extensions.runtime import reset_extension_cache_for_tests
     from core.tools.integration import reset_default_client_for_tests
     reset_extension_cache_for_tests(); reset_default_client_for_tests()
-    save_workflow("default", _definition())
-    run = execute_workflow("default", "cross_extension", {})
+    missing = _definition()
+    missing["nodes"][0]["arguments"] = {"workspace_id": "${input.missing}"}
+    save_workflow("default", missing)
+    run = execute_workflow("default", "network_asset_read", {})
     assert run["status"] == "failed"
     assert run["nodes"][0]["status"] == "failed"
     assert "not found" in run["nodes"][0]["errors"][0]
@@ -157,11 +151,11 @@ def test_workflow_job_runs_through_durable_job_lifecycle(monkeypatch, tmp_path):
     from jobs.manager import create_job
     from jobs.runner import run_job
     from jobs.store import get_job
-    job = create_job("default", "workflow_run", "Workflow", {"workflow_id": "cross_extension", "inputs": {"text": "queued text"}}, enqueue=True)
+    job = create_job("default", "workflow_run", "Workflow", {"workflow_id": "network_asset_read", "inputs": {"text": "queued text"}}, enqueue=True)
     run_job("default", job.job_id)
     completed = get_job("default", job.job_id)
     assert completed and completed.status == "succeeded"
-    assert completed.result_summary["workflow_id"] == "cross_extension"
+    assert completed.result_summary["workflow_id"] == "network_asset_read"
     assert completed.result_summary["workflow_run_id"].startswith("wfrun_")
 
 
@@ -172,7 +166,7 @@ def test_progress_save_cannot_erase_a_concurrent_cancel_request(monkeypatch, tmp
     initial = {
         "workspace_id": "default",
         "run_id": "cancel_race",
-        "workflow_id": "cross_extension",
+        "workflow_id": "network_asset_read",
         "status": "running",
         "nodes": [],
     }
@@ -191,7 +185,7 @@ def test_awaiting_approval_workflow_can_be_cancelled(monkeypatch, tmp_path):
     _save_run({
         "workspace_id": "default",
         "run_id": "cancel_waiting",
-        "workflow_id": "cross_extension",
+        "workflow_id": "network_asset_read",
         "status": "awaiting_approval",
         "nodes": [],
     })
@@ -231,7 +225,7 @@ def test_organization_workspace_isolation_and_workflow_roles(monkeypatch, tmp_pa
 
     viewer = app.test_client()
     viewer.post("/api/auth/login", json={"username": "viewer_a", "password": "password"}, headers=origin)
-    denied = viewer.post("/api/workflows/cross_extension/runs", json={"workspace_id": "team_a", "inputs": {"text": "x"}}, headers=origin)
+    denied = viewer.post("/api/workflows/network_asset_read/runs", json={"workspace_id": "team_a", "inputs": {"text": "x"}}, headers=origin)
     assert denied.status_code == 403
 
     admin_b = app.test_client()
@@ -269,7 +263,7 @@ def test_queued_workflow_rejects_raw_secrets_before_job_persistence(monkeypatch,
     app = create_app()
     app.config.update(TESTING=True)
     response = app.test_client().post(
-        "/api/workflows/cross_extension/runs",
+        "/api/workflows/network_asset_read/runs",
         json={
             "workspace_id": "default",
             "enqueue": True,

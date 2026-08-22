@@ -74,7 +74,7 @@ def register_routes(app):
             return jsonify({"ok": True, "inspections": service.list_inspections(ws)})
         data = _payload()
         try:
-            task = service.start_inspection(ws, data.get("asset_ids"), data.get("commands"), script_id=str(data.get("script_id") or ""), background=True)
+            task = service.enqueue_inspection(ws, data.get("asset_ids"), data.get("commands"), script_id=str(data.get("script_id") or ""))
             return jsonify({"ok": True, "task": task}), 202
         except ValueError as exc:
             return jsonify({"ok": False, "error": str(exc)}), 400
@@ -89,6 +89,17 @@ def register_routes(app):
     def network_inspection_cancel(task_id):
         ws = _workspace()
         return jsonify({"ok": service.cancel_inspection(ws, task_id) if ws else False})
+
+    @app.route("/api/extensions/network.operations/inspections/<task_id>/evidence")
+    def network_inspection_evidence(task_id):
+        ws = _workspace()
+        if not ws:
+            return jsonify({"ok": False, "error": "workspace_id is required"}), 400
+        try:
+            return jsonify(service.inspection_evidence_summary(ws, task_id))
+        except ValueError as exc:
+            return jsonify({"ok": False, "error": str(exc)}), 404
+
     @app.route("/api/extensions/network.operations/scripts", methods=["GET", "POST"])
     def network_inspection_scripts():
         ws = _workspace()
@@ -108,6 +119,25 @@ def register_routes(app):
             except ValueError as exc: return jsonify({"ok": False, "error": str(exc)}), 400
         try: return jsonify({"ok": True, "script": service.save_inspection_script(ws, {**_payload(), "script_id": script_id})})
         except ValueError as exc: return jsonify({"ok": False, "error": str(exc)}), 400
+
+    @app.route("/api/extensions/network.operations/schedules", methods=["GET", "POST"])
+    def network_inspection_schedules():
+        ws = _workspace()
+        if not ws:
+            return jsonify({"ok": False, "error": "workspace_id is required"}), 400
+        if request.method == "GET":
+            return jsonify({"ok": True, "schedules": service.list_inspection_schedules(ws)})
+        try:
+            return jsonify({"ok": True, "schedule": service.save_inspection_schedule(ws, _payload())}), 201
+        except ValueError as exc:
+            return jsonify({"ok": False, "error": str(exc)}), 400
+
+    @app.route("/api/extensions/network.operations/schedules/<schedule_id>", methods=["DELETE"])
+    def network_inspection_schedule(schedule_id):
+        ws = _workspace()
+        if not ws:
+            return jsonify({"ok": False, "error": "workspace_id is required"}), 400
+        return jsonify({"ok": service.delete_inspection_schedule(ws, schedule_id)})
 
     @app.route("/api/extensions/network.operations/baselines", methods=["GET", "POST"])
     def network_baselines():

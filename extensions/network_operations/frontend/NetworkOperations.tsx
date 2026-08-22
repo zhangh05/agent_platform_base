@@ -7,15 +7,21 @@ type Asset = {
   asset_id: string; name: string; host: string; port: number; username: string;
   vendor: string; region: string; auth_method?: string; credential_configured: boolean; host_key_trusted?: boolean;
 };
+type InspectionResult = {
+  status: string; name?: string; host?: string; commands?: string[]; output_hash?: string; duration_ms?: number; error?: string;
+};
 type Inspection = {
   task_id: string; status: string; script?: { name?: string; script_id?: string }; total: number; completed: number;
-  succeeded: number; failed: number; created_at: string; artifact_id?: string;
+  succeeded: number; failed: number; created_at: string; finished_at?: string; artifact_id?: string; results?: Record<string, InspectionResult>;
 };
+type InspectionDiff = { baseline_id: string; task_id: string; changed: boolean; changes: Array<{ asset_id: string; before: { status?: string; output_hash?: string } | null; after: { status?: string; output_hash?: string } | null }> };
+type EvidenceSummary = { artifact_id: string; artifact_sensitivity: string; devices: Array<{ asset_id: string; name: string; host: string; status: string; command_count: number; output_hash: string; duration_ms: number; error: string }> };
 type Baseline = {
   baseline_id: string; task_id: string; confirmed: boolean; current: boolean; created_at: string;
 };
 type InspectionScript = { script_id: string; name: string; description: string; vendors: string[]; commands: string[]; builtin?: boolean; version?: number };
-type Tab = "assets" | "scripts" | "inspections" | "baselines";
+type Schedule = { schedule_id: string; name: string; asset_ids: string[]; script_id: string; script_name: string; interval_minutes: number; enabled: boolean; next_run_at_epoch: number; last_task_id?: string; last_error?: string };
+type Tab = "assets" | "scripts" | "inspections" | "baselines" | "schedules";
 
 const base = "/extensions/network.operations";
 
@@ -34,19 +40,27 @@ export default function NetworkOperations() {
   const [form, setForm] = useState({ name: "", host: "", port: "22", username: "", password: "", private_key: "", key_passphrase: "", auth_method: "password", vendor: "h3c", region: "" });
   const [scriptForm, setScriptForm] = useState({ name: "", description: "", vendors: "h3c", commands: "" });
   const [editingScriptId, setEditingScriptId] = useState("");
+  const [activeTask, setActiveTask] = useState<Inspection | null>(null);
+  const [taskDiff, setTaskDiff] = useState<InspectionDiff | null>(null);
+  const [diffMessage, setDiffMessage] = useState("");
+  const [evidence, setEvidence] = useState<EvidenceSummary | null>(null);
+  const [schedules, setSchedules] = useState<Schedule[]>([]);
+  const [scheduleForm, setScheduleForm] = useState({ name: "", interval_minutes: "60" });
 
   const load = useCallback(async () => {
     const params = { workspace_id: workspaceId };
-    const [assetRes, inspectionRes, baselineRes, scriptRes] = await Promise.all([
+    const [assetRes, inspectionRes, baselineRes, scriptRes, scheduleRes] = await Promise.all([
       apiRequest<{ assets: Asset[] }>({ method: "GET", url: `${base}/assets`, params }),
       apiRequest<{ inspections: Inspection[] }>({ method: "GET", url: `${base}/inspections`, params }),
       apiRequest<{ baselines: Baseline[] }>({ method: "GET", url: `${base}/baselines`, params }),
       apiRequest<{ scripts: InspectionScript[] }>({ method: "GET", url: `${base}/scripts`, params }),
+      apiRequest<{ schedules: Schedule[] }>({ method: "GET", url: `${base}/schedules`, params }),
     ]);
     setAssets(assetRes.assets || []);
     setInspections(inspectionRes.inspections || []);
     setBaselines(baselineRes.baselines || []);
     setScripts(scriptRes.scripts || []);
+    setSchedules(scheduleRes.schedules || []);
     if (!scriptId && scriptRes.scripts?.length) setScriptId(scriptRes.scripts[0].script_id);
   }, [workspaceId, scriptId]);
 
@@ -133,14 +147,69 @@ export default function NetworkOperations() {
     catch (err) { setError(String((err as { message?: string })?.message || "脚本删除失败")); } finally { setBusy(false); }
   }
 
-  async function createBaseline() {
-    if (!latestCompleted) return;
-    setBusy(true);
+  async function openTask(task: Inspection) {
+    setBusy(true); setError(""); setDiffMessage(""); setTaskDiff(null); setEvidence(null);
     try {
-      await apiRequest({ method: "POST", url: `${base}/baselines`, data: { workspace_id: workspaceId, task_id: latestCompleted.task_id, confirm: true } });
-      setTab("baselines");
+      const detail = await apiRequest<{ task: Inspection }>({ method: "GET", url: `${base}/inspections/${task.task_id}`, params: { workspace_id: workspaceId } });
+      setActiveTask(detail.task);
+      if (currentBaseline && ["succeeded", "partial"].includes(detail.task.status)) {
+        try {
+          const diff = await apiRequest<InspectionDiff>({ method: "GET", url: `${base}/diff`, params: { workspace_id: workspaceId, task_id: detail.task.task_id } });
+          setTaskDiff(diff);
+        } catch (err) { setDiffMessage(String((err as { message?: string })?.message || "当前结果尚不能与基线比较")); }
+      } else if (!currentBaseline) {
+        setDiffMessage("尚未确认当前基线；确认一份可信结果后可查看设备变化。");
+      }
+      if (detail.task.artifact_id) {
+        try {
+          const summary = await apiRequest<EvidenceSummary>({ method: "GET", url: `${base}/inspections/${task.task_id}/evidence`, params: { workspace_id: workspaceId } });
+          setEvidence(summary);
+        } catch { setEvidence(null); }
+      }
+    } catch (err) { setError(String((err as { message?: string })?.message || "巡检结果读取失败")); }
+    finally { setBusy(false); }
+  }
+  async function cancelTask(task: Inspection) {
+    if (!window.confirm(`确定取消巡检任务 ${task.task_id} 吗？`)) return;
+    setBusy(true); setError("");
+    try {
+      await apiRequest({ method: "POST", url: `${base}/inspections/${task.task_id}/cancel`, data: { workspace_id: workspaceId } });
       await load();
-    } finally { setBusy(false); }
+      if (activeTask?.task_id === task.task_id) await openTask(task);
+    } catch (err) { setError(String((err as { message?: string })?.message || "巡检取消失败")); }
+    finally { setBusy(false); }
+  }
+  async function saveSchedule(event: React.FormEvent) {
+    event.preventDefault();
+    if (!scriptId) { setError("请先选择巡检脚本后再创建计划。"); setTab("scripts"); return; }
+    if (selected.length === 0) { setError("请先在设备资产页选择计划巡检的设备。"); setTab("assets"); return; }
+    setBusy(true); setError("");
+    try {
+      await apiRequest({ method: "POST", url: `${base}/schedules`, data: { workspace_id: workspaceId, name: scheduleForm.name, interval_minutes: Number(scheduleForm.interval_minutes), asset_ids: selected, script_id: scriptId, enabled: true } });
+      setScheduleForm({ name: "", interval_minutes: "60" });
+      await load();
+    } catch (err) { setError(String((err as { message?: string })?.message || "计划巡检保存失败")); }
+    finally { setBusy(false); }
+  }
+  async function removeSchedule(schedule: Schedule) {
+    if (!window.confirm(`确定删除计划巡检“${schedule.name}”吗？`)) return;
+    setBusy(true); setError("");
+    try { await apiRequest({ method: "DELETE", url: `${base}/schedules/${schedule.schedule_id}`, params: { workspace_id: workspaceId } }); await load(); }
+    catch (err) { setError(String((err as { message?: string })?.message || "计划巡检删除失败")); }
+    finally { setBusy(false); }
+  }
+  async function createBaseline() {
+    const target = activeTask && ["succeeded", "partial"].includes(activeTask.status) ? activeTask : latestCompleted;
+    if (!target) return;
+    if (!window.confirm(`确认将任务 ${target.task_id} 设为当前状态基线吗？`)) return;
+    setBusy(true); setError("");
+    try {
+      await apiRequest({ method: "POST", url: `${base}/baselines`, data: { workspace_id: workspaceId, task_id: target.task_id, confirm: true } });
+      await load();
+      await openTask(target);
+      setTab("baselines");
+    } catch (err) { setError(String((err as { message?: string })?.message || "基线确认失败")); }
+    finally { setBusy(false); }
   }
 
   return (
@@ -170,6 +239,7 @@ export default function NetworkOperations() {
           <button className={tab === "scripts" ? "active" : ""} onClick={() => setTab("scripts")}>巡检脚本</button>
           <button className={tab === "inspections" ? "active" : ""} onClick={() => setTab("inspections")}>巡检记录</button>
           <button className={tab === "baselines" ? "active" : ""} onClick={() => setTab("baselines")}>状态基线</button>
+          <button className={tab === "schedules" ? "active" : ""} onClick={() => setTab("schedules")}>计划巡检</button>
         </nav>
 
         {tab === "assets" ? (
@@ -236,17 +306,40 @@ export default function NetworkOperations() {
         ) : null}
         {tab === "inspections" ? (
           <section className="network-list-panel full">
-            <div className="network-section-head"><h2>巡检记录</h2><p>最多并发 5 台，任务可取消</p></div>
+            <div className="network-section-head"><h2>巡检记录</h2><p>任务完成后查看每台设备结果、基线差异和受保护证据摘要。</p></div>
             {inspections.length === 0 ? <div className="network-empty">暂无巡检记录</div> : inspections.map((task) => (
-              <article className="network-task-row" key={task.task_id}>
+              <article className={`network-task-row ${activeTask?.task_id === task.task_id ? "selected" : ""}`} key={task.task_id}>
                 <div><strong>{task.script?.name || "未记录脚本"}</strong><span>{new Date(task.created_at).toLocaleString()} · {task.task_id}</span></div>
                 <div className="network-progress"><span style={{ width: `${task.total ? Math.round(task.completed / task.total * 100) : 0}%` }} /></div>
                 <div className="network-counts"><span>完成 {task.completed}/{task.total}</span><span className="ok">成功 {task.succeeded}</span><span className={task.failed ? "danger" : ""}>失败 {task.failed}</span></div>
                 <span className={`network-status ${task.status}`}>{task.status}</span>
+                <div className="network-row-actions"><button className="network-link" onClick={() => void openTask(task)} disabled={busy}>查看结果</button>{["queued", "running"].includes(task.status) ? <button className="network-delete" onClick={() => void cancelTask(task)} disabled={busy}>取消</button> : null}</div>
               </article>
             ))}
-            <div className="network-panel-actions"><button className="btn primary" onClick={createBaseline} disabled={!latestCompleted || busy}>将最近结果确认为基线</button></div>
+            {activeTask ? <section className="network-task-detail" aria-label="巡检结果详情">
+              <div className="network-section-head"><div><h3>任务详情</h3><p>{activeTask.task_id} · {activeTask.finished_at ? new Date(activeTask.finished_at).toLocaleString() : "执行中"}</p></div><span className={`network-status ${activeTask.status}`}>{activeTask.status}</span></div>
+              <div className="network-result-list">{Object.entries(activeTask.results || {}).map(([assetId, result]) => <article key={assetId} className={`network-result-row ${result.status}`}><div><strong>{result.name || assetId}</strong><span>{result.host || "未记录地址"} · {result.duration_ms || 0} ms</span></div><div><span>{result.commands?.length || 0} 条命令</span><code>{result.output_hash || "无输出哈希"}</code></div><div>{result.error ? <p className="danger">{result.error}</p> : <span className="ok">{result.status}</span>}</div></article>)}</div>
+              <div className="network-evidence-panel"><strong>证据摘要</strong>{evidence ? <span>工件 {evidence.artifact_id} · {evidence.devices.length} 台设备 · 原始命令输出按敏感数据策略受保护，已保留输出哈希供复核。</span> : <span>{activeTask.artifact_id ? "证据索引读取中或不可用" : "任务尚未生成证据工件"}</span>}</div>
+              <div className="network-diff-panel"><strong>基线差异</strong>{taskDiff ? <>{taskDiff.changed ? <div>{taskDiff.changes.map((change) => <p key={change.asset_id}>{change.asset_id}：{change.before?.status || "无"} → {change.after?.status || "无"}{change.before?.output_hash !== change.after?.output_hash ? "，输出发生变化" : ""}</p>)}</div> : <span className="ok">与当前基线一致</span>}</> : <span>{diffMessage || "选择已完成任务后加载差异"}</span>}</div>
+            </section> : null}
+            <div className="network-panel-actions"><button className="btn primary" onClick={createBaseline} disabled={!(activeTask || latestCompleted) || busy}>将选定结果确认为基线</button></div>
           </section>
+        ) : null}
+
+        {tab === "schedules" ? (
+          <div className="network-schedules-layout">
+            <form className="network-asset-form" onSubmit={saveSchedule}>
+              <div className="network-section-head"><h2>新建计划巡检</h2><p>按选定设备和脚本周期创建持久任务；实际执行由后台 Worker 接管。</p></div>
+              <label><span>计划名称</span><input value={scheduleForm.name} onChange={(event) => setScheduleForm({ ...scheduleForm, name: event.target.value })} placeholder="例如：核心设备每小时健康巡检" required /></label>
+              <label><span>执行间隔（分钟）</span><input type="number" min="5" max="10080" value={scheduleForm.interval_minutes} onChange={(event) => setScheduleForm({ ...scheduleForm, interval_minutes: event.target.value })} required /></label>
+              <p className="text-xs muted">当前将使用“设备资产”页已选的 {selected.length} 台设备和脚本“{scripts.find((item) => item.script_id === scriptId)?.name || "未选择"}”。</p>
+              <button className="btn primary" type="submit" disabled={busy || !scriptId || selected.length === 0}>创建计划</button>
+            </form>
+            <section className="network-list-panel">
+              <div className="network-section-head"><h2>已配置计划</h2><p>每次到期只入队一次；Worker 重启后计划配置和待执行任务仍会保留。</p></div>
+              {schedules.length === 0 ? <div className="network-empty">暂无计划巡检</div> : schedules.map((schedule) => <article className="network-schedule-row" key={schedule.schedule_id}><div><strong>{schedule.name}</strong><span>{schedule.script_name} · {schedule.asset_ids.length} 台设备 · 每 {schedule.interval_minutes} 分钟</span><p>下次执行：{schedule.next_run_at_epoch ? new Date(schedule.next_run_at_epoch * 1000).toLocaleString() : "待调度"}{schedule.last_task_id ? ` · 最近任务 ${schedule.last_task_id}` : ""}</p>{schedule.last_error ? <p className="danger">{schedule.last_error}</p> : null}</div><button className="network-delete" onClick={() => void removeSchedule(schedule)} disabled={busy}>删除</button></article>)}
+            </section>
+          </div>
         ) : null}
 
         {tab === "baselines" ? (

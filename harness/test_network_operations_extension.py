@@ -312,3 +312,74 @@ def test_inspection_script_http_routes(monkeypatch, tmp_path):
     created = client.post("/api/extensions/network.operations/scripts", json={"workspace_id": "default", "name": "接口核查", "vendors": ["h3c"], "commands": ["display interface brief"]})
     assert created.status_code == 201
     assert created.get_json()["script"]["name"] == "接口核查"
+
+
+def test_inspection_evidence_summary_and_baseline_diff(monkeypatch, tmp_path):
+    _setup(monkeypatch, tmp_path)
+    script = service.save_inspection_script("default", {
+        "name": "结果闭环检查", "vendors": ["h3c"], "commands": ["display version"],
+    })
+    asset = service.save_asset("default", {
+        "name": "Core-1", "host": "10.0.0.9", "username": "ops", "password": "secret", "vendor": "h3c",
+    })
+    first = service.start_inspection(
+        "default", [asset["asset_id"]], script_id=script["script_id"],
+        collector=lambda _asset, commands: {command: "first" for command in commands}, background=False,
+    )
+    evidence = service.inspection_evidence_summary("default", first["task_id"])
+    assert evidence["artifact_sensitivity"] == "secret"
+    assert evidence["devices"][0]["asset_id"] == asset["asset_id"]
+    assert evidence["devices"][0]["output_hash"]
+    assert "raw_output" not in evidence["devices"][0]
+    service.create_baseline("default", first["task_id"], confirm=True)
+    second = service.start_inspection(
+        "default", [asset["asset_id"]], script_id=script["script_id"],
+        collector=lambda _asset, commands: {command: "changed" for command in commands}, background=False,
+    )
+    diff = service.diff_against_current("default", second["task_id"])
+    assert diff["changed"] is True
+    assert diff["changes"][0]["asset_id"] == asset["asset_id"]
+
+
+def test_user_inspection_uses_durable_job_worker_and_cancel(monkeypatch, tmp_path):
+    _setup(monkeypatch, tmp_path)
+    monkeypatch.setattr(service, "collect_ssh", lambda _asset, commands: {command: "ok" for command in commands})
+    script = service.save_inspection_script("default", {
+        "name": "持久 Worker 巡检", "vendors": ["h3c"], "commands": ["display version"],
+    })
+    asset = service.save_asset("default", {
+        "name": "Core-Worker", "host": "10.0.0.10", "username": "ops", "password": "secret", "vendor": "h3c",
+    })
+    task = service.enqueue_inspection("default", [asset["asset_id"]], script_id=script["script_id"])
+    assert task["status"] == "queued"
+    assert task["job_id"]
+    from jobs.runner import run_job
+    from jobs.store import get_job
+    run_job("default", task["job_id"])
+    finished = service.get_inspection("default", task["task_id"])
+    assert finished["status"] == "succeeded"
+    assert get_job("default", task["job_id"]).status == "succeeded"
+    queued = service.enqueue_inspection("default", [asset["asset_id"]], script_id=script["script_id"])
+    assert service.cancel_inspection("default", queued["task_id"]) is True
+    assert service.get_inspection("default", queued["task_id"])["status"] == "cancelled"
+    assert get_job("default", queued["job_id"]).status == "cancelled"
+
+
+def test_schedule_tick_creates_durable_inspection_job(monkeypatch, tmp_path):
+    _setup(monkeypatch, tmp_path)
+    script = service.save_inspection_script("default", {
+        "name": "计划巡检脚本", "vendors": ["h3c"], "commands": ["display version"],
+    })
+    asset = service.save_asset("default", {
+        "name": "Core-Schedule", "host": "10.0.0.11", "username": "ops", "password": "secret", "vendor": "h3c",
+    })
+    schedule = service.save_inspection_schedule("default", {
+        "name": "每五分钟巡检", "interval_minutes": 5, "asset_ids": [asset["asset_id"]], "script_id": script["script_id"],
+    })
+    result = service.run_due_inspection_schedules(float(schedule["next_run_at_epoch"]) + 1)
+    assert result["queued"] == 1
+    stored = next(item for item in service.list_inspection_schedules("default") if item["schedule_id"] == schedule["schedule_id"])
+    assert stored["last_task_id"]
+    scheduled_task = service.get_inspection("default", stored["last_task_id"])
+    assert scheduled_task["status"] == "queued"
+    assert scheduled_task["job_id"]

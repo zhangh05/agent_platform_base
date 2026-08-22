@@ -15,20 +15,14 @@ stable node order, so concurrency never changes references or audit semantics.
 
 ```json
 {
-  "workflow_id": "inspect_and_summarize",
-  "name": "巡检并汇总",
+  "workflow_id": "readonly_inspection",
+  "name": "批量只读巡检",
   "failure_policy": "fail_fast",
   "nodes": [
     {
       "node_id": "inspect",
       "tool_id": "network.operations.inspection",
       "arguments": {"asset_ids": "${input.asset_ids}"}
-    },
-    {
-      "node_id": "summary",
-      "tool_id": "reference.insights.summarize",
-      "depends_on": ["inspect"],
-      "arguments": {"text": "${nodes.inspect.output.summary}"}
     }
   ]
 }

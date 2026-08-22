@@ -26,6 +26,8 @@ def run_job(ws_id: str, job_id: str):
             _run_knowledge_index(rec)
         elif rec.job_type == "workflow_run":
             _run_workflow(rec)
+        elif rec.job_type == "network_inspection":
+            _run_network_inspection(rec)
 
         # Fresh-get final job for accurate summary
         final = get_job(ws_id, job_id)
@@ -158,6 +160,24 @@ def _run_knowledge_index(rec: JobRecord):
         "source_id": result.get("source_id") or source_id,
         "chunk_count": int(result.get("chunk_count") or 0),
     }})
+
+
+def _run_network_inspection(rec: JobRecord):
+    from extensions.network_operations.service import execute_queued_inspection
+    task_id = str((rec.payload or {}).get("task_id") or "").strip()
+    if not task_id:
+        raise ValueError("network_inspection task_id is required")
+    if _cancel_check(rec):
+        return
+    update_progress(rec.workspace_id, rec.job_id, current=0, total=1, message="正在执行网络巡检")
+    task = execute_queued_inspection(rec.workspace_id, task_id, rec.job_id)
+    update_job(rec.workspace_id, rec.job_id, {
+        "output_artifacts": [task["artifact_id"]] if task.get("artifact_id") else [],
+        "result_summary": {"task_id": task_id, "inspection_status": task.get("status"), "succeeded": task.get("succeeded", 0), "failed": task.get("failed", 0)},
+    })
+    update_progress(rec.workspace_id, rec.job_id, current=1, total=1, message="网络巡检已完成")
+    if task.get("status") == "cancelled":
+        mark_cancelled(rec.workspace_id, rec.job_id, "Network inspection cancelled")
 
 
 def _run_workflow(rec: JobRecord):

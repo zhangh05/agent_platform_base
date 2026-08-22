@@ -1,6 +1,8 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import { vi } from "vitest";
-import { extensionsApi } from "../api";
+import { authApi, extensionsApi } from "../api";
+
+beforeEach(() => { vi.spyOn(authApi, "status").mockResolvedValue({ ok: true, login_enabled: true, authenticated: true, username: "admin", role: "admin", platform_admin: true }); });
 import { ExtensionCenter } from "../pages/ExtensionCenter/ExtensionCenter";
 import { ExtensionRegistryProvider } from "../extensions/registry";
 import { MemoryRouter } from "../router";
@@ -10,12 +12,12 @@ test("shows installed extensions and verified repository packages", async () => 
     ok: true,
     count: 1,
     extensions: [{
-      extension_id: "reference.insights",
-      name: "文本洞察",
+      extension_id: "network.operations",
+      name: "网络巡检",
       version: "1.0.0",
-      description: "示例",
-      capabilities: ["insights"],
-      tools: ["reference.insights.summarize"],
+      description: "业务能力",
+      capabilities: ["network_inspection"],
+      tools: ["network.operations.inspection"],
       frontend_routes: [],
       source: "bundled",
     }],
@@ -33,7 +35,7 @@ test("shows installed extensions and verified repository packages", async () => 
   });
 
   render(<ExtensionCenter />);
-  await waitFor(() => expect(screen.getByText("文本洞察")).toBeInTheDocument());
+  await waitFor(() => expect(screen.getByText("网络巡检")).toBeInTheDocument());
   expect(screen.getByText("vendor.sample")).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "安装" })).toBeInTheDocument();
 });

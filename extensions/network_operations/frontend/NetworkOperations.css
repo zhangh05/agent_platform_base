@@ -70,3 +70,22 @@
   .network-ops-tabs { padding: 3px; }
   .network-ops-tabs button { padding: 5px 10px; }
 }
+
+.network-task-row.selected { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 6%, var(--surface)); }
+.network-task-detail { display: grid; gap: 12px; margin-top: 14px; padding: 16px; border: 1px solid var(--line-2); border-radius: var(--r-8); background: var(--surface-2); }
+.network-task-detail h3 { margin: 0; color: var(--text-1); font-size: var(--fs-14); }
+.network-result-list { display: grid; gap: 8px; }
+.network-result-row { display: grid; grid-template-columns: minmax(0,1fr) minmax(180px,0.8fr) auto; gap: 12px; align-items: center; padding: 10px 12px; border: 1px solid var(--line-2); border-radius: 6px; background: var(--surface); }
+.network-result-row > div { display: grid; gap: 3px; min-width: 0; }
+.network-result-row span { color: var(--text-4); font-size: var(--fs-11); }
+.network-result-row code { color: var(--text-3); font-size: var(--fs-10); overflow-wrap: anywhere; }
+.network-evidence-panel,.network-diff-panel { display: grid; gap: 6px; padding: 11px 12px; border-radius: 6px; background: var(--surface); color: var(--text-3); font-size: var(--fs-12); }
+.network-evidence-panel strong,.network-diff-panel strong { color: var(--text-1); }
+.network-diff-panel p { margin: 0; }
+@media (max-width: 900px) { .network-result-row { grid-template-columns: 1fr; } }
+.network-schedules-layout { display: grid; grid-template-columns: minmax(260px, 360px) minmax(0, 1fr); gap: 14px; min-height: 0; }
+.network-schedule-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 14px 16px; border-bottom: 1px solid var(--line-2); }
+.network-schedule-row > div { display: grid; gap: 4px; min-width: 0; }
+.network-schedule-row strong { color: var(--text-1); font-size: var(--fs-13); }
+.network-schedule-row span,.network-schedule-row p { margin: 0; color: var(--text-4); font-size: var(--fs-11); overflow-wrap: anywhere; }
+@media (max-width: 900px) { .network-schedules-layout { grid-template-columns: 1fr; } }
