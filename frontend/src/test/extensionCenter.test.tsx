@@ -96,3 +96,15 @@ test("does not link a runtime extension whose frontend was not bundled", async (
   await waitFor(() => expect(screen.getByText("该扩展的前端模块未包含在当前平台构建中，不能直接打开。")).toBeInTheDocument());
   expect(screen.queryByRole("link", { name: "打开运行时扩展" })).not.toBeInTheDocument();
 });
+
+test("does not request or expose the private repository to ordinary users", async () => {
+  vi.spyOn(authApi, "status").mockResolvedValue({ ok: true, login_enabled: true, authenticated: true, username: "operator", role: "operator", platform_admin: false });
+  const list = vi.spyOn(extensionsApi, "list").mockResolvedValue({ ok: true, count: 0, extensions: [] });
+  const repository = vi.spyOn(extensionsApi, "repository");
+
+  render(<ExtensionCenter />);
+
+  await waitFor(() => expect(list).toHaveBeenCalledOnce());
+  expect(repository).not.toHaveBeenCalled();
+  expect(screen.queryByText("私有扩展仓库")).not.toBeInTheDocument();
+});

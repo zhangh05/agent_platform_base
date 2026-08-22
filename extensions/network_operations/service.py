@@ -24,6 +24,8 @@ from storage.time_utils import now_iso
 
 
 EXTENSION_ID = "network.operations"
+MAX_INSPECTION_SCHEDULES = 200
+INTERNAL_SCAN_LIMIT = 5000
 DEFAULT_COMMANDS = {
     "h3c": ["display version", "display device", "display interface brief", "display ip routing-table summary"],
     "huawei": ["display version", "display device", "display interface brief", "display ip routing-table statistics"],
@@ -283,29 +285,71 @@ def collect_ssh(asset: dict[str, Any], commands: list[str], *, timeout: int = 15
 
 
 def _inspection_assets(workspace_id: str, asset_ids: list[str] | None) -> list[dict[str, Any]]:
-    assets = [get_asset(workspace_id, asset_id, include_secret=True) for asset_id in (asset_ids or [])]
-    if not asset_ids:
-        assets = [get_asset(workspace_id, item["asset_id"], include_secret=True) for item in list_assets(workspace_id)]
-    assets = [item for item in assets if item]
-    if not assets:
-        raise ValueError("no assets selected")
-    return assets
+    if not isinstance(asset_ids, list) or not asset_ids:
+        raise ValueError("asset_ids must be a non-empty array")
+    if any(not isinstance(item, str) or not item.strip() for item in asset_ids):
+        raise ValueError("asset_ids must contain non-empty strings")
+    normalized = [item.strip() for item in asset_ids]
+    if len(set(normalized)) != len(normalized):
+        raise ValueError("asset_ids must not contain duplicates")
+    assets = [get_asset(workspace_id, asset_id, include_secret=True) for asset_id in normalized]
+    missing = [asset_id for asset_id, asset in zip(normalized, assets) if asset is None]
+    if missing:
+        raise ValueError(f"inspection_assets_not_found:{','.join(missing)}")
+    return [item for item in assets if item]
+
+
+def _command_plan(commands: list[str] | None, script: dict[str, Any] | None) -> dict[str, Any]:
+    if script:
+        return {"mode": "script", "script": _script_safe(script)}
+    if commands is not None:
+        return {"mode": "inline_commands", "commands": list(commands)}
+    return {"mode": "vendor_defaults"}
+
+
+def _restore_command_plan(task: dict[str, Any]) -> tuple[list[str] | None, dict[str, Any] | None]:
+    plan = task.get("command_plan")
+    if not isinstance(plan, dict):
+        raise ValueError("inspection_command_plan_missing")
+    mode = str(plan.get("mode") or "")
+    if mode == "script":
+        script = plan.get("script")
+        if not isinstance(script, dict) or not script.get("script_id"):
+            raise ValueError("inspection_script_snapshot_invalid")
+        return None, dict(script)
+    if mode == "inline_commands":
+        commands = plan.get("commands")
+        if not isinstance(commands, list):
+            raise ValueError("inspection_inline_commands_invalid")
+        return list(commands), None
+    if mode == "vendor_defaults":
+        return None, None
+    raise ValueError("inspection_command_plan_invalid")
+
+
+def _build_inspection_task(assets: list[dict[str, Any]], commands: list[str] | None, script: dict[str, Any] | None, *, job_id: str = "") -> dict[str, Any]:
+    for asset in assets:
+        commands_for(asset, commands, script)
+    task_id = _id("inspection")
+    return {
+        "task_id": task_id, "job_id": job_id, "status": "queued",
+        "asset_ids": [item["asset_id"] for item in assets],
+        "total": len(assets), "completed": 0, "succeeded": 0, "failed": 0,
+        "results": {}, "artifact_id": "",
+        "command_plan": _command_plan(commands, script),
+        "script": _script_safe(script) if script else {
+            "script_id": "inline-commands" if commands is not None else "vendor-defaults",
+            "name": "临时只读命令" if commands is not None else "厂商默认命令",
+            "commands": list(commands or []),
+        },
+        "created_at": now_iso(), "updated_at": now_iso(),
+    }
 
 
 def _new_inspection_task(workspace_id: str, asset_ids: list[str] | None, commands: list[str] | None, script_id: str, *, job_id: str = "") -> tuple[dict[str, Any], list[dict[str, Any]], dict[str, Any] | None]:
     assets = _inspection_assets(workspace_id, asset_ids)
     script = _resolve_script(workspace_id, script_id)
-    for asset in assets:
-        commands_for(asset, commands, script)
-    task_id = _id("inspection")
-    task = {
-        "task_id": task_id, "job_id": job_id, "status": "queued",
-        "asset_ids": [item["asset_id"] for item in assets],
-        "total": len(assets), "completed": 0, "succeeded": 0, "failed": 0,
-        "results": {}, "artifact_id": "",
-        "script": _script_safe(script) if script else {"script_id": "legacy-default", "name": "厂商默认命令", "commands": commands or []},
-        "created_at": now_iso(), "updated_at": now_iso(),
-    }
+    task = _build_inspection_task(assets, commands, script, job_id=job_id)
     return task, assets, script
 
 
@@ -329,10 +373,10 @@ def start_inspection(
     collector: Callable[[dict[str, Any], list[str]], dict[str, str]] | None = None,
     background: bool = True,
 ) -> dict[str, Any]:
-    """Compatibility entrypoint for direct deterministic tests and tool calls.
+    """Synchronous-capable entrypoint for deterministic internal tests.
 
-    User-initiated HTTP inspections use ``enqueue_inspection`` so production
-    execution always runs through the durable jobs Worker.
+    Production HTTP and LLM entrypoints use ``enqueue_inspection`` so execution
+    always runs through the durable jobs Worker.
     """
     task, assets, script = _new_inspection_task(workspace_id, asset_ids, commands, script_id)
     _store(workspace_id).save("inspections", task["task_id"], task)
@@ -347,10 +391,8 @@ def start_inspection(
     return get_inspection(workspace_id, task["task_id"]) or task
 
 
-def enqueue_inspection(workspace_id: str, asset_ids: list[str] | None = None, commands: list[str] | None = None, script_id: str = "", *, created_by: str = "user") -> dict[str, Any]:
-    """Create a durable inspection task and queue it on the platform Worker."""
+def _enqueue_prepared_inspection(workspace_id: str, task: dict[str, Any], *, created_by: str) -> dict[str, Any]:
     from jobs.manager import create_job
-    task, _assets, _script = _new_inspection_task(workspace_id, asset_ids, commands, script_id)
     job = create_job(
         workspace_id=workspace_id,
         job_type="network_inspection",
@@ -371,14 +413,20 @@ def enqueue_inspection(workspace_id: str, asset_ids: list[str] | None = None, co
     return get_inspection(workspace_id, task["task_id"]) or task
 
 
+def enqueue_inspection(workspace_id: str, asset_ids: list[str] | None = None, commands: list[str] | None = None, script_id: str = "", *, created_by: str = "user") -> dict[str, Any]:
+    """Create a durable inspection task and queue it on the platform Worker."""
+    task, _assets, _script = _new_inspection_task(workspace_id, asset_ids, commands, script_id)
+    return _enqueue_prepared_inspection(workspace_id, task, created_by=created_by)
+
+
 def execute_queued_inspection(workspace_id: str, task_id: str, job_id: str) -> dict[str, Any]:
     task = get_inspection(workspace_id, task_id)
     if not task:
         raise ValueError("inspection_not_found")
     assets = _inspection_assets(workspace_id, list(task.get("asset_ids") or []))
-    script = dict(task.get("script") or {}) or None
+    commands, script = _restore_command_plan(task)
     cancel = _DurableCancellation(workspace_id, job_id)
-    _execute_inspection(workspace_id, task_id, assets, None, collect_ssh, cancel, script)
+    _execute_inspection(workspace_id, task_id, assets, commands, collect_ssh, cancel, script)
     return get_inspection(workspace_id, task_id) or task
 
 
@@ -394,9 +442,9 @@ def _execute_inspection(workspace_id: str, task_id: str, assets: list[dict[str, 
     def run_one(asset: dict[str, Any]) -> tuple[str, dict[str, Any]]:
         if cancel.is_set():
             return asset["asset_id"], {"status": "cancelled", "name": asset["name"]}
-        selected = commands_for(asset, commands, script)
         started = time.monotonic()
         try:
+            selected = commands_for(asset, commands, script)
             raw = collector(asset, selected)
             normalized = json.dumps(raw, ensure_ascii=False, sort_keys=True)
             return asset["asset_id"], {
@@ -423,13 +471,24 @@ def _execute_inspection(workspace_id: str, task_id: str, assets: list[dict[str, 
             task["failed"] += int(result["status"] == "failed")
             task["updated_at"] = now_iso()
             store.save("inspections", task_id, task)
-    task["status"] = "cancelled" if cancel.is_set() else ("succeeded" if task["failed"] == 0 else "partial")
+    task["status"] = (
+        "cancelled" if cancel.is_set()
+        else "succeeded" if task["failed"] == 0
+        else "partial" if task["succeeded"] > 0
+        else "failed"
+    )
     task["finished_at"] = now_iso()
     task["updated_at"] = now_iso()
-    task["artifact_id"] = _save_evidence_artifact(workspace_id, task, raw_outputs)
-    store.save("inspections", task_id, task)
-    with _TASK_LOCK:
-        _TASK_CANCEL.pop(task_id, None)
+    try:
+        task["artifact_id"] = _save_evidence_artifact(workspace_id, task, raw_outputs)
+        store.save("inspections", task_id, task)
+    except Exception:
+        task.update({"status": "failed", "error": "inspection_evidence_persist_failed", "finished_at": now_iso(), "updated_at": now_iso()})
+        store.save("inspections", task_id, task)
+        raise
+    finally:
+        with _TASK_LOCK:
+            _TASK_CANCEL.pop(task_id, None)
 
 
 def _save_evidence_artifact(workspace_id: str, task: dict[str, Any], raw_outputs: dict[str, dict[str, str]]) -> str:
@@ -461,8 +520,13 @@ def retry_inspection(workspace_id: str, task_id: str) -> dict[str, Any]:
     task = get_inspection(workspace_id, task_id)
     if not task or task.get("status") not in {"failed", "cancelled", "partial"}:
         raise ValueError("retryable inspection task is required")
-    script_id = str((task.get("script") or {}).get("script_id") or "")
-    retried = enqueue_inspection(workspace_id, list(task.get("asset_ids") or []), script_id=script_id, created_by="retry")
+    commands, script = _restore_command_plan(task)
+    assets = _inspection_assets(workspace_id, list(task.get("asset_ids") or []))
+    retried = _enqueue_prepared_inspection(
+        workspace_id,
+        _build_inspection_task(assets, commands, script),
+        created_by="retry",
+    )
     retried["retry_of_task_id"] = task_id
     _store(workspace_id).save("inspections", retried["task_id"], retried)
     return retried
@@ -482,7 +546,7 @@ def reconcile_interrupted_inspections() -> int:
         with storage_principal(principal):
             for workspace_id in sorted(set(scoped_workspaces)):
                 store = _store(workspace_id)
-                for task in store.list("inspections", limit=200):
+                for task in store.list("inspections", limit=INTERNAL_SCAN_LIMIT):
                     if task.get("status") not in {"queued", "running"}:
                         continue
                     job_id = str(task.get("job_id") or "")
@@ -520,9 +584,14 @@ def save_inspection_schedule(workspace_id: str, payload: dict[str, Any]) -> dict
     # Validate selection and script before a schedule can be persisted.
     assets = _inspection_assets(workspace_id, asset_ids)
     script = _resolve_script(workspace_id, str(payload.get("script_id") or ""))
+    if not script:
+        raise ValueError("inspection_script_required")
     for asset in assets: commands_for(asset, None, script)
     schedule_id = str(payload.get("schedule_id") or _id("schedule"))
-    existing = _store(workspace_id).get("schedules", schedule_id) or {}
+    store = _store(workspace_id)
+    existing = store.get("schedules", schedule_id) or {}
+    if not existing and len(store.list("schedules", limit=MAX_INSPECTION_SCHEDULES + 1)) >= MAX_INSPECTION_SCHEDULES:
+        raise ValueError("inspection_schedule_limit_reached")
     now = time.time()
     record = {
         "schedule_id": schedule_id,
@@ -538,7 +607,7 @@ def save_inspection_schedule(workspace_id: str, payload: dict[str, Any]) -> dict
         "created_at": existing.get("created_at") or now_iso(),
         "updated_at": now_iso(),
     }
-    _store(workspace_id).save("schedules", schedule_id, record)
+    store.save("schedules", schedule_id, record)
     return record
 
 
@@ -561,7 +630,7 @@ def run_due_inspection_schedules(now_epoch: float | None = None) -> dict[str, in
         with storage_principal(principal):
             for workspace_id in sorted(set(workspace_ids)):
                 store = _store(workspace_id)
-                for listed in store.list("schedules", limit=200):
+                for listed in store.list("schedules", limit=INTERNAL_SCAN_LIMIT):
                     schedule_id = str(listed.get("schedule_id") or "")
                     if not schedule_id:
                         continue

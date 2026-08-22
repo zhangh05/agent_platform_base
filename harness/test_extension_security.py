@@ -45,6 +45,7 @@ def test_extension_routes_enforce_role_and_lifecycle(monkeypatch, tmp_path):
     upsert_user("viewer", "password", "viewer", "default", ["default"])
     upsert_user("operator", "password", "operator", "default", ["default"])
     upsert_user("admin", "password", "admin", "default", ["default"])
+    upsert_user("owner", "password", "owner", "default", ["default"])
     from extensions.runtime import reset_extension_cache_for_tests
     reset_extension_cache_for_tests()
     from backend.main import create_app
@@ -71,6 +72,7 @@ def test_extension_routes_enforce_role_and_lifecycle(monkeypatch, tmp_path):
     }, headers=origin)
     assert created.status_code == 201
     assert operator.post("/api/extensions/network.operations/disable", headers=origin).status_code == 403
+    assert operator.get("/api/extensions/repository", headers=origin).status_code == 403
     assert operator.post("/api/extensions/repository/publish", headers=origin).status_code == 403
 
     admin = app.test_client()
@@ -88,8 +90,13 @@ def test_extension_routes_enforce_role_and_lifecycle(monkeypatch, tmp_path):
         "/api/admin/operation-ledger?workspace_id=default&status=not-a-state",
         headers=origin,
     ).status_code == 400
-    assert admin.post("/api/extensions/repository/publish", headers=origin).status_code == 400
+    assert admin.get("/api/extensions/repository", headers=origin).status_code == 403
+    assert admin.post("/api/extensions/repository/publish", headers=origin).status_code == 403
     assert admin.post("/api/extensions/network.operations/disable", headers=origin).status_code == 200
     blocked = admin.get("/api/extensions/network.operations/assets?workspace_id=default", headers=origin)
     assert blocked.status_code == 409
     assert admin.post("/api/extensions/network.operations/enable", headers=origin).status_code == 200
+
+    owner = app.test_client()
+    owner.post("/api/auth/login", json={"username": "owner", "password": "password"}, headers=origin)
+    assert owner.get("/api/extensions/repository", headers=origin).status_code == 200

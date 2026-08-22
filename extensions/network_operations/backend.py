@@ -265,7 +265,7 @@ def inspection(invocation):
     args = invocation.arguments or {}
     action = str(args.get("action") or "list")
     if action == "run":
-        return {"ok": True, "task": service.start_inspection(invocation.workspace_id, args.get("asset_ids"), args.get("commands"), script_id=str(args.get("script_id") or ""), background=True)}
+        return {"ok": True, "task": service.enqueue_inspection(invocation.workspace_id, args.get("asset_ids"), args.get("commands"), script_id=str(args.get("script_id") or ""), created_by="llm")}
     if action == "get":
         task_id = str(args.get("task_id") or "")
         task = service.get_inspection(invocation.workspace_id, task_id)
@@ -274,6 +274,8 @@ def inspection(invocation):
         return {"ok": True, "task": task}
     if action == "cancel":
         return {"ok": service.cancel_inspection(invocation.workspace_id, str(args.get("task_id") or ""))}
+    if action == "retry":
+        return {"ok": True, "task": service.retry_inspection(invocation.workspace_id, str(args.get("task_id") or ""))}
     return {"ok": True, "inspections": service.list_inspections(invocation.workspace_id)}
 
 
@@ -368,12 +370,12 @@ def register():
             {
                 "tool_id": "network.operations.inspection",
                 "name": "执行只读巡检",
-                "description": "对多个已保存设备执行可追踪的只读巡检。run 返回 task_id 后必须 get 跟踪到终态并读取结果；list 只列记录，cancel 不代表已产出结果。",
+                "description": "对多个已保存设备执行持久、可追踪的只读巡检。run 必须明确传非空 asset_ids，返回 task_id 后用 get 跟踪到终态并读取结果；list 只列记录；cancel 取消未完成任务；retry 仅对 failed、cancelled 或 partial 终态创建一项新的持久任务。",
                 "category": "ops",
                 "risk_level": "medium",
                 "permission_action": "network",
                 "action_requirements": {
-                    "all": {"run": ["asset_ids"], "get": ["task_id"], "cancel": ["task_id"]},
+                    "all": {"run": ["asset_ids"], "get": ["task_id"], "cancel": ["task_id"], "retry": ["task_id"]},
                 },
                 "handler": inspection,
                 "timeout_seconds": 120,
@@ -381,7 +383,7 @@ def register():
                     "type": "object",
                     "properties": {
                         **common,
-                        "action": {"type": "string", "enum": ["run", "list", "get", "cancel"]},
+                        "action": {"type": "string", "enum": ["run", "list", "get", "cancel", "retry"]},
                         "asset_ids": {"type": "array", "items": {"type": "string"}},
                         "commands": {"type": "array", "items": {"type": "string"}},
                         "script_id": {"type": "string"},

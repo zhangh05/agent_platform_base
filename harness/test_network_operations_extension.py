@@ -383,3 +383,125 @@ def test_schedule_tick_creates_durable_inspection_job(monkeypatch, tmp_path):
     scheduled_task = service.get_inspection("default", stored["last_task_id"])
     assert scheduled_task["status"] == "queued"
     assert scheduled_task["job_id"]
+
+
+def test_inspection_selection_fails_closed(monkeypatch, tmp_path):
+    _setup(monkeypatch, tmp_path)
+    asset = service.save_asset("default", {
+        "name": "Core-Selection", "host": "10.0.0.20", "username": "ops", "password": "secret", "vendor": "h3c",
+    })
+    invalid = (None, [], [""], [asset["asset_id"], asset["asset_id"]], [asset["asset_id"], "asset_missing"])
+    for asset_ids in invalid:
+        try:
+            service.enqueue_inspection("default", asset_ids)  # type: ignore[arg-type]
+        except ValueError:
+            pass
+        else:
+            raise AssertionError(f"invalid asset selection must fail closed: {asset_ids!r}")
+
+
+def test_durable_default_and_inline_command_plans_are_replayable(monkeypatch, tmp_path):
+    _setup(monkeypatch, tmp_path)
+    asset = service.save_asset("default", {
+        "name": "Core-Plan", "host": "10.0.0.21", "username": "ops", "password": "secret", "vendor": "h3c",
+    })
+    monkeypatch.setattr(service, "collect_ssh", lambda _asset, commands: {command: "ok" for command in commands})
+    from jobs.runner import run_job
+
+    default_task = service.enqueue_inspection("default", [asset["asset_id"]])
+    assert default_task["command_plan"] == {"mode": "vendor_defaults"}
+    run_job("default", default_task["job_id"])
+    finished_default = service.get_inspection("default", default_task["task_id"])
+    assert finished_default["status"] == "succeeded"
+    assert finished_default["results"][asset["asset_id"]]["commands"] == service.DEFAULT_COMMANDS["h3c"]
+
+    inline_task = service.enqueue_inspection("default", [asset["asset_id"]], commands=["display version"])
+    assert inline_task["command_plan"] == {"mode": "inline_commands", "commands": ["display version"]}
+    run_job("default", inline_task["job_id"])
+    finished_inline = service.get_inspection("default", inline_task["task_id"])
+    assert finished_inline["results"][asset["asset_id"]]["commands"] == ["display version"]
+
+
+def test_all_device_failures_fail_both_inspection_and_job(monkeypatch, tmp_path):
+    _setup(monkeypatch, tmp_path)
+    asset = service.save_asset("default", {
+        "name": "Core-Fail", "host": "10.0.0.22", "username": "ops", "password": "secret", "vendor": "h3c",
+    })
+    monkeypatch.setattr(service, "collect_ssh", lambda _asset, _commands: (_ for _ in ()).throw(RuntimeError("auth failed")))
+    task = service.enqueue_inspection("default", [asset["asset_id"]])
+    from jobs.runner import run_job
+    from jobs.store import get_job
+    run_job("default", task["job_id"])
+    assert service.get_inspection("default", task["task_id"])["status"] == "failed"
+    assert get_job("default", task["job_id"]).status == "failed"
+
+
+def test_inline_inspection_retry_preserves_immutable_command_plan(monkeypatch, tmp_path):
+    _setup(monkeypatch, tmp_path)
+    asset = service.save_asset("default", {
+        "name": "Core-Retry", "host": "10.0.0.23", "username": "ops", "password": "secret", "vendor": "h3c",
+    })
+    failed = service.start_inspection(
+        "default", [asset["asset_id"]], commands=["display version"],
+        collector=lambda _asset, _commands: (_ for _ in ()).throw(RuntimeError("temporary failure")),
+        background=False,
+    )
+    assert failed["status"] == "failed"
+    retried = service.retry_inspection("default", failed["task_id"])
+    assert retried["retry_of_task_id"] == failed["task_id"]
+    assert retried["command_plan"] == {"mode": "inline_commands", "commands": ["display version"]}
+
+
+def test_script_inspection_retry_uses_original_snapshot_after_script_edit(monkeypatch, tmp_path):
+    _setup(monkeypatch, tmp_path)
+    asset = service.save_asset("default", {
+        "name": "Core-Snapshot", "host": "10.0.0.25", "username": "ops", "password": "secret", "vendor": "h3c",
+    })
+    script = service.save_inspection_script("default", {
+        "name": "快照脚本", "vendors": ["h3c"], "commands": ["display version"],
+    })
+    failed = service.start_inspection(
+        "default", [asset["asset_id"]], script_id=script["script_id"],
+        collector=lambda _asset, _commands: (_ for _ in ()).throw(RuntimeError("temporary failure")),
+        background=False,
+    )
+    service.save_inspection_script("default", {
+        "script_id": script["script_id"], "name": "已修改脚本", "vendors": ["h3c"], "commands": ["display device"],
+    })
+    retried = service.retry_inspection("default", failed["task_id"])
+    assert retried["command_plan"]["script"]["commands"] == ["display version"]
+    assert retried["script"]["name"] == "快照脚本"
+
+
+def test_llm_inspection_run_uses_durable_queue_and_exposes_retry(monkeypatch):
+    captured = {}
+    def fake_enqueue(workspace_id, asset_ids, commands, script_id="", *, created_by="user"):
+        captured.update({"workspace_id": workspace_id, "asset_ids": asset_ids, "commands": commands, "script_id": script_id, "created_by": created_by})
+        return {"task_id": "inspection_durable", "status": "queued"}
+    monkeypatch.setattr(service, "enqueue_inspection", fake_enqueue)
+    result = inspection(SimpleNamespace(workspace_id="default", arguments={"action": "run", "asset_ids": ["asset_1"]}))
+    assert result["task"]["status"] == "queued"
+    assert captured["created_by"] == "llm"
+
+    monkeypatch.setattr(service, "retry_inspection", lambda workspace_id, task_id: {"task_id": "inspection_retry", "retry_of_task_id": task_id})
+    retried = inspection(SimpleNamespace(workspace_id="default", arguments={"action": "retry", "task_id": "inspection_failed"}))
+    assert retried["task"]["retry_of_task_id"] == "inspection_failed"
+
+
+def test_evidence_failure_transitions_task_to_terminal_failure(monkeypatch, tmp_path):
+    _setup(monkeypatch, tmp_path)
+    asset = service.save_asset("default", {
+        "name": "Core-Evidence", "host": "10.0.0.24", "username": "ops", "password": "secret", "vendor": "h3c",
+    })
+    monkeypatch.setattr(service, "_save_evidence_artifact", lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("disk full")))
+    try:
+        service.start_inspection(
+            "default", [asset["asset_id"]], collector=lambda _asset, commands: {command: "ok" for command in commands}, background=False,
+        )
+    except RuntimeError as exc:
+        assert str(exc) == "disk full"
+    else:
+        raise AssertionError("evidence persistence errors must reach the job runner")
+    failed = service.list_inspections("default")[0]
+    assert failed["status"] == "failed"
+    assert failed["error"] == "inspection_evidence_persist_failed"

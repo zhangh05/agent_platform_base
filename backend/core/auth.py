@@ -545,7 +545,7 @@ def _authorize_identity_request():
     if path.startswith("/api/agent/llm/") and path != "/api/agent/llm/test" and flask.request.method not in {"GET", "HEAD"} and not _role_at_least(role, "admin"):
         return flask.jsonify({"ok": False, "error": "forbidden"}), 403
     if path.startswith("/api/extensions/"):
-        extension_denied = _authorize_extension_request(path, role)
+        extension_denied = _authorize_extension_request(path, role, platform_admin=platform_admin)
         if extension_denied:
             return extension_denied
     workspace_id = _request_workspace_id()
@@ -582,9 +582,9 @@ def _role_at_least(role: str, minimum: str) -> bool:
     return has_role(role, minimum)
 
 
-def _authorize_extension_request(path: str, role: str):
+def _authorize_extension_request(path: str, role: str, *, platform_admin: bool):
     import re
-    if path.startswith("/api/extensions/repository") and flask.request.method not in {"GET", "HEAD"} and not _role_at_least(role, "admin"):
+    if path.startswith("/api/extensions/repository") and not platform_admin:
         return flask.jsonify({"ok": False, "error": "extension_admin_required"}), 403
     lifecycle = re.match(r"^/api/extensions/([^/]+)/(enable|disable|migrate|install|upgrade|uninstall)", path)
     if lifecycle and not _role_at_least(role, "admin"):

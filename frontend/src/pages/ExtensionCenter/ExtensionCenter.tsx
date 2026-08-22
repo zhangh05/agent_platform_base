@@ -16,10 +16,12 @@ export function ExtensionCenter() {
   const [error, setError] = useState("");
 
   const load = useCallback(async () => {
-    const [installed, repository, auth] = await Promise.all([extensionsApi.list(), extensionsApi.repository(), authApi.status()]);
+    const [installed, auth] = await Promise.all([extensionsApi.list(), authApi.status()]);
+    const platformAdmin = Boolean(auth.platform_admin);
+    const repository = platformAdmin ? await extensionsApi.repository() : { packages: [] };
     setItems(installed.extensions || []);
     setPackages(repository.packages || []);
-    setIsPlatformAdmin(Boolean(auth.platform_admin));
+    setIsPlatformAdmin(platformAdmin);
   }, []);
   useEffect(() => { load().catch(() => setError("扩展目录读取失败")); }, [load]);
 

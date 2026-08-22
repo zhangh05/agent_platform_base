@@ -103,6 +103,7 @@ export default function NetworkOperations() {
 
   async function runInspection() {
     if (!scriptId) { setError("请先选择巡检脚本。"); setTab("scripts"); return; }
+    if (selected.length === 0) { setError("请先选择至少一台巡检设备。"); setTab("assets"); return; }
     setBusy(true); setError("");
     try {
       await apiRequest({ method: "POST", url: `${base}/inspections`, data: { workspace_id: workspaceId, asset_ids: selected, script_id: scriptId } });
@@ -177,6 +178,15 @@ export default function NetworkOperations() {
       await load();
       if (activeTask?.task_id === task.task_id) await openTask(task);
     } catch (err) { setError(String((err as { message?: string })?.message || "巡检取消失败")); }
+    finally { setBusy(false); }
+  }
+  async function retryTask(task: Inspection) {
+    setBusy(true); setError("");
+    try {
+      const result = await apiRequest<{ task: Inspection }>({ method: "POST", url: `${base}/inspections/${task.task_id}/retry`, data: { workspace_id: workspaceId } });
+      setActiveTask(result.task);
+      await load();
+    } catch (err) { setError(String((err as { message?: string })?.message || "巡检重试失败")); }
     finally { setBusy(false); }
   }
   async function saveSchedule(event: React.FormEvent) {
@@ -306,7 +316,7 @@ export default function NetworkOperations() {
                 <div className="network-progress"><span style={{ width: `${task.total ? Math.round(task.completed / task.total * 100) : 0}%` }} /></div>
                 <div className="network-counts"><span>完成 {task.completed}/{task.total}</span><span className="ok">成功 {task.succeeded}</span><span className={task.failed ? "danger" : ""}>失败 {task.failed}</span></div>
                 <span className={`network-status ${task.status}`}>{task.status}</span>
-                <div className="network-row-actions"><button className="network-link" onClick={() => void openTask(task)} disabled={busy}>查看结果</button>{["queued", "running"].includes(task.status) ? <button className="network-delete" onClick={() => void cancelTask(task)} disabled={busy}>取消</button> : null}</div>
+                <div className="network-row-actions"><button className="network-link" onClick={() => void openTask(task)} disabled={busy}>查看结果</button>{["failed", "cancelled", "partial"].includes(task.status) ? <button className="network-link" onClick={() => void retryTask(task)} disabled={busy}>重新执行</button> : null}{["queued", "running"].includes(task.status) ? <button className="network-delete" onClick={() => void cancelTask(task)} disabled={busy}>取消</button> : null}</div>
               </article>
             ))}
             {activeTask ? <section className="network-task-detail" aria-label="巡检结果详情">

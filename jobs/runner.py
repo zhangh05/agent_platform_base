@@ -178,6 +178,8 @@ def _run_network_inspection(rec: JobRecord):
     update_progress(rec.workspace_id, rec.job_id, current=1, total=1, message="网络巡检已完成")
     if task.get("status") == "cancelled":
         mark_cancelled(rec.workspace_id, rec.job_id, "Network inspection cancelled")
+    elif task.get("status") == "failed":
+        raise RuntimeError(str(task.get("error") or "network_inspection_failed"))
 
 
 def _run_workflow(rec: JobRecord):

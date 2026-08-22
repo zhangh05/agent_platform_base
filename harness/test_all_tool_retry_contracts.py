@@ -103,6 +103,8 @@ def test_extension_action_profiles_drive_parallel_and_retry_semantics():
         ("network.operations.inspection", "list"): True,
         ("network.operations.inspection", "get"): True,
         ("network.operations.inspection", "run"): False,
+        ("network.operations.inspection", "cancel"): False,
+        ("network.operations.inspection", "retry"): False,
         ("network.operations.device.manage", "probe"): True,
         ("network.operations.device.manage", "read"): True,
     }
