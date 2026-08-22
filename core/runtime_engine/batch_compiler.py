@@ -28,11 +28,16 @@ def contains_disallowed_batch_action(
 ) -> bool:
     """Identify declared batch actions so QueryLoop can preserve user intent."""
     for call in calls:
+        action = str(call.arguments.get("action") or "")
+        # A user prohibition on batching applies to every explicit batch action,
+        # including tools whose target action is not currently compiler-backed.
+        if action.endswith("_batch"):
+            return True
         tool_id = call.name.replace("__", ".")
         metadata = (tool_registry.get(tool_id) or {}).get("metadata") or {}
         for raw_contract in metadata.get("batching") or []:
             contract = _validated_contract(raw_contract)
-            if contract and str(call.arguments.get("action") or "") == str(contract["target_action"]):
+            if contract and action == str(contract["target_action"]):
                 return True
     return False
 

@@ -925,3 +925,72 @@ def test_queryloop_replans_explicit_weather_batch_before_any_handler_runs():
     assert [item["action"] for item in received] == ["weather", "weather"]
     assert all("locations" not in item for item in received)
     assert any("不得使用 batch action" in message.content for message in prompts[1])
+
+
+def test_explicit_individual_calls_reject_all_batch_action_names():
+    from agent.llm.schemas import LLMToolCall
+    from core.runtime_engine.batch_compiler import contains_disallowed_batch_action
+
+    calls = [LLMToolCall(
+        id="location-batch",
+        name="location.manage",
+        arguments={"action": "resolve_batch", "queries": ["上海", "南京"]},
+    )]
+
+    assert contains_disallowed_batch_action(calls, {"location.manage": {}}) is True
+
+
+def test_queryloop_replans_repairable_read_only_length_error():
+    import asyncio
+
+    from agent.llm.schemas import LLMResponse, LLMToolCall
+    from core.runtime_engine.engine import SSOTRuntimeEngine
+    from core.runtime_engine.models import SSOTRuntimeConfig
+    from core.runtime_engine.tool_runtime import ToolRuntime
+
+    responses = [
+        LLMResponse(tool_calls=[LLMToolCall(
+            id="too-many", name="location.manage", arguments={
+                "action": "resolve_batch", "queries": [f"城市{index}" for index in range(21)],
+            },
+        )]),
+        LLMResponse(tool_calls=[LLMToolCall(
+            id="bounded", name="location.manage", arguments={
+                "action": "resolve_batch", "queries": ["上海", "南京"],
+            },
+        )]),
+        LLMResponse(content="已完成有界地点解析。"),
+    ]
+    received = []
+    prompts = []
+
+    def llm(**kwargs):
+        prompts.append(kwargs["messages"])
+        return responses.pop(0)
+
+    def handler(arguments):
+        received.append(dict(arguments))
+        return {"ok": True, "locations": []}
+
+    config = SSOTRuntimeConfig(max_query_loop_iterations=5, max_tool_calls_per_iteration=2)
+    runtime = ToolRuntime(config)
+    runtime.register("location.manage", handler)
+    registry = {"location.manage": {
+        "description": "location",
+        "args_schema": {"type": "object", "required": ["action", "queries"], "properties": {
+            "action": {"type": "string", "enum": ["resolve_batch"]},
+            "queries": {"type": "array", "items": {"type": "string"}, "maxItems": 20},
+        }},
+    }}
+    engine = SSOTRuntimeEngine(
+        config=config, llm_invoke=llm, tool_registry=registry, tool_runtime=runtime,
+    )
+
+    result = asyncio.run(engine.run(
+        "解析多个地点。",
+        workspace_id="default", session_id="bounded-location",
+    ))
+
+    assert result.success is True
+    assert received == [{"action": "resolve_batch", "queries": ["上海", "南京"]}]
+    assert any("allows at most 20" in message.content for message in prompts[1])
