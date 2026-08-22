@@ -46,7 +46,11 @@ def register_admin_routes(app) -> None:
     @app.route("/api/admin/operation-ledger")
     def operation_ledger_list():
         """List redacted durable write-operation facts; this endpoint never replays work."""
-        from core.runtime_engine.operation_ledger import list_operations
+        from core.runtime_engine.operation_ledger import (
+            list_operations,
+            operation_counts,
+            reconcile_operations,
+        )
         from storage.ids import validate_workspace_id
 
         try:
@@ -61,16 +65,56 @@ def register_admin_routes(app) -> None:
             limit = max(1, min(int(request.args.get("limit") or 100), 500))
         except (TypeError, ValueError):
             return jsonify({"ok": False, "error": "invalid_limit"}), 400
+        maintenance = reconcile_operations(workspace_id)
         records = list_operations(workspace_id, status=status, limit=limit)
-        counts: dict[str, int] = {}
-        for record in list_operations(workspace_id, limit=500):
-            state = str(record.get("status") or "unknown")
-            counts[state] = counts.get(state, 0) + 1
+        counts = operation_counts(workspace_id)
         return jsonify({
             "ok": True,
             "operations": records,
             "count": len(records),
             "counts": counts,
+            "maintenance": maintenance,
+        })
+
+    @app.route("/api/admin/operation-ledger/<operation_id>/resolve", methods=["POST"])
+    def operation_ledger_resolve(operation_id):
+        """Resolve an uncertain operation from explicit human verification."""
+        from core.runtime_engine.operation_ledger import resolve_operation_manually
+        from storage.ids import validate_workspace_id
+
+        data = request.get_json(silent=True) or {}
+        try:
+            workspace_id = validate_workspace_id(str(data.get("workspace_id") or ""))
+        except (TypeError, ValueError):
+            return jsonify({"ok": False, "error": "invalid_workspace_id"}), 400
+        confirmation = str(data.get("confirmation") or "")
+        if confirmation != f"RESOLVE {operation_id}":
+            return jsonify({
+                "ok": False,
+                "error": "confirmation_required",
+                "expected": f"RESOLVE {operation_id}",
+            }), 400
+        status = str(data.get("status") or "")
+        if status not in {"succeeded", "failed"}:
+            return jsonify({"ok": False, "error": "invalid_resolution_status"}), 400
+        try:
+            record = resolve_operation_manually(
+                workspace_id,
+                operation_id,
+                status=status,
+                reason=str(data.get("reason") or ""),
+            )
+        except FileNotFoundError:
+            return jsonify({"ok": False, "error": "operation_not_found"}), 404
+        except ValueError as exc:
+            return jsonify({"ok": False, "error": str(exc)}), 400
+        except RuntimeError as exc:
+            return jsonify({"ok": False, "error": str(exc)}), 409
+        return jsonify({
+            "ok": True,
+            "operation_id": operation_id,
+            "status": record.get("status"),
+            "resolved_by": record.get("resolved_by"),
         })
 
     @app.route("/api/admin/approval-continuations")

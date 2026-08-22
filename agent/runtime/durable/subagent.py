@@ -119,6 +119,8 @@ class SubagentTask:
     parent_task_id: str = ""
     workspace_id: str = ""
     session_id: str = ""
+    operation_id: str = ""
+    operation_call_id: str = ""
     profile_id: str = ""
     goal: str = ""
     input_context_refs: list = field(default_factory=list)
@@ -170,6 +172,8 @@ def create_subagent_task(
     parent_task_id: str, workspace_id: str, session_id: str,
     profile_id: str, goal: str, context_refs: list = None,
     max_steps: int | None = None,
+    operation_id: str = "",
+    operation_call_id: str = "",
 ) -> dict:
     profile = get_profile(profile_id)
     if not profile:
@@ -183,6 +187,8 @@ def create_subagent_task(
         parent_task_id=parent_task_id,
         workspace_id=workspace_id,
         session_id=session_id,
+        operation_id=str(operation_id or ""),
+        operation_call_id=str(operation_call_id or ""),
         profile_id=profile_id,
         goal=goal,
         input_context_refs=context_refs or [],

@@ -369,6 +369,21 @@ def create_app():
                 exc_info=True,
             )
         try:
+            from core.runtime_engine.operation_ledger import reconcile_all_operations
+            reconciled_operations = reconcile_all_operations()
+            if any(int(value.get("resolved") or 0) for value in reconciled_operations.values()):
+                import logging as _operation_log
+                _operation_log.getLogger(__name__).info(
+                    "[operation startup] reconciliation complete: %s",
+                    reconciled_operations,
+                )
+        except Exception as exc:
+            import logging as _operation_log
+            _operation_log.getLogger(__name__).warning(
+                "[operation startup] reconcile failed: %s", exc,
+                exc_info=True,
+            )
+        try:
             from agent.runtime.task_state import reconcile_active_task_states
             from backend.core.identity import get_user
             from storage.principal import known_storage_principals, storage_principal

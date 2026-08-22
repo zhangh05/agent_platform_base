@@ -298,6 +298,8 @@ class ToolRuntime:
                 task = asyncio.create_task(self._invoke_handler(handler, merged_args))
             finally:
                 reset_runtime_cancel_check(cancel_token)
+            from core.tools.context import get_runtime_operation_context
+            operation_context = get_runtime_operation_context()
             task.add_done_callback(self._consume_detached_result)
             result = await asyncio.wait_for(
                 asyncio.shield(task),
@@ -306,6 +308,11 @@ class ToolRuntime:
             elapsed = (time.monotonic() - start) * 1000
             return _normalize_result(node, result, elapsed)
         except asyncio.TimeoutError:
+            if operation_context is not None:
+                task.add_done_callback(
+                    lambda done, correlation=operation_context, tool=node.tool:
+                    self._settle_detached_operation(done, correlation, tool)
+                )
             elapsed = (time.monotonic() - start) * 1000
             return ToolResult(
                 node_id=node.id,
@@ -335,6 +342,45 @@ class ToolRuntime:
                 latency_ms=elapsed,
                 retry_count=node.retry_count,
             )
+
+    @staticmethod
+    def _settle_detached_operation(
+        done: asyncio.Task,
+        correlation: tuple[str, str, str],
+        tool_id: str,
+    ) -> None:
+        """Commit the handler's eventual truth even if the caller timed out."""
+        try:
+            raw = done.result()
+        except asyncio.CancelledError:
+            return
+        except Exception as exc:
+            raw = {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
+        status, error_code, normalized = resolve_tool_outcome(raw)
+        payload = normalized if isinstance(normalized, dict) else {}
+        tracking = payload.get("tracking") if isinstance(payload.get("tracking"), dict) else {}
+        resource_id = str(payload.get("subtask_id") or payload.get("task_id") or payload.get("job_id") or "")
+        resource_kind = str(tracking.get("domain") or "")
+        if not resource_kind and payload.get("subtask_id"):
+            resource_kind = "subagent"
+        elif not resource_kind and payload.get("job_id"):
+            resource_kind = "job"
+        try:
+            from .operation_ledger import settle_operation
+            settle_operation(
+                correlation[0], correlation[1],
+                status="succeeded" if status == _STATUS_SUCCESS else "failed",
+                resolved_by="timed_out_handler",
+                error_code=str(error_code or payload.get("error_code") or ""),
+                error=extract_error(payload),
+                result_summary=str(payload.get("summary") or ""),
+                resource_kind=resource_kind,
+                resource_id=resource_id,
+            )
+        except (OSError, RuntimeError, TypeError, ValueError):
+            # The durable resource reconciler remains the fallback after a
+            # process interruption or transient ledger write failure.
+            return
 
     async def execute_layer(
         self,

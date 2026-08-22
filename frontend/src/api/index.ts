@@ -1131,6 +1131,11 @@ export type OperationLedgerSummary = {
   result_summary?: string;
   planned_at?: string;
   updated_at?: string;
+  resource_kind?: string;
+  resource_id?: string;
+  resolved_at?: string;
+  resolved_by?: string;
+  resolution_reason?: string;
 };
 
 export const operationLedgerApi = {
@@ -1145,6 +1150,18 @@ export const operationLedgerApi = {
       url: "/admin/operation-ledger",
       params: { workspace_id: workspaceId },
     }, signal),
+
+  resolve: (workspaceId: string, operationId: string, status: "succeeded" | "failed", reason: string) =>
+    apiRequest<{ ok: boolean; operation_id: string; status: string; resolved_by: string }>({
+      method: "POST",
+      url: `/admin/operation-ledger/${encodeURIComponent(operationId)}/resolve`,
+      data: {
+        workspace_id: workspaceId,
+        status,
+        reason,
+        confirmation: `RESOLVE ${operationId}`,
+      },
+    }),
 };
 
 

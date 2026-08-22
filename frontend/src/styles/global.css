@@ -9005,6 +9005,12 @@ summary:focus-visible,
   background: var(--warning-bg, #fff8df);
 }
 .diag-continuation-alert > div { display: grid; gap: 4px; min-width: 0; }
+.diag-continuation-alert > .diag-operation-actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 8px;
+}
 .diag-continuation-alert b { overflow-wrap: anywhere; }
 .diag-continuation-alert span { color: var(--text-3); font-size: var(--fs-12); }
 @media (max-width: 800px) {

@@ -60,6 +60,19 @@ def create_job(workspace_id="default", job_type="agent_run", title="", payload=N
         created_by=created_by, status="created",
     )
     rec = _create(rec)
+    # Every job created inside a side-effecting tool call inherits the
+    # server-owned operation correlation. This closes the crash window between
+    # durable job creation and the tool response without trusting model input.
+    from core.tools.context import get_runtime_operation_context
+    operation = get_runtime_operation_context()
+    if operation and operation[0] == workspace_id:
+        from core.runtime_engine.operation_ledger import link_operation_resource
+        link_operation_resource(
+            workspace_id,
+            operation[1],
+            resource_kind="job",
+            resource_id=rec.job_id,
+        )
     if enqueue:
         rec = enqueue_job(workspace_id, rec.job_id)
     return rec

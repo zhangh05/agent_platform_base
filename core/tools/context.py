@@ -25,6 +25,9 @@ from typing import Callable, Optional
 _runtime_cancel_check: ContextVar[Optional[Callable[[], bool]]] = ContextVar(
     "lzcore_runtime_cancel_check", default=None
 )
+_runtime_operation_context: ContextVar[Optional[tuple[str, str, str]]] = ContextVar(
+    "lzcore_runtime_operation_context", default=None
+)
 
 
 def bind_runtime_cancel_check(
@@ -45,6 +48,22 @@ def reset_runtime_cancel_check(token: Token) -> None:
 
 def get_runtime_cancel_check() -> Optional[Callable[[], bool]]:
     return _runtime_cancel_check.get()
+
+
+def bind_runtime_operation_context(
+    workspace_id: str, operation_id: str, call_id: str,
+) -> Token:
+    """Bind server-created operation correlation for one side-effecting call."""
+    return _runtime_operation_context.set((workspace_id, operation_id, call_id))
+
+
+def reset_runtime_operation_context(token: Token) -> None:
+    _runtime_operation_context.reset(token)
+
+
+def get_runtime_operation_context() -> Optional[tuple[str, str, str]]:
+    """Return trusted operation correlation; never sourced from model arguments."""
+    return _runtime_operation_context.get()
 
 
 @dataclass

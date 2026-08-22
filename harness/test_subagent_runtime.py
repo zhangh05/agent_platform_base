@@ -123,6 +123,32 @@ class TestSubagentTask:
         from core.runtime_engine.query_loop import QueryLoop
         assert QueryLoop._should_poll_tracking("delegate this task", result["tracking"])
 
+    def test_spawn_links_subtask_to_runtime_operation(self, monkeypatch, tmp_path):
+        from core.tools.general_tools.agent_tools import _run_durable_subagent
+        monkeypatch.setenv("LZCORE_WORKSPACE_ROOT", str(tmp_path / "workspaces"))
+        from core.runtime_engine.operation_ledger import list_operations, plan_operation, start_operation
+        from core.tools.context import bind_runtime_operation_context, reset_runtime_operation_context
+
+        monkeypatch.setattr(
+            "agent.runtime.durable.subagent.start_subagent_task",
+            lambda subtask_id, _ws_id: {"ok": True, "subtask_id": subtask_id, "status": "running"},
+        )
+        ws = "default"
+        ctx = type("Ctx", (), {"workspace_id": ws, "request_id": "turn-link", "session_id": "s1", "extras": {"risk_level": "low"}})()
+        operation = plan_operation(ctx, "agent.manage", "call-link", {"action": "spawn"})
+        start_operation(ws, operation["operation_id"])
+        token = bind_runtime_operation_context(ws, operation["operation_id"], "call-link")
+        try:
+            result = _run_durable_subagent(
+                instruction="Research", workspace_id=ws, session_id="s1",
+                profile_id="research_agent", background=True,
+            )
+        finally:
+            reset_runtime_operation_context(token)
+        record = list_operations(ws)[0]
+        assert record["resource_kind"] == "subagent"
+        assert record["resource_id"] == result["subtask_id"]
+
 
 class TestSubagentRuntime:
     def test_research_agent_runs_with_profile_limits(self, monkeypatch):

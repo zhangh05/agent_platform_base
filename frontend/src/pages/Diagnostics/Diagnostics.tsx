@@ -81,6 +81,7 @@ type DiagnosticsCache = {
   retention: PolicyData;
   archive: PolicyData;
   continuations: ContinuationData | null;
+  operations: OperationLedgerData | null;
 };
 
 /* ── 内部组件名 → 用户友好名称 ── */
@@ -202,10 +203,11 @@ export function Diagnostics() {
   const [retention, setRetention] = useState<PolicyData>(cache?.retention ?? {});
   const [archive, setArchive] = useState<PolicyData>(cache?.archive ?? {});
   const [continuations, setContinuations] = useState<ContinuationData | null>(cache?.continuations ?? null);
-  const [operations, setOperations] = useState<OperationLedgerData | null>(null);
+  const [operations, setOperations] = useState<OperationLedgerData | null>(cache?.operations ?? null);
   const [operationLedgerError, setOperationLedgerError] = useState(false);
   const [lastCheck, setLastCheck] = useState<string | null>(cache?.ts ?? null);
   const [closingContinuation, setClosingContinuation] = useState("");
+  const [resolvingOperation, setResolvingOperation] = useState("");
 
   const [detecting, setDetecting] = useState(false);
   const mountedRef = useRef(true);
@@ -223,19 +225,8 @@ export function Diagnostics() {
       setDetecting(false);
       return;
     }
-    setOperations(null);
     setOperationLedgerError(false);
-    void operationLedgerApi.list(wsId, ctrl.signal).then((value) => {
-      if (!mountedRef.current || seq !== seqRef.current) return;
-      setOperations({
-        operations: value.operations ?? [],
-        counts: value.counts ?? {},
-      });
-    }).catch(() => {
-      if (!mountedRef.current || seq !== seqRef.current || ctrl.signal.aborted) return;
-      setOperationLedgerError(true);
-    });
-    const [rh, sc, us, cs, pr, rp, ap, ac] = await Promise.allSettled([
+    const [rh, sc, us, cs, pr, rp, ap, ac, ol] = await Promise.allSettled([
       runtimeApi.health(wsId, ctrl.signal),
       runtimeApi.selfcheck(wsId, ctrl.signal),
       agentUsageApi.get(wsId, ctrl.signal),
@@ -244,12 +235,14 @@ export function Diagnostics() {
       retentionApi.preview(wsId, ctrl.signal),
       archiveApi.preview(wsId, ctrl.signal),
       approvalContinuationsApi.list(wsId, ctrl.signal),
+      operationLedgerApi.list(wsId, ctrl.signal),
     ]);
     if (!mountedRef.current || seq !== seqRef.current) return;
 
     let newHealth = health, newSelfcheck = selfcheck, newUsage = usage;
     let newContextOk = contextOk, newPrompts = prompts, newRetention = retention, newArchive = archive;
     let newContinuations = continuations;
+    let newOperations = operations;
 
     if (rh.status === "fulfilled") { newHealth = rh.value as HealthData; setHealth(newHealth); }
     if (sc.status === "fulfilled") { newSelfcheck = sc.value as SelfcheckData; setSelfcheck(newSelfcheck); }
@@ -276,6 +269,15 @@ export function Diagnostics() {
       };
       setContinuations(newContinuations);
     }
+    if (ol.status === "fulfilled") {
+      newOperations = {
+        operations: ol.value.operations ?? [],
+        counts: ol.value.counts ?? {},
+      };
+      setOperations(newOperations);
+    } else if (!ctrl.signal.aborted) {
+      setOperationLedgerError(true);
+    }
 
     // Save to cache
     writeCache({
@@ -283,11 +285,12 @@ export function Diagnostics() {
       contextOk: newContextOk, prompts: newPrompts,
       retention: newRetention, archive: newArchive,
       continuations: newContinuations,
+      operations: newOperations,
     });
     setLastCheck(new Date().toISOString());
 
     setDetecting(false);
-  }, [currentWorkspaceId, health, selfcheck, usage, contextOk, prompts, retention, archive, continuations]);
+  }, [currentWorkspaceId, health, selfcheck, usage, contextOk, prompts, retention, archive, continuations, operations]);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -303,7 +306,8 @@ export function Diagnostics() {
   const selfcheckOk = !selfcheck || (selfcheck.status === "healthy" && selfcheckIssueCount === 0);
   const continuationOk = (continuations?.counts.stalled ?? 0) === 0;
   const operationUnknownCount = operations?.counts.unknown ?? 0;
-  const allOk = runtimeOk && selfcheckOk && continuationOk && operationUnknownCount === 0;
+  const operationRunningCount = operations?.counts.running ?? 0;
+  const allOk = runtimeOk && selfcheckOk && continuationOk && operationUnknownCount === 0 && operationRunningCount === 0;
   const hasData = health !== null || selfcheck !== null || usage !== null;
 
   const closeStalledContinuation = useCallback(async (continuationId: string) => {
@@ -320,6 +324,25 @@ export function Diagnostics() {
       setClosingContinuation("");
     }
   }, [currentWorkspaceId, closingContinuation]);
+
+  const resolveUnknownOperation = useCallback(async (
+    operationId: string,
+    status: "succeeded" | "failed",
+  ) => {
+    if (!currentWorkspaceId || resolvingOperation) return;
+    const outcome = status === "succeeded" ? "已成功完成" : "执行失败";
+    const reason = window.prompt(`填写核对依据，说明为什么确认该操作${outcome}。`)?.trim();
+    if (!reason) return;
+    if (!window.confirm(`确认已核对外部事实，并将该操作标记为“${outcome}”？`)) return;
+    setResolvingOperation(operationId);
+    try {
+      await operationLedgerApi.resolve(currentWorkspaceId, operationId, status, reason);
+      const refreshed = await operationLedgerApi.list(currentWorkspaceId);
+      setOperations({ operations: refreshed.operations, counts: refreshed.counts });
+    } finally {
+      setResolvingOperation("");
+    }
+  }, [currentWorkspaceId, resolvingOperation]);
 
   /* ── 概览摘要数据 ── */
   const summaryStats = useMemo(() => {
@@ -551,7 +574,7 @@ export function Diagnostics() {
                     <Row label="等待审批" value={String(continuations.counts.pending ?? 0)} compact />
                     <Row label="执行中" value={String(continuations.counts.running ?? 0)} compact />
                     <Row label="失联待核对" value={String(continuations.counts.stalled ?? 0)} compact />
-                    <Row label="失败" value={String(continuations.counts.failed ?? 0)} compact />
+                    <Row label="历史失败" value={String(continuations.counts.failed ?? 0)} compact />
                   </div>
                   {continuations.continuations.filter((item) => item.status === "stalled").map((item) => (
                     <div className="diag-continuation-alert" key={item.continuation_id}>
@@ -572,24 +595,30 @@ export function Diagnostics() {
               ) : <Dim>管理员执行系统检测后可查看审批续跑状态</Dim>}
             </Section>
             <Section title="写操作账本" badge={operations ? (
-              <span className={`diag-section-badge ${operationUnknownCount === 0 ? "diag-text-ok" : "diag-text-warn"}`}>
-                {operationUnknownCount === 0 ? "无未知结果" : `${operationUnknownCount} 项待受控核对`}
+              <span className={`diag-section-badge ${operationUnknownCount + operationRunningCount === 0 ? "diag-text-ok" : "diag-text-warn"}`}>
+                {operationUnknownCount + operationRunningCount === 0 ? "无待核对项" : `${operationUnknownCount + operationRunningCount} 项未决操作`}
               </span>
             ) : null}>
               {operations ? (
                 <div className="diag-continuation-panel" data-testid="operation-ledger-panel">
                   <div className="diag-continuation-summary">
                     <Row label="结果未知" value={String(operationUnknownCount)} compact />
-                    <Row label="执行中" value={String(operations.counts.running ?? 0)} compact />
-                    <Row label="失败" value={String(operations.counts.failed ?? 0)} compact />
+                    <Row label="当前执行中" value={String(operationRunningCount)} compact />
+                    <Row label="历史失败" value={String(operations.counts.failed ?? 0)} compact />
                   </div>
                   {operations.operations.filter((item) => item.status === "unknown" || item.status === "running").slice(0, 5).map((item) => (
                     <div className="diag-continuation-alert" key={item.operation_id}>
                       <div>
                         <b>{item.operation_id}</b>
                         <span>{item.canonical_tool} · {item.status === "unknown" ? "结果未知，先核对外部事实，禁止重试" : "仍在执行，请等待或按运维流程核对"}</span>
+                        {item.planned_at && <small>发生时间：{formatDate(item.planned_at, "compact")}</small>}
+                        {item.resource_kind && item.resource_id && <small>关联任务：{item.resource_kind} · {item.resource_id}</small>}
                         {item.error_code && <small>{item.error_code}</small>}
                       </div>
+                      {item.status === "unknown" ? <div className="diag-operation-actions">
+                        <button className="btn sm" disabled={resolvingOperation === item.operation_id} onClick={() => { void resolveUnknownOperation(item.operation_id, "succeeded"); }}>核对为成功</button>
+                        <button className="btn sm" disabled={resolvingOperation === item.operation_id} onClick={() => { void resolveUnknownOperation(item.operation_id, "failed"); }}>核对为失败</button>
+                      </div> : null}
                     </div>
                   ))}
                   {operations.operations.length === 0 && <Dim>当前工作区暂无耐久写操作记录</Dim>}

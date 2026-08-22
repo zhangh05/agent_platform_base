@@ -54,6 +54,8 @@ def _run_durable_subagent(*, instruction: str, workspace_id: str, session_id: st
         merge_subagent_result,
         run_subagent_task,
     )
+    from core.tools.context import get_runtime_operation_context
+    runtime_operation = get_runtime_operation_context()
 
     profile = _get_profile(profile_id)
     if not profile:
@@ -69,11 +71,22 @@ def _run_durable_subagent(*, instruction: str, workspace_id: str, session_id: st
         goal=instruction,
         context_refs=[],
         max_steps=effective_turns,
+        operation_id=(runtime_operation[1] if runtime_operation and runtime_operation[0] == workspace_id else ""),
+        operation_call_id=(runtime_operation[2] if runtime_operation and runtime_operation[0] == workspace_id else ""),
     )
     if not created.get("ok"):
         return {"ok": False, "error": created.get("error", "failed to create subagent task")}
 
     subtask_id = created["subtask_id"]
+
+    if runtime_operation and runtime_operation[0] == workspace_id:
+        from core.runtime_engine.operation_ledger import link_operation_resource
+        link_operation_resource(
+            workspace_id,
+            runtime_operation[1],
+            resource_kind="subagent",
+            resource_id=subtask_id,
+        )
 
     if background:
         started = start_subagent_task(subtask_id, workspace_id)

@@ -937,7 +937,14 @@ class StreamingToolExecutor:
                 if operation is not None and ctx is not None:
                     from .operation_ledger import start_operation
                     start_operation(ctx.workspace_id, operation["operation_id"])
+                operation_token = None
+                execution_task: asyncio.Task | None = None
                 try:
+                    if operation is not None and ctx is not None:
+                        from core.tools.context import bind_runtime_operation_context
+                        operation_token = bind_runtime_operation_context(
+                            ctx.workspace_id, operation["operation_id"], tc.id,
+                        )
                     execution = self._execute_one(tc, ctx=ctx, budget=budget)
                     if budget is None:
                         result_by_id[tc.id] = await execution
@@ -949,7 +956,16 @@ class StreamingToolExecutor:
                             timeout=max(0.001, budget.remaining_execution_seconds()),
                         )
                 except asyncio.TimeoutError:
+                    if operation is not None and ctx is not None and execution_task is not None:
+                        execution_task.add_done_callback(
+                            lambda done, workspace_id=ctx.workspace_id, op_id=operation["operation_id"]:
+                            self._settle_budget_detached_operation(done, workspace_id, op_id)
+                        )
                     result_by_id[tc.id] = self._execution_budget_timeout(tc, may_continue=True)
+                finally:
+                    if operation_token is not None:
+                        from core.tools.context import reset_runtime_operation_context
+                        reset_runtime_operation_context(operation_token)
             result = result_by_id[tc.id]
             if operation is not None and ctx is not None:
                 from .operation_ledger import finish_operation
@@ -1003,6 +1019,50 @@ class StreamingToolExecutor:
         try:
             task.exception()
         except asyncio.CancelledError:
+            return
+
+    @staticmethod
+    def _settle_budget_detached_operation(
+        task: asyncio.Task,
+        workspace_id: str,
+        operation_id: str,
+    ) -> None:
+        """Persist eventual truth when the request budget expires first."""
+        if task.cancelled():
+            return
+        try:
+            result = task.result()
+        except asyncio.CancelledError:
+            return
+        except Exception:
+            return
+        if not isinstance(result, StreamingToolResult) or result.execution_may_continue:
+            return
+        output = result.output if isinstance(result.output, dict) else {}
+        tracking = output.get("tracking") if isinstance(output.get("tracking"), dict) else {}
+        resource_id = str(output.get("subtask_id") or output.get("task_id") or output.get("job_id") or "")
+        resource_kind = str(tracking.get("domain") or "")
+        if not resource_kind and output.get("subtask_id"):
+            resource_kind = "subagent"
+        elif not resource_kind and output.get("job_id"):
+            resource_kind = "job"
+        try:
+            from .operation_ledger import settle_operation
+            settle_operation(
+                workspace_id,
+                operation_id,
+                status=(
+                    "blocked" if output.get("executed") is False else
+                    "succeeded" if result.ok else "failed"
+                ),
+                resolved_by="request_budget_handler",
+                error_code=result.error_code,
+                error=str(result.error or ""),
+                result_summary=str(output.get("summary") or result.summary or ""),
+                resource_kind=resource_kind,
+                resource_id=resource_id,
+            )
+        except (FileNotFoundError, OSError, RuntimeError, TypeError, ValueError):
             return
 
     async def _execute_one(
