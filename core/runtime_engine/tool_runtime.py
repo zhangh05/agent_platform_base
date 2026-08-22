@@ -354,7 +354,7 @@ class ToolRuntime:
             raw = done.result()
         except asyncio.CancelledError:
             return
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 -- normalize arbitrary registered-handler failures
             raw = {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
         status, error_code, normalized = resolve_tool_outcome(raw)
         payload = normalized if isinstance(normalized, dict) else {}

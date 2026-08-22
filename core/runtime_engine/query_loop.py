@@ -1034,7 +1034,7 @@ class StreamingToolExecutor:
             result = task.result()
         except asyncio.CancelledError:
             return
-        except Exception:
+        except Exception:  # noqa: BLE001 -- detached tool tasks may raise any registered-handler exception
             return
         if not isinstance(result, StreamingToolResult) or result.execution_may_continue:
             return
