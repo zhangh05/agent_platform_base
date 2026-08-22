@@ -208,7 +208,7 @@ def test_queryloop_replans_oversized_model_round_before_any_handler_runs():
                 id=f"too-many-{index}", name="data.manage",
                 arguments={"action": "parse", "text": str(index)},
             )
-            for index in range(3)
+            for index in range(25)
         ]),
         LLMResponse(tool_calls=[LLMToolCall(
             id="bounded", name="data.manage",

@@ -397,6 +397,106 @@ def reconcile_active_task_states(
     return {"interrupted": interrupted, "skipped": skipped}
 
 
+_LEGACY_PARALLEL_READ_TIMEOUT = "parallel tool layer exceeded its execution budget"
+
+
+def reconcile_legacy_parallel_read_timeout_states(workspace_id: str) -> dict[str, int]:
+    """Safely close obsolete read-only timeout fences left by old QueryLoop builds.
+
+    Before ``max_tool_calls_per_iteration`` bounded model plans, an oversized
+    all-read layer could time out as a unit and be recorded as a blocking
+    unknown. The persisted manifest proves every call was read-only and failed,
+    so neither approval nor user attestation is required. Preserve the evidence,
+    but expose a terminal, retryable outcome instead of a misleading
+    ``waiting_user`` state.
+    """
+    sessions_dir = workspace_record_dir(workspace_id, "sessions", create=False)
+    if not sessions_dir.is_dir():
+        return {"reconciled": 0, "skipped": 0}
+    reconciled = 0
+    skipped = 0
+    for child in sessions_dir.iterdir():
+        if not child.is_dir():
+            continue
+        session_id = child.name
+        try:
+            _validate_session_id(session_id)
+        except ValueError:
+            skipped += 1
+            continue
+        path = _state_path(workspace_id, session_id)
+        with FileLock(path.with_suffix(".lock")):
+            state = _read_unlocked(path)
+            task = state.get("task") if isinstance(state.get("task"), dict) else None
+            if not task or str(task.get("status") or "") != "waiting_user":
+                continue
+            nodes = task.get("nodes") if isinstance(task.get("nodes"), list) else []
+            if not nodes or _bounded_key_list(task.get("pending_mutation_keys")):
+                continue
+            failed_nodes = [item for item in nodes if isinstance(item, dict)]
+            if len(failed_nodes) != len(nodes):
+                continue
+            if not all(
+                str(item.get("status") or "") == "failed"
+                and not bool(item.get("side_effecting"))
+                and str(item.get("result_ref") or "").startswith(_LEGACY_PARALLEL_READ_TIMEOUT)
+                for item in failed_nodes
+            ):
+                continue
+            unknowns = _as_list(task.get("unknowns"))
+            if any(
+                not isinstance(item, dict)
+                or str(item.get("kind") or "") != "blocking_unknown"
+                or str(item.get("reason") or "") != "runtime_reported_blocking_unknown"
+                for item in unknowns
+            ):
+                continue
+            now = _now_iso()
+            revision = int(state.get("revision") or 0) + 1
+            task = deepcopy(task)
+            task["status"] = "failed"
+            task["next_action"] = "retry_with_bounded_plan"
+            task["legacy_recovery"] = "parallel_read_timeout_safe_to_retry"
+            task["unknowns"] = [
+                item for item in _as_list(task.get("unknowns"))
+                if not (
+                    isinstance(item, dict)
+                    and str(item.get("reason") or "") == "runtime_reported_blocking_unknown"
+                )
+            ]
+            task["updated_at"] = now
+            task["revision"] = revision
+            record = {
+                "schema": _SCHEMA,
+                "workspace_id": workspace_id,
+                "session_id": session_id,
+                "revision": revision,
+                "task": task,
+                "updated_at": now,
+            }
+            event = {
+                "schema": _EVENT_SCHEMA,
+                "event_id": f"evt_{hashlib.sha256(f'{task.get('task_id', '')}:{revision}:{task.get('source_run_id', '')}:legacy_parallel_read_timeout'.encode()).hexdigest()[:20]}",
+                "event_type": "task_reconciled",
+                "task_id": str(task.get("task_id") or ""),
+                "revision": revision,
+                "run_id": str(task.get("source_run_id") or ""),
+                "at": now,
+                "status": "failed",
+                "relationship": _relationship_kind(task.get("relationship")),
+                "tool_count": len(failed_nodes),
+                "successful_tool_count": 0,
+                "assertion_status": _assertion_status(task.get("assertions")),
+                "next_action": "retry_with_bounded_plan",
+                "run_ok": False,
+                "execution_outcome": "legacy_parallel_read_timeout_safe_to_retry",
+            }
+            append_jsonl_once(workspace_id, _event_parts(session_id), event)
+            atomic_write_json(path, record)
+            reconciled += 1
+    return {"reconciled": reconciled, "skipped": skipped}
+
+
 def resolve_task_state(
     *,
     workspace_id: str,
