@@ -85,13 +85,23 @@ def _error(msg: str) -> dict:
     return {"ok": False, "status": "failed", "summary": msg, "error": msg, "errors": [msg]}
 
 
-def _error_inv(inv: "ToolInvocation", msg: str) -> dict:
+def _error_inv(
+    inv: "ToolInvocation",
+    msg: str,
+    *,
+    error_code: str = "",
+    details: dict[str, Any] | None = None,
+) -> dict:
     """Like _error but attaches the tool_id so the LLM-facing contract
     is consistent across success and failure paths."""
     out = _error(msg)
     tool_id = getattr(inv, "tool_id", "")
     if tool_id:
         out["tool_id"] = tool_id
+    if error_code:
+        out["error_code"] = error_code
+    if details:
+        out["error_details"] = dict(details)
     return out
 
 

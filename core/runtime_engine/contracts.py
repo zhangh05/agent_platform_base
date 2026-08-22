@@ -250,21 +250,18 @@ ALWAYS_READ_ONLY_TOOLS: frozenset[str] = frozenset({
 })
 
 
-READ_ONLY_ACTIONS: dict[str, frozenset[str]] = {
-    "agent.manage": frozenset({"list", "get", "status"}),
-    "browser.manage": frozenset({"snapshot", "extract", "wait", "network", "console"}),
-    "knowledge.manage": frozenset({"search", "read", "list", "chunk"}),
-    "memory.manage": frozenset({"search", "review", "profile_get"}),
-    "report.manage": frozenset({"diff", "document"}),
-    "skill.manage": frozenset({"list", "find", "load", "inspect", "mcp_list_tools"}),
-    "system.manage": frozenset({
-        "diagnostics", "health", "selfcheck", "local_info", "tasks",
-        "audit_log", "run_get", "session_get",
-    }),
-    "workspace.artifact": frozenset({"list", "read"}),
-    "workspace.file": frozenset({"list", "read", "read_image", "extract_document", "extract_document_image", "extract_document_images", "glob"}),
-    "workspace.filestore": frozenset({"references", "reconcile_trash_preview"}),
-}
+def _base_read_only_actions() -> dict[str, frozenset[str]]:
+    """Project retry semantics from the action-contract SSOT."""
+    from core.tools.action_requirements import ACTION_EXECUTION_CONTRACTS
+
+    grouped: dict[str, set[str]] = {}
+    for (tool_id, action), action_contract in ACTION_EXECUTION_CONTRACTS.items():
+        if action_contract.get("read_only") is True:
+            grouped.setdefault(tool_id, set()).add(action)
+    return {tool_id: frozenset(actions) for tool_id, actions in grouped.items()}
+
+
+READ_ONLY_ACTIONS: dict[str, frozenset[str]] = _base_read_only_actions()
 
 
 def is_read_only_call(
@@ -279,6 +276,10 @@ def is_read_only_call(
     if normalized in ALWAYS_READ_ONLY_TOOLS:
         return True
     action = str((arguments or {}).get("action") or "").lower().strip()
+    from core.tools.action_requirements import action_execution_contract
+    action_contract = action_execution_contract(normalized, action)
+    if action_contract:
+        return action_contract.get("read_only") is True
     if contract and action in contract.read_only_actions:
         return True
     for profile in (tool_metadata or {}).get("action_profiles") or ():

@@ -59,7 +59,18 @@ def _run_durable_subagent(*, instruction: str, workspace_id: str, session_id: st
 
     profile = _get_profile(profile_id)
     if not profile:
-        return {"ok": False, "error": f"unknown profile_id: {profile_id}"}
+        return {
+            "ok": False,
+            "status": "failed",
+            "error_code": "ARG_ENUM_INVALID",
+            "error": f"unknown profile_id: {profile_id}",
+            "error_details": {
+                "field": "profile_id",
+                "invalid_value": profile_id,
+                "allowed_values": list(BUILTIN_PROFILES),
+            },
+            "retryable": False,
+        }
 
     effective_turns = min(max_turns, profile.max_steps)
 
@@ -138,7 +149,16 @@ def _spawn_agent(inv: ToolInvocation, profile_id: str, default_max_turns: int = 
 
     profile = _get_profile(profile_id)
     if not profile:
-        return _error_inv(inv, f"unknown profile_id: {profile_id}")
+        return _error_inv(
+            inv,
+            f"unknown profile_id: {profile_id}",
+            error_code="ARG_ENUM_INVALID",
+            details={
+                "field": "profile_id",
+                "invalid_value": profile_id,
+                "allowed_values": list(BUILTIN_PROFILES),
+            },
+        )
 
     workspace_id = _caller_workspace(inv)
     effective_turns = max_turns or default_max_turns

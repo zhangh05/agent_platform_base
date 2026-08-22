@@ -2340,6 +2340,7 @@ class QueryLoop:
                     )
 
                 # ── Doom-loop detection ──
+                deterministic_arg_failures: set[str] = set()
                 for r in results:
                     if not r.ok and r.error:
                         err_lower = str(r.error).lower()
@@ -2390,22 +2391,29 @@ class QueryLoop:
                                 llm_calls=llm_calls,
                                 error="doom_loop_budget",
                             )
-                        # Missing/invalid arguments are deterministic. Different
-                        # call ids must not allow the same schema error to consume
-                        # the entire execution budget.
-                        if "required" in err_lower or "invalid argument" in err_lower:
-                            normalized_error = " ".join(err_lower.split())[:160]
-                            key = f"args:{r.tool_name}:{normalized_error}"
-                            failure_counts[key] = failure_counts.get(key, 0) + 1
-                            if failure_counts[key] >= 2:
-                                return finish(
-                                    final_response=self._build_tool_result_fallback(ctx, all_results),
-                                    tool_results=all_results,
-                                    iterations=iterations,
-                                    total_tool_calls=len(all_results),
-                                    llm_calls=llm_calls,
-                                    error="doom_loop_args",
-                                )
+                        # Contract violations are deterministic. Count one
+                        # signature per model round, not once per parallel call;
+                        # this permits one informed correction without allowing
+                        # different call ids to consume the whole turn budget.
+                        retry_code = StreamingToolExecutor._retry_error_code(ToolResult(
+                            node_id=r.call_id,
+                            tool=r.tool_name,
+                            success=False,
+                            error=str(r.error or ""),
+                            error_code=str(r.error_code or (r.output or {}).get("error_code") or ""),
+                        ))
+                        if retry_code == "ARGS_INVALID" or str(
+                            r.error_code or (r.output or {}).get("error_code") or ""
+                        ).upper() in {
+                            "ARG_ENUM_INVALID", "ARG_TYPE_MISMATCH", "ARG_RANGE_INVALID",
+                            "ARG_LENGTH_INVALID", "MISSING_REQUIRED_ARG", "UNKNOWN_ARGUMENT",
+                            "TOOL_ARGUMENT_VALIDATION_FAILED",
+                        }:
+                            error_details = (r.output or {}).get("error_details") or {}
+                            normalized_error = " ".join(err_lower.split())[:180]
+                            deterministic_arg_failures.add(
+                                f"args:{r.tool_name}:{_json_compact(error_details, max_chars=300)}:{normalized_error}"
+                            )
                         # Timeout / connection — generic doom-loop detection
                         if "timeout" in err_lower or "timed out" in err_lower or "connection" in err_lower or "network" in err_lower:
                             key = f"timeout:{r.tool_name}:{_json_compact(r.output, max_chars=600)}"
@@ -2419,6 +2427,18 @@ class QueryLoop:
                                     llm_calls=llm_calls,
                                     error="doom_loop_timeout",
                                 )
+
+                for key in deterministic_arg_failures:
+                    failure_counts[key] = failure_counts.get(key, 0) + 1
+                    if failure_counts[key] >= 2:
+                        return finish(
+                            final_response=self._build_tool_result_fallback(ctx, all_results),
+                            tool_results=all_results,
+                            iterations=iterations,
+                            total_tool_calls=len(all_results),
+                            llm_calls=llm_calls,
+                            error="doom_loop_args",
+                        )
 
                 continue
 

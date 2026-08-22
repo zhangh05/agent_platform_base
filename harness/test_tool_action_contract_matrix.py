@@ -8,7 +8,11 @@ import pytest
 
 from core.runtime_engine.models import ExecutionNode
 from core.runtime_engine.semantic_validator import SemanticValidator
-from core.tools.action_requirements import ACTION_REQUIRED_ALL, ACTION_REQUIRED_ANY
+from core.tools.action_requirements import (
+    ACTION_EXECUTION_CONTRACTS,
+    ACTION_REQUIRED_ALL,
+    ACTION_REQUIRED_ANY,
+)
 from core.tools.canonical_registry import CANONICAL_REGISTRY
 
 
@@ -42,6 +46,20 @@ def test_catalog_and_runtime_agree_on_read_only_action_semantics():
             if runtime_value != bool(profile.get("read_only")):
                 mismatches.append((tool["tool_id"], profile["action"]))
     assert mismatches == []
+
+
+def test_every_base_action_has_an_explicit_execution_contract():
+    missing = []
+    for tool_id, actions in _action_enums(include_extensions=False).items():
+        for action in actions:
+            contract = ACTION_EXECUTION_CONTRACTS.get((tool_id, action))
+            if not contract:
+                missing.append((tool_id, action))
+                continue
+            assert contract["action_class"] in {"read", "write", "execute", "network", "delete"}
+            assert contract["idempotency"] in {"safe_to_retry", "unsafe_to_retry"}
+            assert isinstance(contract["read_only"], bool)
+    assert missing == []
 
 
 def _action_enums(*, include_extensions: bool = True) -> dict[str, set[str]]:

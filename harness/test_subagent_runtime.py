@@ -69,6 +69,26 @@ class TestSubagentTask:
         )
         assert result["ok"] is False
 
+    def test_agent_tool_unknown_profile_returns_machine_readable_contract(self):
+        from core.tools.general_tools.agent_tools import handle_agent_spawn
+        from core.tools.schemas import ToolInvocation
+
+        result = handle_agent_spawn(ToolInvocation(
+            tool_id="agent.manage",
+            workspace_id="ws_x",
+            session_id="s1",
+            arguments={
+                "action": "spawn",
+                "instruction": "research",
+                "profile_id": "general_agent",
+            },
+        ))
+
+        assert result["ok"] is False
+        assert result["error_code"] == "ARG_ENUM_INVALID"
+        assert result["error_details"]["field"] == "profile_id"
+        assert result["error_details"]["allowed_values"] == list(BUILTIN_PROFILES)
+
     def test_workspace_required(self):
         result = create_subagent_task(
             parent_task_id="t1", workspace_id="",

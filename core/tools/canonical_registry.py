@@ -40,7 +40,14 @@ class CanonicalToolEntry:
 
 
 def _schema(properties: dict[str, Any] | None = None, required: list[str] | None = None) -> dict[str, Any]:
-    return {"type": "object", "properties": properties or {}, "required": required or []}
+    # Canonical schemas are executable contracts, not documentation hints.
+    # Reject model-invented fields before a handler can silently ignore them.
+    return {
+        "type": "object",
+        "properties": properties or {},
+        "required": required or [],
+        "additionalProperties": False,
+    }
 
 
 def _action(inv: ToolInvocation) -> str:
@@ -610,6 +617,25 @@ _COMMON = {
     "workspace_id": {"type": "string", "description": "Current workspace id; normally supplied by runtime."},
 }
 
+
+def _subagent_profile_schema() -> dict[str, Any]:
+    """Project the profiles implemented by the durable runtime into the SSOT schema."""
+    from agent.runtime.durable.subagent import BUILTIN_PROFILES
+
+    descriptions = "; ".join(
+        f"{profile_id}={profile.role}"
+        for profile_id, profile in BUILTIN_PROFILES.items()
+    )
+    return {
+        "type": "string",
+        "enum": list(BUILTIN_PROFILES),
+        "default": "research_agent",
+        "description": (
+            "Optional subagent profile. Choose only a published value; "
+            f"defaults to research_agent. Available profiles: {descriptions}."
+        ),
+    }
+
 _EXEC_ARGS = {
     "command": {"type": "string", "description": "Shell/slash command; required for action=shell|slash."},
     "code": {"type": "string", "description": "Python source; required for action=python."},
@@ -782,13 +808,13 @@ _RAW_REGISTRY: list[CanonicalToolEntry] = [
         **_COMMON,
         "action": {"type": "string", "enum": ["spawn", "list", "get", "status", "cancel", "merge"]},
         "instruction": {"type": "string", "description": "Required for spawn: the complete task delegated to the subagent."},
-        "profile_id": {"type": "string", "description": "Optional subagent profile; defaults to research_agent."},
+        "profile_id": _subagent_profile_schema(),
         "max_turns": {"type": "integer", "minimum": 1, "maximum": 20},
         "background": {"type": "boolean"},
         "session_id": {"type": "string"},
         "subtask_id": {"type": "string"},
         "parent_task_id": {"type": "string"},
-    }, required=["action"], description="Subagent task management. action=spawn requires instruction; get/cancel/merge use the subtask_id returned by spawn."),
+    }, required=["action"], description="Subagent task management. spawn requires a complete instruction and accepts only the profile_id values published in the schema; choose research_agent for external research, file_agent for workspace files, and data_agent for structured analysis. get/cancel/merge use the subtask_id returned by spawn. Delegation does not extend an upstream tool or data provider's limits."),
     _entry("system.manage", _handle_system, {**_COMMON, **_SYSTEM_ARGS, "limit": {"type": "integer", "minimum": 1}, "action": {"type": "string", "enum": ["diagnostics", "health", "selfcheck", "local_info", "tasks", "audit_log", "run_get", "session_get", "session_checkpoint", "session_rewind", "session_export", "session_snapshot"]}}, required=["action"], risk="medium", description="Runtime health, current local date/time and host facts, durable tasks, audit logs, run details, and session operations. local_info returns timezone-aware current time plus host/IP/OS facts; run_get requires run_id; session actions require session_id; rewind additionally requires snapshot_id."),
     _entry("text.analyze", _handle_text, {**_COMMON, "action": {"type": "string", "enum": ["redact", "extract_entities", "match"]}, "text": {"type": "string"}, "pattern": {"type": "string"}}, required=["action"], description="Text redact, extract and match."),
     _entry("workspace.file", _handle_workspace_file, {**_COMMON, **_WORKSPACE_FILE_ARGS, "action": {"type": "string", "enum": ["list", "read", "read_image", "extract_document", "extract_document_image", "extract_document_images", "write", "write_artifact", "edit", "patch", "glob", "delete"]}}, required=["action"], risk="medium", description="Workspace files. extract_document reads a managed text, DOCX, PDF, XLSX, or PPTX attachment by file_id and reports embedded_image_count for DOCX. extract_document_image extracts one DOCX image by file_id and 1-based image_index. extract_document_images extracts an ordered DOCX image batch (up to 8) for visual analysis; its image evidence is automatically delivered to the next model turn. Never pass a returned file_id to read/read_image because those actions require a workspace filepath. write/write_artifact require filename and content.", execution_contract={

@@ -107,6 +107,18 @@ _EXECUTE = {
     "action_class": "execute", "risk_level": "medium", "side_effects": "task_state",
     "idempotency": "unsafe_to_retry", "read_only": False,
 }
+_NETWORK_READ = {
+    "action_class": "network", "risk_level": "low", "side_effects": "external_read",
+    "idempotency": "safe_to_retry", "read_only": True,
+}
+_BROWSER_EXECUTE = {
+    "action_class": "network", "risk_level": "medium", "side_effects": "browser_state",
+    "idempotency": "unsafe_to_retry", "read_only": False,
+}
+_LOCAL_EXECUTE = {
+    "action_class": "execute", "risk_level": "medium", "side_effects": "local_process",
+    "idempotency": "unsafe_to_retry", "read_only": False,
+}
 _DELETE = {
     "action_class": "delete", "risk_level": "high", "side_effects": "workspace",
     "idempotency": "unsafe_to_retry", "read_only": False,
@@ -120,10 +132,24 @@ def _contracts(tool_id: str, actions: tuple[str, ...], contract: dict) -> dict[t
 
 ACTION_EXECUTION_CONTRACTS: dict[tuple[str, str], dict] = {}
 ACTION_EXECUTION_CONTRACTS.update(_contracts(
+    "exec.run", ("shell", "python", "slash"), _LOCAL_EXECUTE,
+))
+ACTION_EXECUTION_CONTRACTS.update(_contracts(
+    "browser.manage", ("snapshot", "extract", "wait", "network", "console"), _NETWORK_READ,
+))
+ACTION_EXECUTION_CONTRACTS.update(_contracts(
+    "browser.manage",
+    ("navigate", "screenshot", "click", "type", "scroll", "hover", "press_key", "select_option", "evaluate", "tabs", "navigate_back", "close"),
+    _BROWSER_EXECUTE,
+))
+ACTION_EXECUTION_CONTRACTS.update(_contracts(
     "web.manage", ("search", "fetch", "weather", "weather_batch", "deep_search"), _READ,
 ))
 ACTION_EXECUTION_CONTRACTS.update(_contracts(
     "location.manage", ("resolve", "resolve_batch", "reverse"), _READ,
+))
+ACTION_EXECUTION_CONTRACTS.update(_contracts(
+    "data.manage", ("parse", "stats", "distinct", "aggregate", "filter", "sort", "render", "pivot", "join"), _READ,
 ))
 ACTION_EXECUTION_CONTRACTS.update(_contracts(
     "workspace.file",
@@ -144,13 +170,20 @@ ACTION_EXECUTION_CONTRACTS.update(_contracts("knowledge.manage", ("import", "rei
 ACTION_EXECUTION_CONTRACTS.update(_contracts("memory.manage", ("search", "review", "profile_get"), _READ))
 ACTION_EXECUTION_CONTRACTS.update(_contracts("memory.manage", ("create", "update", "confirm", "profile_set"), _WRITE))
 ACTION_EXECUTION_CONTRACTS.update(_contracts("memory.manage", ("delete",), _DELETE))
+ACTION_EXECUTION_CONTRACTS.update(_contracts(
+    "skill.manage", ("list", "find", "load", "inspect", "mcp_list_tools"), _READ,
+))
+ACTION_EXECUTION_CONTRACTS.update(_contracts("skill.manage", ("mcp_call",), _EXECUTE))
 ACTION_EXECUTION_CONTRACTS.update(_contracts("report.manage", ("diff", "document"), _READ))
 ACTION_EXECUTION_CONTRACTS.update(_contracts("report.manage", ("save",), _WRITE))
 ACTION_EXECUTION_CONTRACTS.update(_contracts(
-    "system.manage", ("diagnostics", "health", "selfcheck", "tasks", "audit_log", "run_get", "session_get", "session_snapshot"), _READ,
+    "system.manage", ("diagnostics", "health", "selfcheck", "local_info", "tasks", "audit_log", "run_get", "session_get", "session_export", "session_snapshot"), _READ,
 ))
 ACTION_EXECUTION_CONTRACTS.update(_contracts("system.manage", ("session_checkpoint",), _WRITE))
 ACTION_EXECUTION_CONTRACTS.update(_contracts("system.manage", ("session_rewind",), _DELETE))
+ACTION_EXECUTION_CONTRACTS.update(_contracts(
+    "text.analyze", ("redact", "extract_entities", "match"), _READ,
+))
 
 
 def action_execution_contract(tool_id: str, action: str) -> dict:

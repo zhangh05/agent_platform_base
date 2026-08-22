@@ -11,6 +11,7 @@ and the description prefix both reference the canonical tool_id;
 internal dispatch fields are never exposed to the model.
 """
 
+from copy import deepcopy
 from typing import List
 
 
@@ -57,23 +58,21 @@ def tool_spec_to_openai_function(tool: dict) -> dict:
         "type": "object",
         "properties": {},
         "required": required,
+        "additionalProperties": bool(schema.get("additionalProperties", True)),
     }
 
     for name, prop in properties.items():
-        param = {"type": prop.get("type", "string")}
+        # Preserve the complete public JSON-Schema constraint surface.  The
+        # previous hand-picked projection dropped minItems/maxItems and nested
+        # constraints, so the model was shown a weaker contract than runtime.
+        param = deepcopy(prop)
+        if "type" not in param and not any(
+            key in param for key in ("enum", "oneOf", "anyOf", "allOf")
+        ):
+            param["type"] = "string"
         description = prop.get("description") or _default_param_description(name)
         if description:
-            param["description"] = str(description)[:240]
-        if "enum" in prop:
-            param["enum"] = prop["enum"]
-        if "default" in prop:
-            param["default"] = prop["default"]
-        if "minimum" in prop:
-            param["minimum"] = prop["minimum"]
-        if "maximum" in prop:
-            param["maximum"] = prop["maximum"]
-        if "items" in prop:
-            param["items"] = prop["items"]
+            param["description"] = _soft_truncate(str(description), 420)
         params_def["properties"][name] = param
 
     # Optional incremental-orchestration controls are available on every
@@ -132,9 +131,10 @@ def tool_spec_to_openai_function(tool: dict) -> dict:
 def _build_tool_description(tool: dict, metadata: dict, canonical_tool_id: str) -> str:
     """Build a compact but actionable LLM-facing tool description."""
     base = str(tool.get("description") or tool.get("name") or canonical_tool_id)
+    rendered_base = _soft_truncate(base, 420)
     parts = [
         f"[tool_id={canonical_tool_id}]",
-        _soft_truncate(base, 420),
+        rendered_base,
     ]
     usage_hint = metadata.get("usage_hint") or tool.get("usage_hint")
     not_for = metadata.get("not_for") or tool.get("not_for")
@@ -142,16 +142,25 @@ def _build_tool_description(tool: dict, metadata: dict, canonical_tool_id: str) 
     approval = tool.get("requires_approval", False)
     if risk and str(risk).lower() not in {"low", "safe"}:
         parts.append(f"Risk: {risk}; approval_required={bool(approval)}.")
-    if usage_hint:
-        parts.append(f"Use when: {_soft_truncate(str(usage_hint), 360)}")
-    if not_for:
-        parts.append(f"Do not use for: {_soft_truncate(str(not_for), 180)}")
     boundary = _format_action_profiles(tool.get("action_profiles") or metadata.get("action_profiles"))
     if boundary:
         parts.append(f"Action boundaries: {boundary}")
     requirements = _format_action_requirements(canonical_tool_id, metadata)
     if requirements:
         parts.append(f"Required arguments by action: {requirements}")
+    normalized_base = " ".join(base.split())
+    normalized_rendered = " ".join(rendered_base.split())
+    normalized_usage = " ".join(str(usage_hint or "").split())
+    if usage_hint and normalized_usage not in normalized_rendered:
+        if normalized_usage.startswith(normalized_rendered):
+            usage_remainder = normalized_usage[len(normalized_rendered):].lstrip(" .;,，；。")
+            if usage_remainder:
+                parts.append(f"Additional guidance: {_soft_truncate(usage_remainder, 220)}")
+        elif normalized_usage[:160] != normalized_base[:160]:
+            parts.append(f"Use when: {_soft_truncate(str(usage_hint), 360)}")
+    normalized_not_for = " ".join(str(not_for or "").split())
+    if not_for and normalized_not_for[:100] not in normalized_base:
+        parts.append(f"Do not use for: {_soft_truncate(str(not_for), 180)}")
     return " ".join(p for p in parts if p)[:1200]
 
 

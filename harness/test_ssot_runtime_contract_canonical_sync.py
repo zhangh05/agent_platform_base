@@ -41,14 +41,99 @@ def test_web_weather_contract_exposes_forecast_arguments():
 
 def test_agent_contract_exposes_current_runtime_actions():
     from core.runtime_engine.contracts import get_contract
+    from agent.runtime.durable.subagent import BUILTIN_PROFILES
 
     properties = get_contract("agent.manage").input_schema["properties"]
     actions = properties["action"]["enum"]
     assert actions == ["spawn", "list", "get", "status", "cancel", "merge"]
     assert "instruction" in properties
     assert "profile_id" in properties
+    assert properties["profile_id"]["enum"] == list(BUILTIN_PROFILES)
+    assert properties["profile_id"]["default"] == "research_agent"
     assert "max_turns" in properties
     assert "background" in properties
+
+
+def test_llm_projection_preserves_complete_schema_constraints():
+    from core.tools.canonical_registry import to_openai_tools
+
+    tools = {item["function"]["name"]: item["function"] for item in to_openai_tools()}
+    weather = tools["web__manage"]["parameters"]
+    assert weather["additionalProperties"] is False
+    assert weather["properties"]["locations"]["minItems"] == 2
+    assert weather["properties"]["locations"]["maxItems"] == 10
+    assert tools["agent__manage"]["parameters"]["properties"]["profile_id"]["enum"] == [
+        "research_agent", "file_agent", "data_agent",
+    ]
+    assert "data_agent=" in tools["agent__manage"]["parameters"]["properties"]["profile_id"]["description"]
+    assert "write_artifact=>filename+content" in tools["workspace__file"]["description"]
+    assert tools["workspace__file"]["description"].count("Use proactively for real workspace file evidence") == 1
+
+
+def test_all_base_tool_schemas_reject_unpublished_arguments():
+    from core.tools.canonical_registry import CANONICAL_REGISTRY
+
+    assert len(CANONICAL_REGISTRY) == 17
+    for tool_id, entry in CANONICAL_REGISTRY.items():
+        assert entry.input_schema.get("additionalProperties") is False, tool_id
+
+
+def test_semantic_validator_rejects_unknown_profile_and_array_cardinality():
+    from core.runtime_engine.models import ExecutionNode
+    from core.runtime_engine.semantic_validator import SemanticValidator
+
+    result = SemanticValidator().validate([
+        ExecutionNode(
+            id="bad_profile",
+            tool="agent.manage",
+            args={"action": "spawn", "instruction": "research", "profile_id": "general_agent"},
+        ),
+        ExecutionNode(
+            id="bad_batch",
+            tool="web.manage",
+            args={"action": "weather_batch", "locations": ["上海"], "invented": True},
+        ),
+    ])
+
+    assert result.valid is False
+    by_code = {error.code: error for error in result.errors}
+    assert by_code["ARG_ENUM_INVALID"].details["allowed_values"] == [
+        "research_agent", "file_agent", "data_agent",
+    ]
+    assert by_code["ARG_LENGTH_INVALID"].details["minItems"] == 2
+    assert by_code["UNKNOWN_ARGUMENT"].details["field"] == "invented"
+
+
+def test_non_action_enum_error_cannot_trigger_action_alias_repair():
+    from core.runtime_engine.models import ExecutionNode
+    from core.runtime_engine.semantic_validator import SemanticValidator
+
+    result = SemanticValidator().validate([
+        ExecutionNode(
+            id="bad_source",
+            tool="web.manage",
+            args={"action": "search", "query": "test", "source": "web_search"},
+        ),
+    ])
+
+    assert result.valid is False
+    error = next(error for error in result.errors if error.details.get("field") == "source")
+    assert error.code == "ARG_ENUM_INVALID"
+
+
+def test_tool_executor_enforces_the_same_closed_schema_and_cardinality():
+    from core.tools.canonical_registry import CANONICAL_REGISTRY
+    from core.tools.executor import _validate_arguments
+
+    schema = CANONICAL_REGISTRY["web.manage"].input_schema
+    errors = _validate_arguments({
+        "action": "weather_batch",
+        "locations": ["上海"],
+        "invented": True,
+    }, schema)
+
+    assert any("Unknown field: 'invented'" in error for error in errors)
+    assert any("below minimum 2" in error for error in errors)
 
 
 def test_system_contract_exposes_local_info_action():

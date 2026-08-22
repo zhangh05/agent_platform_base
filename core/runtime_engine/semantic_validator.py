@@ -176,10 +176,23 @@ class SemanticValidator:
                     node_id=node.id,
                     code="MISSING_REQUIRED_ARG",
                     message=f"Node '{node.id}' missing required arg '{field_name}'",
+                    details={"field": field_name, "required": True},
                 ))
 
         for field_name, value in node.args.items():
             if field_name not in properties:
+                if field_name == "__invalid_tool_arguments_json__":
+                    continue
+                if schema.get("additionalProperties") is False:
+                    result.errors.append(SemanticError(
+                        node_id=node.id,
+                        code="UNKNOWN_ARGUMENT",
+                        message=(
+                            f"Node '{node.id}' arg '{field_name}' is not supported by {node.tool}; "
+                            "use only arguments published in the tool schema"
+                        ),
+                        details={"field": field_name, "allowed_fields": sorted(properties)},
+                    ))
                 continue
             field_schema = properties[field_name]
             expected_type = field_schema.get("type")
@@ -203,6 +216,11 @@ class SemanticValidator:
                     node_id=node.id,
                     code="ARG_TYPE_MISMATCH",
                     message=f"Node '{node.id}' arg '{field_name}' expected {expected_type}, got {type(value).__name__}",
+                    details={
+                        "field": field_name,
+                        "expected_type": expected_type,
+                        "actual_type": type(value).__name__,
+                    },
                 ))
 
             if not type_mismatch and isinstance(value, (int, float)) and not isinstance(value, bool):
@@ -212,19 +230,52 @@ class SemanticValidator:
                     result.errors.append(SemanticError(
                         node_id=node.id, code="ARG_RANGE_INVALID",
                         message=f"Node '{node.id}' arg '{field_name}' must be >= {minimum}",
+                        details={"field": field_name, "value": value, "minimum": minimum},
                     ))
                 if maximum is not None and value > maximum:
                     result.errors.append(SemanticError(
                         node_id=node.id, code="ARG_RANGE_INVALID",
                         message=f"Node '{node.id}' arg '{field_name}' must be <= {maximum}",
+                        details={"field": field_name, "value": value, "maximum": maximum},
+                    ))
+
+            if not type_mismatch and isinstance(value, str):
+                minimum = field_schema.get("minLength")
+                maximum = field_schema.get("maxLength")
+                if minimum is not None and len(value) < minimum:
+                    result.errors.append(SemanticError(
+                        node_id=node.id, code="ARG_LENGTH_INVALID",
+                        message=f"Node '{node.id}' arg '{field_name}' length must be >= {minimum}",
+                        details={"field": field_name, "length": len(value), "minLength": minimum},
+                    ))
+                if maximum is not None and len(value) > maximum:
+                    result.errors.append(SemanticError(
+                        node_id=node.id, code="ARG_LENGTH_INVALID",
+                        message=f"Node '{node.id}' arg '{field_name}' length must be <= {maximum}",
+                        details={"field": field_name, "length": len(value), "maxLength": maximum},
                     ))
 
             if not type_mismatch and isinstance(value, list):
+                minimum = field_schema.get("minItems")
+                maximum = field_schema.get("maxItems")
+                if minimum is not None and len(value) < minimum:
+                    result.errors.append(SemanticError(
+                        node_id=node.id, code="ARG_LENGTH_INVALID",
+                        message=f"Node '{node.id}' arg '{field_name}' requires at least {minimum} item(s)",
+                        details={"field": field_name, "length": len(value), "minItems": minimum},
+                    ))
+                if maximum is not None and len(value) > maximum:
+                    result.errors.append(SemanticError(
+                        node_id=node.id, code="ARG_LENGTH_INVALID",
+                        message=f"Node '{node.id}' arg '{field_name}' allows at most {maximum} item(s)",
+                        details={"field": field_name, "length": len(value), "maxItems": maximum},
+                    ))
                 item_type = (field_schema.get("items") or {}).get("type")
                 if item_type == "string" and any(not isinstance(item, str) for item in value):
                     result.errors.append(SemanticError(
                         node_id=node.id, code="ARG_TYPE_MISMATCH",
                         message=f"Node '{node.id}' arg '{field_name}' items must be string",
+                        details={"field": field_name, "item_type": "string"},
                     ))
 
             # Enum validation is strictly canonical. QueryLoop normally
@@ -236,8 +287,12 @@ class SemanticValidator:
                 # normalization layer was bypassed (a future bug);
                 # we want a clear error rather than silent acceptance.
                 from .action_alias import resolve_action_alias
-                resolution = resolve_action_alias(node.tool, str(value))
-                if resolution.matched:
+                resolution = (
+                    resolve_action_alias(node.tool, str(value))
+                    if field_name == "action"
+                    else None
+                )
+                if resolution is not None and resolution.matched:
                     result.errors.append(SemanticError(
                         node_id=node.id,
                         code="ACTION_ALIAS_NOT_NORMALIZED",
@@ -245,12 +300,23 @@ class SemanticValidator:
                             f"Node '{node.id}' arg '{field_name}' value '{value}' is a known alias "
                             f"(→ '{resolution.canonical_action}') but was not normalized by QueryLoop."
                         ),
+                        details={
+                            "field": field_name,
+                            "invalid_value": value,
+                            "canonical_value": resolution.canonical_action,
+                            "allowed_values": list(enum_values),
+                        },
                     ))
                 else:
                     result.errors.append(SemanticError(
                         node_id=node.id,
                         code="ARG_ENUM_INVALID",
                         message=f"Node '{node.id}' arg '{field_name}' value '{value}' not in allowed enum: {enum_values}",
+                        details={
+                            "field": field_name,
+                            "invalid_value": value,
+                            "allowed_values": list(enum_values),
+                        },
                     ))
 
         # Forbidden args
@@ -260,6 +326,7 @@ class SemanticValidator:
                     node_id=node.id,
                     code="FORBIDDEN_ARG",
                     message=f"Node '{node.id}' uses forbidden arg '{forbidden}'",
+                    details={"field": forbidden},
                 ))
 
     def _validate_action_specific_required_args(
@@ -287,6 +354,7 @@ class SemanticValidator:
                     node_id=node.id,
                     code="MISSING_REQUIRED_ARG",
                     message=f"Node '{node.id}' missing required arg '{field_name}' for {node.tool} action={action}",
+                    details={"field": field_name, "tool_id": node.tool, "action": action},
                 ))
 
         for alternatives in tuple(ACTION_REQUIRED_ANY.get(key, ())) + tuple(extension_any.get(action) or ()):
@@ -301,6 +369,11 @@ class SemanticValidator:
                         f"Node '{node.id}' requires one of {list(alternatives)} "
                         f"for {node.tool} action={action}"
                     ),
+                    details={
+                        "one_of_fields": list(alternatives),
+                        "tool_id": node.tool,
+                        "action": action,
+                    },
                 ))
 
     def _validate_path_safety(
