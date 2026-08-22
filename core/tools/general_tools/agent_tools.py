@@ -260,6 +260,25 @@ def handle_agent_get_result(inv: ToolInvocation) -> dict:
                         f"Subagent result ready: {len(full_result)} chars in artifact {artifact_id}",
                         payload,
                     )
+            if status in {"failed", "cancelled", "canceled"}:
+                error_code = (
+                    "SUBAGENT_CANCELLED"
+                    if status in {"cancelled", "canceled"}
+                    else "SUBAGENT_FAILED"
+                )
+                errors = [str(item) for item in (persisted.get("errors") or []) if str(item)]
+                summary = str(
+                    persisted.get("summary")
+                    or (errors[0] if errors else f"Subagent {status}")
+                )
+                return _result(inv, False, {
+                    **payload,
+                    "summary": summary,
+                    "error": summary,
+                    "errors": errors or [summary],
+                    "error_code": error_code,
+                    "retryable": False,
+                })
             return _ok(inv, str(persisted.get("summary") or f"Subagent status: {status}"), payload)
 
         return _error_inv(inv, "subtask not found")

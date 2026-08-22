@@ -41,6 +41,16 @@ _SECRET_ASSIGNMENT_RE = re.compile(
     re.IGNORECASE,
 )
 _REFERENCE_RE = re.compile(r"\b(?:art|job|run|report|trace)[A-Za-z0-9_-]{8,64}\b")
+_PROCESS_ONLY_RE = re.compile(
+    r"(?:^|[。.!！]\s*)(?:好的[，,。\s]*)?(?:"
+    r"(?:我|现在|接下来|下面)(?:将|会|来|准备|正在)?(?:汇总|整理|分析|生成|撰写|给出|呈现|回答)"
+    r"|(?:let me|i(?:'ll| will)|now i(?:'ll| will)|next i(?:'ll| will))\s+"
+    r"(?:summari[sz]e|compose|analy[sz]e|prepare|write|present|answer)"
+    r").{0,160}[。.!！\s]*$",
+    re.IGNORECASE | re.DOTALL,
+)
+_CJK_RE = re.compile(r"[\u3400-\u9fff]")
+_LATIN_RE = re.compile(r"[A-Za-z]")
 
 
 def _is_textual_continuation_edit_claim(claim: str, contract: dict | None) -> bool:
@@ -78,6 +88,33 @@ def validate_response_quality(
         issues.append(ResponseQualityIssue(
             code="CORRUPT_UNICODE",
             message="The answer contains the Unicode replacement character (�). Regenerate the affected words.",
+        ))
+
+    if tool_results and len(value.strip()) <= 320 and _PROCESS_ONLY_RE.search(value.strip()):
+        issues.append(ResponseQualityIssue(
+            code="PROCESS_ONLY_RESPONSE",
+            message=(
+                "The draft is only an internal transition or promise to produce an answer. "
+                "Synthesize the available tool evidence now and return the actual user-facing result."
+            ),
+        ))
+
+    user_cjk = len(_CJK_RE.findall(str(user_input or "")))
+    response_cjk = len(_CJK_RE.findall(value))
+    response_latin = len(_LATIN_RE.findall(value))
+    if (
+        tool_results
+        and user_cjk >= 2
+        and response_cjk == 0
+        and response_latin >= 12
+        and len(value.strip()) <= 320
+    ):
+        issues.append(ResponseQualityIssue(
+            code="USER_LANGUAGE_MISMATCH",
+            message=(
+                "The user wrote in Chinese, but the short draft switched entirely to English. "
+                "Answer in the user's language unless the user explicitly requested another language."
+            ),
         ))
 
     if (

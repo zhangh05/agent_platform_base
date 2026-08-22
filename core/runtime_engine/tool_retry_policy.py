@@ -96,6 +96,13 @@ FORBIDDEN_RETRY_ERRORS: frozenset[str] = frozenset({
     "ARGS_INVALID",
     "ARGS_MISSING",
     "ARGS_TYPE_MISMATCH",
+    "TOOL_ARGUMENT_VALIDATION_FAILED",
+    "ARG_ENUM_INVALID",
+    "ARG_TYPE_MISMATCH",
+    "ARG_RANGE_INVALID",
+    "ARG_LENGTH_INVALID",
+    "MISSING_REQUIRED_ARG",
+    "UNKNOWN_ARGUMENT",
 })
 
 # Side effects that cannot be retried safely — the first attempt

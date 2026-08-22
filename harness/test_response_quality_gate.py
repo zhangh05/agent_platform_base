@@ -64,6 +64,29 @@ def test_quality_gate_accepts_action_claim_with_successful_tool_evidence():
     assert issues == []
 
 
+def test_quality_gate_rejects_process_only_transition_after_tool_results():
+    issues = validate_response_quality(
+        "I have all the weather data. Let me compose a clear summary.",
+        user_input="查看未来十天珠三角城市天气",
+        tool_results=[SimpleNamespace(ok=True, output={"source_type": "structured_weather"})],
+    )
+
+    assert {issue.code for issue in issues} == {
+        "PROCESS_ONLY_RESPONSE",
+        "USER_LANGUAGE_MISMATCH",
+    }
+
+
+def test_quality_gate_does_not_reject_complete_english_answer_for_english_user():
+    issues = validate_response_quality(
+        "The forecast is warm and humid, with thunderstorms likely tomorrow.",
+        user_input="What is the weather forecast?",
+        tool_results=[SimpleNamespace(ok=True, output={"source_type": "structured_weather"})],
+    )
+
+    assert issues == []
+
+
 def test_quality_gate_rejects_credential_assignment():
     issues = validate_response_quality("password: super-secret", user_input="显示密码")
 
@@ -139,6 +162,54 @@ def test_query_loop_corrects_unverified_claim_before_delivery():
     assert result.final_response == "尚未执行部署，无法确认成功。"
     assert len(calls) == 2
     assert result.metadata["response_quality_corrections"] == 1
+
+
+def test_query_loop_corrects_process_only_transition_before_delivery():
+    calls: list[dict] = []
+
+    def llm_mock(**kwargs):
+        calls.append(kwargs)
+        if len(calls) == 1:
+            from agent.llm.provider import LLMResponse
+            from agent.llm.schemas import LLMToolCall
+            return LLMResponse(
+                content="",
+                tool_calls=[LLMToolCall(
+                    id="weather-1",
+                    name="web.manage",
+                    arguments={"action": "weather", "location": "广州"},
+                )],
+            )
+        if len(calls) == 2:
+            return "I have all the weather data. Let me compose a clear summary."
+        return "广州未来十天以高温湿热为主，期间有雷阵雨，请关注临近预报。"
+
+    class Runtime:
+        @staticmethod
+        def has_tool(_name):
+            return True
+
+        @staticmethod
+        def invoke_raw(_tool_id, _arguments):
+            return {
+                "ok": True,
+                "source_type": "structured_weather",
+                "summary": "广州未来十天有雷阵雨",
+            }
+
+    runtime = Runtime()
+    engine = SSOTRuntimeEngine(
+        config=SSOTRuntimeConfig(max_query_loop_iterations=5),
+        llm_invoke=llm_mock,
+        tool_runtime=runtime,
+    )
+
+    result = asyncio.run(engine.run(user_input="查看广州未来十天天气", workspace_id="test"))
+
+    assert result.success is True
+    assert result.final_response.startswith("广州未来十天")
+    assert result.metadata["response_quality_corrections"] == 1
+    assert len(calls) == 3
 
 
 def test_query_loop_stops_if_unverified_claim_persists():

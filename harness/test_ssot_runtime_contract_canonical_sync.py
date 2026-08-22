@@ -136,6 +136,38 @@ def test_tool_executor_enforces_the_same_closed_schema_and_cardinality():
     assert any("below minimum 2" in error for error in errors)
 
 
+def test_tool_executor_classifies_schema_rejection_as_non_retryable():
+    from core.tools.executor import ToolExecutor
+    from core.tools.registry import ToolRegistry
+    from core.tools.schemas import ToolInvocation, ToolSpec
+
+    registry = ToolRegistry()
+    registry.register_tool(
+        ToolSpec(
+            tool_id="test.closed_schema",
+            name="closed schema",
+            description="test",
+            category="tool",
+            input_schema={
+                "type": "object",
+                "properties": {"subtask_id": {"type": "string"}},
+                "additionalProperties": False,
+            },
+        ),
+        lambda _invocation: {"ok": True},
+    )
+
+    result = ToolExecutor(registry).execute(ToolInvocation(
+        tool_id="test.closed_schema",
+        arguments={"task_id": "wrong-id"},
+    ))
+
+    assert result.status == "blocked"
+    assert result.output["executed"] is False
+    assert result.output["error_code"] == "TOOL_ARGUMENT_VALIDATION_FAILED"
+    assert result.output["retryable"] is False
+
+
 def test_system_contract_exposes_local_info_action():
     from core.runtime_engine.contracts import get_contract
     from core.tools.canonical_registry import CANONICAL_REGISTRY

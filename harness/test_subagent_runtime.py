@@ -417,10 +417,12 @@ def test_tracking_exposes_only_latest_poll_but_keeps_full_events(monkeypatch):
         _Runtime(),
     )
     poll_number = 0
+    poll_arguments = []
 
     async def _poll(call, **_kwargs):
         nonlocal poll_number
         poll_number += 1
+        poll_arguments.append(dict(call.arguments))
         done = poll_number == 3
         status = "succeeded" if done else "running"
         return StreamingToolResult(
@@ -470,10 +472,44 @@ def test_tracking_exposes_only_latest_poll_but_keeps_full_events(monkeypatch):
     exposed = asyncio.run(loop._settle_tracking(ctx, [initial]))
 
     assert poll_number == 3
+    assert poll_arguments == [
+        {"action": "get", "subtask_id": "sub-1"},
+        {"action": "get", "subtask_id": "sub-1"},
+        {"action": "get", "subtask_id": "sub-1"},
+    ]
+    assert all("task_id" not in arguments for arguments in poll_arguments)
     assert len(exposed) == 1
     assert exposed[0].call_id == "spawn-1_track_3"
     assert exposed[0].output["tracking_poll_count"] == 3
     assert len(ctx.extras["tracking_events"]) == 4
+
+
+def test_agent_get_exposes_terminal_failure_as_failed_tool_result(monkeypatch):
+    from core.tools.general_tools.agent_tools import handle_agent_get_result
+    from core.tools.schemas import ToolInvocation
+
+    monkeypatch.setattr(
+        "agent.runtime.durable.subagent.get_subagent_task",
+        lambda _workspace_id, _subtask_id: {
+            "subtask_id": "sub-failed123",
+            "workspace_id": "default",
+            "status": "failed",
+            "summary": "Subagent LLM call failed",
+            "errors": ["provider_timeout"],
+        },
+    )
+    result = handle_agent_get_result(ToolInvocation(
+        tool_id="agent.manage",
+        workspace_id="default",
+        arguments={"action": "get", "subtask_id": "sub-failed123"},
+    ))
+
+    assert result["ok"] is False
+    assert result["error_code"] == "SUBAGENT_FAILED"
+    assert result["status"] == "failed"
+    assert result["subtask_id"] == "sub-failed123"
+    assert result["tracking"]["done"] is True
+    assert result["retryable"] is False
 
 
 def test_agent_spawn_defaults_to_tracked_background(monkeypatch):

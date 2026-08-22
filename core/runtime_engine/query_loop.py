@@ -1212,6 +1212,22 @@ class StreamingToolExecutor:
     @staticmethod
     def _record_retry_decision(ctx: StatelessContext, node: ExecutionNode, decision) -> int:
         events = list(ctx.extras.get("retry_events") or [])
+        # Exhaustion is the terminal state of the retry attempt already
+        # recorded for this node, not a second "not retried" incident. Merge
+        # it into that event so audit and UI both report one coherent recovery
+        # story per tool call.
+        if decision.reason == "max_retries_exhausted":
+            for index in range(len(events) - 1, -1, -1):
+                event = events[index]
+                if event.get("node_id") != node.id:
+                    continue
+                events[index] = {
+                    **event,
+                    "exhausted": True,
+                    "terminal_reason": decision.reason,
+                }
+                ctx.extras["retry_events"] = events
+                return index
         events.append({
             **decision.to_dict(),
             "node_id": node.id,
@@ -2530,6 +2546,10 @@ class QueryLoop:
                 contract_quality_codes = {
                     "TASK_CONTINUATION_CONTRACT_VIOLATION",
                 }
+                delivery_quality_codes = {
+                    "PROCESS_ONLY_RESPONSE",
+                    "USER_LANGUAGE_MISMATCH",
+                }
                 safety_blocking_issues = [
                     issue for issue in quality_issues
                     if issue.code in safety_hard_quality_codes
@@ -2538,9 +2558,15 @@ class QueryLoop:
                     issue for issue in quality_issues
                     if issue.code in contract_quality_codes
                 ]
-                blocking_issues = safety_blocking_issues + contract_issues
+                delivery_issues = [
+                    issue for issue in quality_issues
+                    if issue.code in delivery_quality_codes
+                ]
+                blocking_issues = safety_blocking_issues + contract_issues + delivery_issues
                 max_quality_corrections = (
-                    2 if contract_issues and not safety_blocking_issues else 1
+                    2
+                    if (contract_issues or delivery_issues) and not safety_blocking_issues
+                    else 1
                 )
                 if blocking_issues:
                     if response_quality_attempts < max_quality_corrections and iterations < max_iterations:
@@ -2569,7 +2595,9 @@ class QueryLoop:
                         final_response=(
                             "本轮文本交付未满足数量、编号或前缀合同，未覆盖上一版已交付内容；"
                             "已完成有界格式纠正但仍未满足服务器校验。请重试或调整交付约束。"
-                            if contract_issues and not safety_blocking_issues
+                            if contract_issues and not safety_blocking_issues and not delivery_issues
+                            else self._build_tool_result_fallback(ctx, all_results)
+                            if delivery_issues and not safety_blocking_issues
                             else "当前答复包含无法由本轮证据支持的完成声明、引用或敏感内容；"
                             "为避免误导，未直接交付该内容。请提供可验证结果或允许先执行必要核验。"
                         ),
@@ -2579,7 +2607,9 @@ class QueryLoop:
                         llm_calls=llm_calls,
                         error=(
                             "task_continuation_contract_failed"
-                            if contract_issues and not safety_blocking_issues
+                            if contract_issues and not safety_blocking_issues and not delivery_issues
+                            else "response_delivery_incomplete"
+                            if delivery_issues and not safety_blocking_issues
                             else "response_quality_failed"
                         ),
                     )
@@ -3682,8 +3712,20 @@ class QueryLoop:
             task_id = str(state["task_id"])
             poll_call_id = f"{source_result.call_id}_track_{poll_index}"
             poll_arguments = dict(tracking.get("poll_arguments") or {})
-            poll_arguments.setdefault("task_id", task_id)
-            poll_arguments.setdefault("action", str(tracking.get("poll_action") or "get"))
+            # A producer-declared polling contract is authoritative. Different
+            # tools intentionally use different identifiers (for example
+            # ``subtask_id`` and ``job_id``); injecting a generic ``task_id``
+            # corrupts closed schemas. The generic fallback exists only for
+            # producers that supplied no polling arguments.
+            if poll_arguments:
+                poll_arguments.setdefault(
+                    "action", str(tracking.get("poll_action") or "get")
+                )
+            else:
+                poll_arguments = {
+                    "action": str(tracking.get("poll_action") or "get"),
+                    "task_id": task_id,
+                }
             poll_call = LLMToolCall(
                 id=poll_call_id,
                 name=tool_name,

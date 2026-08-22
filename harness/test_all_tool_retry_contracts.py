@@ -182,3 +182,33 @@ def test_action_level_retry_executes_only_safe_reads(
 
     assert calls["count"] == expected_calls
     assert results[0].ok is expected_ok
+
+
+def test_exhausted_retry_is_one_event_not_a_second_blocked_incident():
+    config = SSOTRuntimeConfig(max_retries_per_node=1)
+    runtime = ToolRuntime(config)
+    calls = {"count": 0}
+
+    async def always_timeout(_args):
+        calls["count"] += 1
+        return {"ok": False, "error": "request timed out"}
+
+    runtime.register("knowledge.manage", always_timeout)
+    executor = StreamingToolExecutor(runtime, config)
+    ctx = StatelessContext("default", "s1", "r1", "test")
+
+    results = asyncio.run(executor.execute([
+        LLMToolCall(
+            id="call_timeout",
+            name="knowledge.manage",
+            arguments={"action": "search"},
+        ),
+    ], ctx=ctx))
+
+    assert results[0].ok is False
+    assert calls["count"] == 2
+    assert len(ctx.extras["retry_events"]) == 1
+    assert ctx.extras["retry_events"][0]["exhausted"] is True
+    assert ctx.extras["retry_summary"]["retry_attempts"] == 1
+    assert ctx.extras["retry_summary"]["retry_failed"] == 1
+    assert ctx.extras["retry_summary"]["retry_blocked"] == 0

@@ -208,6 +208,8 @@ export interface AgentResult {
       blocked_by_policy?: boolean;
       final_status?: string;
       duration_ms?: number;
+      exhausted?: boolean;
+      terminal_reason?: string;
     }>;
     /** Invalid tool arguments returned to the model for bounded correction. */
     validation_correction_summary?: {
