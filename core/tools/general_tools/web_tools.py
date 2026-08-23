@@ -581,6 +581,8 @@ def handle_weather_current(inv: ToolInvocation) -> dict:
         language=language,
         units=units,
         include_current=True,
+        latitude=args.get("latitude"),
+        longitude=args.get("longitude"),
     )
     if structured.get("ok"):
         return _weather_structured_result(
@@ -629,6 +631,8 @@ def handle_weather_forecast(inv: ToolInvocation) -> dict:
         language=language,
         units=units,
         include_current=False,
+        latitude=args.get("latitude"),
+        longitude=args.get("longitude"),
     )
     if structured.get("ok"):
         return _weather_structured_result(
@@ -677,17 +681,36 @@ def handle_weather_batch(inv: ToolInvocation) -> dict:
     if not isinstance(raw_locations, list):
         return _error_inv(inv, "locations must be an array of 2-10 location strings")
 
-    locations: list[str] = []
-    seen: set[str] = set()
+    location_specs: list[dict] = []
+    seen: set[tuple[str, float | None, float | None]] = set()
     for value in raw_locations:
-        location = str(value or "").strip()
-        key = location.casefold()
+        latitude = longitude = None
+        if isinstance(value, str):
+            location = value.strip()
+        elif isinstance(value, dict):
+            location = str(value.get("name") or value.get("location") or "").strip()
+            latitude = value.get("latitude")
+            longitude = value.get("longitude")
+            has_coordinates = latitude is not None or longitude is not None
+            if has_coordinates:
+                if (
+                    latitude is None or longitude is None
+                    or isinstance(latitude, bool) or isinstance(longitude, bool)
+                    or not isinstance(latitude, (int, float)) or not isinstance(longitude, (int, float))
+                    or not -90 <= float(latitude) <= 90 or not -180 <= float(longitude) <= 180
+                ):
+                    return _error_inv(inv, "location objects require a valid latitude/longitude pair")
+                latitude, longitude = float(latitude), float(longitude)
+        else:
+            return _error_inv(inv, "locations items must be place strings or objects with name and optional coordinates")
+        key = (location.casefold(), latitude, longitude)
         if not location or key in seen:
             continue
         seen.add(key)
-        locations.append(location)
-    if not 2 <= len(locations) <= 10:
+        location_specs.append({"name": location, "latitude": latitude, "longitude": longitude})
+    if not 2 <= len(location_specs) <= 10:
         return _error_inv(inv, "locations must contain 2-10 unique non-empty locations")
+    locations = [item["name"] for item in location_specs]
 
     # Match scalar web.manage(action=weather): omitted days means current
     # weather, so compilation never changes the model's requested semantics.
@@ -695,17 +718,22 @@ def handle_weather_batch(inv: ToolInvocation) -> dict:
     language = str(args.get("language") or "zh-CN").strip() or "zh-CN"
     units = str(args.get("units") or "metric").strip().lower()
 
-    def lookup(location: str) -> dict:
+    def lookup(spec: dict) -> dict:
+        location = spec["name"]
+        child_arguments = {
+            **args,
+            "action": "weather",
+            "location": location,
+            "days": days,
+            "language": language,
+            "units": units,
+        }
+        if spec["latitude"] is not None:
+            child_arguments["latitude"] = spec["latitude"]
+            child_arguments["longitude"] = spec["longitude"]
         child = ToolInvocation(
             tool_id=inv.tool_id,
-            arguments={
-                **args,
-                "action": "weather",
-                "location": location,
-                "days": days,
-                "language": language,
-                "units": units,
-            },
+            arguments=child_arguments,
             workspace_id=inv.workspace_id,
             session_id=inv.session_id,
             run_id=inv.run_id,
@@ -724,8 +752,8 @@ def handle_weather_batch(inv: ToolInvocation) -> dict:
                 "error": f"weather_lookup_exception:{type(exc).__name__}",
             }
 
-    with ThreadPoolExecutor(max_workers=min(5, len(locations))) as pool:
-        outcomes = list(pool.map(lookup, locations))
+    with ThreadPoolExecutor(max_workers=min(5, len(location_specs))) as pool:
+        outcomes = list(pool.map(lookup, location_specs))
 
     forecasts: list[dict] = []
     failed_locations: list[dict] = []
@@ -762,6 +790,7 @@ def handle_weather_batch(inv: ToolInvocation) -> dict:
             "error": "weather_batch_failed",
             "summary": f"天气批量查询失败：0/{len(locations)} 个地点成功。",
             "requested_locations": locations,
+            "requested_location_details": location_specs,
             "failed_locations": failed_locations,
             "coverage": {
                 "requested_locations": locations,
@@ -790,6 +819,7 @@ def handle_weather_batch(inv: ToolInvocation) -> dict:
             "source_quality": "public_data_api",
         }],
         "forecasts": forecasts,
+        "requested_location_details": location_specs,
         "failed_locations": failed_locations,
         "coverage": {
             "requested_locations": locations,

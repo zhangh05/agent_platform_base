@@ -163,3 +163,64 @@ def test_weather_batch_does_not_count_search_fallback_as_structured_success(monk
     assert result["ok"] is False
     assert result["coverage"]["successful_location_count"] == 0
     assert result["coverage"]["failed_locations"] == ["甲地", "乙地"]
+
+
+def test_weather_batch_accepts_named_coordinate_locations_through_semantic_gate(monkeypatch):
+    from core.runtime_engine.models import ExecutionNode
+    from core.runtime_engine.semantic_validator import SemanticValidator
+    from core.tools.general_tools import web_tools
+    from core.tools.schemas import ToolInvocation
+
+    locations = [
+        {"name": "广州", "latitude": 23.11667, "longitude": 113.25},
+        {"name": "深圳", "latitude": 22.54554, "longitude": 114.0683},
+    ]
+    validation = SemanticValidator().validate([ExecutionNode(
+        id="coordinate-batch", tool="web.manage",
+        args={"action": "weather_batch", "locations": locations, "days": 2},
+    )])
+    assert validation.valid is True
+
+    observed = []
+    def fake_forecast(inv):
+        observed.append(dict(inv.arguments))
+        return {
+            "ok": True,
+            "resolved_location": {
+                "name": inv.arguments["location"],
+                "latitude": inv.arguments["latitude"],
+                "longitude": inv.arguments["longitude"],
+            },
+            "forecast_daily": [{"date": "2026-08-23", "condition": "晴"}],
+        }
+
+    monkeypatch.setattr(web_tools, "handle_weather_forecast", fake_forecast)
+    result = web_tools.handle_weather_batch(ToolInvocation(
+        tool_id="web.manage",
+        arguments={"action": "weather_batch", "locations": locations, "days": 2},
+        workspace_id="default",
+        requested_by="subagent",
+    ))
+
+    assert result["ok"] is True
+    assert [call["location"] for call in observed] == ["广州", "深圳"]
+    assert [(call["latitude"], call["longitude"]) for call in observed] == [
+        (23.11667, 113.25), (22.54554, 114.0683),
+    ]
+    assert result["requested_location_details"] == locations
+
+
+def test_read_only_timeout_is_failed_not_unknown_execution_outcome():
+    from types import SimpleNamespace
+    from core.runtime_engine.turn_outcome import (
+        derive_execution_outcome,
+        derive_tool_execution_outcome,
+    )
+
+    result = SimpleNamespace(
+        ok=False,
+        execution_may_continue=True,
+        output={"read_only": True},
+    )
+    assert derive_tool_execution_outcome([result]) == "failed"
+    assert derive_execution_outcome([result], terminal_error="tool_timeout") == "failed"

@@ -6,7 +6,11 @@ from typing import Any
 
 def derive_tool_execution_outcome(tool_results: list[Any]) -> str:
     """Aggregate tool-attempt facts without claiming the user task outcome."""
-    if any(bool(getattr(result, "execution_may_continue", False)) for result in tool_results):
+    if any(
+        bool(getattr(result, "execution_may_continue", False))
+        and not bool((getattr(result, "output", None) or {}).get("read_only", False))
+        for result in tool_results
+    ):
         return "unknown"
     partial_success = any(
         bool((getattr(result, "output", None) or {}).get("partial"))

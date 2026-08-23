@@ -683,8 +683,13 @@ _WEB_ARGS = {
         ),
     },
     "locations": {
-        "type": "array", "items": {"type": "string"}, "minItems": 2, "maxItems": 10,
-        "description": "Two to ten explicit weather locations for one bounded batch lookup.",
+        "type": "array", "items": {}, "minItems": 2, "maxItems": 10,
+        "description": (
+            "Two to ten explicit weather locations for one bounded batch lookup. "
+            "Each item is either a non-empty place string or an object with a non-empty "
+            "name and an optional latitude/longitude pair; when both coordinates are supplied, "
+            "the lookup uses those exact coordinates instead of geocoding the name."
+        ),
     },
     "days": {"type": "integer", "minimum": 1, "maximum": 10, "description": "Forecast horizon in days (1-10)."},
     "language": {"type": "string"}, "units": {"type": "string", "enum": ["metric", "imperial"]},

@@ -457,8 +457,38 @@ _WEATHER_PROVIDER_SLOTS = threading.BoundedSemaphore(4)
 
 
 def _lookup_open_meteo_weather(*, location: str, days: int, language: str,
-                               units: str, include_current: bool) -> dict:
-    """Fetch structured weather data from Open-Meteo's no-key public APIs."""
+                               units: str, include_current: bool,
+                               latitude: float | None = None,
+                               longitude: float | None = None) -> dict:
+    """Fetch structured weather data from Open-Meteo's no-key public APIs.
+
+    A caller may provide a complete latitude/longitude pair for an exact location.
+    That stays on the same canonical weather path while avoiding an unnecessary
+    name-resolution round trip for delegated, coordinate-backed requests.
+    """
+    direct_coordinates = latitude is not None or longitude is not None
+    if direct_coordinates:
+        if (
+            latitude is None or longitude is None
+            or isinstance(latitude, bool) or isinstance(longitude, bool)
+            or not isinstance(latitude, (int, float)) or not isinstance(longitude, (int, float))
+            or not -90 <= float(latitude) <= 90 or not -180 <= float(longitude) <= 180
+        ):
+            return _result(_DummyInv(""), False, {
+                "status": "invalid_coordinates",
+                "errors": ["latitude_longitude_must_be_a_valid_pair"],
+            })
+        latitude = float(latitude)
+        longitude = float(longitude)
+        resolved_location = {
+            "name": location,
+            "latitude": latitude,
+            "longitude": longitude,
+            "timezone": "",
+            "provider": "user_coordinates",
+            "provider_id": "",
+            "confidence": 1.0,
+        }
     acquired = _WEATHER_PROVIDER_SLOTS.acquire(timeout=20)
     if not acquired:
         return _result(_DummyInv(""), False, {
@@ -467,21 +497,35 @@ def _lookup_open_meteo_weather(*, location: str, days: int, language: str,
         })
     try:
         import requests
-        from core.resolution import resolve_location
+        if not direct_coordinates:
+            from core.resolution import resolve_location
 
-        resolution = resolve_location(
-            location,
-            language=_open_meteo_language(language),
-        )
-        if not resolution.ok or resolution.resolved is None:
-            return _result(_DummyInv(""), False, {
-                "status": resolution.status,
-                "errors": [resolution.status],
-                "location_resolution": resolution.as_dict(),
-            })
-        place = resolution.resolved
-        latitude = place.latitude
-        longitude = place.longitude
+            resolution = resolve_location(
+                location,
+                language=_open_meteo_language(language),
+            )
+            if not resolution.ok or resolution.resolved is None:
+                return _result(_DummyInv(""), False, {
+                    "status": resolution.status,
+                    "errors": [resolution.status],
+                    "location_resolution": resolution.as_dict(),
+                })
+            place = resolution.resolved
+            latitude = place.latitude
+            longitude = place.longitude
+            resolved_name = ", ".join(
+                str(v) for v in (place.canonical_name, place.admin1, place.country)
+                if v
+            )
+            resolved_location = {
+                "name": resolved_name or place.canonical_name or location,
+                "latitude": latitude,
+                "longitude": longitude,
+                "timezone": "",
+                "provider": place.provider,
+                "provider_id": place.provider_id,
+                "confidence": resolution.confidence,
+            }
         forecast_params = {
             "latitude": latitude,
             "longitude": longitude,
@@ -546,25 +590,14 @@ def _lookup_open_meteo_weather(*, location: str, days: int, language: str,
                 "status": "forecast_empty",
                 "errors": ["open_meteo_forecast_empty"],
             })
-        resolved_name = ", ".join(
-            str(v) for v in (place.canonical_name, place.admin1, place.country)
-            if v
-        )
+        resolved_location["timezone"] = weather.get("timezone", "")
         result = {
             "status": "succeeded",
             "provider": "open_meteo",
             "source_type": "structured_weather",
             "source_url": "https://open-meteo.com/",
             "location": location,
-            "resolved_location": {
-                "name": resolved_name or place.canonical_name or location,
-                "latitude": latitude,
-                "longitude": longitude,
-                "timezone": weather.get("timezone", ""),
-                "provider": place.provider,
-                "provider_id": place.provider_id,
-                "confidence": resolution.confidence,
-            },
+            "resolved_location": resolved_location,
             "current": current,
             "forecast_daily": daily,
         }
