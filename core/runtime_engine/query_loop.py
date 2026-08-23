@@ -914,6 +914,11 @@ class StreamingToolExecutor:
                     )
                 else:
                     result_by_id[tc.id] = r
+                result = result_by_id[tc.id]
+                if self._result_may_continue(result):
+                    output = dict(result.output or {})
+                    output["read_only"] = True
+                    result.output = output
 
         read_group: list[LLMToolCall] = []
         for tc in tool_calls:
@@ -967,17 +972,13 @@ class StreamingToolExecutor:
                         from core.tools.context import reset_runtime_operation_context
                         reset_runtime_operation_context(operation_token)
             result = result_by_id[tc.id]
-            if self._result_may_continue(result) and self._is_read_only_call(tc):
-                output = dict(result.output or {})
-                output["read_only"] = True
-                result.output = output
             if operation is not None and ctx is not None:
                 from .operation_ledger import finish_operation
                 final_operation = finish_operation(ctx.workspace_id, operation["operation_id"], result)
                 output = dict(result.output or {})
                 output["operation_id"] = final_operation["operation_id"]
                 result.output = output
-            if self._result_may_continue(result):
+            if self._result_may_continue(result) and not self._is_read_only_call(tc):
                 write_fence = self._mark_unknown_write_outcome(ctx, tc, result)
         await execute_read_group(read_group)
 

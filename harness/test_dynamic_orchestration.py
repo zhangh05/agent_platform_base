@@ -1071,3 +1071,37 @@ def test_queryloop_replans_batch_introduced_after_initial_constraint_check(monke
     assert result.success is True
     assert received == [{"action": "weather", "location": "上海", "days": 10}]
     assert any("规范化后的计划仍包含批量 action" in message.content for message in prompts[1])
+
+
+def test_executable_read_timeout_never_installs_unknown_write_fence(monkeypatch):
+    from core.runtime_engine.query_loop import StreamingToolResult
+
+    class Runtime:
+        def invoke_raw(self, _tool_id, _arguments):
+            raise AssertionError("mocked _execute_one should own this test")
+
+    executor = StreamingToolExecutor(Runtime(), SSOTRuntimeConfig())
+
+    async def fake_execute_one(call, *, ctx=None, budget=None):
+        return StreamingToolResult(
+            tool_name=call.name,
+            call_id=call.id,
+            output={},
+            ok=False,
+            error="read operation may still be finishing",
+            error_code="TOOL_TIMEOUT_UNCERTAIN",
+            execution_may_continue=True,
+        )
+
+    monkeypatch.setattr(executor, "_execute_one", fake_execute_one)
+    ctx = _ctx()
+    call = LLMToolCall(
+        id="read-timeout", name="web.manage",
+        arguments={"action": "weather_batch", "locations": ["广州", "深圳"], "days": 2},
+        step_id="read_timeout",
+    )
+    results = asyncio.run(executor.execute([call], ctx=ctx))
+
+    assert results[0].execution_may_continue is True
+    assert results[0].output["read_only"] is True
+    assert "unknown_outcome" not in ctx.extras
