@@ -195,6 +195,17 @@ class SemanticValidator:
                     ))
                 continue
             field_schema = properties[field_name]
+            if isinstance(field_schema.get("oneOf"), list):
+                from core.tools.executor import validate_schema_value
+                schema_errors = validate_schema_value(field_name, value, field_schema)
+                if schema_errors:
+                    result.errors.append(SemanticError(
+                        node_id=node.id,
+                        code="ARG_TYPE_MISMATCH",
+                        message=f"Node '{node.id}' arg '{field_name}' does not match its published schema",
+                        details={"field": field_name, "schema_errors": schema_errors[:5]},
+                    ))
+                continue
             expected_type = field_schema.get("type")
 
             type_mismatch = False
@@ -277,6 +288,27 @@ class SemanticValidator:
                         message=f"Node '{node.id}' arg '{field_name}' items must be string",
                         details={"field": field_name, "item_type": "string"},
                     ))
+                item_schema = field_schema.get("items") or {}
+                if isinstance(item_schema.get("oneOf"), list):
+                    from core.tools.executor import validate_schema_value
+                    for index, item in enumerate(value):
+                        schema_errors = validate_schema_value(
+                            f"{field_name}[{index}]", item, item_schema,
+                        )
+                        if schema_errors:
+                            result.errors.append(SemanticError(
+                                node_id=node.id,
+                                code="ARG_TYPE_MISMATCH",
+                                message=(
+                                    f"Node '{node.id}' arg '{field_name}[{index}]' does not match "
+                                    "its published item schema"
+                                ),
+                                details={
+                                    "field": field_name,
+                                    "item_index": index,
+                                    "schema_errors": schema_errors[:5],
+                                },
+                            ))
 
             # Enum validation is strictly canonical. QueryLoop normally
             # normalizes known aliases before this guard runs.

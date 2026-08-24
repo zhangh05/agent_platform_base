@@ -157,6 +157,16 @@ def validate_response_quality(
             ),
         ))
 
+    if _has_weather_evidence(tool_results) and _overstates_weather_uncertainty(value):
+        issues.append(ResponseQualityIssue(
+            code="WEATHER_UNCERTAINTY_OVERSTATED",
+            message=(
+                "The answer turns a probabilistic hail forecast into a definite event. "
+                "Preserve evidence qualifiers such as 可能, 局地可能, 风险, or 概率; "
+                "do not state hail as certain when the provider did not."
+            ),
+        ))
+
     delivered_images = int(((evidence or {}).get("delivered_by_kind") or {}).get("image", 0) or 0)
     if delivered_images and re.search(
         r"(?:无法|不能|未能|没法).{0,18}(?:查看|读取|识别|分析).{0,12}(?:图片|图像|视觉内容)|"
@@ -212,6 +222,16 @@ def validate_response_quality(
             ))
 
     return issues
+
+
+def _overstates_weather_uncertainty(text: str) -> bool:
+    """Detect definite hail claims in otherwise probabilistic forecasts."""
+    for clause in re.split(r"[。；;\n]|(?<=[，,])", str(text or "")):
+        if "冰雹" not in clause:
+            continue
+        if not re.search(r"可能|或有|概率|风险|局地|不排除|chance|risk|possible", clause, re.IGNORECASE):
+            return True
+    return False
 
 
 def build_response_quality_nudge(issues: Iterable[ResponseQualityIssue]) -> str:

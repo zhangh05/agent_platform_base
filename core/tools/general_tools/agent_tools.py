@@ -46,7 +46,7 @@ def _inv_session_id(inv: ToolInvocation) -> str:
 def _run_durable_subagent(*, instruction: str, workspace_id: str, session_id: str,
                           parent_task_id: str = "",
                           profile_id: str = "research_agent",
-                          max_turns: int = 3,
+                          max_turns: int | None = None,
                           background: bool = False) -> dict:
     from agent.runtime.durable.subagent import (
         create_subagent_task,
@@ -72,7 +72,7 @@ def _run_durable_subagent(*, instruction: str, workspace_id: str, session_id: st
             "retryable": False,
         }
 
-    effective_turns = min(max_turns, profile.max_steps)
+    effective_turns = min(max_turns or profile.max_steps, profile.max_steps)
 
     created = create_subagent_task(
         parent_task_id=parent_task_id,
@@ -134,7 +134,7 @@ def _run_durable_subagent(*, instruction: str, workspace_id: str, session_id: st
 # ── Generic spawn dispatcher ─────────────────────────────────────────
 
 
-def _spawn_agent(inv: ToolInvocation, profile_id: str, default_max_turns: int = 5) -> dict:
+def _spawn_agent(inv: ToolInvocation, profile_id: str) -> dict:
     """Generic dispatcher for spawning a subagent of a specific profile."""
     args = inv.arguments
     instruction = str(args.get("instruction", "")).strip()
@@ -161,7 +161,10 @@ def _spawn_agent(inv: ToolInvocation, profile_id: str, default_max_turns: int = 
         )
 
     workspace_id = _caller_workspace(inv)
-    effective_turns = max_turns or default_max_turns
+    # Omission means "use the selected profile's budget". A hidden generic
+    # default previously reduced every profile to five turns and made valid
+    # delegated research fail before synthesis.
+    effective_turns = max_turns or profile.max_steps
 
     try:
         validate_workspace_id(workspace_id)
@@ -194,7 +197,7 @@ def handle_agent_spawn(inv: ToolInvocation) -> dict:
     """Spawn a durable subagent using a generic base profile."""
     args = inv.arguments or {}
     profile_id = str(args.get("profile_id") or "research_agent").strip()
-    return _spawn_agent(inv, profile_id=profile_id, default_max_turns=5)
+    return _spawn_agent(inv, profile_id=profile_id)
 
 
 def handle_agent_list(inv: ToolInvocation) -> dict:

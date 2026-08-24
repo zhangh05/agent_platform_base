@@ -384,15 +384,11 @@ def create_app():
                 exc_info=True,
             )
         try:
-            from agent.runtime.task_state import (
-                reconcile_active_task_states,
-                reconcile_legacy_parallel_read_timeout_states,
-            )
+            from agent.runtime.task_state import reconcile_active_task_states
             from backend.core.identity import get_user
             from storage.principal import known_storage_principals, storage_principal
             from storage.workspace_store import list_workspace_ids
             reconciled_task_states = {}
-            reconciled_legacy_parallel_timeouts = {}
             all_workspace_ids = list_workspace_ids(include_system=False)
             for principal in known_storage_principals() or [""]:
                 identity = get_user(principal)
@@ -404,20 +400,11 @@ def create_app():
                             workspace_id,
                             started_before=_backend_started_at,
                         )
-                        reconciled_legacy_parallel_timeouts[result_key] = (
-                            reconcile_legacy_parallel_read_timeout_states(workspace_id)
-                        )
             if any(int(value.get("interrupted") or 0) for value in reconciled_task_states.values()):
                 import logging as _task_state_log
                 _task_state_log.getLogger(__name__).warning(
                     "[task state startup] marked in-flight tasks interrupted: %s",
                     reconciled_task_states,
-                )
-            if any(int(value.get("reconciled") or 0) for value in reconciled_legacy_parallel_timeouts.values()):
-                import logging as _task_state_log
-                _task_state_log.getLogger(__name__).warning(
-                    "[task state startup] closed legacy all-read timeout fences: %s",
-                    reconciled_legacy_parallel_timeouts,
                 )
         except Exception as exc:
             import logging as _task_state_log

@@ -51,6 +51,7 @@ _CALLER_RESERVED_RUNTIME_METADATA_KEYS = frozenset({
     # They are accepted only from SubagentRuntimeControl below.
     "subagent_profile",
     "max_steps",
+    "max_tool_nodes",
     "subtask_id",
     "parent_session_id",
     "cancel_check",
@@ -106,6 +107,7 @@ def _apply_runtime_control(metadata: dict[str, Any], runtime_control: Any) -> No
     metadata.update({
         "subagent_profile": dict(profile),
         "max_steps": max(1, int(runtime_control.max_steps or 1)),
+        "max_tool_nodes": max(1, int(runtime_control.max_tool_nodes or runtime_control.max_steps or 1)),
         "subtask_id": str(runtime_control.subtask_id or ""),
         "parent_session_id": str(runtime_control.parent_session_id or ""),
     })
@@ -433,7 +435,7 @@ def run_ssot_turn(
             emitter=emitter,
             prebuilt_registry=ssot_registry,
             max_query_loop_iterations=metadata_in.get("max_steps"),
-            max_tool_nodes=metadata_in.get("max_steps"),
+            max_tool_nodes=metadata_in.get("max_tool_nodes"),
             context_budget=runtime_context_budget,
             approved_tool_grant=metadata_in.get("__approved_tool_continuation"),
             approval_run_id=(

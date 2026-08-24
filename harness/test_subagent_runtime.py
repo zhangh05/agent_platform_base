@@ -204,6 +204,7 @@ class TestSubagentRuntime:
         assert isinstance(control, SubagentRuntimeControl)
         assert control.profile["profile_id"] == "research_agent"
         assert control.max_steps == get_profile("research_agent").max_steps
+        assert control.max_tool_nodes == get_profile("research_agent").max_tool_nodes
         assert control.subtask_id == created["subtask_id"]
         assert control.parent_session_id == "parent-s1"
         assert callable(control.cancel_check)
@@ -235,11 +236,11 @@ class TestSubagentRuntime:
             trace_id="t1",
             requested_by="subagent",
             max_query_loop_iterations=3,
-            max_tool_nodes=3,
+            max_tool_nodes=7,
         )
         assert engine._config.max_query_loop_iterations == 3
-        assert engine._config.max_nodes == 3
-        assert engine._config.max_tool_calls_per_iteration == 3
+        assert engine._config.max_nodes == 7
+        assert engine._config.max_tool_calls_per_iteration == 7
 
     def test_timeout_is_failed_not_user_cancelled(self, monkeypatch):
         monkeypatch.setattr(

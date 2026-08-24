@@ -688,7 +688,7 @@ def handle_weather_batch(inv: ToolInvocation) -> dict:
         if isinstance(value, str):
             location = value.strip()
         elif isinstance(value, dict):
-            location = str(value.get("name") or value.get("location") or "").strip()
+            location = str(value.get("name") or "").strip()
             latitude = value.get("latitude")
             longitude = value.get("longitude")
             has_coordinates = latitude is not None or longitude is not None

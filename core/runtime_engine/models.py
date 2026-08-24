@@ -142,6 +142,7 @@ class SubagentRuntimeControl:
     """
     profile: dict[str, Any] = field(default_factory=dict)
     max_steps: int = 0
+    max_tool_nodes: int = 0
     subtask_id: str = ""
     parent_session_id: str = ""
     cancel_check: Any = None

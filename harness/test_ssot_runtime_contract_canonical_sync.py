@@ -136,6 +136,32 @@ def test_tool_executor_enforces_the_same_closed_schema_and_cardinality():
     assert any("below minimum 2" in error for error in errors)
 
 
+def test_weather_batch_coordinate_items_keep_a_closed_recursive_contract():
+    from core.tools.canonical_registry import CANONICAL_REGISTRY
+    from core.tools.executor import _validate_arguments
+
+    schema = CANONICAL_REGISTRY["web.manage"].input_schema
+    valid = _validate_arguments({
+        "action": "weather_batch",
+        "locations": [
+            {"name": "广州", "latitude": 23.1291, "longitude": 113.2644},
+            "深圳",
+        ],
+    }, schema)
+    missing_pair = _validate_arguments({
+        "action": "weather_batch",
+        "locations": [{"name": "广州", "latitude": 23.1291}, "深圳"],
+    }, schema)
+    unknown = _validate_arguments({
+        "action": "weather_batch",
+        "locations": [{"location": "广州"}, "深圳"],
+    }, schema)
+
+    assert valid == []
+    assert any("does not match any allowed schema" in error for error in missing_pair)
+    assert any("does not match any allowed schema" in error for error in unknown)
+
+
 def test_tool_executor_classifies_schema_rejection_as_non_retryable():
     from core.tools.executor import ToolExecutor
     from core.tools.registry import ToolRegistry

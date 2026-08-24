@@ -1086,6 +1086,7 @@ class StreamingToolExecutor:
                 args=dict(tc.arguments or {}),
             )
             result = await self._runtime.execute_node(node, ctx, {})
+            result = self._normalize_read_timeout_for_retry(node, result)
             if not result.success:
                 result = await self._maybe_retry_node(node, ctx, result, budget)
             return self._from_tool_result(result, fallback_call_id=tc.id)
@@ -1131,6 +1132,7 @@ class StreamingToolExecutor:
         total_latency_ms = float(original_result.latency_ms or 0.0)
 
         while not current_result.success:
+            current_result = self._normalize_read_timeout_for_retry(node, current_result)
             error_code = self._retry_error_code(current_result)
             budget_ok = bool(budget.check_execution().ok) if budget is not None else True
             decision = should_retry_tool_failure(
@@ -1160,6 +1162,7 @@ class StreamingToolExecutor:
             node.retry_count += 1
             retry_started = time.monotonic()
             current_result = await self._runtime.execute_node(node, ctx, {})
+            current_result = self._normalize_read_timeout_for_retry(node, current_result)
             retry_duration_ms = (time.monotonic() - retry_started) * 1000
             total_latency_ms += retry_duration_ms + float(decision.backoff_ms)
             current_result.retry_count = node.retry_count
@@ -1180,6 +1183,39 @@ class StreamingToolExecutor:
             )
 
         return current_result
+
+    def _normalize_read_timeout_for_retry(
+        self,
+        node: ExecutionNode,
+        result: ToolResult,
+    ) -> ToolResult:
+        """Turn an uncertain *read* timeout into the canonical retryable timeout.
+
+        The worker may still finish, so that fact remains in audit metadata.
+        Replaying an idempotent read cannot duplicate a mutation, however, and
+        must use the normal retry policy instead of the unknown-write fence.
+        Write and unknown-action calls retain ``TOOL_TIMEOUT_UNCERTAIN``.
+        """
+        if result.success or str(result.error_code or "").upper() != "TOOL_TIMEOUT_UNCERTAIN":
+            return result
+        from .contracts import is_read_only_call
+        if not is_read_only_call(
+            node.tool,
+            node.args,
+            self._tool_registry.get(node.tool.replace("__", ".")),
+        ):
+            return result
+        metadata = dict(result.metadata or {})
+        metadata.update({
+            "read_only": True,
+            "read_execution_may_continue": bool(metadata.get("execution_may_continue", True)),
+            "execution_may_continue": False,
+            "timeout_normalized_for_retry": True,
+        })
+        result.metadata = metadata
+        result.error_code = "TOOL_TIMEOUT"
+        result.error_code_norm = "TOOL_TIMEOUT"
+        return result
 
     @staticmethod
     def _retry_error_code(result: ToolResult) -> str:
@@ -2591,6 +2627,7 @@ class QueryLoop:
                     "PROCESS_ONLY_RESPONSE",
                     "USER_LANGUAGE_MISMATCH",
                     "EXPLICIT_WEATHER_DELIVERY_INCOMPLETE",
+                    "WEATHER_UNCERTAINTY_OVERSTATED",
                 }
                 safety_blocking_issues = [
                     issue for issue in quality_issues

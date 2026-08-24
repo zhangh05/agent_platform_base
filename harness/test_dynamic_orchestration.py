@@ -8,7 +8,7 @@ from types import SimpleNamespace
 import pytest
 
 from agent.llm.schemas import LLMToolCall
-from core.runtime_engine.models import SSOTRuntimeConfig, StatelessContext
+from core.runtime_engine.models import SSOTRuntimeConfig, StatelessContext, ToolResult
 from core.runtime_engine.orchestration import OrchestrationError, StepEvidence, validate_incremental_graph
 from core.runtime_engine.query_loop import StreamingToolExecutor
 
@@ -1105,3 +1105,48 @@ def test_executable_read_timeout_never_installs_unknown_write_fence(monkeypatch)
     assert results[0].execution_may_continue is True
     assert results[0].output["read_only"] is True
     assert "unknown_outcome" not in ctx.extras
+
+
+def test_uncertain_read_timeout_uses_normal_bounded_retry_path():
+    class Runtime:
+        def __init__(self):
+            self.calls = 0
+
+        async def execute_node(self, node, _ctx, _inputs):
+            self.calls += 1
+            if self.calls == 1:
+                return ToolResult(
+                    node_id=node.id,
+                    tool=node.tool,
+                    success=False,
+                    error="read worker exceeded request timeout",
+                    error_code="TOOL_TIMEOUT_UNCERTAIN",
+                    error_code_raw="TOOL_TIMEOUT_UNCERTAIN",
+                    error_code_norm="TOOL_TIMEOUT_UNCERTAIN",
+                    metadata={"execution_may_continue": True},
+                )
+            return ToolResult(
+                node_id=node.id,
+                tool=node.tool,
+                success=True,
+                data={"ok": True, "items": ["evidence"]},
+            )
+
+    runtime = Runtime()
+    executor = StreamingToolExecutor(
+        runtime,
+        SSOTRuntimeConfig(max_retries_per_node=1),
+    )
+    result = asyncio.run(executor._execute_one(
+        LLMToolCall(
+            id="read-retry",
+            name="web.manage",
+            arguments={"action": "weather", "location": "广州", "days": 2},
+        ),
+        ctx=_ctx(),
+    ))
+
+    assert runtime.calls == 2
+    assert result.ok is True
+    assert result.output["metadata"]["retried"] is True
+    assert result.output["metadata"]["retry_error_code"] == "TOOL_TIMEOUT"

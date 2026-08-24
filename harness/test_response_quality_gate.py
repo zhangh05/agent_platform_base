@@ -48,6 +48,38 @@ def test_weather_evidence_rejects_literal_or_wrong_domain_wording():
     assert [issue.code for issue in issues] == ["UNNATURAL_WEATHER_TERMINOLOGY"]
 
 
+def test_weather_hail_probability_cannot_be_promoted_to_certainty():
+    evidence = [SimpleNamespace(
+        tool_name="web.manage",
+        call_id="weather-hail",
+        ok=True,
+        output={"source_type": "structured_weather", "condition": "雷暴，可能伴少量冰雹"},
+    )]
+    issues = validate_response_quality(
+        "广州明天有雷暴，伴少量冰雹。",
+        user_input="广州明天天气",
+        tool_results=evidence,
+    )
+
+    assert [issue.code for issue in issues] == ["WEATHER_UNCERTAINTY_OVERSTATED"]
+
+
+def test_weather_hail_probability_is_preserved():
+    evidence = [SimpleNamespace(
+        tool_name="web.manage",
+        call_id="weather-hail-safe",
+        ok=True,
+        output={"source_type": "structured_weather", "condition": "雷暴，可能伴少量冰雹"},
+    )]
+    issues = validate_response_quality(
+        "广州明天有雷暴，可能伴少量冰雹。",
+        user_input="广州明天天气",
+        tool_results=evidence,
+    )
+
+    assert issues == []
+
+
 def test_quality_gate_rejects_unverified_action_completion():
     issues = validate_response_quality("配置已成功部署。", user_input="部署配置")
 

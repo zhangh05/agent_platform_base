@@ -683,7 +683,31 @@ _WEB_ARGS = {
         ),
     },
     "locations": {
-        "type": "array", "items": {}, "minItems": 2, "maxItems": 10,
+        "type": "array",
+        "items": {
+            "oneOf": [
+                {"type": "string", "minLength": 1},
+                {
+                    "type": "object",
+                    "properties": {
+                        "name": {"type": "string", "minLength": 1},
+                    },
+                    "required": ["name"],
+                    "additionalProperties": False,
+                },
+                {
+                    "type": "object",
+                    "properties": {
+                        "name": {"type": "string", "minLength": 1},
+                        "latitude": {"type": "number", "minimum": -90, "maximum": 90},
+                        "longitude": {"type": "number", "minimum": -180, "maximum": 180},
+                    },
+                    "required": ["name", "latitude", "longitude"],
+                    "additionalProperties": False,
+                },
+            ],
+        },
+        "minItems": 2, "maxItems": 10,
         "description": (
             "Two to ten explicit weather locations for one bounded batch lookup. "
             "Each item is either a non-empty place string or an object with a non-empty "
@@ -812,14 +836,14 @@ _RAW_REGISTRY: list[CanonicalToolEntry] = [
     _entry("agent.manage", _handle_agent, {
         **_COMMON,
         "action": {"type": "string", "enum": ["spawn", "list", "get", "status", "cancel", "merge"]},
-        "instruction": {"type": "string", "description": "Required for spawn: the complete task delegated to the subagent."},
+        "instruction": {"type": "string", "description": "Required for spawn: an outcome-oriented task preserving the user's scope, evidence requirements, and output constraints. Let the subagent choose from its published tools; do not invent provider limits or force one-call-per-item execution unless the user explicitly requires that method."},
         "profile_id": _subagent_profile_schema(),
         "max_turns": {"type": "integer", "minimum": 1, "maximum": 20},
         "background": {"type": "boolean"},
         "session_id": {"type": "string"},
         "subtask_id": {"type": "string"},
         "parent_task_id": {"type": "string"},
-    }, required=["action"], description="Subagent task management. spawn requires a complete instruction and accepts only the profile_id values published in the schema; choose research_agent for external research, file_agent for workspace files, and data_agent for structured analysis. get/cancel/merge use the subtask_id returned by spawn. Delegation does not extend an upstream tool or data provider's limits."),
+    }, required=["action"], description="Subagent task management. spawn delegates an outcome, not an invented implementation plan, and accepts only the profile_id values published in the schema; choose research_agent for external research, file_agent for workspace files, and data_agent for structured analysis. Preserve explicit user constraints, but let the child select and compose its allowed tools. get/cancel/merge use the subtask_id returned by spawn. Delegation does not extend an upstream tool or data provider's limits."),
     _entry("system.manage", _handle_system, {**_COMMON, **_SYSTEM_ARGS, "limit": {"type": "integer", "minimum": 1}, "action": {"type": "string", "enum": ["diagnostics", "health", "selfcheck", "local_info", "tasks", "audit_log", "run_get", "session_get", "session_checkpoint", "session_rewind", "session_export", "session_snapshot"]}}, required=["action"], risk="medium", description="Runtime health, current local date/time and host facts, durable tasks, audit logs, run details, and session operations. local_info returns timezone-aware current time plus host/IP/OS facts; run_get requires run_id; session actions require session_id; rewind additionally requires snapshot_id."),
     _entry("text.analyze", _handle_text, {**_COMMON, "action": {"type": "string", "enum": ["redact", "extract_entities", "match"]}, "text": {"type": "string"}, "pattern": {"type": "string"}}, required=["action"], description="Text redact, extract and match."),
     _entry("workspace.file", _handle_workspace_file, {**_COMMON, **_WORKSPACE_FILE_ARGS, "action": {"type": "string", "enum": ["list", "read", "read_image", "extract_document", "extract_document_image", "extract_document_images", "write", "write_artifact", "edit", "patch", "glob", "delete"]}}, required=["action"], risk="medium", description="Workspace files. extract_document reads a managed text, DOCX, PDF, XLSX, or PPTX attachment by file_id and reports embedded_image_count for DOCX. extract_document_image extracts one DOCX image by file_id and 1-based image_index. extract_document_images extracts an ordered DOCX image batch (up to 8) for visual analysis; its image evidence is automatically delivered to the next model turn. Never pass a returned file_id to read/read_image because those actions require a workspace filepath. write/write_artifact require filename and content.", execution_contract={

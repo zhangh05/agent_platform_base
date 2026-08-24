@@ -306,8 +306,29 @@ def _validate_arguments(arguments: dict, schema: dict) -> list:
     return errors
 
 
+def validate_schema_value(field: str, value, schema: dict) -> list[str]:
+    """Validate one value with the same recursive schema rules as execution."""
+    errors: list[str] = []
+    _validate_field(field, value, schema or {}, errors)
+    return errors
+
+
 def _validate_field(field: str, value, field_schema: dict, errors: list):
     """Validate a single field against its schema definition."""
+    alternatives = field_schema.get("oneOf")
+    if isinstance(alternatives, list) and alternatives:
+        alternative_errors = []
+        for alternative in alternatives:
+            candidate_errors: list[str] = []
+            _validate_field(field, value, alternative if isinstance(alternative, dict) else {}, candidate_errors)
+            if not candidate_errors:
+                return
+            alternative_errors.append(candidate_errors)
+        errors.append(
+            f"Field '{field}' does not match any allowed schema: "
+            + " | ".join("; ".join(candidate[:3]) for candidate in alternative_errors)
+        )
+        return
     expected_type = field_schema.get("type", "")
 
     # ── Type check ──
@@ -371,13 +392,9 @@ def _validate_field(field: str, value, field_schema: dict, errors: list):
                 f"Field '{field}' has {len(value)} item(s), above maximum {field_schema['maxItems']}"
             )
         items_schema = field_schema.get("items")
-        if isinstance(items_schema, dict) and "type" in items_schema:
-            items_type = items_schema["type"]
+        if isinstance(items_schema, dict) and items_schema:
             for i, item in enumerate(value):
-                if items_type == "string" and not isinstance(item, str):
-                    errors.append(f"Field '{field}' item[{i}] expected string")
-                elif items_type == "number" and not isinstance(item, (int, float)):
-                    errors.append(f"Field '{field}' item[{i}] expected number")
+                _validate_field(f"{field}[{i}]", item, items_schema, errors)
 
     # ── Nested object properties check ──
     if expected_type == "object" and isinstance(value, dict):
@@ -387,9 +404,20 @@ def _validate_field(field: str, value, field_schema: dict, errors: list):
                 for nested_field in value:
                     if nested_field not in nested_props:
                         errors.append(f"Unknown field: '{field}.{nested_field}'")
+            for nested_field in field_schema.get("required", []):
+                if nested_field not in value:
+                    errors.append(f"Missing required field: '{field}.{nested_field}'")
             for nf, nv in value.items():
                 if nf in nested_props:
                     _validate_field(f"{field}.{nf}", nv, nested_props[nf], errors)
+            for dependency, dependents in (field_schema.get("dependentRequired") or {}).items():
+                if dependency not in value:
+                    continue
+                for dependent in dependents if isinstance(dependents, list) else []:
+                    if dependent not in value:
+                        errors.append(
+                            f"Field '{field}.{dependency}' requires '{field}.{dependent}'"
+                        )
 
     # ── Array type check ──
     if expected_type == "array" and not isinstance(value, list):

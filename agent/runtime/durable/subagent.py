@@ -58,6 +58,9 @@ class SubagentProfile:
     allowed_tools: list = field(default_factory=list)       # explicit tool_id list
     allowed_action_classes: list = field(default_factory=list)  # read/write/execute/...
     max_steps: int = 5
+    # Model turns and executable tool nodes are independent budgets. A single
+    # planning turn may legitimately emit several bounded read calls.
+    max_tool_nodes: int = 10
     max_runtime_seconds: int = 60
     max_context_tokens: int = 8000
     memory_write_policy: str = "pending_only"  # none | pending_only
@@ -75,6 +78,7 @@ BUILTIN_PROFILES: dict[str, SubagentProfile] = {
         allowed_action_classes=["read", "network"],
         allowed_tools=["knowledge.manage", "web.manage", "location.manage", "workspace.file", "workspace.artifact", "system.manage"],
         max_steps=8,
+        max_tool_nodes=16,
         max_runtime_seconds=180,
         can_call_network=True,
         memory_write_policy="pending_only",
@@ -91,6 +95,7 @@ BUILTIN_PROFILES: dict[str, SubagentProfile] = {
         allowed_action_classes=["read", "write"],
         allowed_tools=["workspace.file", "workspace.artifact", "text.analyze", "report.manage"],
         max_steps=10,
+        max_tool_nodes=16,
         max_runtime_seconds=300,
         can_modify_files=True,
         memory_write_policy="pending_only",
@@ -103,6 +108,7 @@ BUILTIN_PROFILES: dict[str, SubagentProfile] = {
         allowed_action_classes=["read", "write"],
         allowed_tools=["data.manage", "report.manage", "workspace.file", "workspace.artifact"],
         max_steps=8,
+        max_tool_nodes=16,
         max_runtime_seconds=180,
         can_modify_files=True,
         memory_write_policy="pending_only",
@@ -195,6 +201,7 @@ def create_subagent_task(
         allowed_tools=profile.allowed_tools,
         budget={
             "max_steps": max(1, min(int(max_steps or profile.max_steps), profile.max_steps)),
+            "max_tool_nodes": profile.max_tool_nodes,
             "max_runtime_seconds": profile.max_runtime_seconds,
         },
     )
@@ -280,6 +287,10 @@ def run_subagent_task(subtask_id: str, ws_id: str) -> dict:
             int((task.budget or {}).get("max_steps") or profile.max_steps),
             profile.max_steps,
         ))
+        effective_tool_nodes = max(1, min(
+            int((task.budget or {}).get("max_tool_nodes") or profile.max_tool_nodes),
+            profile.max_tool_nodes,
+        ))
         sess.metadata["max_steps"] = effective_steps
         sess.metadata["parent_session_id"] = task.session_id
         sess.metadata["subtask_id"] = subtask_id
@@ -300,11 +311,13 @@ def run_subagent_task(subtask_id: str, ws_id: str) -> dict:
                     "name": profile.name,
                     "role": profile.role,
                     "max_steps": effective_steps,
+                    "max_tool_nodes": effective_tool_nodes,
                     "max_runtime_seconds": profile.max_runtime_seconds,
                     "allowed_action_classes": list(profile.allowed_action_classes),
                     "output_contract": profile.output_contract,
                 },
                 max_steps=effective_steps,
+                max_tool_nodes=effective_tool_nodes,
                 subtask_id=subtask_id,
                 parent_session_id=task.session_id,
                 cancel_check=cancel_event.is_set,
