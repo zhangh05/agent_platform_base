@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import re
-from typing import Any, Iterable
+from typing import Any, Callable, Iterable, Mapping
 
 
 STEP_ID_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_-]{0,63}$")
@@ -61,7 +61,15 @@ def extract_orchestration(arguments: dict[str, Any], fallback_step_id: str) -> t
     return cleaned, step_id, depends_on, bindings, failure_policy
 
 
-def validate_incremental_graph(calls: Iterable[Any], prior: dict[str, StepEvidence] | None = None) -> list[list[str]]:
+BindingTargetValidator = Callable[[str, str, str], bool]
+
+
+def validate_incremental_graph(
+    calls: Iterable[Any],
+    prior: dict[str, StepEvidence] | None = None,
+    *,
+    binding_target_validator: BindingTargetValidator | None = None,
+) -> list[list[str]]:
     """Validate one LLM call batch and return stable topological layers."""
     prior = prior or {}
     calls = list(calls)
@@ -104,7 +112,7 @@ def validate_incremental_graph(calls: Iterable[Any], prior: dict[str, StepEviden
                 raise OrchestrationError(
                     f"binding source {source_id} must be declared in plan_depends_on for step {step_id}"
                 )
-            if not safe_binding_target(
+            if binding_target_validator is None or not binding_target_validator(
                 getattr(call, "name", ""),
                 (getattr(call, "arguments", None) or {}).get("action", ""),
                 target,
@@ -166,14 +174,33 @@ def resolve_bindings(arguments: dict[str, Any], bindings: dict[str, str], eviden
     return resolved
 
 
-def safe_binding_target(tool_id: str, action: str, target: str) -> bool:
-    """Only allow bound values where they cannot bypass write/risk review."""
+def binding_target_allowed(
+    tool_registry: Mapping[str, Any],
+    tool_id: str,
+    action: str,
+    target: str,
+) -> bool:
+    """Authorize a result binding from the destination tool's own contract.
+
+    Bindings are denied unless the registered ToolSpec explicitly declares the
+    destination input as bindable for the selected action. The fully resolved
+    arguments are still schema- and policy-validated before handler execution.
+    """
     normalized = str(tool_id or "").replace("__", ".")
-    action = str(action or "").lower()
-    if normalized == "exec.run":
-        return action == "python" and target == "input_data"
-    if normalized == "data.manage":
-        return target in {"text", "rows", "right_text", "right_rows"}
-    if normalized == "text.analyze":
-        return target == "text"
-    return False
+    entry = tool_registry.get(normalized)
+    if entry is None:
+        return False
+    if isinstance(entry, Mapping):
+        metadata = entry.get("metadata") or {}
+    else:
+        metadata = getattr(entry, "metadata", {}) or {}
+    declared = metadata.get("bindable_inputs") if isinstance(metadata, Mapping) else None
+    if not isinstance(declared, Mapping):
+        return False
+    selected_action = str(action or "").strip().lower()
+    allowed: set[str] = set()
+    for key in ("*", selected_action):
+        fields = declared.get(key)
+        if isinstance(fields, (list, tuple, set, frozenset)):
+            allowed.update(str(field) for field in fields)
+    return str(target or "") in allowed

@@ -145,6 +145,21 @@ def test_extension_action_requirements_remain_with_the_extension():
 
     assert requirements["any"]["probe"] == (("asset_id", "host"),)
     assert requirements["any"]["read"] == (("asset_id", "host"),)
+    assert device.metadata["bindable_inputs"]["probe"] == ("asset_id",)
+
+
+def test_every_declared_binding_target_is_a_public_tool_argument():
+    from core.tools.canonical_registry import to_tool_specs
+
+    for spec, _handler in to_tool_specs():
+        properties = (spec.input_schema or {}).get("properties") or {}
+        actions = set((properties.get("action") or {}).get("enum") or [])
+        declared = (spec.metadata or {}).get("bindable_inputs") or {}
+        for action, fields in declared.items():
+            assert action == "*" or action in actions, (spec.tool_id, action)
+            assert fields, (spec.tool_id, action)
+            for field in fields:
+                assert field in properties, (spec.tool_id, action, field)
 
 
 def test_public_schemas_expose_handler_consumed_arguments():

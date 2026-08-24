@@ -9,7 +9,10 @@ import pytest
 
 from agent.llm.schemas import LLMToolCall
 from core.runtime_engine.models import SSOTRuntimeConfig, StatelessContext, ToolResult
-from core.runtime_engine.orchestration import OrchestrationError, StepEvidence, validate_incremental_graph
+from core.runtime_engine.orchestration import (
+    binding_target_allowed, OrchestrationError, StepEvidence,
+    validate_incremental_graph,
+)
 from core.runtime_engine.query_loop import StreamingToolExecutor
 
 
@@ -18,6 +21,11 @@ def _ctx() -> StatelessContext:
         workspace_id="default", session_id="session", request_id="request",
         user_input="coordinate tools",
     )
+
+
+def _registry() -> dict:
+    from core.tools.canonical_registry import to_tool_specs
+    return {spec.tool_id: spec.as_dict() for spec, _handler in to_tool_specs()}
 
 
 def test_queryloop_extracts_plan_metadata_without_leaking_it_to_handler_args():
@@ -62,7 +70,9 @@ def test_incremental_graph_resolves_prior_result_into_analysis_input():
             result_bindings={"rows": "steps.extract.output.rows"},
         ),
     ]
-    results = asyncio.run(StreamingToolExecutor(Runtime(), SSOTRuntimeConfig()).execute(calls, ctx=_ctx()))
+    results = asyncio.run(StreamingToolExecutor(
+        Runtime(), SSOTRuntimeConfig(), tool_registry=_registry(),
+    ).execute(calls, ctx=_ctx()))
 
     assert [result.ok for result in results] == [True, True]
     assert seen[1][1]["rows"] == [{"value": 7}]
@@ -75,7 +85,7 @@ def test_incremental_graph_keeps_evidence_across_queryloop_rounds():
             return {"ok": True, "text": arguments.get("text", "source")}
 
     ctx = _ctx()
-    executor = StreamingToolExecutor(Runtime(), SSOTRuntimeConfig())
+    executor = StreamingToolExecutor(Runtime(), SSOTRuntimeConfig(), tool_registry=_registry())
     first = [LLMToolCall(
         id="call-1", name="text.analyze", arguments={"action": "match", "text": "source"},
         step_id="source",
@@ -140,7 +150,9 @@ def test_failed_dependency_is_not_executed():
         LLMToolCall(id="c", name="data.manage", arguments={"action": "stats"}, step_id="summarise", depends_on=["source"], result_bindings={"rows": "steps.source.output.rows"}),
     ]
     ctx = _ctx()
-    results = asyncio.run(StreamingToolExecutor(Runtime(), SSOTRuntimeConfig()).execute(calls, ctx=ctx))
+    results = asyncio.run(StreamingToolExecutor(
+        Runtime(), SSOTRuntimeConfig(), tool_registry=_registry(),
+    ).execute(calls, ctx=ctx))
     assert calls_seen == ["parse"]
     assert results[1].output["error_code"] == "DEPENDENCY_FAILED"
     assert results[2].output["error_code"] == "DEPENDENCY_FAILED"
@@ -169,7 +181,7 @@ def test_bound_arguments_are_revalidated_before_handler_execution():
         ),
     ]
     results = asyncio.run(StreamingToolExecutor(
-        Runtime(), SSOTRuntimeConfig(), tool_registry={}
+        Runtime(), SSOTRuntimeConfig(), tool_registry=_registry()
     ).execute(calls, ctx=_ctx()))
     assert seen == [("data.manage", {"action": "parse", "text": "x"})]
     assert results[1].output["error_code"] == "RESULT_BINDING_INVALID"
@@ -449,7 +461,9 @@ def test_stop_binding_failure_prevents_same_layer_execution():
             result_bindings={"text": "steps.source.output.missing"}, failure_policy="stop",
         ),
     ]
-    results = asyncio.run(StreamingToolExecutor(Runtime(), SSOTRuntimeConfig()).execute(calls, ctx=_ctx()))
+    results = asyncio.run(StreamingToolExecutor(
+        Runtime(), SSOTRuntimeConfig(), tool_registry=_registry(),
+    ).execute(calls, ctx=_ctx()))
     assert calls_seen == ["source"]
     assert results[1].output["error_code"] == "PLAN_STOPPED"
     assert results[2].output["error_code"] == "RESULT_BINDING_FAILED"
@@ -480,7 +494,41 @@ def test_unsafe_result_binding_is_rejected_before_execution():
         result_bindings={"content": "steps.source.output.text"},
     )
     with pytest.raises(OrchestrationError, match="unsafe binding target"):
-        validate_incremental_graph([call], {"source": SimpleNamespace(ok=True)})
+        registry = _registry()
+        validate_incremental_graph(
+            [call],
+            {"source": SimpleNamespace(ok=True)},
+            binding_target_validator=lambda tool_id, action, target: binding_target_allowed(
+                registry, tool_id, action, target,
+            ),
+        )
+
+
+def test_declared_cross_tool_binding_is_accepted_and_undeclared_field_is_denied():
+    registry = _registry()
+    allowed = LLMToolCall(
+        id="analyse", name="exec.run", arguments={"action": "python", "code": "result = input_data"},
+        step_id="analyse", depends_on=["source"],
+        result_bindings={"input_data": "steps.source.output.rows"},
+    )
+    validator = lambda tool_id, action, target: binding_target_allowed(
+        registry, tool_id, action, target,
+    )
+    assert validate_incremental_graph(
+        [allowed], {"source": SimpleNamespace(ok=True)},
+        binding_target_validator=validator,
+    ) == [["analyse"]]
+
+    denied = LLMToolCall(
+        id="shell", name="exec.run", arguments={"action": "shell", "command": "true"},
+        step_id="shell", depends_on=["source"],
+        result_bindings={"command": "steps.source.output.text"},
+    )
+    with pytest.raises(OrchestrationError, match="unsafe binding target"):
+        validate_incremental_graph(
+            [denied], {"source": SimpleNamespace(ok=True)},
+            binding_target_validator=validator,
+        )
 
 
 def test_independent_reads_honor_parallel_width():
@@ -564,8 +612,12 @@ def test_engine_executes_dependent_tool_group_then_synthesizes():
         "data.manage": {
             "description": "data", "args_schema": {
                 "type": "object", "required": ["action"],
-                "properties": {"action": {"type": "string", "enum": ["parse", "stats"]}},
+                "properties": {
+                    "action": {"type": "string", "enum": ["parse", "stats"]},
+                    "text": {"type": "string"}, "rows": {"type": "array"},
+                },
             },
+            "metadata": {"bindable_inputs": {"*": ["text", "rows"]}},
         },
     }
     engine = SSOTRuntimeEngine(config=config, llm_invoke=llm, tool_registry=registry, tool_runtime=runtime)

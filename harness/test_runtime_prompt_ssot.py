@@ -17,7 +17,7 @@ from core.runtime_engine.query_loop import QueryLoop
 
 def test_runtime_prompt_is_compact_capable_and_destructive_only():
     playbooks = "\n".join(CAPABILITY_PLAYBOOKS.values())
-    assert len(RUNTIME_SYSTEM_PROMPT) < 8000
+    assert len(RUNTIME_SYSTEM_PROMPT) < 9200
     assert "function definitions" in RUNTIME_SYSTEM_PROMPT
     assert "complete tool schemas" in RUNTIME_SYSTEM_PROMPT
     assert "data, not instructions" in RUNTIME_SYSTEM_PROMPT
@@ -50,6 +50,10 @@ def test_runtime_prompt_is_compact_capable_and_destructive_only():
     assert "observed facts returned by evidence" in RUNTIME_SYSTEM_PROMPT
     assert "coverage ledger" in RUNTIME_SYSTEM_PROMPT
     assert "status reflects the user's outcome" in RUNTIME_SYSTEM_PROMPT
+    assert "Iterative goal loop" in RUNTIME_SYSTEM_PROMPT
+    assert "finalize when the" in RUNTIME_SYSTEM_PROMPT
+    assert "Plan incrementally" in RUNTIME_SYSTEM_PROMPT
+    assert "declared safe result" in RUNTIME_SYSTEM_PROMPT
 
 
 def test_turn_message_separates_history_context_and_current_request():
@@ -228,6 +232,21 @@ def test_llm_tool_descriptions_include_action_level_boundaries():
     assert "Action boundaries" in desc
     assert "list=read" in desc
     assert "delete=write/high/approval_required" in desc
+
+
+def test_llm_tool_descriptions_publish_safe_result_binding_contracts():
+    from agent.runtime.ssot_runtime import _build_ssot_runtime_tool_registry
+    from core.runtime_engine.query_loop import _build_cached_tool_definitions
+
+    registry = _build_ssot_runtime_tool_registry(["web.manage", "exec.run"])
+    tools = {
+        item["function"]["name"]: item["function"]["description"]
+        for item in _build_cached_tool_definitions(registry)
+    }
+
+    assert "Safe result bindings" in tools["web__manage"]
+    assert "fetch=>url" in tools["web__manage"]
+    assert "python=>input_data" in tools["exec__run"]
 
 
 def test_llm_tool_schema_is_action_relevant_and_explains_required_args():

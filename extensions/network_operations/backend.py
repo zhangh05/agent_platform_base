@@ -303,6 +303,7 @@ def register():
                 "description": "需要确认当前工作区有哪些网络设备或连接参数时主动使用。传 asset_id 读取单个资产；不传则列出。资产记录只证明保存的配置，不证明设备当前在线。",
                 "category": "ops",
                 "permission_action": "read",
+                "bindable_inputs": {"*": ["asset_id"]},
                 "handler": assets_read,
                 "input_schema": {
                     "type": "object",
@@ -339,6 +340,7 @@ def register():
                 "category": "ops",
                 "risk_level": "medium",
                 "permission_action": "network",
+                "bindable_inputs": {"probe": ["asset_id"], "read": ["asset_id"]},
                 "action_requirements": {
                     "any": {"probe": [["asset_id", "host"]], "read": [["asset_id", "host"]]},
                 },
@@ -374,6 +376,7 @@ def register():
                 "category": "ops",
                 "risk_level": "medium",
                 "permission_action": "network",
+                "bindable_inputs": {"get": ["task_id"]},
                 "action_requirements": {
                     "all": {"run": ["asset_ids"], "get": ["task_id"], "cancel": ["task_id"], "retry": ["task_id"]},
                 },

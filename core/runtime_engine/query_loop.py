@@ -142,6 +142,9 @@ def _tool_registry_signature(tool_registry: dict) -> str:
             "action_requirements": _tool_meta_get(
                 _tool_meta_get(meta, "metadata", {}), "action_requirements", {},
             ),
+            "bindable_inputs": _tool_meta_get(
+                _tool_meta_get(meta, "metadata", {}), "bindable_inputs", {},
+            ),
         })
     encoded = json.dumps(
         payload,
@@ -480,6 +483,7 @@ class StreamingToolExecutor:
     ) -> List[StreamingToolResult]:
         """Execute one incremental dependency graph and preserve call order."""
         from .orchestration import (
+            binding_target_allowed,
             OrchestrationError,
             StepEvidence,
             resolve_bindings,
@@ -489,7 +493,13 @@ class StreamingToolExecutor:
 
         prior = dict((ctx.extras.get("orchestration_evidence") or {}) if ctx else {})
         try:
-            layers = validate_incremental_graph(tool_calls, prior)
+            layers = validate_incremental_graph(
+                tool_calls,
+                prior,
+                binding_target_validator=lambda tool_id, action, target: binding_target_allowed(
+                    self._tool_registry, tool_id, action, target,
+                ),
+            )
         except OrchestrationError as exc:
             return [StreamingToolResult(
                 tool_name=tc.name,
@@ -2421,8 +2431,9 @@ class QueryLoop:
                         messages,
                         RESPONSE_ONLY_MARKER
                         + " The requested embedded document image is now attached as visual evidence. "
-                        "Answer the user's original question from that image. Do not issue more tools or "
-                        "claim visual details not present in the image.",
+                        "Answer the user's original question from that image when the evidence is sufficient. "
+                        "Additional tools remain available for a genuine unresolved evidence gap; never claim "
+                        "visual details not present in the image.",
                     )
                 elif iterations >= max_iterations - 1:
                     messages = self._append_turn_nudge(
@@ -3212,21 +3223,21 @@ class QueryLoop:
             REPAIRABLE_ERROR_CODES,
         )
         from .risk_policy import RiskPolicyEngine
-        from .plan_enrichment import enrich_tool_calls_from_user_request
 
         self._fill_delete_paths_from_verified_history(ctx, nodes)
-        enrichment_events = enrich_tool_calls_from_user_request(nodes, ctx.user_input)
-        if enrichment_events:
-            ctx.extras.setdefault("plan_enrichment_events", [])
-            ctx.extras["plan_enrichment_events"].extend(
-                asdict(event) for event in enrichment_events
-            )
 
-        from .orchestration import OrchestrationError, validate_incremental_graph
+        from .orchestration import (
+            binding_target_allowed,
+            OrchestrationError,
+            validate_incremental_graph,
+        )
         try:
             validate_incremental_graph(
                 tool_calls,
                 dict(ctx.extras.get("orchestration_evidence") or {}),
+                binding_target_validator=lambda tool_id, action, target: binding_target_allowed(
+                    self._tool_registry, tool_id, action, target,
+                ),
             )
         except OrchestrationError as exc:
             message = str(exc)

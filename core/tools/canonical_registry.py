@@ -874,6 +874,55 @@ _RAW_REGISTRY: list[CanonicalToolEntry] = [
 ]
 
 
+# Cross-tool composition is a destination-side capability contract.  Keep it
+# beside the canonical registry so the LLM description and runtime validator
+# consume one declaration; undeclared inputs remain fail-closed.
+_BINDABLE_INPUTS: dict[str, dict[str, list[str]]] = {
+    "exec.run": {"python": ["input_data"]},
+    "browser.manage": {"navigate": ["url"], "extract": ["url"]},
+    "web.manage": {
+        "search": ["query"], "deep_search": ["query"], "fetch": ["url"],
+        "weather": ["location"], "weather_batch": ["locations"],
+    },
+    "location.manage": {
+        "resolve": ["query"], "resolve_batch": ["queries"],
+        "reverse": ["latitude", "longitude"],
+    },
+    "data.manage": {"*": ["text", "rows", "right_text", "right_rows"]},
+    "report.manage": {"diff": ["text_a", "text_b"]},
+    "knowledge.manage": {
+        "search": ["query"], "read": ["chunk_id", "source_id"],
+        "chunk": ["source_id"],
+    },
+    "memory.manage": {"search": ["query"], "review": ["query"]},
+    "skill.manage": {
+        "find": ["query"], "load": ["skill_name"], "inspect": ["skill_name"],
+    },
+    "agent.manage": {"get": ["subtask_id"]},
+    "system.manage": {
+        "run_get": ["run_id"], "session_get": ["session_id"],
+        "session_export": ["session_id"],
+    },
+    "text.analyze": {"*": ["text"]},
+    "workspace.file": {
+        "read": ["filepath"], "read_image": ["filepath"],
+        "extract_document": ["file_id"], "extract_document_image": ["file_id"],
+        "extract_document_images": ["file_id"],
+    },
+    "workspace.artifact": {"list": ["query"], "read": ["artifact_id"]},
+    "workspace.filestore": {"references": ["file_id"]},
+    "workspace.document.pdf.extract_text": {"*": ["filepath"]},
+}
+
+
+def _execution_metadata(entry: CanonicalToolEntry) -> dict[str, Any]:
+    metadata = dict(entry.execution_contract or {})
+    bindable = _BINDABLE_INPUTS.get(entry.canonical_tool_id)
+    if bindable:
+        metadata["bindable_inputs"] = bindable
+    return metadata
+
+
 CANONICAL_REGISTRY: dict[str, CanonicalToolEntry] = {
     entry.canonical_tool_id: entry for entry in _RAW_REGISTRY
 }
@@ -907,7 +956,7 @@ def to_tool_specs() -> list[tuple[ToolSpec, Callable[[ToolInvocation], dict]]]:
             requires_approval=entry.requires_approval,
             callable_by_llm=entry.callable_by_llm,
             permission_action=entry.permission_action,
-            metadata={**ns_entry.metadata(), **(entry.execution_contract or {})},
+            metadata={**ns_entry.metadata(), **_execution_metadata(entry)},
         )
         out.append((spec, entry.handler))
     from extensions.runtime import get_extension_tool_specs
@@ -942,7 +991,7 @@ def to_openai_tools() -> list[dict[str, Any]]:
                 category=ns_entry.category,
                 base_permission=entry.permission_action or "read",
             ),
-            "metadata": {**ns_entry.metadata(), **(entry.execution_contract or {})},
+            "metadata": {**ns_entry.metadata(), **_execution_metadata(entry)},
         }))
     for spec, _handler in get_extension_tool_specs():
         if not spec.callable_by_llm:

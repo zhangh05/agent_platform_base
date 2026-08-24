@@ -176,6 +176,28 @@ def test_cognitive_state_marks_conflicting_claims_as_blocking_unknown():
     assert state.unknowns[-1]["reason"] == "evidence_conflict"
 
 
+def test_cognitive_state_clears_transient_failure_when_same_step_recovers():
+    state = initialize_cognitive_state(
+        turn_id="t-replan", trace_id="x-replan", user_input="分析文件",
+    )
+    failed = SimpleNamespace(
+        tool_name="workspace.file", call_id="provider-a", ok=False,
+        output={"_orchestration": {"step_id": "extract"}, "error": "temporary failure"},
+        error="temporary failure", execution_may_continue=False,
+    )
+    recovered = SimpleNamespace(
+        tool_name="workspace.file", call_id="provider-b", ok=True,
+        output={"_orchestration": {"step_id": "extract"}, "summary": "document extracted"},
+        summary="document extracted", execution_may_continue=False,
+    )
+
+    state.register_tool_results([failed])
+    assert state.summary()["unknown_count"] == 1
+    state.register_tool_results([recovered])
+    assert state.summary()["unknown_count"] == 0
+    assert state.summary()["known_fact_count"] == 1
+
+
 def test_cognitive_gate_does_not_complete_with_blocking_evidence_gap():
     from core.runtime_engine.cognitive_gate import STOP_NEEDS_USER_INPUT, decide_next_action
 

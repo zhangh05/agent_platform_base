@@ -148,6 +148,9 @@ def _build_tool_description(tool: dict, metadata: dict, canonical_tool_id: str) 
     requirements = _format_action_requirements(canonical_tool_id, metadata)
     if requirements:
         parts.append(f"Required arguments by action: {requirements}")
+    bindings = _format_bindable_inputs(metadata)
+    if bindings:
+        parts.append(f"Safe result bindings: {bindings}")
     normalized_base = " ".join(base.split())
     normalized_rendered = " ".join(rendered_base.split())
     normalized_usage = " ".join(str(usage_hint or "").split())
@@ -167,7 +170,22 @@ def _build_tool_description(tool: dict, metadata: dict, canonical_tool_id: str) 
             parts.append(f"Do not use for: {rendered_not_for}")
     # Keep the final boundary intact. Raw slicing used to cut prohibitions and
     # identifiers mid-sentence for richer tools such as workspace.file.
-    return _soft_truncate(" ".join(p for p in parts if p), 1600)
+    return _soft_truncate(" ".join(p for p in parts if p), 1900)
+
+
+def _format_bindable_inputs(metadata: dict | None = None) -> str:
+    """Expose only destination inputs explicitly authorized for result binding."""
+    declared = (metadata or {}).get("bindable_inputs") or {}
+    if not isinstance(declared, dict):
+        return ""
+    chunks = []
+    for action, fields in sorted(declared.items()):
+        if not isinstance(fields, (list, tuple)):
+            continue
+        names = [str(field) for field in fields if str(field)]
+        if names:
+            chunks.append(f"{action}=>{'+'.join(names)}")
+    return _soft_truncate(", ".join(chunks), 360)
 
 
 _PARAM_DESCRIPTIONS = {

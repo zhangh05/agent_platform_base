@@ -108,6 +108,9 @@ def _build_tools(manifest: ExtensionManifest, contribution: dict[str, Any]) -> t
             raise ExtensionValidationError(f"action_requirements all/any must be objects: {tool_id}")
         approval_actions = tuple(str(action) for action in (item.get("approval_actions") or ()))
         approval_when_truthy = tuple(str(field) for field in (item.get("approval_when_truthy") or ()))
+        bindable_inputs = item.get("bindable_inputs") or {}
+        if not isinstance(bindable_inputs, dict):
+            raise ExtensionValidationError(f"bindable_inputs must be an object: {tool_id}")
         properties = (item.get("input_schema") or {}).get("properties") or {}
         actions = set((properties.get("action") or {}).get("enum") or [])
         for action, fields in required_all.items():
@@ -121,6 +124,11 @@ def _build_tools(manifest: ExtensionManifest, contribution: dict[str, Any]) -> t
             for group in groups:
                 if not isinstance(group, (list, tuple)) or not group or any(str(field) not in properties for field in group):
                     raise ExtensionValidationError(f"invalid action alternative fields for {tool_id}: {action}")
+        for action, fields in bindable_inputs.items():
+            if action != "*" and action not in actions:
+                raise ExtensionValidationError(f"invalid bindable action for {tool_id}: {action}")
+            if not isinstance(fields, (list, tuple)) or any(str(field) not in properties for field in fields):
+                raise ExtensionValidationError(f"invalid bindable input for {tool_id}: {action}")
         seen.add(tool_id)
 
         def workspace_scoped_handler(invocation: ToolInvocation, *, _handler=handler) -> dict:
@@ -167,6 +175,10 @@ def _build_tools(manifest: ExtensionManifest, contribution: dict[str, Any]) -> t
                 },
                 "approval_actions": approval_actions,
                 "approval_when_truthy": approval_when_truthy,
+                "bindable_inputs": {
+                    str(action): tuple(str(field) for field in fields)
+                    for action, fields in bindable_inputs.items()
+                },
             },
         ), workspace_scoped_handler))
     missing = set(manifest.tools) - seen

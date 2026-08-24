@@ -495,7 +495,6 @@ class SSOTRuntimeEngine:
                 "structured_errors": [e.to_dict() for e in errors],
                 "metrics": metrics.to_dict(),
                 "alias_normalizations": ctx.extras.get("alias_normalizations", []),
-                "plan_enrichment_events": ctx.extras.get("plan_enrichment_events", []),
                 "pre_exec_repair_events": ctx.extras.get("pre_exec_repair_events", []),
                 "pre_exec_repair_applied": ctx.extras.get("pre_exec_repair_applied", False),
                 # v3.10 (tool retry): aggregate per-node retry decisions

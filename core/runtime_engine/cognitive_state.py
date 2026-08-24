@@ -57,10 +57,29 @@ class CognitiveState:
         if record["fact"] and record not in self.known_facts:
             self.known_facts = (self.known_facts + [record])[-MAX_FACTS:]
 
-    def add_unknown(self, item: str, *, blocking: bool, reason: str = "") -> None:
+    def add_unknown(
+        self,
+        item: str,
+        *,
+        blocking: bool,
+        reason: str = "",
+        resolution_key: str = "",
+    ) -> None:
         record = {"item": _text(item), "blocking": bool(blocking), "reason": _text(reason, 160)}
+        if resolution_key:
+            record["resolution_key"] = _text(resolution_key, 160)
         if record["item"] and record not in self.unknowns:
             self.unknowns = (self.unknowns + [record])[-MAX_UNKNOWNS:]
+
+    def resolve_unknown(self, resolution_key: str) -> bool:
+        """Remove a transient gap once the same logical step succeeds."""
+        key = _text(resolution_key, 160)
+        if not key:
+            return False
+        retained = [item for item in self.unknowns if item.get("resolution_key") != key]
+        changed = len(retained) != len(self.unknowns)
+        self.unknowns = retained
+        return changed
 
     def select_plan(self, steps: Iterable[Mapping[str, Any]], *, reason: str = "") -> None:
         selected: list[dict[str, Any]] = []
@@ -80,12 +99,20 @@ class CognitiveState:
         for result in observed:
             tool_id = _text(getattr(result, "tool_name", "") or getattr(result, "tool_id", "") or "tool", 120)
             output = getattr(result, "output", {})
+            orchestration = output.get("_orchestration") if isinstance(output, Mapping) else {}
+            step_id = _text(
+                (orchestration.get("step_id") if isinstance(orchestration, Mapping) else "")
+                or getattr(result, "call_id", ""),
+                128,
+            )
+            resolution_key = f"tool_step:{step_id}" if step_id else ""
             summary = _text(getattr(result, "summary", "") or (output.get("summary") if isinstance(output, Mapping) else "") or (output.get("_hint") if isinstance(output, Mapping) else "") or getattr(result, "error", "") or (json.dumps(output, ensure_ascii=False, sort_keys=True, default=str) if isinstance(output, Mapping) else ""), 220)
             if bool(getattr(result, "execution_may_continue", False)):
                 uncertain += 1
                 self.add_unknown(f"{tool_id} 的写入结果尚未确定", blocking=True, reason="unknown_tool_outcome")
             elif bool(getattr(result, "ok", False)):
                 success += 1
+                self.resolve_unknown(resolution_key)
                 claim_key = _text(output.get("fact_key") or output.get("claim_key") or output.get("evidence_key"), 120) if isinstance(output, Mapping) else ""
                 prior = next((item for item in self.known_facts if claim_key and item.get("claim_key") == claim_key and item.get("verified", True)), None)
                 if prior is not None and prior.get("fact") != summary:
@@ -97,7 +124,12 @@ class CognitiveState:
                     self.add_fact(summary or f"{tool_id} 执行成功", source=tool_id, evidence_id=_text(getattr(result, "call_id", ""), 128), claim_key=claim_key)
             else:
                 gaps += 1
-                self.add_unknown(summary or f"{tool_id} 未成功执行", blocking=False, reason="tool_failure")
+                self.add_unknown(
+                    summary or f"{tool_id} 未成功执行",
+                    blocking=False,
+                    reason="tool_failure",
+                    resolution_key=resolution_key,
+                )
         if observed:
             self._append(COGNITIVE_EVIDENCE_REGISTERED, {"fact_count": success - conflict_count, "unknown_count": gaps + uncertain + conflict_count, "conflict_count": conflict_count, "visible_summary": f"已登记 {success} 项有效观察"})
         if gaps or uncertain or conflict_count:
@@ -222,6 +254,7 @@ def restore_cognitive_state(
                 _text(item.get("item")),
                 blocking=bool(item.get("blocking")),
                 reason=_text(item.get("reason"), 160),
+                resolution_key=_text(item.get("resolution_key"), 160),
             )
     state.plan = [
         {"action": _text(item.get("action"), 120), "purpose": _text(item.get("purpose"), 180)}
