@@ -35,6 +35,7 @@ class StepEvidence:
     ok: bool
     output: dict[str, Any]
     error: str = ""
+    action: str = ""
 
 
 def extract_orchestration(arguments: dict[str, Any], fallback_step_id: str) -> tuple[dict[str, Any], str, list[str], dict[str, str], str]:
@@ -115,15 +116,24 @@ def validate_incremental_graph(
                 raise OrchestrationError(
                     f"binding source {source_id} must be declared in plan_depends_on for step {step_id}"
                 )
-            if source_id in current and source_path:
-                source_call = calls_by_step[source_id]
+            if source_path:
+                if source_id in current:
+                    source_call = calls_by_step[source_id]
+                    source_tool_id = getattr(source_call, "name", "")
+                    source_action = (
+                        (getattr(source_call, "arguments", None) or {}).get("action", "")
+                    )
+                else:
+                    source_evidence = prior[source_id]
+                    source_tool_id = getattr(source_evidence, "tool_id", "")
+                    source_action = getattr(source_evidence, "action", "")
                 if binding_source_validator is None or not binding_source_validator(
-                    getattr(source_call, "name", ""),
-                    (getattr(source_call, "arguments", None) or {}).get("action", ""),
+                    source_tool_id,
+                    source_action,
                     source_path,
                 ):
                     raise OrchestrationError(
-                        f"undeclared binding source for {getattr(source_call, 'name', '')}: "
+                        f"undeclared binding source for {source_tool_id}: "
                         f"{'.'.join(source_path)}; bind the whole output or use a published result field"
                     )
             if binding_target_validator is None or not binding_target_validator(

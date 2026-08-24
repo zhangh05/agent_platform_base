@@ -613,6 +613,7 @@ class StreamingToolExecutor:
                     result_by_id[tc.id] = result
                     evidence[step_id] = StepEvidence(
                         step_id, tc.id, tc.name, False, result.output, error,
+                        str((tc.arguments or {}).get("action") or ""),
                     )
                     if tc.failure_policy == "stop":
                         stop_requested = True
@@ -638,6 +639,7 @@ class StreamingToolExecutor:
                     result_by_id[tc.id] = result
                     evidence[step_id] = StepEvidence(
                         step_id, tc.id, tc.name, False, result.output, error,
+                        str((tc.arguments or {}).get("action") or ""),
                     )
                     continue
                 try:
@@ -659,6 +661,7 @@ class StreamingToolExecutor:
                     result_by_id[tc.id] = result
                     evidence[step_id] = StepEvidence(
                         step_id, tc.id, tc.name, False, result.output, str(exc),
+                        str((tc.arguments or {}).get("action") or ""),
                     )
                     if tc.failure_policy == "stop":
                         stop_requested = True
@@ -684,6 +687,7 @@ class StreamingToolExecutor:
                     result_by_id[tc.id] = result
                     evidence[step_id] = StepEvidence(
                         step_id, tc.id, tc.name, False, result.output, binding_error,
+                        str((tc.arguments or {}).get("action") or ""),
                     )
                     if tc.failure_policy == "stop":
                         stop_requested = True
@@ -717,6 +721,7 @@ class StreamingToolExecutor:
                     result_by_id[tc.id] = result
                     evidence[step_id] = StepEvidence(
                         step_id, tc.id, tc.name, False, result.output, error,
+                        str((tc.arguments or {}).get("action") or ""),
                     )
                 runnable = []
             runnable_by_step = {str(tc.step_id or tc.id): tc for tc in runnable}
@@ -768,6 +773,7 @@ class StreamingToolExecutor:
                 evidence[step_id] = StepEvidence(
                     step_id, tc.id, tc.name, result.ok,
                     evidence_output, result.error or "",
+                    str((tc.arguments or {}).get("action") or ""),
                 )
                 if not result.ok and tc.failure_policy == "stop":
                     stop_requested = True

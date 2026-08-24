@@ -69,6 +69,9 @@ def test_location_resolve_handler_preserves_provider_evidence(monkeypatch):
     assert result["resolved"]["provider"] == "test_provider"
     assert result["resolved"]["admin1"] == "Test Region"
     assert result["confidence"] == 0.95
+    assert result["canonical_name"] == "Any Place canonical"
+    assert result["latitude"] == 10.0
+    assert result["longitude"] == 20.0
 
 
 def test_location_batch_reports_exact_partial_coverage(monkeypatch):
@@ -95,6 +98,10 @@ def test_location_batch_reports_exact_partial_coverage(monkeypatch):
         "requested_count": 3,
         "resolved_count": 2,
     }
+    assert result["resolved_entities"] == [
+        {"name": "One canonical", "latitude": 10.0, "longitude": 20.0},
+        {"name": "Three canonical", "latitude": 10.0, "longitude": 20.0},
+    ]
 
 
 def test_location_reverse_rejects_invalid_coordinate_before_provider(monkeypatch):
@@ -172,3 +179,56 @@ def test_location_actions_validate_through_ssot_semantic_validator():
     assert valid.valid is True
     assert invalid.valid is False
     assert any("query" in error.message for error in invalid.errors)
+
+
+def test_location_batch_projection_can_feed_weather_batch_without_reshaping(monkeypatch):
+    import asyncio
+
+    from core.runtime_engine.models import SSOTRuntimeConfig, StatelessContext
+    from core.runtime_engine.query_loop import StreamingToolExecutor
+    from core.tools.canonical_registry import get_entry, to_tool_specs
+
+    from core.tools.general_tools import location_tools
+    monkeypatch.setattr(
+        location_tools,
+        "resolve_locations",
+        lambda queries, **_kwargs: [_resolution(item) for item in queries],
+    )
+    seen = []
+
+    class Runtime:
+        def invoke_raw(self, tool_id, arguments):
+            if tool_id == "location.manage":
+                return get_entry(tool_id).handler(ToolInvocation(
+                    tool_id=tool_id, arguments=arguments, workspace_id="default",
+                ))
+            seen.append(dict(arguments))
+            return {"ok": True, "forecasts": []}
+
+    calls = [
+        LLMToolCall(
+            id="resolve", name="location.manage",
+            arguments={"action": "resolve_batch", "queries": ["One", "Two"]},
+            step_id="resolve",
+        ),
+        LLMToolCall(
+            id="weather", name="web.manage",
+            arguments={"action": "weather_batch", "days": 3},
+            step_id="weather", depends_on=["resolve"],
+            result_bindings={"locations": "steps.resolve.output.resolved_entities"},
+        ),
+    ]
+    registry = {spec.tool_id: spec.as_dict() for spec, _handler in to_tool_specs()}
+    ctx = StatelessContext(
+        workspace_id="default", session_id="session", request_id="request",
+        user_input="weather",
+    )
+    results = asyncio.run(StreamingToolExecutor(
+        Runtime(), SSOTRuntimeConfig(), tool_registry=registry,
+    ).execute(calls, ctx=ctx))
+
+    assert [result.ok for result in results] == [True, True]
+    assert seen[0]["locations"] == [
+        {"name": "One canonical", "latitude": 10.0, "longitude": 20.0},
+        {"name": "Two canonical", "latitude": 10.0, "longitude": 20.0},
+    ]

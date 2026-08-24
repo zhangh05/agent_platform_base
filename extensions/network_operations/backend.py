@@ -185,8 +185,17 @@ def assets_read(invocation):
         asset = service.get_asset(invocation.workspace_id, asset_id)
         if not asset:
             return {"ok": False, "error": "asset_not_found", "asset_id": asset_id}
-        return {"ok": True, "asset": asset}
-    return {"ok": True, "assets": service.list_assets(invocation.workspace_id)}
+        return {"ok": True, "asset": asset, "assets": [asset], "asset_ids": [asset_id]}
+    assets = service.list_assets(invocation.workspace_id)
+    return {
+        "ok": True,
+        "assets": assets,
+        "asset_ids": [
+            str(asset.get("asset_id") or "")
+            for asset in assets
+            if str(asset.get("asset_id") or "")
+        ],
+    }
 
 
 def assets_write(invocation):
@@ -239,7 +248,7 @@ def device_manage(invocation):
     if not str(args.get("host") or "").strip():
         return {"ok": False, "error": "host is required when asset_id is omitted"}
     credential = DeviceCredential(
-        auth_method=str(args.get("auth_method") or "password"),
+        auth_method=str(args.get("auth_method") or ("private_key" if args.get("private_key") else "password")),
         username=str(args.get("username") or ""),
         password=str(args.get("password") or ""),
         private_key=str(args.get("private_key") or ""),
@@ -252,13 +261,23 @@ def device_manage(invocation):
         expected_fingerprint=str(args.get("host_key_fingerprint") or ""),
         credential=credential,
     )
-    return probe_target(
+    result = probe_target(
         target,
         commands=[str(item) for item in (args.get("commands") or [])],
         accept_host_key=bool(args.get("accept_host_key")),
         read=action == "read",
         timeout=int(args.get("timeout") or 15),
     )
+    result["asset"] = {
+        "asset_id": "",
+        "name": target.name,
+        "host": target.host,
+        "port": target.port,
+        "vendor": target.vendor,
+        "auth_method": credential.auth_method,
+        "username": credential.username,
+    }
+    return result
 
 
 def inspection(invocation):
@@ -283,7 +302,9 @@ def baseline(invocation):
     args = invocation.arguments or {}
     action = str(args.get("action") or "list")
     if action == "create":
-        return {"ok": True, "baseline": service.create_baseline(invocation.workspace_id, str(args.get("task_id") or ""), confirm=bool(args.get("confirm")))}
+        # LLM creation is always an unconfirmed candidate. Confirmation is a
+        # distinct approval-gated action and cannot be smuggled into create.
+        return {"ok": True, "baseline": service.create_baseline(invocation.workspace_id, str(args.get("task_id") or ""), confirm=False)}
     if action == "confirm":
         return {"ok": True, "baseline": service.confirm_baseline(invocation.workspace_id, str(args.get("baseline_id") or ""))}
     if action == "diff":
@@ -304,7 +325,7 @@ def register():
                 "category": "ops",
                 "permission_action": "read",
                 "bindable_inputs": {"*": ["asset_id"]},
-                "referenceable_outputs": {"*": ["asset", "assets"]},
+                "referenceable_outputs": {"*": ["assets", "asset_ids"]},
                 "handler": assets_read,
                 "input_schema": {
                     "type": "object",
@@ -330,7 +351,27 @@ def register():
                         **common,
                         "action": {"type": "string", "enum": ["save", "delete"]},
                         "asset_id": {"type": "string"},
-                        "asset": {"type": "object"},
+                        "asset": {
+                            "type": "object",
+                            "properties": {
+                                "asset_id": {"type": "string", "description": "Existing asset id when updating; omit for create."},
+                                "name": {"type": "string", "minLength": 1},
+                                "host": {"type": "string", "minLength": 1},
+                                "port": {"type": "integer", "minimum": 1, "maximum": 65535},
+                                "username": {"type": "string", "minLength": 1},
+                                "auth_method": {"type": "string", "enum": ["password", "private_key"]},
+                                "password": {"type": "string", "description": "Set only when creating or rotating a password."},
+                                "private_key": {"type": "string", "description": "OpenSSH private key used only when creating or rotating credentials."},
+                                "key_passphrase": {"type": "string"},
+                                "vendor": {"type": "string"},
+                                "device_type": {"type": "string"},
+                                "region": {"type": "string"},
+                                "tags": {"type": "array", "items": {"type": "string"}},
+                                "host_key_fingerprint": {"type": "string"},
+                            },
+                            "required": ["name", "host", "username"],
+                            "additionalProperties": False,
+                        },
                     },
                     "required": ["action"],
                 },
@@ -348,7 +389,18 @@ def register():
                     "read": ["asset", "status", "stages", "fingerprint", "output"],
                 },
                 "action_requirements": {
-                    "any": {"probe": [["asset_id", "host"]], "read": [["asset_id", "host"]]},
+                    "any": {
+                        "probe": [
+                            ["asset_id", "host"],
+                            ["asset_id", "username"],
+                            ["asset_id", "password", "private_key"],
+                        ],
+                        "read": [
+                            ["asset_id", "host"],
+                            ["asset_id", "username"],
+                            ["asset_id", "password", "private_key"],
+                        ],
+                    },
                 },
                 "approval_when_truthy": ["accept_host_key"],
                 "handler": device_manage,
@@ -360,7 +412,7 @@ def register():
                         "action": {"type": "string", "enum": ["probe", "read"]},
                         "asset_id": {"type": "string"},
                         "host": {"type": "string"},
-                        "port": {"type": "integer"},
+                        "port": {"type": "integer", "minimum": 1, "maximum": 65535},
                         "vendor": {"type": "string"},
                         "username": {"type": "string"},
                         "password": {"type": "string"},
@@ -369,8 +421,8 @@ def register():
                         "passphrase": {"type": "string"},
                         "host_key_fingerprint": {"type": "string"},
                         "accept_host_key": {"type": "boolean"},
-                        "commands": {"type": "array", "items": {"type": "string"}},
-                        "timeout": {"type": "integer"},
+                        "commands": {"type": "array", "items": {"type": "string"}, "maxItems": 20},
+                        "timeout": {"type": "integer", "minimum": 1, "maximum": 90},
                     },
                     "required": ["action"],
                 },
@@ -382,7 +434,7 @@ def register():
                 "category": "ops",
                 "risk_level": "medium",
                 "permission_action": "network",
-                "bindable_inputs": {"get": ["task_id"]},
+                "bindable_inputs": {"run": ["asset_ids"], "get": ["task_id"]},
                 "referenceable_outputs": {
                     "run": ["task"], "get": ["task"], "list": ["inspections"], "retry": ["task"],
                 },
@@ -396,8 +448,8 @@ def register():
                     "properties": {
                         **common,
                         "action": {"type": "string", "enum": ["run", "list", "get", "cancel", "retry"]},
-                        "asset_ids": {"type": "array", "items": {"type": "string"}},
-                        "commands": {"type": "array", "items": {"type": "string"}},
+                        "asset_ids": {"type": "array", "items": {"type": "string"}, "minItems": 1, "maxItems": 100},
+                        "commands": {"type": "array", "items": {"type": "string"}, "maxItems": 20},
                         "script_id": {"type": "string"},
                         "task_id": {"type": "string"},
                     },
@@ -411,6 +463,10 @@ def register():
                 "category": "ops",
                 "risk_level": "medium",
                 "permission_action": "write",
+                "bindable_inputs": {
+                    "create": ["task_id"], "confirm": ["baseline_id"],
+                    "diff": ["task_id"],
+                },
                 "action_requirements": {
                     "all": {"create": ["task_id"], "confirm": ["baseline_id"], "diff": ["task_id"]},
                 },
@@ -428,7 +484,6 @@ def register():
                         "action": {"type": "string", "enum": ["create", "confirm", "list", "diff"]},
                         "task_id": {"type": "string"},
                         "baseline_id": {"type": "string"},
-                        "confirm": {"type": "boolean"},
                     },
                     "required": ["action"],
                 },

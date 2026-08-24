@@ -3,7 +3,7 @@ from __future__ import annotations
 from core.tools.schemas import ToolInvocation
 from storage.ids import validate_workspace_id
 
-from core.tools.general_tools.shared import _caller_workspace, _contract, _error, _error_inv, _ok, _result, _safe_preview, _unavailable, _workspace_path
+from core.tools.general_tools.shared import _caller_workspace, _error_inv, _ok, _safe_preview
 """Split general tool handlers."""
 
 
@@ -11,6 +11,7 @@ def handle_artifact_search(inv: ToolInvocation) -> dict:
     args = inv.arguments
     ws = _caller_workspace(inv)
     query = (args.get("query") or "").strip().lower()
+    limit = max(1, min(int(args.get("limit") or 20), 100))
     evidence_view = str(args.get("evidence_view") or "").strip()
     if evidence_view not in {"", "current", "history", "deliverables"}:
         return _error_inv(inv, "evidence_view must be current, history, or deliverables")
@@ -39,7 +40,7 @@ def handle_artifact_search(inv: ToolInvocation) -> dict:
                     "governance": a.get("governance") or {},
                 })
         return _ok(inv, "", {
-            "results": results[:20], "count": len(results),
+            "results": results[:limit], "count": len(results),
             "governance": artifact_governance_summary(ws),
         })
     except Exception as e:
@@ -60,7 +61,10 @@ def handle_artifact_read_content_safe(inv: ToolInvocation) -> dict:
         art_type = getattr(art, "artifact_type", "")
         if sensitivity == "secret":
             return _ok(inv, "", {
+                "artifact_id": art_id,
                 "preview": "[artifact content not shown]",
+                "content_complete": False,
+                "truncated": True,
                 "title": getattr(art, "title", ""),
                 "artifact_type": art_type,
                 "sensitivity": sensitivity,

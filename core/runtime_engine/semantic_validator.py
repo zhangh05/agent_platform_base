@@ -234,6 +234,25 @@ class SemanticValidator:
                     },
                 ))
 
+            if (
+                not type_mismatch
+                and expected_type == "object"
+                and isinstance(field_schema.get("properties"), dict)
+            ):
+                # Reuse the execution gate's recursive validator so nested
+                # required fields, closed objects and array item schemas fail
+                # during planning instead of consuming a real tool attempt.
+                from core.tools.executor import validate_schema_value
+
+                nested_errors = validate_schema_value(field_name, value, field_schema)
+                if nested_errors:
+                    result.errors.append(SemanticError(
+                        node_id=node.id,
+                        code="ARG_SCHEMA_INVALID",
+                        message=f"Node '{node.id}' arg '{field_name}' does not match its published nested schema",
+                        details={"field": field_name, "schema_errors": nested_errors[:5]},
+                    ))
+
             if not type_mismatch and isinstance(value, (int, float)) and not isinstance(value, bool):
                 minimum = field_schema.get("minimum")
                 maximum = field_schema.get("maximum")

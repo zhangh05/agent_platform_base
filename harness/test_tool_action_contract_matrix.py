@@ -126,6 +126,37 @@ def test_action_requirements_reference_public_actions_and_arguments():
                 assert field_name in properties, (tool_id, action, field_name)
 
 
+def test_weather_accepts_name_or_complete_coordinate_pair():
+    validator = SemanticValidator()
+
+    def validate(args):
+        return validator.validate([
+            ExecutionNode(id="weather", tool="web.manage", args={"action": "weather", **args}),
+        ])
+
+    assert validate({"location": "上海"}).valid is True
+    assert validate({"latitude": 31.23, "longitude": 121.47}).valid is True
+    assert validate({"latitude": 31.23}).valid is False
+    assert validate({"longitude": 121.47}).valid is False
+
+
+def test_data_actions_require_real_source_inputs_before_execution():
+    validator = SemanticValidator()
+    for action in ("parse", "stats", "distinct", "aggregate", "filter", "sort", "render", "pivot"):
+        result = validator.validate([
+            ExecutionNode(id=action, tool="data.manage", args={"action": action}),
+        ])
+        assert result.valid is False, action
+
+    join = validator.validate([
+        ExecutionNode(
+            id="join", tool="data.manage",
+            args={"action": "join", "rows": [{"id": 1}], "on": "id"},
+        ),
+    ])
+    assert join.valid is False
+
+
 def test_base_action_requirements_remain_domain_neutral():
     assert all(not tool_id.startswith("network.operations.") for tool_id, _action in ACTION_REQUIRED_ALL)
     assert all(not tool_id.startswith("network.operations.") for tool_id, _action in ACTION_REQUIRED_ANY)
@@ -143,9 +174,36 @@ def test_extension_action_requirements_remain_with_the_extension():
     device = specs["network.operations.device.manage"]
     requirements = device.metadata["action_requirements"]
 
-    assert requirements["any"]["probe"] == (("asset_id", "host"),)
-    assert requirements["any"]["read"] == (("asset_id", "host"),)
+    expected = (
+        ("asset_id", "host"),
+        ("asset_id", "username"),
+        ("asset_id", "password", "private_key"),
+    )
+    assert requirements["any"]["probe"] == expected
+    assert requirements["any"]["read"] == expected
     assert device.metadata["bindable_inputs"]["probe"] == ("asset_id",)
+
+
+def test_network_asset_schema_teaches_required_nested_fields():
+    validator = _validator_for_tool("network.operations.assets_write")
+    invalid = validator.validate([
+        ExecutionNode(
+            id="asset", tool="network.operations.assets_write",
+            args={"action": "save", "asset": {"host": "192.0.2.1"}},
+        ),
+    ])
+    valid = validator.validate([
+        ExecutionNode(
+            id="asset", tool="network.operations.assets_write",
+            args={
+                "action": "save",
+                "asset": {"name": "edge-1", "host": "192.0.2.1", "username": "ops"},
+            },
+        ),
+    ])
+
+    assert invalid.valid is False
+    assert valid.valid is True
 
 
 def test_every_declared_binding_target_is_a_public_tool_argument():
@@ -213,11 +271,34 @@ def test_deterministic_referenceable_output_contracts_match_real_handlers(monkey
         assert set(fields) <= set(result), (tool_id, action, sorted(set(fields) - set(result)))
 
 
+def test_workspace_read_success_satisfies_its_published_output_contract(monkeypatch, tmp_path):
+    from core.tools.canonical_registry import get_entry, to_tool_specs
+    from core.tools.schemas import ToolInvocation
+
+    monkeypatch.setenv("LZCORE_WORKSPACE_ROOT", str(tmp_path / "workspaces"))
+    invocation = lambda arguments: ToolInvocation(
+        tool_id="workspace.file", arguments=arguments,
+        workspace_id="default", session_id="session", run_id="run",
+    )
+    written = get_entry("workspace.file").handler(invocation({
+        "action": "write", "filename": "contract.txt", "content": "x" * 600,
+    }))
+    result = get_entry("workspace.file").handler(invocation({
+        "action": "read", "filepath": written["filepath"], "limit": 500,
+    }))
+    spec = next(spec for spec, _handler in to_tool_specs() if spec.tool_id == "workspace.file")
+    declared = set(spec.metadata["referenceable_outputs"]["read"])
+
+    assert result["ok"] is True
+    assert declared <= set(result)
+    assert result["truncated"] is True
+
+
 def test_public_schemas_expose_handler_consumed_arguments():
     expected = {
         "exec.run": {"command", "code", "description", "working_dir", "timeout", "target", "shell", "env_vars"},
         "browser.manage": {"url", "selector", "ref", "text", "script", "key", "value", "wait_selector", "wait_text", "timeout", "wait_ms", "compact", "max_elements", "full_page", "as_file", "clear_first", "direction", "amount", "tab_action", "tab_index"},
-        "web.manage": {"query", "source", "url", "location", "days", "language", "units", "recency", "safe_search", "depth", "domains", "allowed_domains", "blocked_domains", "site", "vendor", "max_results", "top_k", "extract_mode", "max_length", "timeout"},
+        "web.manage": {"query", "source", "url", "location", "latitude", "longitude", "days", "language", "units", "recency", "safe_search", "depth", "domains", "allowed_domains", "blocked_domains", "site", "vendor", "max_results", "top_k", "extract_mode", "max_length", "timeout"},
         "location.manage": {"query", "queries", "latitude", "longitude", "language", "country_code", "admin_hint", "limit"},
         "data.manage": {"text", "rows", "column", "conditions", "group_by", "metrics", "by", "order", "max_rows", "output", "index", "columns", "values", "aggfunc", "right_text", "right_rows", "on", "how"},
         "report.manage": {"title", "content", "summary", "text_a", "text_b"},
@@ -228,7 +309,7 @@ def test_public_schemas_expose_handler_consumed_arguments():
         "system.manage": {"run_id", "session_id", "snapshot_id", "operation", "reason", "format", "dry_run", "status", "limit", "log_level"},
         "text.analyze": {"text", "pattern"},
         "workspace.file": {"filepath", "file_id", "limit", "offset", "subdir", "pattern", "old_string", "new_string", "replace_all", "patch_text", "filename", "content", "dry_run"},
-        "workspace.artifact": {"artifact_id", "query", "limit", "title", "content", "tags", "artifact_type", "status"},
+        "workspace.artifact": {"artifact_id", "query", "limit", "title", "content", "tags", "artifact_type", "evidence_view", "producer_id", "asset_id"},
         "workspace.filestore": {"file_id", "filepath"},
         "workspace.document.pdf.extract_text": {"filepath", "page_range"},
     }
@@ -380,7 +461,11 @@ def test_each_required_alternative_group_is_rejected_when_empty(tool_id, action,
         args[required] = _sample_value(required)
     for other_group in REGISTERED_REQUIRED_ANY.get((tool_id, action), ()):
         if other_group != alternatives:
-            args[other_group[0]] = _sample_value(other_group[0])
+            candidate = next(
+                (field for field in other_group if field not in alternatives),
+                other_group[0],
+            )
+            args[candidate] = _sample_value(candidate)
 
     result = _validator_for_tool(tool_id).validate([
         ExecutionNode(id="contract", tool=tool_id, args=args),

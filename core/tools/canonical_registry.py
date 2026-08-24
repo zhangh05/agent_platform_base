@@ -70,8 +70,10 @@ def _local_glob(inv: ToolInvocation) -> dict:
     for path in root.glob(pattern):
         if len(matches) >= limit:
             break
+        relative = path.relative_to(root)
         matches.append({
-            "path": str(path.relative_to(root)),
+            "path": str(relative),
+            "filepath": (Path(subdir) / relative).as_posix(),
             "is_file": path.is_file(),
             "size": path.stat().st_size if path.is_file() else 0,
         })
@@ -95,7 +97,7 @@ def _local_delete(inv: ToolInvocation) -> dict:
     from storage import index as file_index
 
     args = inv.arguments or {}
-    filepath = str(args.get("filepath") or args.get("path") or "").strip()
+    filepath = str(args.get("filepath") or "").strip()
     if not filepath:
         return {"ok": False, "error": "filepath is required"}
     ws = _caller_workspace(inv)
@@ -217,7 +219,7 @@ def _handle_browser(inv: ToolInvocation) -> dict:
     if action == "wait":
         return browser.browser_wait(wait_ms=int(args.get("wait_ms") or 0), wait_text=str(args.get("wait_text") or ""), timeout=int(args.get("timeout") or 30000))
     if action == "tabs":
-        return browser.browser_tabs(action=str(args.get("tab_action") or args.get("tab_action") or "list"), url=str(args.get("url") or ""), tab_index=int(args.get("tab_index") or 0))
+        return browser.browser_tabs(action=str(args.get("tab_action") or "list"), url=str(args.get("url") or ""), tab_index=int(args.get("tab_index") or 0))
     if action == "network":
         return browser.browser_network()
     if action == "console":
@@ -339,7 +341,7 @@ def _handle_data(inv: ToolInvocation) -> dict:
     if action == "render":
         return data_engine.data_render(text=text, rows=rows, output=str(args.get("output") or "markdown"), max_rows=max_rows())
     if action == "pivot":
-        return data_engine.data_pivot(text=text, rows=rows, index=str(args.get("index") or ""), columns=str(args.get("columns") or args.get("pivot_columns") or ""), values=str(args.get("values") or args.get("pivot_values") or ""), aggfunc=str(args.get("aggfunc") or "sum"))
+        return data_engine.data_pivot(text=text, rows=rows, index=str(args.get("index") or ""), columns=str(args.get("columns") or ""), values=str(args.get("values") or ""), aggfunc=str(args.get("aggfunc") or "count"))
     if action == "join":
         return data_engine.data_join(text=text, rows=rows, right_text=str(args.get("right_text") or ""), right_rows=args.get("right_rows"), on=str(args.get("on") or ""), how=str(args.get("how") or "inner"))
     return _unsupported(inv, "parse|stats|distinct|aggregate|filter|sort|render|pivot|join")
@@ -419,12 +421,11 @@ def _handle_skill(inv: ToolInvocation) -> dict:
     return {
         "list": handle_skill_list,
         "find": handle_skill_find,
-        "search": handle_skill_find,
         "load": handle_skill_load,
         "inspect": handle_skill_inspect,
         "mcp_list_tools": handle_mcp_list_tools,
         "mcp_call": handle_mcp_call,
-    }.get(action, lambda x: _unsupported(x, "list|search|load|inspect|mcp_list_tools|mcp_call"))(inv)
+    }.get(action, lambda x: _unsupported(x, "list|find|load|inspect|mcp_list_tools|mcp_call"))(inv)
 
 
 def _handle_agent(inv: ToolInvocation) -> dict:
@@ -451,10 +452,10 @@ def _handle_system(inv: ToolInvocation) -> dict:
         handle_runtime_tasks,
     )
     from core.tools.general_tools.session_tools import (
-        handle_run_get_merged,
+        handle_run_get_summary,
         handle_session_checkpoint,
         handle_session_export,
-        handle_session_get_merged,
+        handle_session_get_summary,
         handle_session_rewind,
         handle_session_snapshot,
     )
@@ -467,8 +468,8 @@ def _handle_system(inv: ToolInvocation) -> dict:
         "local_info": handle_runtime_local_info,
         "tasks": handle_runtime_tasks,
         "audit_log": handle_runtime_audit_log,
-        "run_get": handle_run_get_merged,
-        "session_get": handle_session_get_merged,
+        "run_get": handle_run_get_summary,
+        "session_get": handle_session_get_summary,
         "session_checkpoint": handle_session_checkpoint,
         "session_rewind": handle_session_rewind,
         "session_export": handle_session_export,
@@ -682,6 +683,14 @@ _WEB_ARGS = {
             "explicit location set; never silently replace the requested scope with representative cities."
         ),
     },
+    "latitude": {
+        "type": "number", "minimum": -90, "maximum": 90,
+        "description": "Optional verified latitude paired with longitude for action=weather.",
+    },
+    "longitude": {
+        "type": "number", "minimum": -180, "maximum": 180,
+        "description": "Optional verified longitude paired with latitude for action=weather.",
+    },
     "locations": {
         "type": "array",
         "items": {
@@ -724,7 +733,8 @@ _WEB_ARGS = {
     "allowed_domains": {"type": "array", "items": {"type": "string"}},
     "blocked_domains": {"type": "array", "items": {"type": "string"}},
     "site": {"type": "string"}, "vendor": {"type": "string"},
-    "max_results": {"type": "integer", "minimum": 1}, "top_k": {"type": "integer", "minimum": 1},
+    "max_results": {"type": "integer", "minimum": 1, "maximum": 30},
+    "top_k": {"type": "integer", "minimum": 1, "maximum": 10},
     "extract_mode": {"type": "string", "enum": ["article", "full", "structured", "links"]},
     "max_length": {"type": "integer", "minimum": 1}, "timeout": {"type": "integer", "minimum": 1},
 }
@@ -737,14 +747,19 @@ _DATA_ARGS = {
     "max_rows": {"type": "integer", "minimum": 1, "maximum": 200},
     "output": {"type": "string", "enum": ["markdown", "json", "csv"]},
     "index": {"type": "string"}, "columns": {"type": "string"},
-    "values": {"type": "string"}, "aggfunc": {"type": "string", "enum": ["sum", "count", "avg", "min", "max"]},
+    "values": {"type": "string", "description": "Pivot value column; required for sum, avg, min, and max."},
+    "aggfunc": {
+        "type": "string", "enum": ["sum", "count", "avg", "min", "max"],
+        "default": "count",
+        "description": "Pivot aggregate. count needs no values column; all other choices require values.",
+    },
     "right_text": {"type": "string"}, "right_rows": {"type": "array"},
     "on": {"type": "string"}, "how": {"type": "string", "enum": ["inner", "left"]},
 }
 
 _MEMORY_ARGS = {
     "query": {"type": "string"},
-    "limit": {"type": "integer", "minimum": 1},
+    "limit": {"type": "integer", "minimum": 1, "maximum": 100},
     "title": {"type": "string"},
     "content": {"type": "string"},
     "memory_id": {"type": "string"}, "memory_type": {"type": "string"},
@@ -771,7 +786,7 @@ _WORKSPACE_FILE_ARGS = {
     "patch_text": {"type": "string"}, "filename": {"type": "string"},
     "dry_run": {"type": "boolean"},
     "file_id": {"type": "string", "description": "Managed attachment id for extract_document and embedded-image extraction actions; never use it as filepath."},
-    "image_index": {"type": "integer", "minimum": 1, "description": "1-based embedded DOCX image index."},
+    "image_index": {"type": "integer", "minimum": 1, "maximum": 50, "description": "1-based embedded DOCX image index."},
     "start_index": {"type": "integer", "minimum": 1, "description": "First 1-based DOCX image index for a batch."},
 }
 
@@ -781,8 +796,8 @@ _RAW_REGISTRY: list[CanonicalToolEntry] = [
         **_COMMON, **_EXEC_ARGS,
         "action": {"type": "string", "enum": ["shell", "python", "slash"], "default": "shell"},
     }, required=["action"], risk="medium", permission="exec", description="Local shell, slash, and Python data processing. Python uses the policy-selected runner: trusted local mode is explicitly best-effort, while network or multi-user mode requires strong container isolation."),
-    _entry("browser.manage", _handle_browser, {**_COMMON, **_BROWSER_ARGS, "action": {"type": "string", "enum": ["navigate", "snapshot", "screenshot", "click", "type", "extract", "scroll", "hover", "press_key", "select_option", "evaluate", "wait", "tabs", "network", "console", "navigate_back", "close"]}}, required=["action"], risk="medium", description="Browser automation. navigate/extract require url; click/hover require selector or ref; type requires text and selector/ref."),
-    _entry("web.manage", _handle_web, {**_COMMON, **_WEB_ARGS, "action": {"type": "string", "enum": ["search", "fetch", "weather", "weather_batch", "deep_search"]}}, required=["action"], description="Current external evidence via search/fetch/weather. Use proactively for time-sensitive facts, official technical references, versions and vulnerabilities. search finds candidates; fetch verifies page content; deep_search does both for top sources. Weather accepts one precise location; weather_batch accepts 2-10 explicit locations. Resolve broad/all scopes explicitly and report exact coverage rather than silently choosing representative locations. Select authority_profile and cite returned titles/URLs.", execution_contract={
+    _entry("browser.manage", _handle_browser, {**_COMMON, **_BROWSER_ARGS, "action": {"type": "string", "enum": ["navigate", "snapshot", "screenshot", "click", "type", "extract", "scroll", "hover", "press_key", "select_option", "evaluate", "wait", "tabs", "network", "console", "navigate_back", "close"]}}, required=["action"], risk="medium", description="Browser automation. navigate requires url; extract may use a url or the current page; click/hover require selector or ref; type requires text and selector/ref. tabs uses tab_action=list|new|switch|close."),
+    _entry("web.manage", _handle_web, {**_COMMON, **_WEB_ARGS, "action": {"type": "string", "enum": ["search", "fetch", "weather", "weather_batch", "deep_search"]}}, required=["action"], description="Current external evidence via search/fetch/weather. Use proactively for time-sensitive facts, official technical references, versions and vulnerabilities. search finds candidates; fetch verifies page content; deep_search does both for top sources. Weather accepts one precise location or a verified latitude/longitude pair; weather_batch accepts 2-10 explicit locations. Resolve broad/all scopes explicitly and report exact coverage rather than silently choosing representative locations. Select authority_profile and cite returned titles/URLs.", execution_contract={
         "batching": [{
             "source_action": "weather",
             "target_action": "weather_batch",
@@ -830,9 +845,9 @@ _RAW_REGISTRY: list[CanonicalToolEntry] = [
     }),
     _entry("data.manage", _handle_data, {**_COMMON, **_DATA_ARGS, "action": {"type": "string", "enum": ["parse", "stats", "distinct", "aggregate", "filter", "sort", "render", "pivot", "join"]}}, required=["action"], description="Structured data processing. Supply text or rows; action-specific columns/options are declared in the schema."),
     _entry("report.manage", _handle_report, {**_COMMON, "action": {"type": "string", "enum": ["save", "diff", "document"]}, "title": {"type": "string"}, "content": {"type": "string"}, "summary": {"type": "string"}, "text_a": {"type": "string"}, "text_b": {"type": "string"}}, required=["action"], description="Report operations. save requires content; diff requires text_a/text_b; document requires summary."),
-    _entry("knowledge.manage", _handle_knowledge, {**_COMMON, "action": {"type": "string", "enum": ["search", "read", "list", "chunk", "import", "reindex"]}, "query": {"type": "string"}, "limit": {"type": "integer", "minimum": 1}, "artifact_id": {"type": "string"}, "level": {"type": "string", "enum": ["chunk", "source"]}, "chunk_id": {"type": "string"}, "source_id": {"type": "string"}, "chunk_type": {"type": "string"}, "scope": {"type": "string"}, "include_disabled": {"type": "boolean"}, "include_deleted": {"type": "boolean"}}, required=["action"], risk="medium", description="Knowledge operations. search requires query; read requires chunk_id or source_id; list lists sources; chunk lists chunks; import requires artifact_id; reindex requires source_id."),
-    _entry("memory.manage", _handle_memory, {**_COMMON, **_MEMORY_ARGS, "action": {"type": "string", "enum": ["search", "review", "confirm", "create", "update", "delete", "profile_get", "profile_set"]}}, required=["action"], risk="medium", description="Memory operations. create requires content; update/confirm/delete require memory_id; profile_set requires field and value."),
-    _entry("skill.manage", _handle_skill, {**_COMMON, "action": {"type": "string", "enum": ["list", "find", "load", "inspect", "mcp_list_tools", "mcp_call"]}, "query": {"type": "string"}, "limit": {"type": "integer", "minimum": 1}, "skill_name": {"type": "string"}, "provider_id": {"type": "string"}, "tool_name": {"type": "string"}, "arguments": {"type": "object"}, "confirm": {"type": "boolean"}}, required=["action"], risk="medium", permission="exec", description="Skill operations. find requires query; load/inspect require skill_name; MCP actions require provider_id and mcp_call also requires tool_name."),
+    _entry("knowledge.manage", _handle_knowledge, {**_COMMON, "action": {"type": "string", "enum": ["search", "read", "list", "chunk", "import", "reindex"]}, "query": {"type": "string"}, "limit": {"type": "integer", "minimum": 1, "maximum": 200}, "artifact_id": {"type": "string"}, "level": {"type": "string", "enum": ["chunk", "source"]}, "chunk_id": {"type": "string"}, "source_id": {"type": "string"}, "chunk_type": {"type": "string"}, "scope": {"type": "string"}, "include_disabled": {"type": "boolean"}, "include_deleted": {"type": "boolean"}}, required=["action"], risk="medium", description="Knowledge operations. search requires query; read requires chunk_id or source_id; list lists sources; chunk lists chunks; import requires artifact_id; reindex requires source_id."),
+    _entry("memory.manage", _handle_memory, {**_COMMON, **_MEMORY_ARGS, "action": {"type": "string", "enum": ["search", "review", "confirm", "create", "update", "delete", "profile_get", "profile_set"]}}, required=["action"], risk="medium", description="Memory operations. create requires content; update requires memory_id and replacement content; confirm/delete require memory_id; profile_set requires field and value."),
+    _entry("skill.manage", _handle_skill, {**_COMMON, "action": {"type": "string", "enum": ["list", "find", "load", "inspect", "mcp_list_tools", "mcp_call"]}, "query": {"type": "string"}, "limit": {"type": "integer", "minimum": 1, "maximum": 20}, "skill_name": {"type": "string"}, "provider_id": {"type": "string"}, "tool_name": {"type": "string"}, "arguments": {"type": "object"}, "confirm": {"type": "boolean"}}, required=["action"], risk="medium", permission="exec", description="Skill operations. find requires query; load/inspect require skill_name; MCP actions require provider_id and mcp_call also requires tool_name."),
     _entry("agent.manage", _handle_agent, {
         **_COMMON,
         "action": {"type": "string", "enum": ["spawn", "list", "get", "status", "cancel", "merge"]},
@@ -844,7 +859,7 @@ _RAW_REGISTRY: list[CanonicalToolEntry] = [
         "subtask_id": {"type": "string"},
         "parent_task_id": {"type": "string"},
     }, required=["action"], description="Subagent task management. spawn delegates an outcome, not an invented implementation plan, and accepts only the profile_id values published in the schema; choose research_agent for external research, file_agent for workspace files, and data_agent for structured analysis. Preserve explicit user constraints, but let the child select and compose its allowed tools. get/cancel/merge use the subtask_id returned by spawn. Delegation does not extend an upstream tool or data provider's limits."),
-    _entry("system.manage", _handle_system, {**_COMMON, **_SYSTEM_ARGS, "limit": {"type": "integer", "minimum": 1}, "action": {"type": "string", "enum": ["diagnostics", "health", "selfcheck", "local_info", "tasks", "audit_log", "run_get", "session_get", "session_checkpoint", "session_rewind", "session_export", "session_snapshot"]}}, required=["action"], risk="medium", description="Runtime health, current local date/time and host facts, durable tasks, audit logs, run details, and session operations. local_info returns timezone-aware current time plus host/IP/OS facts; run_get requires run_id; session actions require session_id; rewind additionally requires snapshot_id."),
+    _entry("system.manage", _handle_system, {**_COMMON, **_SYSTEM_ARGS, "limit": {"type": "integer", "minimum": 1, "maximum": 200}, "action": {"type": "string", "enum": ["diagnostics", "health", "selfcheck", "local_info", "tasks", "audit_log", "run_get", "session_get", "session_checkpoint", "session_rewind", "session_export", "session_snapshot"]}}, required=["action"], risk="medium", description="Runtime health, current local date/time and host facts, durable tasks, audit logs, run details, and session operations. local_info returns timezone-aware current time plus host/IP/OS facts; run_get requires run_id; session actions require session_id; rewind additionally requires snapshot_id."),
     _entry("text.analyze", _handle_text, {**_COMMON, "action": {"type": "string", "enum": ["redact", "extract_entities", "match"]}, "text": {"type": "string"}, "pattern": {"type": "string"}}, required=["action"], description="Text redact, extract and match."),
     _entry("workspace.file", _handle_workspace_file, {**_COMMON, **_WORKSPACE_FILE_ARGS, "action": {"type": "string", "enum": ["list", "read", "read_image", "extract_document", "extract_document_image", "extract_document_images", "write", "write_artifact", "edit", "patch", "glob", "delete"]}}, required=["action"], risk="medium", description="Workspace files. extract_document reads a managed text, DOCX, PDF, XLSX, or PPTX attachment by file_id and reports embedded_image_count for DOCX. extract_document_image extracts one DOCX image by file_id and 1-based image_index. extract_document_images extracts an ordered DOCX image batch (up to 8) for visual analysis; its image evidence is automatically delivered to the next model turn. Never pass a returned file_id to read/read_image because those actions require a workspace filepath. write/write_artifact require filename and content.", execution_contract={
         "batching": [{
@@ -867,7 +882,7 @@ _RAW_REGISTRY: list[CanonicalToolEntry] = [
             "delete": {"filepath": "workspace_path"},
         },
     }),
-    _entry("workspace.artifact", _handle_workspace_artifact, {**_COMMON, "action": {"type": "string", "enum": ["list", "read", "save", "tag", "delete"]}, "query": {"type": "string"}, "limit": {"type": "integer", "minimum": 1}, "artifact_id": {"type": "string"}, "content": {"type": "string"}, "title": {"type": "string"}, "status": {"type": "string"}, "tags": {"type": "array", "items": {"type": "string"}}, "artifact_type": {"type": "string"}}, required=["action"], description="Workspace artifact operations."),
+    _entry("workspace.artifact", _handle_workspace_artifact, {**_COMMON, "action": {"type": "string", "enum": ["list", "read", "save", "tag", "delete"]}, "query": {"type": "string"}, "limit": {"type": "integer", "minimum": 1, "maximum": 100}, "artifact_id": {"type": "string"}, "content": {"type": "string"}, "title": {"type": "string"}, "tags": {"type": "array", "items": {"type": "string"}}, "artifact_type": {"type": "string"}, "evidence_view": {"type": "string", "enum": ["current", "history", "deliverables"]}, "producer_id": {"type": "string"}, "asset_id": {"type": "string"}}, required=["action"], description="Workspace artifact operations. list may filter by query, evidence_view, producer_id, or asset_id."),
     _entry("workspace.filestore", _handle_workspace_filestore, {**_COMMON, "action": {"type": "string", "enum": ["references", "import", "reconcile_trash_preview", "reconcile_trash"]}, "file_id": {"type": "string"}, "filepath": {"type": "string"}}, required=["action"], description="FileStore references, import, and hash-verified legacy trash reconciliation."),
     _entry("workspace.metadata.get", _handle_workspace_metadata, {"workspace_id": {"type": "string"}}, description="Workspace metadata."),
     _entry("workspace.document.pdf.extract_text", _handle_pdf_extract, {"workspace_id": {"type": "string"}, "filepath": {"type": "string"}, "page_range": {"type": "string"}}, required=["filepath"], description="Extract PDF text."),
@@ -882,19 +897,27 @@ _BINDABLE_INPUTS: dict[str, dict[str, list[str]]] = {
     "browser.manage": {"navigate": ["url"], "extract": ["url"]},
     "web.manage": {
         "search": ["query"], "deep_search": ["query"], "fetch": ["url"],
-        "weather": ["location"], "weather_batch": ["locations"],
+        "weather": ["location", "latitude", "longitude"],
+        "weather_batch": ["locations"],
     },
     "location.manage": {
         "resolve": ["query"], "resolve_batch": ["queries"],
         "reverse": ["latitude", "longitude"],
     },
     "data.manage": {"*": ["text", "rows", "right_text", "right_rows"]},
-    "report.manage": {"diff": ["text_a", "text_b"]},
+    "report.manage": {
+        "save": ["content"], "diff": ["text_a", "text_b"],
+        "document": ["summary"],
+    },
     "knowledge.manage": {
         "search": ["query"], "read": ["chunk_id", "source_id"],
-        "chunk": ["source_id"],
+        "chunk": ["source_id"], "import": ["artifact_id"],
     },
-    "memory.manage": {"search": ["query"], "review": ["query"]},
+    "memory.manage": {
+        "search": ["query"], "review": ["query"],
+        "update": ["memory_id"], "confirm": ["memory_id"],
+        "delete": ["memory_id"],
+    },
     "skill.manage": {
         "find": ["query"], "load": ["skill_name"], "inspect": ["skill_name"],
     },
@@ -938,9 +961,9 @@ _REFERENCEABLE_OUTPUTS: dict[str, dict[str, list[str]]] = {
         "weather_batch": ["forecasts", "coverage", "failed_locations"],
     },
     "location.manage": {
-        "resolve": ["resolved", "candidates", "confidence"],
-        "resolve_batch": ["results", "coverage"],
-        "reverse": ["resolved", "candidates", "confidence"],
+        "resolve": ["resolved", "canonical_name", "latitude", "longitude", "candidates", "confidence"],
+        "resolve_batch": ["results", "resolved_entities", "coverage"],
+        "reverse": ["resolved", "canonical_name", "latitude", "longitude", "candidates", "confidence"],
     },
     "data.manage": {
         "parse": ["rows", "columns", "types", "row_count"],
@@ -980,8 +1003,8 @@ _REFERENCEABLE_OUTPUTS: dict[str, dict[str, list[str]]] = {
     "system.manage": {
         "local_info": ["hostname", "primary_ip", "ipv4_addresses", "current_time_local", "local_timezone"],
         "tasks": ["tasks", "count"], "audit_log": ["entries", "count"],
-        "run_get": ["run_id", "runs", "status"],
-        "session_get": ["session_id", "sessions", "title", "message_count"],
+        "run_get": ["run_id", "status"],
+        "session_get": ["session_id", "title", "message_count"],
         "session_export": ["format", "export"],
         "session_snapshot": ["snapshot_id"], "session_checkpoint": ["checkpoint_id"],
     },

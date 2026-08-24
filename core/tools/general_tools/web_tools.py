@@ -1,14 +1,11 @@
 from __future__ import annotations
 
 from core.tools.schemas import ToolInvocation
-from storage.ids import validate_workspace_id
 """Web tool handlers — search, weather, news, fetch."""
 import re
-import threading
-import time
 from concurrent.futures import ThreadPoolExecutor
 
-from core.tools.general_tools.shared import _caller_workspace, _contract, _error, _error_inv, _ok, _result, _safe_preview, _unavailable, _workspace_path
+from core.tools.general_tools.shared import _error_inv, _ok, _result
 from core.tools.general_tools.shared_web import *  # has __all__ — 21 functions, all needed
 
 
@@ -570,9 +567,13 @@ def _invoke_internal_web_search(inv: ToolInvocation, arguments: dict) -> dict:
 def handle_weather_current(inv: ToolInvocation) -> dict:
     """Current-weather lookup backed by structured public weather data."""
     args = inv.arguments
+    if (args.get("latitude") is None) != (args.get("longitude") is None):
+        return _error_inv(inv, "latitude and longitude must be supplied together")
     location = (args.get("location") or "").strip()
+    if not location and args.get("latitude") is not None:
+        location = f"{args['latitude']},{args['longitude']}"
     if not location:
-        return _error_inv(inv, "location is required")
+        return _error_inv(inv, "location or a latitude/longitude pair is required")
     language = (args.get("language") or "zh-CN").strip() or "zh-CN"
     units = (args.get("units") or "metric").strip().lower()
     structured = _lookup_open_meteo_weather(
@@ -605,6 +606,9 @@ def handle_weather_current(inv: ToolInvocation) -> dict:
     })
     out = {"ok": bool(result.get("ok")),
            "summary": result.get("summary", ""),
+           "resolved_location": {"name": location, "verified": False},
+           "current": {},
+           "forecast_daily": [],
            "results": result.get("results", []),
            "errors": list(result.get("errors") or [])[:5],
            "warnings": list(result.get("warnings") or [])[:5]}
@@ -619,9 +623,13 @@ def handle_weather_current(inv: ToolInvocation) -> dict:
 def handle_weather_forecast(inv: ToolInvocation) -> dict:
     """Weather forecast lookup backed by structured public weather data."""
     args = inv.arguments
+    if (args.get("latitude") is None) != (args.get("longitude") is None):
+        return _error_inv(inv, "latitude and longitude must be supplied together")
     location = (args.get("location") or "").strip()
+    if not location and args.get("latitude") is not None:
+        location = f"{args['latitude']},{args['longitude']}"
     if not location:
-        return _error_inv(inv, "location is required")
+        return _error_inv(inv, "location or a latitude/longitude pair is required")
     days = _coerce_int(args.get("days", 3), default=3, min_value=1, max_value=10)
     language = (args.get("language") or "zh-CN").strip() or "zh-CN"
     units = (args.get("units") or "metric").strip().lower()
@@ -655,6 +663,9 @@ def handle_weather_forecast(inv: ToolInvocation) -> dict:
     })
     out = {"ok": bool(result.get("ok")),
            "summary": result.get("summary", ""),
+           "resolved_location": {"name": location, "verified": False},
+           "current": {},
+           "forecast_daily": [],
            "results": result.get("results", []),
            "errors": list(result.get("errors") or [])[:5],
            "warnings": list(result.get("warnings") or [])[:5]}

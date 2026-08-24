@@ -10,59 +10,12 @@ from storage.workspace_files import (
     write_text_atomic,
 )
 
-from core.tools.general_tools.shared import _caller_workspace, _contract, _error, _error_inv, _generate_diff_preview, _ok, _result, _safe_preview, _unavailable, _workspace_path
+from core.tools.general_tools.shared import _caller_workspace, _error_inv, _generate_diff_preview, _ok, _result, _workspace_path
 """Split general tool handlers."""
 
 
 def _is_current_workspace_write_path(ws: str, target: Path) -> bool:
     return is_current_workspace_write_path(ws, target)
-
-
-def handle_file_list(inv: ToolInvocation) -> dict:
-    """List files in workspace subdirectory. Max 50 files."""
-    ws = _caller_workspace(inv)
-    subdir = inv.arguments.get("subdir", "")
-    try:
-        target = _workspace_path(ws, subdir)
-        if not target.exists():
-            return _ok(inv, "", {"files": [], "count": 0})
-        files = []
-        for p in sorted(target.iterdir()):
-            if len(files) >= 50:
-                break
-            if p.is_file():
-                files.append({"name": p.name, "size": p.stat().st_size, "suffix": p.suffix})
-            elif p.is_dir():
-                files.append({"name": p.name, "type": "directory"})
-        return _ok(inv, "", {"files": files, "count": len(files)})
-    except Exception as e:
-        return _error_inv(inv, str(e)[:200])
-
-
-def handle_file_exists(inv: ToolInvocation) -> dict:
-    """Check whether a workspace file exists and return metadata."""
-    ws = _caller_workspace(inv)
-    filepath = inv.arguments.get("filepath", "")
-    try:
-        target = _workspace_path(ws, filepath)
-        exists = target.exists()
-        result = {
-            "exists": exists,
-            "is_file": target.is_file() if exists else False,
-            "is_dir": target.is_dir() if exists else False,
-        }
-        if exists and target.is_file():
-            result["size"] = target.stat().st_size
-        return _ok(inv, f"Path exists={exists}.", result)
-    except Exception as e:
-        return _error_inv(inv, str(e)[:200])
-
-
-def handle_file_list_merged(inv: ToolInvocation) -> dict:
-    """Merged handler for workspace.file — dispatches to list or exists."""
-    if inv.arguments.get("filepath", "").strip():
-        return handle_file_exists(inv)
-    return handle_file_list(inv)
 
 
 def handle_file_read(inv: ToolInvocation) -> dict:
@@ -216,32 +169,22 @@ def handle_file_patch(inv: ToolInvocation) -> dict:
 def handle_ws_list_files(inv: ToolInvocation) -> dict:
     ws = _caller_workspace(inv)
     subdir = inv.arguments.get("subdir", "")
+    limit = max(1, min(int(inv.arguments.get("limit") or 50), 200))
     try:
         target = _workspace_path(ws, subdir)
         if not target.exists():
             return _ok(inv, "", {"files": [], "count": 0})
         files = []
         for p in target.iterdir():
+            relative_path = (Path(subdir) / p.name).as_posix()
             if p.is_file():
-                files.append({"name": p.name, "size": p.stat().st_size, "suffix": p.suffix})
+                files.append({
+                    "name": p.name, "filepath": relative_path,
+                    "size": p.stat().st_size, "suffix": p.suffix,
+                })
             elif p.is_dir():
-                files.append({"name": p.name, "type": "directory"})
-        return _ok(inv, "", {"files": files[:50], "count": len(files)})
-    except Exception as e:
-        return _error_inv(inv, str(e)[:200])
-
-
-def handle_ws_read_text_preview(inv: ToolInvocation) -> dict:
-    ws = _caller_workspace(inv)
-    filepath = inv.arguments.get("filepath", "")
-    try:
-        target = _workspace_path(ws, filepath)
-        if not target.is_file():
-            return _error_inv(inv, "file not found")
-        if target.stat().st_size > 1024 * 1024:
-            return _error_inv(inv, "file too large (>1MB)")
-        content = target.read_text(encoding="utf-8", errors="replace")
-        return _ok(inv, "", {"preview": _safe_preview(content, 500), "size": len(content)})
+                files.append({"name": p.name, "filepath": relative_path, "type": "directory"})
+        return _ok(inv, "", {"files": files[:limit], "count": len(files)})
     except Exception as e:
         return _error_inv(inv, str(e)[:200])
 
@@ -307,16 +250,6 @@ def handle_ws_write_artifact_file(inv: ToolInvocation) -> dict:
         return _error_inv(inv, str(e)[:200])
 
 
-def handle_ws_path_exists(inv: ToolInvocation) -> dict:
-    ws = _caller_workspace(inv)
-    filepath = inv.arguments.get("filepath", "")
-    try:
-        target = _workspace_path(ws, filepath)
-        return _ok(inv, "", {"exists": target.exists(), "is_file": target.is_file(), "is_dir": target.is_dir()})
-    except Exception as e:
-        return _error_inv(inv, str(e)[:200])
-
-
 def handle_ws_get_metadata(inv: ToolInvocation) -> dict:
     ws = _caller_workspace(inv)
     try:
@@ -364,4 +297,4 @@ def handle_file_read_image(inv: ToolInvocation) -> dict:
         return _error_inv(inv, str(e)[:200])
 
 
-__all__ = ['handle_file_list', 'handle_file_exists', 'handle_file_read', 'handle_file_edit', 'handle_file_patch', 'handle_ws_list_files', 'handle_ws_read_text_preview', 'handle_ws_write_artifact_file', 'handle_ws_path_exists', 'handle_ws_get_metadata']
+__all__ = ['handle_file_read', 'handle_file_edit', 'handle_file_patch', 'handle_ws_list_files', 'handle_ws_write_artifact_file', 'handle_ws_get_metadata']

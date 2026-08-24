@@ -3,9 +3,8 @@ from __future__ import annotations
 from core.tools.schemas import ToolInvocation
 from storage.ids import validate_workspace_id
 
-from core.tools.general_tools.shared import _caller_workspace, _contract, _error, _error_inv, _ok, _result, _unavailable, _workspace_path
+from core.tools.general_tools.shared import _caller_workspace, _error_inv, _ok
 
-import json
 import re
 """Split general tool handlers."""
 
@@ -115,7 +114,9 @@ def handle_knowledge_get_source(inv: ToolInvocation) -> dict:
         source = result.get("source", {})
         return _ok(inv, "", {
             "source_id": source.get("source_id", ""),
+            "chunk_id": "",
             "title": source.get("title", ""),
+            "safe_excerpt": "",
             "source": source.get("source", ""),
             "enabled": source.get("enabled", True),
             "chunk_count": source.get("chunk_count", 0),
@@ -136,6 +137,8 @@ def handle_knowledge_get_chunk_summary(inv: ToolInvocation) -> dict:
         chunk = result.get("chunk", {})
         return _ok(inv, "", {
             "chunk_id": chunk_id,
+            "source_id": chunk.get("source_id", ""),
+            "title": chunk.get("title", ""),
             "summary": chunk.get("chapter", "") or chunk.get("section", ""),
             "safe_excerpt": str(chunk.get("content", ""))[:900],
             "llm_safe": True,

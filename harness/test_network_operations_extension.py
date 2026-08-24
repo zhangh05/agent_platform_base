@@ -149,6 +149,20 @@ def test_assets_write_requires_explicit_action_and_non_empty_asset(monkeypatch, 
     assert "action" not in service.get_asset("default", saved["asset"]["asset_id"], include_secret=True)
 
 
+def test_asset_list_publishes_ids_for_direct_inspection_binding(monkeypatch, tmp_path):
+    _setup(monkeypatch, tmp_path)
+    first = service.save_asset("default", {
+        "name": "R1", "host": "10.0.0.1", "username": "ops", "password": "secret",
+    })
+    second = service.save_asset("default", {
+        "name": "R2", "host": "10.0.0.2", "username": "ops", "password": "secret",
+    })
+    result = assets_read(SimpleNamespace(workspace_id="default", arguments={}))
+
+    assert result["ok"] is True
+    assert set(result["asset_ids"]) == {first["asset_id"], second["asset_id"]}
+
+
 def test_network_reads_report_missing_records_as_failures(monkeypatch, tmp_path):
     _setup(monkeypatch, tmp_path)
     missing_asset = assets_read(SimpleNamespace(

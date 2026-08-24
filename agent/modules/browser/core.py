@@ -4,7 +4,7 @@ Browser automation — Playwright-based, 16-operation engine.
 Key features:
     - Accessibility snapshot (Playwright MCP-style structural page view)
     - Full base64 screenshot support (saved to workspace)
-    - Tab management (list/new/close/select)
+    - Tab management (list/new/close/switch)
     - Network & console introspection
     - JS evaluation
     - Form filling, typing, scrolling, hovering, key pressing
@@ -22,7 +22,6 @@ import asyncio
 import base64
 import json
 import logging
-import os
 import threading
 import time
 from typing import Any
@@ -364,6 +363,7 @@ def browser_screenshot(
             result["filename"] = filename
             result["base64_preview"] = b64[:200]
         else:
+            result.update({"file_id": "", "saved_to": "", "filename": ""})
             result["screenshot_base64"] = b64
 
         return result
@@ -647,12 +647,15 @@ def browser_tabs(action: str = "list", tab_index: int = 0, url: str = "") -> dic
     """Manage browser tabs.
 
     Args:
-        action: list | new | close | select
+        action: list | new | close | switch
         tab_index: Target tab index.
         url: URL for new tabs.
     """
     async def _tabs():
         global _pages, _active_tab
+        # tabs is a public entry point and must work before navigate/snapshot.
+        # Initialize the shared browser context instead of dereferencing None.
+        await _get_page()
 
         if action == "list":
             tabs = []
@@ -683,7 +686,7 @@ def browser_tabs(action: str = "list", tab_index: int = 0, url: str = "") -> dic
                 return {"ok": True, "closed_tab": tab_index, "active_tab": _active_tab}
             return {"ok": False, "error": f"tab {tab_index} not found"}
 
-        elif action == "select":
+        elif action == "switch":
             if tab_index in _pages and not _pages[tab_index].is_closed():
                 _active_tab = tab_index
                 page = _pages[tab_index]

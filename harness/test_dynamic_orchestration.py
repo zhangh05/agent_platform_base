@@ -25,7 +25,12 @@ def _ctx() -> StatelessContext:
 
 def _registry() -> dict:
     from core.tools.canonical_registry import to_tool_specs
-    return {spec.tool_id: spec.as_dict() for spec, _handler in to_tool_specs()}
+    from extensions.runtime import get_extension_tool_specs
+
+    return {
+        spec.tool_id: spec.as_dict()
+        for spec, _handler in [*to_tool_specs(), *get_extension_tool_specs()]
+    }
 
 
 def test_queryloop_extracts_plan_metadata_without_leaking_it_to_handler_args():
@@ -82,23 +87,51 @@ def test_incremental_graph_resolves_prior_result_into_analysis_input():
 def test_incremental_graph_keeps_evidence_across_queryloop_rounds():
     class Runtime:
         def invoke_raw(self, tool_id, arguments):
-            return {"ok": True, "text": arguments.get("text", "source")}
+            if arguments.get("action") == "parse":
+                return {"ok": True, "rows": [{"value": 7}]}
+            return {"ok": True, "received": arguments.get("rows")}
 
     ctx = _ctx()
     executor = StreamingToolExecutor(Runtime(), SSOTRuntimeConfig(), tool_registry=_registry())
     first = [LLMToolCall(
-        id="call-1", name="text.analyze", arguments={"action": "match", "text": "source"},
+        id="call-1", name="data.manage", arguments={"action": "parse", "text": "value\n7"},
         step_id="source",
     )]
     asyncio.run(executor.execute(first, ctx=ctx))
     second = [LLMToolCall(
-        id="call-2", name="text.analyze", arguments={"action": "match", "pattern": "source"},
+        id="call-2", name="data.manage", arguments={"action": "stats"},
         step_id="verify", depends_on=["source"],
-        result_bindings={"text": "steps.source.output.text"},
+        result_bindings={"rows": "steps.source.output.rows"},
     )]
     result = asyncio.run(executor.execute(second, ctx=ctx))[0]
     assert result.ok is True
-    assert result.output["text"] == "source"
+    assert result.output["received"] == [{"value": 7}]
+
+
+def test_prior_round_narrow_binding_still_requires_published_source_field():
+    registry = _registry()
+    call = LLMToolCall(
+        id="consume", name="exec.run",
+        arguments={"action": "python", "code": "result = input_data"},
+        step_id="consume", depends_on=["source"],
+        result_bindings={"input_data": "steps.source.output.provider_private"},
+    )
+    prior = {
+        "source": StepEvidence(
+            "source", "call-source", "web.manage", True,
+            {"ok": True, "provider_private": "hidden"}, "", "search",
+        ),
+    }
+    with pytest.raises(OrchestrationError, match="undeclared binding source"):
+        validate_incremental_graph(
+            [call], prior,
+            binding_target_validator=lambda tool_id, action, target: binding_target_allowed(
+                registry, tool_id, action, target,
+            ),
+            binding_source_validator=lambda tool_id, action, path: binding_source_allowed(
+                registry, tool_id, action, path,
+            ),
+        )
 
 
 def test_failed_step_can_be_replanned_with_same_stable_id_and_changed_args():
@@ -506,15 +539,20 @@ def test_unsafe_result_binding_is_rejected_before_execution():
     call = LLMToolCall(
         id="b", name="workspace.file", arguments={"action": "write", "filename": "x.txt"},
         step_id="write", depends_on=["source"],
-        result_bindings={"content": "steps.source.output.text"},
+        result_bindings={"content": "steps.source.output.matches"},
     )
     with pytest.raises(OrchestrationError, match="unsafe binding target"):
         registry = _registry()
         validate_incremental_graph(
             [call],
-            {"source": SimpleNamespace(ok=True)},
+            {"source": StepEvidence(
+                "source", "source-call", "text.analyze", True, {"matches": []}, "", "match",
+            )},
             binding_target_validator=lambda tool_id, action, target: binding_target_allowed(
                 registry, tool_id, action, target,
+            ),
+            binding_source_validator=lambda tool_id, action, path: binding_source_allowed(
+                registry, tool_id, action, path,
             ),
         )
 
@@ -533,7 +571,9 @@ def test_declared_cross_tool_binding_is_accepted_and_undeclared_field_is_denied(
         registry, tool_id, action, path,
     )
     assert validate_incremental_graph(
-        [allowed], {"source": SimpleNamespace(ok=True)},
+        [allowed], {"source": StepEvidence(
+            "source", "source-call", "data.manage", True, {"rows": []}, "", "parse",
+        )},
         binding_target_validator=validator,
         binding_source_validator=source_validator,
     ) == [["analyse"]]
@@ -541,14 +581,53 @@ def test_declared_cross_tool_binding_is_accepted_and_undeclared_field_is_denied(
     denied = LLMToolCall(
         id="shell", name="exec.run", arguments={"action": "shell", "command": "true"},
         step_id="shell", depends_on=["source"],
-        result_bindings={"command": "steps.source.output.text"},
+        result_bindings={"command": "steps.source.output.content"},
     )
     with pytest.raises(OrchestrationError, match="unsafe binding target"):
         validate_incremental_graph(
-            [denied], {"source": SimpleNamespace(ok=True)},
+            [denied], {"source": StepEvidence(
+                "source", "source-call", "web.manage", True, {"content": "true"}, "", "fetch",
+            )},
             binding_target_validator=validator,
             binding_source_validator=source_validator,
         )
+
+
+@pytest.mark.parametrize(
+    ("source_tool", "source_action", "source_field", "target_tool", "target_action", "target_field"),
+    [
+        ("report.manage", "document", "document", "report.manage", "save", "content"),
+        ("workspace.artifact", "save", "artifact_id", "knowledge.manage", "import", "artifact_id"),
+        ("agent.manage", "spawn", "subtask_id", "agent.manage", "get", "subtask_id"),
+        ("location.manage", "resolve_batch", "resolved_entities", "web.manage", "weather_batch", "locations"),
+        ("network.operations.assets_read", "", "asset_ids", "network.operations.inspection", "run", "asset_ids"),
+        ("network.operations.inspection", "run", "task.task_id", "network.operations.baseline", "create", "task_id"),
+        ("network.operations.baseline", "create", "baseline.baseline_id", "network.operations.baseline", "confirm", "baseline_id"),
+    ],
+)
+def test_published_natural_tool_compositions_are_graph_valid(
+    source_tool, source_action, source_field, target_tool, target_action, target_field,
+):
+    registry = _registry()
+    source_args = {"action": source_action} if source_action else {}
+    target_args = {"action": target_action} if target_action else {}
+    source = LLMToolCall(
+        id="source", name=source_tool, arguments=source_args, step_id="source",
+    )
+    target = LLMToolCall(
+        id="target", name=target_tool, arguments=target_args, step_id="target",
+        depends_on=["source"],
+        result_bindings={target_field: f"steps.source.output.{source_field}"},
+    )
+    assert validate_incremental_graph(
+        [source, target],
+        binding_target_validator=lambda tool_id, action, field: binding_target_allowed(
+            registry, tool_id, action, field,
+        ),
+        binding_source_validator=lambda tool_id, action, path: binding_source_allowed(
+            registry, tool_id, action, path,
+        ),
+    ) == [["source"], ["target"]]
 
 
 def test_same_batch_binding_requires_published_source_field_but_whole_output_is_allowed():

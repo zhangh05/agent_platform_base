@@ -2,12 +2,10 @@
 
 from __future__ import annotations
 
-import json
 import re
 import threading
 import time
 from typing import Any
-from datetime import datetime, timezone
 
 from core.tools.general_tools.shared import _PRIVATE_IP_PREFIXES, _result
 
@@ -700,6 +698,11 @@ class _DummyInv:
 def _weather_structured_result(*, tool_id: str, location: str, units: str,
                                language: str, structured: dict) -> dict:
     result = dict(structured)
+    # Keep the canonical weather output shape stable across current and
+    # forecast modes so dependent steps never bind to a mode-specific hole.
+    result.setdefault("resolved_location", {"name": location})
+    result.setdefault("current", {})
+    result.setdefault("forecast_daily", [])
     result["tool_id"] = tool_id
     result["tool_fallback"] = None
     result["query"] = location

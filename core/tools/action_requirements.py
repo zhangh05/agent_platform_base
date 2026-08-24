@@ -16,14 +16,12 @@ ACTION_REQUIRED_ALL: dict[tuple[str, str], tuple[str, ...]] = {
     ("exec.run", "python"): ("code",),
     ("browser.manage", "navigate"): ("url",),
     ("browser.manage", "type"): ("text",),
-    ("browser.manage", "extract"): ("url",),
     ("browser.manage", "press_key"): ("key",),
     ("browser.manage", "select_option"): ("value",),
     ("browser.manage", "evaluate"): ("script",),
     ("web.manage", "search"): ("query",),
     ("web.manage", "deep_search"): ("query",),
     ("web.manage", "fetch"): ("url",),
-    ("web.manage", "weather"): ("location",),
     ("web.manage", "weather_batch"): ("locations",),
     ("location.manage", "resolve"): ("query",),
     ("location.manage", "resolve_batch"): ("queries",),
@@ -31,8 +29,9 @@ ACTION_REQUIRED_ALL: dict[tuple[str, str], tuple[str, ...]] = {
     ("data.manage", "distinct"): ("column",),
     ("data.manage", "filter"): ("conditions",),
     ("data.manage", "sort"): ("by",),
-    # ``values`` is only meaningful for sum/avg.  Count pivots intentionally
-    # operate without it, so the handler validates it after inspecting aggfunc.
+    # ``values`` is required by every aggregate except count. The handler
+    # validates it after inspecting aggfunc because the merged schema cannot
+    # express that action-and-value-dependent requirement clearly.
     ("data.manage", "pivot"): ("index", "columns"),
     ("data.manage", "join"): ("on",),
     ("report.manage", "save"): ("content",),
@@ -42,7 +41,7 @@ ACTION_REQUIRED_ALL: dict[tuple[str, str], tuple[str, ...]] = {
     ("knowledge.manage", "import"): ("artifact_id",),
     ("knowledge.manage", "reindex"): ("source_id",),
     ("memory.manage", "create"): ("content",),
-    ("memory.manage", "update"): ("memory_id",),
+    ("memory.manage", "update"): ("memory_id", "content"),
     ("memory.manage", "confirm"): ("memory_id",),
     ("memory.manage", "delete"): ("memory_id",),
     ("memory.manage", "profile_set"): ("field", "value"),
@@ -88,6 +87,23 @@ ACTION_REQUIRED_ANY: dict[tuple[str, str], tuple[tuple[str, ...], ...]] = {
     ("browser.manage", "hover"): (("selector", "ref"),),
     ("browser.manage", "select_option"): (("selector", "ref"),),
     ("knowledge.manage", "read"): (("chunk_id", "source_id"),),
+    # CNF form: either location, or both coordinates.
+    ("web.manage", "weather"): (
+        ("location", "latitude"),
+        ("location", "longitude"),
+    ),
+    ("data.manage", "parse"): (("text", "rows"),),
+    ("data.manage", "stats"): (("text", "rows"),),
+    ("data.manage", "distinct"): (("text", "rows"),),
+    ("data.manage", "aggregate"): (("text", "rows"),),
+    ("data.manage", "filter"): (("text", "rows"),),
+    ("data.manage", "sort"): (("text", "rows"),),
+    ("data.manage", "render"): (("text", "rows"),),
+    ("data.manage", "pivot"): (("text", "rows"),),
+    ("data.manage", "join"): (
+        ("text", "rows"),
+        ("right_text", "right_rows"),
+    ),
     ("agent.manage", "get"): (("subtask_id",),),
     ("agent.manage", "merge"): (("subtask_id",),),
 }

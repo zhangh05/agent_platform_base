@@ -59,6 +59,19 @@ def test_pivot_count_action_contract_does_not_require_values():
     assert ACTION_REQUIRED_ALL[("data.manage", "pivot")] == ("index", "columns")
 
 
+def test_pivot_supports_every_aggregate_published_by_its_schema():
+    rows = [
+        {"site": "east", "state": "up", "latency": 8},
+        {"site": "east", "state": "up", "latency": 3},
+    ]
+    assert data_pivot(
+        rows=rows, index="site", columns="state", values="latency", aggfunc="min",
+    )["pivot"]["east"]["up"] == 3.0
+    assert data_pivot(
+        rows=rows, index="site", columns="state", values="latency", aggfunc="max",
+    )["pivot"]["east"]["up"] == 8.0
+
+
 def test_join_validates_keys_and_counts_matched_left_rows():
     missing = data_join(rows=[{"id": 1}], right_rows=[{"key": 1}], on="id")
     assert missing["ok"] is False

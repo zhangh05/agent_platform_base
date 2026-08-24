@@ -48,14 +48,15 @@ def _via_gate(title: str, content: str, ws_id: str, source: str = "llm_tool",
 def handle_memory_search(inv: ToolInvocation) -> dict:
     """Search stored memories by keyword. Auto-injection happens at session start."""
     query = (inv.arguments.get("query") or "").strip()
+    limit = max(1, min(int(inv.arguments.get("limit") or 10), 100))
     try:
         ws = _caller_workspace(inv)
         store = _get_store(ws)
         # Try store-level search first, fall back to list+filter
         try:
-            results = store.search(ws, query, limit=10)
+            results = store.search(ws, query, limit=limit)
         except (AttributeError, NotImplementedError):
-            results = store.list_retrievable(ws, limit=30)
+            results = store.list_retrievable(ws, limit=max(limit, 30))
             if query:
                 q = query.lower()
                 results = [r for r in results if q in (r.get("content", "") + r.get("summary", "")).lower()]
@@ -66,7 +67,7 @@ def handle_memory_search(inv: ToolInvocation) -> dict:
             "content": r.get("content", "")[:300],
             "status": r.get("status", ""),
             "memory_type": r.get("memory_type", ""),
-        } for r in results[:10]]
+        } for r in results[:limit]]
         return _ok(inv, "", {
             "results": safe, "count": len(safe),
             "_hint": f"找到 {len(safe)} 条相关记忆。记忆在会话启动时自动注入，search 用于精确查询。",

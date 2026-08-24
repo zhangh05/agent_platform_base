@@ -80,8 +80,6 @@ CANONICAL_ALIASES_BY_TOOL: Final[dict[str, dict[str, tuple[str, str | None]]]] =
         "get_session": ("session_get", "get_history"),
         "session_history": ("session_get", "get_history"),
         "history_get": ("session_get", "get_history"),
-        "session_list": ("session_get", "list"),
-        "list_sessions": ("session_get", "list"),
 
         # audit / tasks
         "audit_get": ("audit_log", "get"),
@@ -90,8 +88,6 @@ CANONICAL_ALIASES_BY_TOOL: Final[dict[str, dict[str, tuple[str, str | None]]]] =
 
         # run history
         "get_run": ("run_get", "get"),
-        "run_list": ("run_get", "list"),
-        "list_runs": ("run_get", "list"),
 
         # diagnostics / health / selfcheck (no operation hint — pure
         # synonyms)

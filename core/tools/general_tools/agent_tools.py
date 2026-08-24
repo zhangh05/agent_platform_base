@@ -241,6 +241,9 @@ def handle_agent_get_result(inv: ToolInvocation) -> dict:
                 **persisted,
                 "tracking": _subtask_tracking(subtask_id, status),
             }
+            payload.setdefault("subtask_id", subtask_id)
+            payload.setdefault("preview", str(persisted.get("summary") or ""))
+            payload.setdefault("artifact_id", "")
             artifact_id = str(persisted.get("result_artifact_id") or "").strip()
             if status == "succeeded" and artifact_id:
                 # This remains inside the registered agent.manage handler. The

@@ -185,7 +185,7 @@ def data_stats(text: str = "", rows: list | None = None) -> dict:
 
     if not num_cols:
         return {
-            "ok": True, "stats": {}, "markdown": "无数值列",
+            "ok": True, "stats": {}, "numeric_columns": [], "markdown": "无数值列",
             "_hint": "数据中没有数值列，试试 distinct 了解分布",
         }
 
@@ -514,7 +514,19 @@ def data_render(
     if err:
         return {"ok": False, "error": err}
     if not parsed:
-        return {"ok": True, "markdown": "(empty)", "rows": []}
+        result = {
+            "ok": True,
+            "columns": [],
+            "returned": 0,
+            "total": 0,
+            "truncated": False,
+            "format": output,
+        }
+        if output == "json":
+            result["rows"] = []
+        else:
+            result["markdown"] = "(empty)"
+        return result
 
     max_rows = max(1, min(int(max_rows or 50), MAX_OUTPUT_ROWS))
     display = parsed[:max_rows]
@@ -544,7 +556,7 @@ def data_render(
 def data_pivot(
     text: str = "", rows: list | None = None,
     index: str = "", columns: str = "", values: str = "",
-    aggfunc: str = "sum",
+    aggfunc: str = "count",
 ) -> dict:
     if rows is not None:
         parsed, err = _normalize_rows(rows)
@@ -554,7 +566,7 @@ def data_pivot(
         return {"ok": False, "error": err}
     if not index or not columns:
         return {"ok": False, "error": "index and columns are required"}
-    if aggfunc not in {"sum", "avg", "count"}:
+    if aggfunc not in {"sum", "avg", "count", "min", "max"}:
         return {"ok": False, "error": f"unsupported pivot aggregate: {aggfunc}"}
     available = set(parsed[0].keys()) if parsed else set()
     required = [index, columns] + ([] if aggfunc == "count" else [values])
@@ -587,6 +599,10 @@ def data_pivot(
                 pivot_result[rk][ck] = len(vals)
             elif aggfunc == "avg":
                 pivot_result[rk][ck] = round(sum(vals) / len(vals), 2)
+            elif aggfunc == "min":
+                pivot_result[rk][ck] = min(vals)
+            elif aggfunc == "max":
+                pivot_result[rk][ck] = max(vals)
             else:
                 pivot_result[rk][ck] = round(sum(vals), 2)
 

@@ -4,26 +4,8 @@ from agent.runtime.utils import now_iso
 from core.tools.schemas import ToolInvocation
 from storage.ids import validate_workspace_id
 
-from core.tools.general_tools.shared import _caller_workspace, _contract, _error, _error_inv, _ok, _result, _unavailable, _workspace_path
+from core.tools.general_tools.shared import _caller_workspace, _error_inv, _ok, _result
 """Split general tool handlers."""
-
-def handle_session_list(inv: ToolInvocation) -> dict:
-    ws = _caller_workspace(inv)
-    try:
-        validate_workspace_id(ws)
-        from storage.session_store import list_sessions
-        sessions = list_sessions(ws, limit=50)
-        results = []
-        for s in sessions:
-            results.append({
-                "session_id": s.get("session_id", ""),
-                "title": s.get("title", ""),
-                "status": s.get("status", "active"),
-                "updated_at": s.get("updated_at", ""),
-            })
-        return _ok(inv, "", {"sessions": results, "count": len(results)})
-    except Exception as e:
-        return _error_inv(inv, str(e)[:200])
 
 def handle_session_get_summary(inv: ToolInvocation) -> dict:
     ws = _caller_workspace(inv)
@@ -70,25 +52,6 @@ def handle_session_archive(inv: ToolInvocation) -> dict:
     except Exception as e:
         return _error_inv(inv, str(e)[:200])
 
-def handle_run_list_recent(inv: ToolInvocation) -> dict:
-    ws = _caller_workspace(inv)
-    limit = min(int(inv.arguments.get("limit", 5)), 20)
-    try:
-        validate_workspace_id(ws)
-        from storage.run_record_store import list_runs
-        runs = list_runs(ws, limit=limit)
-        results = []
-        for r in runs:
-            results.append({
-                "run_id": r.get("run_id", ""),
-                "intent": r.get("intent", ""),
-                "status": r.get("status", "ok"),
-                "created_at": r.get("created_at", ""),
-            })
-        return _ok(inv, "", {"runs": results, "count": len(results)})
-    except Exception as e:
-        return _error_inv(inv, str(e)[:200])
-
 def handle_run_get_summary(inv: ToolInvocation) -> dict:
     ws = _caller_workspace(inv)
     run_id = inv.arguments.get("run_id", "")
@@ -106,19 +69,6 @@ def handle_run_get_summary(inv: ToolInvocation) -> dict:
     except Exception as e:
         return _error_inv(inv, str(e)[:200])
 
-
-def handle_run_get_merged(inv: ToolInvocation) -> dict:
-    """Merged handler for system.run.get — dispatches to list or get-summary."""
-    if inv.arguments.get("run_id", "").strip():
-        return handle_run_get_summary(inv)
-    return handle_run_list_recent(inv)
-
-
-def handle_session_get_merged(inv: ToolInvocation) -> dict:
-    """Merged handler for system.session.get — dispatches to list or get-summary."""
-    if inv.arguments.get("session_id", "").strip():
-        return handle_session_get_summary(inv)
-    return handle_session_list(inv)
 
 def handle_session_snapshot(inv: ToolInvocation) -> dict:
     """Create a snapshot of the current session state."""
@@ -212,7 +162,7 @@ def handle_session_export(inv: ToolInvocation) -> dict:
     """Export session messages to JSON or markdown."""
     ws = _caller_workspace(inv)
     sid = inv.arguments.get("session_id", "")
-    fmt = str(inv.arguments.get("format", "md")).strip().lower()
+    fmt = str(inv.arguments.get("format", "markdown")).strip().lower()
     if not sid:
         return _error_inv(inv, "session_id is required")
     try:
@@ -241,8 +191,8 @@ def handle_session_export(inv: ToolInvocation) -> dict:
                 lines.append(content[:1000])
                 lines.append("")
             md = "\n".join(lines)
-            return _ok(inv, "", {"format": "md", "export": md})
+            return _ok(inv, "", {"format": "markdown", "export": md})
     except Exception as e:
         return _error_inv(inv, str(e)[:200])
 
-__all__ = ['handle_session_list', 'handle_session_get_summary', 'handle_session_create', 'handle_session_archive', 'handle_run_list_recent', 'handle_run_get_summary', 'handle_session_snapshot', 'handle_session_list_snapshots', 'handle_session_rewind', 'handle_session_checkpoint', 'handle_session_export']
+__all__ = ['handle_session_get_summary', 'handle_session_create', 'handle_session_archive', 'handle_run_get_summary', 'handle_session_snapshot', 'handle_session_list_snapshots', 'handle_session_rewind', 'handle_session_checkpoint', 'handle_session_export']

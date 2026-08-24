@@ -27,7 +27,14 @@ def handle_location_manage(inv: ToolInvocation) -> dict:
             str(args.get("query") or ""), language=language,
             country_code=country_code, admin_hint=admin_hint, limit=limit,
         )
-        return _result(inv, resolution.ok, resolution.as_dict())
+        payload = resolution.as_dict()
+        if resolution.resolved is not None:
+            payload.update({
+                "canonical_name": resolution.resolved.canonical_name,
+                "latitude": resolution.resolved.latitude,
+                "longitude": resolution.resolved.longitude,
+            })
+        return _result(inv, resolution.ok, payload)
 
     if action == "resolve_batch":
         queries = args.get("queries")
@@ -45,6 +52,15 @@ def handle_location_manage(inv: ToolInvocation) -> dict:
             admin_hint=admin_hint, limit=limit,
         )
         results = [item.as_dict() for item in resolutions]
+        resolved_entities = [
+            {
+                "name": item.resolved.canonical_name,
+                "latitude": item.resolved.latitude,
+                "longitude": item.resolved.longitude,
+            }
+            for item in resolutions
+            if item.ok and item.resolved is not None
+        ]
         resolved_count = sum(item.ok for item in resolutions)
         complete = resolved_count == len(cleaned)
         return _result(inv, resolved_count > 0, {
@@ -52,6 +68,7 @@ def handle_location_manage(inv: ToolInvocation) -> dict:
             "coverage_status": "complete" if complete else ("partial" if resolved_count else "failed"),
             "partial": 0 < resolved_count < len(cleaned),
             "results": results,
+            "resolved_entities": resolved_entities,
             "coverage": {
                 "requested": cleaned,
                 "resolved": [item.query for item in resolutions if item.ok],
@@ -72,7 +89,14 @@ def handle_location_manage(inv: ToolInvocation) -> dict:
         if not -90 <= latitude <= 90 or not -180 <= longitude <= 180:
             return _error_inv(inv, "latitude or longitude is outside the valid range")
         resolution = reverse_location(latitude, longitude, language=language)
-        return _result(inv, resolution.ok, resolution.as_dict())
+        payload = resolution.as_dict()
+        if resolution.resolved is not None:
+            payload.update({
+                "canonical_name": resolution.resolved.canonical_name,
+                "latitude": resolution.resolved.latitude,
+                "longitude": resolution.resolved.longitude,
+            })
+        return _result(inv, resolution.ok, payload)
 
     return _error_inv(inv, "unsupported action; expected resolve|resolve_batch|reverse")
 

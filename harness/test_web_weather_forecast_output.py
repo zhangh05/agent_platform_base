@@ -64,6 +64,34 @@ def test_weather_result_uses_natural_chinese_labels_and_coverage():
     assert "最多 7 列" in result["answer_hint"]
 
 
+def test_scalar_weather_accepts_verified_coordinates_without_regeocoding(monkeypatch):
+    from core.tools.general_tools import web_tools
+    from core.tools.schemas import ToolInvocation
+
+    observed = {}
+
+    def fake_lookup(**kwargs):
+        observed.update(kwargs)
+        return {
+            "ok": True,
+            "resolved_location": {"name": "上海, 中国"},
+            "current": {"temperature": 30},
+            "forecast_daily": [],
+        }
+
+    monkeypatch.setattr(web_tools, "_lookup_open_meteo_weather", fake_lookup)
+    result = web_tools.handle_weather_current(ToolInvocation(
+        tool_id="web.manage",
+        arguments={"action": "weather", "latitude": 31.23, "longitude": 121.47},
+        workspace_id="default",
+    ))
+
+    assert result["ok"] is True
+    assert observed["latitude"] == 31.23
+    assert observed["longitude"] == 121.47
+    assert observed["location"] == "31.23,121.47"
+
+
 def test_web_manage_weather_batch_reports_exact_partial_coverage(monkeypatch):
     from core.tools.general_tools import web_tools
     from core.tools.schemas import ToolInvocation
