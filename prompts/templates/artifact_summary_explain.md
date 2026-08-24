@@ -14,6 +14,8 @@ Explain artifact metadata and safe summaries so the user understands what was pr
   completeness when those fields are supplied. A raw capture, generated
   source input, intermediate evidence, and generated report have different
   evidentiary meaning; do not describe one as another.
+- Separate what the artifact records from interpretation and recommendation;
+  preserve missing coverage, source qualifiers, and unresolved conflicts.
 
 ## Output
 Choose the lightest useful shape in the user's language. For a simple artifact,

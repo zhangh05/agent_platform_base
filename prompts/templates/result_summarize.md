@@ -14,6 +14,10 @@ Summarize the latest runtime result for the user.
   cancelled, timed-out, or zero-result work into success.
 - A tool's success means that operation completed; claim the user's outcome only
   when the result contains its required evidence or artifact.
+- Separate observed facts from interpretation and recommendation. Preserve
+  qualifiers, source scope, freshness, failed/missing coverage, and uncertainty.
+  Tool failures do not make the user's outcome partial when alternate verified
+  evidence fully satisfies the request.
 
 ## Output
 - Choose the lightest useful shape. For simple complete results, use 1-3

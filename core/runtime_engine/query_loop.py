@@ -2610,7 +2610,8 @@ class QueryLoop:
                 quality_codes = [issue.code for issue in quality_issues]
                 # Real-world completion claims, runtime references and secret-like
                 # output require a bounded correction through this same QueryLoop.
-                # Other presentation observations remain non-blocking.
+                # Writing style and business correctness belong to the prompt and
+                # evidence contracts, not local regex scoring.
                 # Safety violations describe external or sensitive facts and must
                 # never be delivered without evidence. Delivery-contract violations
                 # are recoverable text-shaping defects with independent retries.
@@ -2625,9 +2626,6 @@ class QueryLoop:
                 }
                 delivery_quality_codes = {
                     "PROCESS_ONLY_RESPONSE",
-                    "USER_LANGUAGE_MISMATCH",
-                    "EXPLICIT_WEATHER_DELIVERY_INCOMPLETE",
-                    "WEATHER_UNCERTAINTY_OVERSTATED",
                 }
                 safety_blocking_issues = [
                     issue for issue in quality_issues

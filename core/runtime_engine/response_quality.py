@@ -1,9 +1,9 @@
-"""Small deterministic quality gate for user-facing QueryLoop responses.
+"""Deterministic integrity guard for user-facing QueryLoop responses.
 
-The gate does not judge writing style or business correctness.  It catches
-observable contract violations that should never be persisted as a successful
-answer: corrupt Unicode, silently narrowing an explicit all-scope follow-up,
-and Markdown tables that are too wide to remain usable in the workbench.
+This module does not score wording, domain correctness, language choice, table
+layout, or semantic completeness. Those belong to the model prompt and tool
+evidence contracts. It blocks only mechanically provable runtime contradictions,
+unsafe disclosure, forged references, and server-owned continuation violations.
 """
 
 from __future__ import annotations
@@ -20,15 +20,6 @@ class ResponseQualityIssue:
     message: str
 
 
-_ALL_SCOPE_RE = re.compile(
-    r"^(?:全部|所有|全都|都要|每个|每一个|全部都要|all|everything|all of them)[。.!！?？\s]*$",
-    re.IGNORECASE,
-)
-_PARTIAL_SCOPE_RE = re.compile(r"主要|代表(?:性)?|示例|参考|部分|若干|几个")
-_EXPLICIT_LIMIT_RE = re.compile(
-    r"(?:本次|当前|以下|这里)(?:查询|展示|覆盖|统计)?(?:范围|口径)|"
-    r"仅(?:查询|展示|覆盖)|并非全部|未覆盖全部|无法一次覆盖|按.{0,20}(?:范围|口径)"
-)
 _ACTION_COMPLETION_CLAIM_RE = re.compile(
     r"(?:我)?(?:已经|已)(?:成功)?(?:执行|部署|修改|删除|创建|上传|保存|写入|重启|关闭|连接|配置|发布)"
     r"|(?:executed|deployed|modified|deleted|created|uploaded|saved|restarted|connected)\s+successfully",
@@ -49,8 +40,6 @@ _PROCESS_ONLY_RE = re.compile(
     r").{0,160}[。.!！\s]*$",
     re.IGNORECASE | re.DOTALL,
 )
-_CJK_RE = re.compile(r"[\u3400-\u9fff]")
-_LATIN_RE = re.compile(r"[A-Za-z]")
 
 
 def _is_textual_continuation_edit_claim(claim: str, contract: dict | None) -> bool:
@@ -73,7 +62,7 @@ def validate_response_quality(
     known_reference_ids: Iterable[str] = (),
     task_continuation_contract: dict | None = None,
 ) -> list[ResponseQualityIssue]:
-    """Return deterministic user-visible quality violations."""
+    """Return mechanically provable response-integrity violations."""
     value = str(text or "")
     tool_results = tuple(tool_results)
     issues: list[ResponseQualityIssue] = []
@@ -96,74 +85,6 @@ def validate_response_quality(
             message=(
                 "The draft is only an internal transition or promise to produce an answer. "
                 "Synthesize the available tool evidence now and return the actual user-facing result."
-            ),
-        ))
-
-    user_cjk = len(_CJK_RE.findall(str(user_input or "")))
-    response_cjk = len(_CJK_RE.findall(value))
-    response_latin = len(_LATIN_RE.findall(value))
-    if (
-        tool_results
-        and user_cjk >= 2
-        and response_cjk == 0
-        and response_latin >= 12
-        and len(value.strip()) <= 320
-    ):
-        issues.append(ResponseQualityIssue(
-            code="USER_LANGUAGE_MISMATCH",
-            message=(
-                "The user wrote in Chinese, but the short draft switched entirely to English. "
-                "Answer in the user's language unless the user explicitly requested another language."
-            ),
-        ))
-
-    if (
-        _ALL_SCOPE_RE.fullmatch(str(user_input or "").strip())
-        and _PARTIAL_SCOPE_RE.search(value)
-        and not _EXPLICIT_LIMIT_RE.search(value)
-    ):
-        issues.append(ResponseQualityIssue(
-            code="SCOPE_SILENTLY_NARROWED",
-            message=(
-                "The user explicitly requested all items, but the answer silently presents a representative "
-                "subset. Complete a defensible explicit scope, or state the exact coverage/limitation before "
-                "presenting partial results. Never label a subset as complete."
-            ),
-        ))
-
-    widest = max(_markdown_table_widths(value), default=0)
-    if widest > 7:
-        issues.append(ResponseQualityIssue(
-            code="TABLE_TOO_WIDE",
-            message=(
-                f"The answer contains a {widest}-column Markdown table, which is not usable in the chat view. "
-                "Reformat it as an answer-first summary plus compact tables with at most 7 columns, or split by entity."
-            ),
-        ))
-
-    explicit_weather_delivery_issue = _validate_explicit_weather_delivery(value, str(user_input or ""))
-    if explicit_weather_delivery_issue:
-        issues.append(explicit_weather_delivery_issue)
-
-    if _has_weather_evidence(tool_results) and re.search(
-        r"防务提示|中等毛毛雨|大毛毛雨|雷暴伴小冰�",
-        value,
-    ):
-        issues.append(ResponseQualityIssue(
-            code="UNNATURAL_WEATHER_TERMINOLOGY",
-            message=(
-                "The weather answer contains corrupt or literal provider wording. Use natural Chinese weather "
-                "terms and 防护/出行提示; preserve forecast uncertainty instead of overstating hail."
-            ),
-        ))
-
-    if _has_weather_evidence(tool_results) and _overstates_weather_uncertainty(value):
-        issues.append(ResponseQualityIssue(
-            code="WEATHER_UNCERTAINTY_OVERSTATED",
-            message=(
-                "The answer turns a probabilistic hail forecast into a definite event. "
-                "Preserve evidence qualifiers such as 可能, 局地可能, 风险, or 概率; "
-                "do not state hail as certain when the provider did not."
             ),
         ))
 
@@ -224,21 +145,12 @@ def validate_response_quality(
     return issues
 
 
-def _overstates_weather_uncertainty(text: str) -> bool:
-    """Detect definite hail claims in otherwise probabilistic forecasts."""
-    for clause in re.split(r"[。；;\n]|(?<=[，,])", str(text or "")):
-        if "冰雹" not in clause:
-            continue
-        if not re.search(r"可能|或有|概率|风险|局地|不排除|chance|risk|possible", clause, re.IGNORECASE):
-            return True
-    return False
-
-
 def build_response_quality_nudge(issues: Iterable[ResponseQualityIssue]) -> str:
     details = "\n".join(f"- {issue.code}: {issue.message}" for issue in issues)
     return (
-        "[RUNTIME RESPONSE QUALITY CORRECTION]\n"
-        "The draft answer was not accepted for persistence. Correct only the listed defects while preserving "
+        "[RUNTIME RESPONSE INTEGRITY CORRECTION]\n"
+        "The draft contradicts a mechanically verified runtime constraint and was not accepted. Correct only "
+        "the listed defects while preserving "
         "verified evidence and the user's original request. You may call tools if scope evidence is missing. "
         "Return a clean user-facing answer, not a discussion of this correction.\n"
         + details
@@ -292,98 +204,6 @@ def _validate_task_continuation_output(
             + ". Regenerate the complete continuation and satisfy this contract exactly."
         ),
     )
-
-
-def _validate_explicit_weather_delivery(text: str, user_input: str) -> ResponseQualityIssue | None:
-    """Block false success for an explicitly requested per-city daily forecast."""
-    request = str(user_input or "")
-    response = str(text or "")
-    requires_per_city_daily = (
-        ("每个城市" in request or "逐城市" in request)
-        and ("逐日" in request or "每日" in request)
-    )
-    if not requires_per_city_daily:
-        return None
-    incomplete_markers = (
-        "逐日明细因响应体较大被截断",
-        "逐日明细被截断",
-        "数据截断",
-        "数据未完整展示",
-        "部分详细预报",
-        "批量已获取",
-    )
-    if any(marker in response for marker in incomplete_markers):
-        return ResponseQualityIssue(
-            code="EXPLICIT_WEATHER_DELIVERY_INCOMPLETE",
-            message=(
-                "The user explicitly requested per-city daily weather output, but the draft admits missing or "
-                "truncated daily details. Continue with bounded individual evidence retrieval or report a non-success "
-                "partial outcome; do not mark this task complete."
-            ),
-        )
-    city_count = _explicit_weather_city_count(request)
-    day_count = _explicit_weather_day_count(request)
-    if city_count and day_count:
-        required_daily_rows = city_count * day_count
-        date_count = len(re.findall(r"(?<!\d)(?:20\d{2}[-/]\d{1,2}[-/]\d{1,2}|\d{1,2}/\d{1,2})(?!\d)", response))
-        if date_count < required_daily_rows:
-            return ResponseQualityIssue(
-                code="EXPLICIT_WEATHER_DAILY_COVERAGE_INCOMPLETE",
-                message=(
-                    f"The user requested {city_count} cities with {day_count} daily entries each, but the draft "
-                    f"contains only {date_count} dated daily entries. Return every requested city/day or report a "
-                    "non-success partial outcome; do not mark this task complete."
-                ),
-            )
-    return None
-
-
-def _explicit_weather_city_count(request: str) -> int:
-    match = re.search(r"(?:以下|共|覆盖)\s*(\d{1,3})\s*个城市", request)
-    if not match:
-        return 0
-    return max(0, int(match.group(1)))
-
-
-def _explicit_weather_day_count(request: str) -> int:
-    match = re.search(r"未来\s*(\d{1,2})\s*天", request)
-    if not match:
-        return 0
-    return max(0, int(match.group(1)))
-
-
-def _markdown_table_widths(text: str) -> list[int]:
-    lines = str(text or "").replace("\r\n", "\n").split("\n")
-    widths: list[int] = []
-    for index in range(len(lines) - 1):
-        header = lines[index].strip()
-        separator = lines[index + 1].strip()
-        if "|" not in header or "|" not in separator:
-            continue
-        if not re.fullmatch(r"\|?[\s:|-]+\|?", separator):
-            continue
-        cells = _split_table_row(header)
-        separator_cells = _split_table_row(separator)
-        if len(cells) >= 2 and len(separator_cells) >= 2:
-            widths.append(len(cells))
-    return widths
-
-
-def _split_table_row(line: str) -> list[str]:
-    value = line.strip().strip("|")
-    return [cell.strip() for cell in value.split("|")]
-
-
-def _has_weather_evidence(tool_results: Iterable[object]) -> bool:
-    for result in tool_results:
-        output = getattr(result, "output", None)
-        if not isinstance(output, dict):
-            continue
-        source_type = str(output.get("source_type") or "")
-        tool_id = str(output.get("tool_id") or "")
-        if source_type == "structured_weather" or ".weather." in tool_id:
-            return True
-    return False
 
 
 def _has_successful_tool_result(tool_results: Iterable[object]) -> bool:

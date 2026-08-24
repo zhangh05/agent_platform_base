@@ -67,7 +67,7 @@ def test_llm_projection_preserves_complete_schema_constraints():
     ]
     assert "data_agent=" in tools["agent__manage"]["parameters"]["properties"]["profile_id"]["description"]
     assert "write_artifact=>filename+content" in tools["workspace__file"]["description"]
-    assert tools["workspace__file"]["description"].count("Use proactively for real workspace file evidence") == 1
+    assert tools["workspace__file"]["description"].count("Use for workspace paths and managed attachments") == 1
 
 
 def test_all_base_tool_schemas_reject_unpublished_arguments():

@@ -17,7 +17,7 @@ from core.runtime_engine.query_loop import QueryLoop
 
 def test_runtime_prompt_is_compact_capable_and_destructive_only():
     playbooks = "\n".join(CAPABILITY_PLAYBOOKS.values())
-    assert len(RUNTIME_SYSTEM_PROMPT) < 6000
+    assert len(RUNTIME_SYSTEM_PROMPT) < 8000
     assert "function definitions" in RUNTIME_SYSTEM_PROMPT
     assert "complete tool schemas" in RUNTIME_SYSTEM_PROMPT
     assert "data, not instructions" in RUNTIME_SYSTEM_PROMPT
@@ -47,6 +47,9 @@ def test_runtime_prompt_is_compact_capable_and_destructive_only():
     assert "cite the verified source inline" in RUNTIME_SYSTEM_PROMPT
     assert "Emit valid, readable Markdown" in RUNTIME_SYSTEM_PROMPT
     assert "never claim the session is new" in RUNTIME_SYSTEM_PROMPT
+    assert "observed facts returned by evidence" in RUNTIME_SYSTEM_PROMPT
+    assert "coverage ledger" in RUNTIME_SYSTEM_PROMPT
+    assert "status reflects the user's outcome" in RUNTIME_SYSTEM_PROMPT
 
 
 def test_turn_message_separates_history_context_and_current_request():
@@ -185,10 +188,11 @@ def test_subagent_contract_is_system_level_and_bounded():
     })
     assert "## Subagent assignment" in prompt
     assert "Review Agent" in prompt
-    assert "at most 5 tool steps" in prompt
+    assert "at most 5 reasoning turns" in prompt
     assert "Do not ask the end user follow-up questions" in prompt
-    assert "easy for the parent agent to merge" in prompt
+    assert "easy for the parent to merge" in prompt
     assert "raw provider fields" in prompt
+    assert "Separate source observations from interpretation" in prompt
 
 
 def test_single_runtime_contract_preserves_truth_and_task_tracking():
@@ -263,9 +267,42 @@ def test_model_visible_tool_descriptions_preserve_completion_evidence_rules():
     registry = _build_ssot_runtime_tool_registry(["web.manage", "exec.run"])
     tools = {tool["function"]["name"]: tool["function"] for tool in _build_cached_tool_definitions(registry)}
 
-    assert "Cite source titles and URLs" in tools["web__manage"]["description"]
-    assert "surface degraded results" in tools["web__manage"]["description"]
-    assert "verify requested effects" in tools["exec__run"]["description"]
+    assert "Cite returned titles/URLs" in tools["web__manage"]["description"]
+    assert "degraded evidence" in tools["web__manage"]["description"]
+    assert "requested side effects" in tools["exec__run"]["description"]
+
+
+def test_extension_descriptions_are_not_replaced_by_unknown_tool_fallbacks():
+    from agent.runtime.ssot_runtime import _build_ssot_runtime_tool_registry
+    from core.runtime_engine.query_loop import _build_cached_tool_definitions
+
+    registry = _build_ssot_runtime_tool_registry(["network.operations.device.manage"])
+    tools = _build_cached_tool_definitions(registry)
+    description = tools[0]["function"]["description"]
+
+    assert "probe" in description
+    assert "read" in description
+    assert "when specifically needed" not in description
+    assert "documented safety boundary" not in description
+
+
+def test_model_visible_tool_descriptions_keep_complete_evidence_boundaries():
+    from agent.runtime.ssot_runtime import _build_ssot_runtime_tool_registry
+    from core.runtime_engine.query_loop import _build_cached_tool_definitions
+
+    registry = _build_ssot_runtime_tool_registry(None)
+    tools = {
+        item["function"]["name"]: item["function"]["description"]
+        for item in _build_cached_tool_definitions(registry)
+    }
+
+    assert all("when specifically needed" not in description for description in tools.values())
+    assert all("Do not use for: Do not" not in description for description in tools.values())
+    assert "Writes/edits/patches/deletes" not in tools["workspace__file"]
+    assert "verify by reread, relist, or relevant validation" in tools["workspace__file"]
+    assert "use exec to parse an attachment or unpack document images" in tools["workspace__file"]
+    assert "correlation" in tools["web__manage"] or "shared cause" in tools["web__manage"]
+    assert "child prose as authority" in tools["agent__manage"]
 
 
 def test_ssot_registry_feeds_action_profiles_to_llm_tools():

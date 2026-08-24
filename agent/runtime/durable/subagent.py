@@ -83,9 +83,10 @@ BUILTIN_PROFILES: dict[str, SubagentProfile] = {
         can_call_network=True,
         memory_write_policy="pending_only",
         output_contract=(
-            "Concise user-ready findings for the parent to merge: start with the "
-            "bottom line, include only useful evidence/caveats, and avoid raw API "
-            "fields, weather codes, or process details unless essential."
+            "A compact evidence package for the parent: lead with the bounded result; "
+            "separate source observations from interpretation; preserve qualifiers, "
+            "scope, freshness and source references; list failed or missing coverage; "
+            "and avoid raw provider fields or process details unless essential."
         ),
     ),
     "file_agent": SubagentProfile(
@@ -99,7 +100,11 @@ BUILTIN_PROFILES: dict[str, SubagentProfile] = {
         max_runtime_seconds=300,
         can_modify_files=True,
         memory_write_policy="pending_only",
-        output_contract="Changed files, evidence, validation result, and remaining risks.",
+        output_contract=(
+            "Changed files and exact scope, validation evidence, unresolved failures, "
+            "and remaining risks. Do not claim a file effect without a successful write "
+            "and relevant reread or validation."
+        ),
     ),
     "data_agent": SubagentProfile(
         profile_id="data_agent",
@@ -112,7 +117,11 @@ BUILTIN_PROFILES: dict[str, SubagentProfile] = {
         max_runtime_seconds=180,
         can_modify_files=True,
         memory_write_policy="pending_only",
-        output_contract="Data summary, transformations, caveats, and saved artifacts when created.",
+        output_contract=(
+            "Input coverage and row counts, reproducible transformations, observed "
+            "results separated from interpretation, caveats or missing rows, and only "
+            "verified saved artifact references when created."
+        ),
     ),
 }
 

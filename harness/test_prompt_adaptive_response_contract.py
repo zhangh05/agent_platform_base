@@ -20,6 +20,10 @@ def test_runtime_prompt_has_scene_aware_response_policy():
     assert "Failure, blocker, partial, or zero-result" in RUNTIME_SYSTEM_PROMPT
     assert "recorded configuration, observed live" in CAPABILITY_PLAYBOOKS["structured_operations"]
     assert "Avoid rigid section templates" in RUNTIME_SYSTEM_PROMPT
+    assert "observed facts returned by evidence" in RUNTIME_SYSTEM_PROMPT
+    assert "common cause" in RUNTIME_SYSTEM_PROMPT
+    assert "coverage ledger" in RUNTIME_SYSTEM_PROMPT
+    assert "status reflects the user's outcome" in RUNTIME_SYSTEM_PROMPT
 
 
 def test_prompt_templates_prefer_adaptive_shape_over_rigid_reports():
@@ -34,6 +38,19 @@ def test_prompt_templates_prefer_adaptive_shape_over_rigid_reports():
         text = _template(filename)
         assert phrase in text
         assert "Preserve exact technical notation" in text
+
+
+def test_response_templates_share_evidence_reasoning_contract():
+    for filename in (
+        "assistant_chat.md",
+        "context_qa.md",
+        "response_compose.md",
+        "result_summarize.md",
+        "report_summary.md",
+    ):
+        text = _template(filename)
+        assert "interpretation" in text
+        assert "qualif" in text
 
 
 def test_job_failure_prompt_no_longer_forces_five_section_output():

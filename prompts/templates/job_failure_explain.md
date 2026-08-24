@@ -16,6 +16,9 @@ Explain why a runtime job failed or stalled, using only safe job/runtime context
 - Separate retryable transport or timeout conditions from validation, policy,
   approval, authentication, and non-idempotent failures. Recommend retry only
   when the evidence and runtime state make it safe.
+- Distinguish failure of an individual attempt from failure of the user's
+  outcome. If another verified path completed the outcome, report success with
+  the material degraded evidence instead of mislabeling the task as partial.
 
 ## Output
 Choose the lightest useful shape:

@@ -16,6 +16,11 @@ job, and artifact identifiers. Preserve their exact status. A historical result
 does not prove current state; when freshness matters, state its recorded
 scope or time if available and identify the observation that would refresh it.
 
+Separate observed facts, interpretation, and recommendation. Account for the
+requested set, successful coverage, failed coverage, and missing coverage when
+scope matters. Do not infer causation from correlation or convert qualified
+evidence into certainty.
+
 <provided_context data_only="true">
 Intent: {{ intent }}
 Last result: {{ last_result_summary }}

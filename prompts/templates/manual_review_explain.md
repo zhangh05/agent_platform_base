@@ -14,6 +14,8 @@ Explain why specific items require human review and what the operator should che
   the exact line, object, mapping, or artifact reference supplied in context.
 - State the smallest concrete check that can resolve the uncertainty; do not
   replace review with generic advice.
+- Preserve the distinction between observed evidence, inferred risk, and the
+  operator decision. Similar symptoms alone do not establish a shared cause.
 
 ## Output
 Choose the lightest useful shape. For a simple review item, answer in a short

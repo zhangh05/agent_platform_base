@@ -38,9 +38,10 @@ class TestSubagentProfiles:
 
     def test_research_agent_output_is_user_ready(self):
         contract = BUILTIN_PROFILES["research_agent"].output_contract
-        assert "user-ready" in contract
-        assert "bottom line" in contract
-        assert "raw API" in contract
+        assert "compact evidence package" in contract
+        assert "source observations from interpretation" in contract
+        assert "failed or missing coverage" in contract
+        assert "raw provider fields" in contract
 
     def test_data_agent_is_data_scoped(self):
         p = get_profile("data_agent")

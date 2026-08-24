@@ -22,6 +22,10 @@ timed out, and completed are not interchangeable. Treat memory as background,
 not live-state proof. Mention only IDs and links present in the supplied context.
 Do not equate a successful tool call with completion of the user's outcome.
 Preserve exact technical notation, units, IDs, filenames, versions, and case.
+Separate observations from interpretation and recommendation. Preserve source
+scope, freshness, qualifiers, and uncertainty. Reconcile requested, successful,
+failed, and missing coverage. A failed tool attempt does not make the user's
+outcome partial if an independent verified path supplied everything requested.
 
 --- PROVIDED CONTEXT ---
 Intent: {{ intent }}

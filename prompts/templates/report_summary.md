@@ -13,6 +13,9 @@ Summarize a report artifact or report-like result for an operator.
 - Establish the report's scope, observation time, sample coverage, and
   completeness before generalizing. Separate observed findings from the
   report author's interpretation and from your recommendation.
+- Similar findings across targets do not prove a shared cause. Preserve source
+  qualifiers and distinguish requested, observed, failed, missing, and excluded
+  coverage before generalizing.
 - Prioritize critical and warning findings by operational impact. Preserve
   failed, skipped, unreachable, and unverified targets in the summary.
 

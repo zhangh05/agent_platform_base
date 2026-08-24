@@ -155,13 +155,19 @@ def _build_tool_description(tool: dict, metadata: dict, canonical_tool_id: str) 
         if normalized_usage.startswith(normalized_rendered):
             usage_remainder = normalized_usage[len(normalized_rendered):].lstrip(" .;,，；。")
             if usage_remainder:
-                parts.append(f"Additional guidance: {_soft_truncate(usage_remainder, 220)}")
+                parts.append(f"Additional guidance: {_soft_truncate(usage_remainder, 360)}")
         elif normalized_usage[:160] != normalized_base[:160]:
             parts.append(f"Use when: {_soft_truncate(str(usage_hint), 360)}")
     normalized_not_for = " ".join(str(not_for or "").split())
     if not_for and normalized_not_for[:100] not in normalized_base:
-        parts.append(f"Do not use for: {_soft_truncate(str(not_for), 180)}")
-    return " ".join(p for p in parts if p)[:1200]
+        rendered_not_for = _soft_truncate(str(not_for), 320)
+        if normalized_not_for.lower().startswith(("do not ", "never ")):
+            parts.append(rendered_not_for)
+        else:
+            parts.append(f"Do not use for: {rendered_not_for}")
+    # Keep the final boundary intact. Raw slicing used to cut prohibitions and
+    # identifiers mid-sentence for richer tools such as workspace.file.
+    return _soft_truncate(" ".join(p for p in parts if p), 1600)
 
 
 _PARAM_DESCRIPTIONS = {

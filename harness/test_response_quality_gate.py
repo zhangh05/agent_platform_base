@@ -8,7 +8,7 @@ from core.runtime_engine import SSOTRuntimeConfig, SSOTRuntimeEngine
 from core.runtime_engine.response_quality import validate_response_quality
 
 
-def test_quality_gate_detects_corrupt_scope_and_wide_table():
+def test_integrity_guard_ignores_domain_scope_and_layout_but_detects_corrupt_unicode():
     draft = (
         "已查询几个主要城市，杭州雷暴伴小冰�。\n\n"
         "| 城市 | 1 | 2 | 3 | 4 | 5 | 6 | 7 |\n"
@@ -18,11 +18,7 @@ def test_quality_gate_detects_corrupt_scope_and_wide_table():
 
     issues = validate_response_quality(draft, user_input="全部")
 
-    assert {issue.code for issue in issues} == {
-        "CORRUPT_UNICODE",
-        "SCOPE_SILENTLY_NARROWED",
-        "TABLE_TOO_WIDE",
-    }
+    assert [issue.code for issue in issues] == ["CORRUPT_UNICODE"]
 
 
 def test_explicit_partial_scope_is_honest_and_accepted():
@@ -33,7 +29,7 @@ def test_explicit_partial_scope_is_honest_and_accepted():
     assert issues == []
 
 
-def test_weather_evidence_rejects_literal_or_wrong_domain_wording():
+def test_integrity_guard_does_not_score_domain_wording():
     issues = validate_response_quality(
         "## 出行与防务提示\n明天为中等毛毛雨。",
         user_input="明天天气",
@@ -45,10 +41,10 @@ def test_weather_evidence_rejects_literal_or_wrong_domain_wording():
         )],
     )
 
-    assert [issue.code for issue in issues] == ["UNNATURAL_WEATHER_TERMINOLOGY"]
+    assert issues == []
 
 
-def test_weather_hail_probability_cannot_be_promoted_to_certainty():
+def test_integrity_guard_does_not_score_domain_interpretation():
     evidence = [SimpleNamespace(
         tool_name="web.manage",
         call_id="weather-hail",
@@ -61,7 +57,7 @@ def test_weather_hail_probability_cannot_be_promoted_to_certainty():
         tool_results=evidence,
     )
 
-    assert [issue.code for issue in issues] == ["WEATHER_UNCERTAINTY_OVERSTATED"]
+    assert issues == []
 
 
 def test_weather_hail_probability_is_preserved():
@@ -103,10 +99,7 @@ def test_quality_gate_rejects_process_only_transition_after_tool_results():
         tool_results=[SimpleNamespace(ok=True, output={"source_type": "structured_weather"})],
     )
 
-    assert {issue.code for issue in issues} == {
-        "PROCESS_ONLY_RESPONSE",
-        "USER_LANGUAGE_MISMATCH",
-    }
+    assert [issue.code for issue in issues] == ["PROCESS_ONLY_RESPONSE"]
 
 
 def test_quality_gate_does_not_reject_complete_english_answer_for_english_user():
@@ -346,43 +339,11 @@ def test_quality_gate_accepts_space_delimited_scope_contract_output():
     assert issues == []
 
 
-def test_quality_gate_rejects_explicit_per_city_daily_weather_delivery_when_truncated():
-    from types import SimpleNamespace
-
-    from core.runtime_engine.response_quality import validate_response_quality
-
+def test_integrity_guard_leaves_semantic_coverage_to_prompt_and_evidence_contracts():
     issues = validate_response_quality(
-        "已完成查询。南通的逐日明细因响应体较大被截断；扬州为（批量已获取）。",
-        user_input="每个城市都必须使用独立调用，并逐日返回未来十天天气。",
-        tool_results=[SimpleNamespace(ok=True, output={"source_type": "structured_weather"})],
+        "已完成。仅展示了部分记录，详细内容未完整列出。",
+        user_input="覆盖全部对象并逐项返回结果。",
+        tool_results=[SimpleNamespace(ok=True, output={"status": "partial"})],
     )
 
-    assert [issue.code for issue in issues] == ["EXPLICIT_WEATHER_DELIVERY_INCOMPLETE"]
-
-
-def test_quality_gate_rejects_explicit_weather_daily_answer_without_all_dated_rows():
-    from types import SimpleNamespace
-
-    from core.runtime_engine.response_quality import validate_response_quality
-
-    issues = validate_response_quality(
-        "已完成。| 城市 | 日期 | 天气 |\n| --- | --- | --- |\n| 上海 | 8/23 | 晴 |",
-        user_input="必须覆盖以下 2 个城市：上海、南京。每个城市必须逐日返回未来 2 天的天气。",
-        tool_results=[SimpleNamespace(ok=True, output={"source_type": "structured_weather"})],
-    )
-
-    assert [issue.code for issue in issues] == ["EXPLICIT_WEATHER_DAILY_COVERAGE_INCOMPLETE"]
-
-
-def test_quality_gate_rejects_explicit_weather_daily_delivery_with_generic_truncation_marker():
-    from types import SimpleNamespace
-
-    from core.runtime_engine.response_quality import validate_response_quality
-
-    issues = validate_response_quality(
-        "已完成。扬州数据未完整展示，金华数据截断。",
-        user_input="每个城市必须逐日返回未来十天天气，不得批量调用。",
-        tool_results=[SimpleNamespace(ok=True, output={"source_type": "structured_weather"})],
-    )
-
-    assert [issue.code for issue in issues] == ["EXPLICIT_WEATHER_DELIVERY_INCOMPLETE"]
+    assert issues == []

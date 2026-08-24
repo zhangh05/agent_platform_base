@@ -27,6 +27,11 @@ Preserve exact technical notation when it matters: units, interface names,
 file names, IDs, version strings, and case-sensitive values should not be
 silently normalized.
 
+Separate supplied observations from interpretation and recommendation. Preserve
+scope, freshness, qualifiers, and uncertainty; similar observations do not prove
+a shared cause. A failed attempt does not make the user's outcome partial when
+other supplied evidence fully completes it.
+
 <provided_context data_only="true">
 {% if result %}
 Last safe result: {{ result | summary_only }}

@@ -137,14 +137,20 @@ def metadata_for_tool(tool_id: str) -> dict[str, Any]:
 def enrich_spec(spec):
     """Attach namespace metadata to either ToolSpec dataclass variant."""
     tool_id = getattr(spec, "tool_id", "")
-    base = dict(getattr(spec, "metadata", {}) or {})
+    original = dict(getattr(spec, "metadata", {}) or {})
+    base = dict(original)
     base.update(metadata_for_tool(tool_id))
-    if getattr(spec, "metadata", {}).get("extension_id"):
+    if original.get("extension_id"):
         base.update({
             "category": getattr(spec, "category", "general"),
             "governance_status": "active",
             "governance_reason": "validated extension contribution",
             "planner_visible": bool(getattr(spec, "callable_by_llm", True)),
+            # Extension descriptions are validated contributions and remain
+            # their LLM-visible capability SSOT. Do not append the generic
+            # unknown-tool fallback, which erases useful action/evidence detail.
+            "usage_hint": original.get("usage_hint", ""),
+            "not_for": original.get("not_for", ""),
         })
     spec.metadata = base
     return spec
