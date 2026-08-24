@@ -231,10 +231,14 @@ def test_weather_batch_accepts_named_coordinate_locations_through_semantic_gate(
     ))
 
     assert result["ok"] is True
-    assert [call["location"] for call in observed] == ["广州", "深圳"]
-    assert [(call["latitude"], call["longitude"]) for call in observed] == [
+    # The handler deliberately fans out concurrently.  Invocation timing is
+    # therefore not a public ordering contract; returned forecasts must retain
+    # the caller's requested order.
+    assert sorted(call["location"] for call in observed) == ["广州", "深圳"]
+    assert [item["requested_location"] for item in result["forecasts"]] == ["广州", "深圳"]
+    assert sorted((call["latitude"], call["longitude"]) for call in observed) == sorted([
         (23.11667, 113.25), (22.54554, 114.0683),
-    ]
+    ])
     assert result["requested_location_details"] == locations
 
 
