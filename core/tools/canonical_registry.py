@@ -915,11 +915,111 @@ _BINDABLE_INPUTS: dict[str, dict[str, list[str]]] = {
 }
 
 
+# Public top-level result fields that may be referenced by a dependent call in
+# the same model batch.  A whole successful output is always referenceable via
+# ``steps.<id>.output``; these declarations make narrower paths discoverable
+# and prevent the model from guessing handler-internal field names.
+_REFERENCEABLE_OUTPUTS: dict[str, dict[str, list[str]]] = {
+    "exec.run": {
+        "shell": ["stdout", "stderr", "exit_code"],
+        "slash": ["stdout", "stderr", "exit_code"],
+        "python": ["stdout", "stderr", "exit_code", "structured_output"],
+    },
+    "browser.manage": {
+        "navigate": ["url", "title"], "snapshot": ["url", "title", "elements"],
+        "screenshot": ["url", "title", "file_id", "saved_to", "filename"],
+        "extract": ["text", "url", "selector"],
+    },
+    "web.manage": {
+        "search": ["query", "results", "results_markdown"],
+        "fetch": ["url", "title", "content"],
+        "deep_search": ["query", "search_results", "pages"],
+        "weather": ["resolved_location", "current", "forecast_daily"],
+        "weather_batch": ["forecasts", "coverage", "failed_locations"],
+    },
+    "location.manage": {
+        "resolve": ["resolved", "candidates", "confidence"],
+        "resolve_batch": ["results", "coverage"],
+        "reverse": ["resolved", "candidates", "confidence"],
+    },
+    "data.manage": {
+        "parse": ["rows", "columns", "types", "row_count"],
+        "stats": ["stats", "numeric_columns", "markdown"],
+        "distinct": ["values", "unique_count", "markdown"],
+        "aggregate": ["aggregated", "markdown"],
+        "filter": ["rows", "markdown"], "sort": ["rows", "markdown"],
+        "render": ["columns", "returned", "total", "truncated", "format"],
+        "pivot": ["pivot", "markdown"],
+        "join": ["rows", "markdown"],
+    },
+    "report.manage": {
+        "save": ["artifact_id", "artifact_ids", "title"], "diff": ["diff", "changed_lines"],
+        "document": ["document", "format", "title"],
+    },
+    "knowledge.manage": {
+        "search": ["results", "count"],
+        "read": ["source_id", "chunk_id", "title", "safe_excerpt"],
+        "list": ["sources"], "chunk": ["chunks"], "import": ["source_id"],
+        "reindex": ["source_id"],
+    },
+    "memory.manage": {
+        "search": ["results", "count"], "review": ["items", "total_pending"],
+        "create": ["memory_id"], "update": ["memory_id"],
+        "profile_get": ["explicit_preferences", "inferred_preferences", "tool_usage_stats"],
+    },
+    "skill.manage": {
+        "list": ["results", "count"], "find": ["results", "count"],
+        "load": ["skill_id", "skill_record", "tool_ids", "prompt_hints"],
+        "inspect": ["capability_id", "recommended_tool_ids", "prompt_hints"],
+        "mcp_list_tools": ["tools", "count"], "mcp_call": ["result"],
+    },
+    "agent.manage": {
+        "spawn": ["subtask_id", "tracking"], "get": ["subtask_id", "status", "preview", "artifact_id"],
+        "list": ["profiles", "count"], "status": ["tasks", "count"],
+    },
+    "system.manage": {
+        "local_info": ["hostname", "primary_ip", "ipv4_addresses", "current_time_local", "local_timezone"],
+        "tasks": ["tasks", "count"], "audit_log": ["entries", "count"],
+        "run_get": ["run_id", "runs", "status"],
+        "session_get": ["session_id", "sessions", "title", "message_count"],
+        "session_export": ["format", "export"],
+        "session_snapshot": ["snapshot_id"], "session_checkpoint": ["checkpoint_id"],
+    },
+    "text.analyze": {
+        "redact": ["redacted", "original_length"],
+        "extract_entities": ["keywords"],
+        "match": ["matches", "match_count"],
+    },
+    "workspace.file": {
+        "list": ["files", "count"], "glob": ["matches", "count"],
+        "read": ["preview", "size", "truncated"],
+        "read_image": ["filepath", "filename", "format", "dimensions"],
+        "extract_document": ["file_id", "file_kind", "title", "content", "truncated", "embedded_image_count"],
+        "extract_document_image": ["file_id", "image_index", "image_count", "evidence_parts"],
+        "extract_document_images": ["file_id", "image_count", "evidence_parts", "has_more"],
+        "write": ["filepath", "file_id"],
+        "write_artifact": ["filepath", "file_id", "artifact_id"],
+    },
+    "workspace.artifact": {
+        "list": ["results", "count"], "read": ["artifact_id", "preview", "content_complete"],
+        "save": ["artifact_id", "artifact_ids", "file_id"],
+    },
+    "workspace.filestore": {
+        "references": ["file_id", "references"], "import": ["file_id", "path"],
+    },
+    "workspace.metadata.get": {"*": ["workspace_id", "exists", "artifact_count"]},
+    "workspace.document.pdf.extract_text": {"*": ["text", "page_count", "pages_read"]},
+}
+
+
 def _execution_metadata(entry: CanonicalToolEntry) -> dict[str, Any]:
     metadata = dict(entry.execution_contract or {})
     bindable = _BINDABLE_INPUTS.get(entry.canonical_tool_id)
     if bindable:
         metadata["bindable_inputs"] = bindable
+    referenceable = _REFERENCEABLE_OUTPUTS.get(entry.canonical_tool_id)
+    if referenceable:
+        metadata["referenceable_outputs"] = referenceable
     return metadata
 
 

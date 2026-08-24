@@ -247,6 +247,14 @@ def commit_task_continuation(
     """Commit validated task state after the canonical QueryLoop reaches terminal success."""
     if not run_ok or not str(assistant_response or "").strip():
         return None
+    # The continuation contract guides the model, but never acts as a local
+    # response-quality gate.  If the delivered shape does not match the
+    # server-derived mechanical contract, simply leave durable continuation
+    # state unchanged instead of rejecting or rewriting the user's answer.
+    if continuation_contract and not _continuation_delivery_matches(
+        continuation_contract, assistant_response,
+    ):
+        return None
     path = _path(workspace_id, session_id)
     current_task = _task_from_exchange([
         {"role": "user", "content": user_input, "run_id": run_id},
@@ -313,3 +321,28 @@ def _apply_continuation_progress(
         "status": "completed",
         "updated_at": _now_iso(),
     }
+
+
+def _continuation_delivery_matches(contract: dict[str, Any], response: str) -> bool:
+    validation = contract.get("validation")
+    if not isinstance(validation, dict) or validation.get("kind") != "enumerated_items":
+        return True
+    try:
+        expected_count = int(
+            validation.get("expected_new_items")
+            or validation.get("expected_total_items")
+            or 0
+        )
+        expected_start = int(validation.get("expected_start_ordinal") or 0)
+    except (TypeError, ValueError):
+        return False
+    if expected_count <= 0 or expected_start <= 0:
+        return False
+    items = _extract_items(response)
+    expected_ordinals = list(range(expected_start, expected_start + expected_count))
+    if [int(item["ordinal"]) for item in items] != expected_ordinals:
+        return False
+    required_prefix = str(validation.get("required_prefix") or "")
+    return not required_prefix or all(
+        str(item.get("prefix") or "") == required_prefix for item in items
+    )

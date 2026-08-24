@@ -6,7 +6,6 @@ from agent.runtime.task_continuation import (
     render_task_continuation_guidance,
     resolve_task_continuation,
 )
-from core.runtime_engine.response_quality import validate_response_quality
 
 
 def _message(role: str, content: str, run_id: str) -> dict[str, str]:
@@ -202,28 +201,6 @@ def test_trusted_guidance_excludes_historic_user_prose(monkeypatch, tmp_path):
     assert "expected_new_items" in guidance
 
 
-def test_quality_gate_rejects_final_ordinal_and_accepts_exact_append(monkeypatch, tmp_path):
-    monkeypatch.setenv("LZCORE_WORKSPACE_ROOT", str(tmp_path))
-    contract = resolve_task_continuation(
-        workspace_id="default",
-        session_id="session_f",
-        user_input="再来30条",
-        messages=_seed_messages(),
-    )
-    assert contract is not None
-    wrong = validate_response_quality(
-        _append_answer(5, 26),
-        user_input="再来30条",
-        task_continuation_contract=contract,
-    )
-    assert [issue.code for issue in wrong] == ["TASK_CONTINUATION_CONTRACT_VIOLATION"]
-    assert validate_response_quality(
-        _append_answer(5, 30),
-        user_input="再来30条",
-        task_continuation_contract=contract,
-    ) == []
-
-
 def test_append_never_jumps_across_unrelated_completed_exchange(monkeypatch, tmp_path):
     monkeypatch.setenv("LZCORE_WORKSPACE_ROOT", str(tmp_path))
     commit_task_continuation(
@@ -245,7 +222,7 @@ def test_append_never_jumps_across_unrelated_completed_exchange(monkeypatch, tmp
     ) is None
 
 
-def test_query_loop_corrects_structured_append_contract_before_delivery():
+def test_query_loop_projects_continuation_contract_without_local_rewrite_gate():
     import asyncio
     from unittest import mock
 
@@ -280,9 +257,8 @@ def test_query_loop_corrects_structured_append_contract_before_delivery():
     ))
 
     assert result.success is True
-    assert len(calls) == 2
-    assert result.final_response.splitlines()[-1].startswith("DC-34")
-    assert result.metadata["response_quality_corrections"] == 1
+    assert len(calls) == 1
+    assert result.final_response.splitlines()[-1].startswith("DC-30")
 
 
 def test_rewrite_relation_binds_active_task_without_trusting_user_prose(monkeypatch, tmp_path):
@@ -328,18 +304,7 @@ def test_scope_relation_with_count_uses_total_item_contract(monkeypatch, tmp_pat
     validation = contract["validation"]
     assert validation["mode"] == "replace_scope"
     assert validation["expected_total_items"] == 3
-    wrong = validate_response_quality(
-        _append_answer(1, 4), user_input="删除其他章节，只保留3条",
-        task_continuation_contract=contract,
-    )
-    assert [issue.code for issue in wrong] == ["TASK_CONTINUATION_CONTRACT_VIOLATION"]
-    assert validate_response_quality(
-        _append_answer(1, 3), user_input="删除其他章节，只保留3条",
-        task_continuation_contract=contract,
-    ) == []
-
-
-def test_query_loop_corrects_structured_scope_contract_before_delivery():
+def test_query_loop_does_not_locally_rewrite_structured_scope_output():
     import asyncio
     from unittest import mock
     from core.runtime_engine import SSOTRuntimeConfig, SSOTRuntimeEngine
@@ -372,9 +337,36 @@ def test_query_loop_corrects_structured_scope_contract_before_delivery():
         }},
     ))
     assert result.success is True
-    assert len(calls) == 2
-    assert result.final_response.splitlines()[-1].startswith("DC-03")
-    assert result.metadata["response_quality_corrections"] == 1
+    assert len(calls) == 1
+    assert result.final_response.splitlines()[-1].startswith("DC-04")
+
+
+def test_invalid_continuation_shape_does_not_advance_durable_state(monkeypatch, tmp_path):
+    monkeypatch.setenv("LZCORE_WORKSPACE_ROOT", str(tmp_path))
+    session_id = "session_invalid_delivery"
+    assert commit_task_continuation(
+        workspace_id="default", session_id=session_id, run_id="run_seed",
+        user_input=_seed_prompt(), assistant_response=_seed_answer(), run_ok=True,
+    ) is not None
+    contract = resolve_task_continuation(
+        workspace_id="default", session_id=session_id, user_input="再来2条",
+        messages=[
+            _message("user", _seed_prompt(), "run_seed"),
+            _message("assistant", _seed_answer(), "run_seed"),
+        ],
+    )
+    assert contract is not None
+
+    rejected = commit_task_continuation(
+        workspace_id="default", session_id=session_id, run_id="run_bad",
+        user_input="再来2条", assistant_response=_append_answer(5, 1),
+        run_ok=True, continuation_contract=contract,
+    )
+
+    assert rejected is None
+    persisted = load_task_continuation("default", session_id)
+    assert persisted["revision"] == 1
+    assert persisted["active_task"]["source_run_id"] == "run_seed"
 
 
 def test_scope_progress_preserves_active_task_for_following_rewrite(monkeypatch, tmp_path):
@@ -445,7 +437,7 @@ def test_scope_progress_preserves_active_task_for_following_rewrite(monkeypatch,
     assert rewritten_task["delivery_contract"]["requested_count"] == 3
 
 
-def test_query_loop_reports_exhausted_contract_retries_without_safety_fallback():
+def test_query_loop_does_not_fail_a_turn_on_local_continuation_scoring():
     import asyncio
     from unittest import mock
     from core.runtime_engine import SSOTRuntimeConfig, SSOTRuntimeEngine
@@ -477,11 +469,10 @@ def test_query_loop_reports_exhausted_contract_retries_without_safety_fallback()
             },
         }},
     ))
-    assert result.success is False
-    assert "task_continuation_contract_failed" in result.errors
-    assert "无法由本轮证据支持" not in result.final_response
-    assert "未满足数量、编号或前缀合同" in result.final_response
-    assert len(calls) == 3
+    assert result.success is True
+    assert "task_continuation_contract_failed" not in result.errors
+    assert result.final_response.splitlines()[-1].startswith("DC-04")
+    assert len(calls) == 1
 
 
 def test_initial_contract_progress_accepts_inline_space_delimited_items(monkeypatch, tmp_path):

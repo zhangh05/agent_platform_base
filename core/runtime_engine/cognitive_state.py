@@ -6,11 +6,10 @@ from typing import Any, Iterable, Mapping
 from .cognitive_events import (
     COGNITIVE_DECISION_MADE, COGNITIVE_EVIDENCE_REGISTERED,
     COGNITIVE_GAP_DETECTED, COGNITIVE_GOAL_NORMALIZED,
-    COGNITIVE_INITIALIZED, COGNITIVE_PLAN_SELECTED, COGNITIVE_REFLECTION_COMPLETED,
-    COGNITIVE_REFLECTION_STARTED, build_cognitive_event,
+    COGNITIVE_INITIALIZED, COGNITIVE_PLAN_SELECTED, build_cognitive_event,
 )
 
-SCHEMA_VERSION = "cognitive-state/v1"
+SCHEMA_VERSION = "cognitive-state/v2"
 MAX_FACTS = 12
 MAX_UNKNOWNS = 8
 MAX_EVENTS = 32
@@ -32,7 +31,7 @@ class CognitiveState:
     unknowns: list[dict[str, Any]] = field(default_factory=list)
     plan: list[dict[str, Any]] = field(default_factory=list)
     decision: dict[str, Any] = field(default_factory=dict)
-    quality: dict[str, Any] = field(default_factory=dict)
+    evidence: dict[str, Any] = field(default_factory=dict)
     safety: dict[str, Any] = field(default_factory=dict)
     conflicts: list[dict[str, Any]] = field(default_factory=list)
     outcome: str = "running"
@@ -135,31 +134,7 @@ class CognitiveState:
         if gaps or uncertain or conflict_count:
             self._append(COGNITIVE_GAP_DETECTED, {"unknown_count": gaps + uncertain + conflict_count, "blocked_by": "unknown_tool_outcome" if uncertain else ("evidence_conflict" if conflict_count else "tool_failure"), "visible_summary": "部分观察尚不足以支持完成结论"})
         if evidence:
-            self.quality["evidence"] = dict(evidence)
-
-
-    def begin_reflection(self, quality_issue_codes: Iterable[str], *, attempt: int) -> None:
-        codes = _texts(quality_issue_codes, 8)
-        self.quality = {"issue_codes": codes, "reflection_attempt": max(0, int(attempt))}
-        self._append(
-            COGNITIVE_REFLECTION_STARTED,
-            {
-                "quality_issue_codes": codes,
-                "reflection_attempt": attempt,
-                "visible_summary": "发现可验证的回复质量缺口，正在进行一次受控纠偏",
-            },
-        )
-
-    def complete_reflection(self, *, resolved: bool, attempt: int) -> None:
-        self.quality["resolved"] = bool(resolved)
-        self.quality["reflection_attempt"] = max(0, int(attempt))
-        self._append(
-            COGNITIVE_REFLECTION_COMPLETED,
-            {
-                "reflection_attempt": attempt,
-                "visible_summary": "回复质量缺口已完成受控复核" if resolved else "回复质量缺口仍未完全消除",
-            },
-        )
+            self.evidence = dict(evidence)
     def set_decision(
         self,
         decision: str,
@@ -205,7 +180,7 @@ class CognitiveState:
             "conflict_count": len(self.conflicts),
             "plan": list(self.plan),
             "decision": dict(self.decision),
-            "quality": dict(self.quality),
+            "evidence": dict(self.evidence),
             "safety": dict(self.safety),
             "visible_summary": _text(self.decision.get("visible_summary") or self.safety.get("visible_summary") or self.goal),
         }
@@ -261,7 +236,7 @@ def restore_cognitive_state(
         for item in list(snapshot.get("plan") or [])[:8]
         if isinstance(item, Mapping) and _text(item.get("action"), 120)
     ]
-    for name in ("decision", "quality", "safety"):
+    for name in ("decision", "evidence", "safety"):
         value = snapshot.get(name)
         if isinstance(value, Mapping):
             setattr(state, name, dict(value))

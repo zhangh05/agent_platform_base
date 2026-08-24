@@ -3,10 +3,8 @@ from types import SimpleNamespace
 
 from core.runtime_engine.cognitive_events import COGNITIVE_DECISION_MADE, build_cognitive_event
 from core.runtime_engine.cognitive_gate import (
-    CONTINUE_CORRECT_RESPONSE,
     CONTINUE_REPLAN,
     STOP_COMPLETED,
-    STOP_FAILED,
     STOP_UNKNOWN_OUTCOME,
     STOP_WAITING_APPROVAL,
     decide_next_action,
@@ -55,20 +53,16 @@ def test_cognitive_gate_hard_stops_unknown_and_pending_approval():
     assert approval.outcome == STOP_WAITING_APPROVAL
 
 
-def test_cognitive_gate_replans_failed_observations_and_caps_reflection():
+def test_cognitive_gate_replans_failed_observations():
     replan = decide_next_action(
         tool_results=[SimpleNamespace(ok=False, execution_may_continue=False)],
         execution_outcome="partial",
         goal_assertions={},
     )
     assert replan.outcome == CONTINUE_REPLAN
-    correction = decide_next_action(tool_results=[], execution_outcome="success", goal_assertions={}, quality_issues=["missing_evidence"], reflection_attempts=0, max_reflection_attempts=1)
-    assert correction.outcome == CONTINUE_CORRECT_RESPONSE
-    exhausted = decide_next_action(tool_results=[], execution_outcome="success", goal_assertions={}, quality_issues=["missing_evidence"], reflection_attempts=1, max_reflection_attempts=1)
-    assert exhausted.outcome == STOP_FAILED
 
 
-def test_cognitive_gate_completes_only_without_safety_or_quality_blockers():
+def test_cognitive_gate_completes_only_without_runtime_blockers():
     decision = decide_next_action(tool_results=[SimpleNamespace(ok=True, execution_may_continue=False)], execution_outcome="success", goal_assertions={"required": True, "status": "passed"})
     assert decision.outcome == STOP_COMPLETED
     assert decision.terminal is True

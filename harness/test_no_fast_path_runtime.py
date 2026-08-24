@@ -185,32 +185,6 @@ def test_ambiguous_operational_request_still_reaches_query_loop():
     assert "Potentially missing fields" in calls[0].get("user", "")
 
 
-def test_response_nudge_does_not_hide_tools_from_llm():
-    calls: list[dict] = []
-
-    def llm_mock(**kwargs):
-        calls.append(kwargs)
-        return "我会基于已有结果回答。"
-
-    engine = SSOTRuntimeEngine(
-        config=SSOTRuntimeConfig(),
-        llm_invoke=llm_mock,
-        tool_runtime=mock.MagicMock(),
-    )
-
-    result = asyncio.run(engine.run(
-        user_input="根据已有结果总结",
-        workspace_id="test",
-        extras={"response_only": True, "response_only_reason": "test"},
-    ))
-
-    assert result.success
-    assert result.metadata.get("planner_skipped") is False
-    assert calls
-    assert calls[0].get("extra", {}).get("stream_scope") == "response"
-    assert calls[0].get("tools") is not None
-
-
 def test_adapter_tool_fallback_surfaces_actual_tool_output():
     from agent.runtime.ssot_runtime import (
         _final_response,

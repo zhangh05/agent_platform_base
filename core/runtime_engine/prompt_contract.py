@@ -116,7 +116,6 @@ def cognitive_state_prompt_item(state: Any) -> TrustedPromptItem | None:
             planned_actions.append(action)
 
     decision = summary.get("decision") if isinstance(summary.get("decision"), Mapping) else {}
-    quality = summary.get("quality") if isinstance(summary.get("quality"), Mapping) else {}
     safety = summary.get("safety") if isinstance(summary.get("safety"), Mapping) else {}
     unknown_reasons = []
     for unknown in getattr(state, "unknowns", ()) or ():
@@ -140,11 +139,6 @@ def cognitive_state_prompt_item(state: Any) -> TrustedPromptItem | None:
             if (code := _code(value, 80))
         ][:8],
         "unknown_reason_codes": unknown_reasons[:8],
-        "quality_issue_codes": [
-            code for value in (quality.get("issue_codes") or [])
-            if (code := _code(value, 80))
-        ][:8],
-        "quality_resolved": bool(quality.get("resolved")),
         "safety_reason_codes": [
             code for value in (safety.get("stop_reason_codes") or [])
             if (code := _code(value, 80))

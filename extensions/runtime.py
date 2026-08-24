@@ -111,6 +111,9 @@ def _build_tools(manifest: ExtensionManifest, contribution: dict[str, Any]) -> t
         bindable_inputs = item.get("bindable_inputs") or {}
         if not isinstance(bindable_inputs, dict):
             raise ExtensionValidationError(f"bindable_inputs must be an object: {tool_id}")
+        referenceable_outputs = item.get("referenceable_outputs") or {}
+        if not isinstance(referenceable_outputs, dict):
+            raise ExtensionValidationError(f"referenceable_outputs must be an object: {tool_id}")
         properties = (item.get("input_schema") or {}).get("properties") or {}
         actions = set((properties.get("action") or {}).get("enum") or [])
         for action, fields in required_all.items():
@@ -129,6 +132,11 @@ def _build_tools(manifest: ExtensionManifest, contribution: dict[str, Any]) -> t
                 raise ExtensionValidationError(f"invalid bindable action for {tool_id}: {action}")
             if not isinstance(fields, (list, tuple)) or any(str(field) not in properties for field in fields):
                 raise ExtensionValidationError(f"invalid bindable input for {tool_id}: {action}")
+        for action, fields in referenceable_outputs.items():
+            if action != "*" and action not in actions:
+                raise ExtensionValidationError(f"invalid referenceable action for {tool_id}: {action}")
+            if not isinstance(fields, (list, tuple)) or any(not str(field).strip() for field in fields):
+                raise ExtensionValidationError(f"invalid referenceable output for {tool_id}: {action}")
         seen.add(tool_id)
 
         def workspace_scoped_handler(invocation: ToolInvocation, *, _handler=handler) -> dict:
@@ -178,6 +186,10 @@ def _build_tools(manifest: ExtensionManifest, contribution: dict[str, Any]) -> t
                 "bindable_inputs": {
                     str(action): tuple(str(field) for field in fields)
                     for action, fields in bindable_inputs.items()
+                },
+                "referenceable_outputs": {
+                    str(action): tuple(str(field) for field in fields)
+                    for action, fields in referenceable_outputs.items()
                 },
             },
         ), workspace_scoped_handler))

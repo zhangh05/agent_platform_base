@@ -9,18 +9,16 @@ COGNITIVE_PLAN_SELECTED = "cognitive_plan_selected"
 COGNITIVE_EVIDENCE_REGISTERED = "cognitive_evidence_registered"
 COGNITIVE_GAP_DETECTED = "cognitive_gap_detected"
 COGNITIVE_DECISION_MADE = "cognitive_decision_made"
-COGNITIVE_REFLECTION_STARTED = "cognitive_reflection_started"
-COGNITIVE_REFLECTION_COMPLETED = "cognitive_reflection_completed"
 COGNITIVE_STOP_DECIDED = "cognitive_stop_decided"
 
 COGNITIVE_EVENT_TYPES = frozenset({
     COGNITIVE_INITIALIZED, COGNITIVE_GOAL_NORMALIZED, COGNITIVE_PLAN_SELECTED,
     COGNITIVE_EVIDENCE_REGISTERED, COGNITIVE_GAP_DETECTED, COGNITIVE_DECISION_MADE,
-    COGNITIVE_REFLECTION_STARTED, COGNITIVE_REFLECTION_COMPLETED, COGNITIVE_STOP_DECIDED,
+    COGNITIVE_STOP_DECIDED,
 })
 _TEXT_KEYS = frozenset({"decision", "selected_action", "expected_observation", "risk_level", "visible_summary", "outcome", "goal", "blocked_by", "next_action"})
-_LIST_KEYS = frozenset({"reason_codes", "criteria", "quality_issue_codes"})
-_INT_KEYS = frozenset({"fact_count", "unknown_count", "conflict_count", "revision", "reflection_attempt"})
+_LIST_KEYS = frozenset({"reason_codes", "criteria"})
+_INT_KEYS = frozenset({"fact_count", "unknown_count", "conflict_count", "revision"})
 
 def _text(value: Any, limit: int = 320) -> str:
     return " ".join(str(value or "").split())[:limit]

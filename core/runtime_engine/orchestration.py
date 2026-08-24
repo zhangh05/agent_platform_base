@@ -62,6 +62,7 @@ def extract_orchestration(arguments: dict[str, Any], fallback_step_id: str) -> t
 
 
 BindingTargetValidator = Callable[[str, str, str], bool]
+BindingSourceValidator = Callable[[str, str, list[str]], bool]
 
 
 def validate_incremental_graph(
@@ -69,6 +70,7 @@ def validate_incremental_graph(
     prior: dict[str, StepEvidence] | None = None,
     *,
     binding_target_validator: BindingTargetValidator | None = None,
+    binding_source_validator: BindingSourceValidator | None = None,
 ) -> list[list[str]]:
     """Validate one LLM call batch and return stable topological layers."""
     prior = prior or {}
@@ -90,6 +92,7 @@ def validate_incremental_graph(
             raise OrchestrationError(f"invalid plan_step_id: {step_id}")
 
     current = set(step_ids)
+    calls_by_step = {step_id: call for call, step_id in zip(calls, step_ids)}
     dependencies: dict[str, set[str]] = {}
     for call, step_id in zip(calls, step_ids):
         depends = list(getattr(call, "depends_on", None) or [])
@@ -107,11 +110,22 @@ def validate_incremental_graph(
         for target, reference in bindings.items():
             if not target or "." in target:
                 raise OrchestrationError(f"invalid binding target for step {step_id}: {target}")
-            source_id, _ = parse_reference(reference)
+            source_id, source_path = parse_reference(reference)
             if source_id not in set(depends):
                 raise OrchestrationError(
                     f"binding source {source_id} must be declared in plan_depends_on for step {step_id}"
                 )
+            if source_id in current and source_path:
+                source_call = calls_by_step[source_id]
+                if binding_source_validator is None or not binding_source_validator(
+                    getattr(source_call, "name", ""),
+                    (getattr(source_call, "arguments", None) or {}).get("action", ""),
+                    source_path,
+                ):
+                    raise OrchestrationError(
+                        f"undeclared binding source for {getattr(source_call, 'name', '')}: "
+                        f"{'.'.join(source_path)}; bind the whole output or use a published result field"
+                    )
             if binding_target_validator is None or not binding_target_validator(
                 getattr(call, "name", ""),
                 (getattr(call, "arguments", None) or {}).get("action", ""),
@@ -204,3 +218,33 @@ def binding_target_allowed(
         if isinstance(fields, (list, tuple, set, frozenset)):
             allowed.update(str(field) for field in fields)
     return str(target or "") in allowed
+
+
+def binding_source_allowed(
+    tool_registry: Mapping[str, Any],
+    tool_id: str,
+    action: str,
+    path: list[str],
+) -> bool:
+    """Allow same-batch narrow references only for published public fields."""
+    if not path:
+        return True
+    normalized = str(tool_id or "").replace("__", ".")
+    entry = tool_registry.get(normalized)
+    if entry is None:
+        return False
+    metadata = (
+        (entry.get("metadata") or {})
+        if isinstance(entry, Mapping)
+        else (getattr(entry, "metadata", {}) or {})
+    )
+    declared = metadata.get("referenceable_outputs") if isinstance(metadata, Mapping) else None
+    if not isinstance(declared, Mapping):
+        return False
+    selected_action = str(action or "").strip().lower()
+    allowed: set[str] = set()
+    for key in ("*", selected_action):
+        fields = declared.get(key)
+        if isinstance(fields, (list, tuple, set, frozenset)):
+            allowed.update(str(field) for field in fields)
+    return path[0] in allowed

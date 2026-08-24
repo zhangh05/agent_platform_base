@@ -245,6 +245,8 @@ def test_llm_tool_descriptions_publish_safe_result_binding_contracts():
     }
 
     assert "Safe result bindings" in tools["web__manage"]
+    assert "Referenceable result fields" in tools["web__manage"]
+    assert "search=>query+results+results_markdown" in tools["web__manage"]
     assert "fetch=>url" in tools["web__manage"]
     assert "python=>input_data" in tools["exec__run"]
 

@@ -95,7 +95,11 @@ def tool_spec_to_openai_function(tool: dict) -> dict:
         },
         "plan_bindings": {
             "type": "object",
-            "description": "Optional argument-to-result references, e.g. input_data -> steps.extract.content.",
+            "description": (
+                "Optional destination-argument to source-result references. "
+                "Use steps.<id>.output for the whole successful output, or a source tool's "
+                "published referenceable field such as steps.<id>.output.rows."
+            ),
         },
         "plan_failure": {
             "type": "string",
@@ -151,6 +155,9 @@ def _build_tool_description(tool: dict, metadata: dict, canonical_tool_id: str) 
     bindings = _format_bindable_inputs(metadata)
     if bindings:
         parts.append(f"Safe result bindings: {bindings}")
+    outputs = _format_referenceable_outputs(metadata)
+    if outputs:
+        parts.append(f"Referenceable result fields: {outputs}")
     normalized_base = " ".join(base.split())
     normalized_rendered = " ".join(rendered_base.split())
     normalized_usage = " ".join(str(usage_hint or "").split())
@@ -170,7 +177,7 @@ def _build_tool_description(tool: dict, metadata: dict, canonical_tool_id: str) 
             parts.append(f"Do not use for: {rendered_not_for}")
     # Keep the final boundary intact. Raw slicing used to cut prohibitions and
     # identifiers mid-sentence for richer tools such as workspace.file.
-    return _soft_truncate(" ".join(p for p in parts if p), 1900)
+    return _soft_truncate(" ".join(p for p in parts if p), 2400)
 
 
 def _format_bindable_inputs(metadata: dict | None = None) -> str:
@@ -186,6 +193,21 @@ def _format_bindable_inputs(metadata: dict | None = None) -> str:
         if names:
             chunks.append(f"{action}=>{'+'.join(names)}")
     return _soft_truncate(", ".join(chunks), 360)
+
+
+def _format_referenceable_outputs(metadata: dict | None = None) -> str:
+    """Publish compact action-specific source paths for same-batch composition."""
+    declared = (metadata or {}).get("referenceable_outputs") or {}
+    if not isinstance(declared, dict):
+        return ""
+    chunks = []
+    for action, fields in sorted(declared.items()):
+        if not isinstance(fields, (list, tuple)):
+            continue
+        names = [str(field) for field in fields if str(field)]
+        if names:
+            chunks.append(f"{action}=>{'+'.join(names)}")
+    return _soft_truncate(", ".join(chunks), 520)
 
 
 _PARAM_DESCRIPTIONS = {

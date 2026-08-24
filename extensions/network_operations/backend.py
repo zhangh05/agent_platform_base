@@ -304,6 +304,7 @@ def register():
                 "category": "ops",
                 "permission_action": "read",
                 "bindable_inputs": {"*": ["asset_id"]},
+                "referenceable_outputs": {"*": ["asset", "assets"]},
                 "handler": assets_read,
                 "input_schema": {
                     "type": "object",
@@ -321,6 +322,7 @@ def register():
                     "all": {"save": ["asset"], "delete": ["asset_id"]},
                 },
                 "approval_actions": ["delete"],
+                "referenceable_outputs": {"save": ["asset"]},
                 "handler": assets_write,
                 "input_schema": {
                     "type": "object",
@@ -341,6 +343,10 @@ def register():
                 "risk_level": "medium",
                 "permission_action": "network",
                 "bindable_inputs": {"probe": ["asset_id"], "read": ["asset_id"]},
+                "referenceable_outputs": {
+                    "probe": ["asset", "status", "stages", "fingerprint"],
+                    "read": ["asset", "status", "stages", "fingerprint", "output"],
+                },
                 "action_requirements": {
                     "any": {"probe": [["asset_id", "host"]], "read": [["asset_id", "host"]]},
                 },
@@ -377,6 +383,9 @@ def register():
                 "risk_level": "medium",
                 "permission_action": "network",
                 "bindable_inputs": {"get": ["task_id"]},
+                "referenceable_outputs": {
+                    "run": ["task"], "get": ["task"], "list": ["inspections"], "retry": ["task"],
+                },
                 "action_requirements": {
                     "all": {"run": ["asset_ids"], "get": ["task_id"], "cancel": ["task_id"], "retry": ["task_id"]},
                 },
@@ -406,6 +415,11 @@ def register():
                     "all": {"create": ["task_id"], "confirm": ["baseline_id"], "diff": ["task_id"]},
                 },
                 "approval_actions": ["confirm"],
+                "referenceable_outputs": {
+                    "create": ["baseline"], "confirm": ["baseline"],
+                    "list": ["baselines"],
+                    "diff": ["baseline_id", "task_id", "changed", "changes"],
+                },
                 "handler": baseline,
                 "input_schema": {
                     "type": "object",

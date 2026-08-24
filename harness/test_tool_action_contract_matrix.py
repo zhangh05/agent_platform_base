@@ -162,6 +162,57 @@ def test_every_declared_binding_target_is_a_public_tool_argument():
                 assert field in properties, (spec.tool_id, action, field)
 
 
+def test_every_referenceable_output_contract_uses_public_actions_and_fields():
+    from core.tools.canonical_registry import to_tool_specs
+
+    for spec, _handler in to_tool_specs():
+        properties = (spec.input_schema or {}).get("properties") or {}
+        actions = set((properties.get("action") or {}).get("enum") or [])
+        declared = (spec.metadata or {}).get("referenceable_outputs") or {}
+        for action, fields in declared.items():
+            assert action == "*" or action in actions, (spec.tool_id, action)
+            assert fields, (spec.tool_id, action)
+            assert all(isinstance(field, str) and field.strip() for field in fields)
+
+
+def test_deterministic_referenceable_output_contracts_match_real_handlers(monkeypatch, tmp_path):
+    """Exercise real handlers so source contracts cannot drift with test doubles."""
+    from core.tools.canonical_registry import get_entry, to_tool_specs
+    from core.tools.schemas import ToolInvocation
+
+    monkeypatch.setenv("LZCORE_WORKSPACE_ROOT", str(tmp_path / "workspaces"))
+    specs = {spec.tool_id: spec for spec, _handler in to_tool_specs()}
+
+    cases = [
+        ("data.manage", {"action": "parse", "text": "name,value\na,1\nb,2"}),
+        ("data.manage", {"action": "stats", "rows": [{"value": 1}, {"value": 2}]}),
+        ("report.manage", {"action": "diff", "text_a": "a", "text_b": "b"}),
+        ("report.manage", {"action": "document", "title": "x", "summary": "body"}),
+        ("text.analyze", {"action": "redact", "text": "public text"}),
+        ("text.analyze", {"action": "extract_entities", "text": "alpha beta alpha"}),
+        ("text.analyze", {"action": "match", "text": "abc123", "pattern": r"\d+"}),
+        ("agent.manage", {"action": "list"}),
+        ("skill.manage", {"action": "list"}),
+        ("system.manage", {"action": "local_info"}),
+        ("workspace.metadata.get", {}),
+        ("workspace.file", {"action": "write", "filename": "contract.txt", "content": "hello"}),
+    ]
+    for tool_id, arguments in cases:
+        result = get_entry(tool_id).handler(ToolInvocation(
+            tool_id=tool_id,
+            arguments=arguments,
+            workspace_id="default",
+            session_id="session",
+            run_id="run",
+        ))
+        assert result.get("ok") is True, (tool_id, arguments, result)
+        action = str(arguments.get("action") or "*")
+        declared = specs[tool_id].metadata["referenceable_outputs"]
+        fields = tuple(declared.get("*", ())) + tuple(declared.get(action, ()))
+        assert fields, (tool_id, action)
+        assert set(fields) <= set(result), (tool_id, action, sorted(set(fields) - set(result)))
+
+
 def test_public_schemas_expose_handler_consumed_arguments():
     expected = {
         "exec.run": {"command", "code", "description", "working_dir", "timeout", "target", "shell", "env_vars"},

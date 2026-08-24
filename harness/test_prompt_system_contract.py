@@ -185,7 +185,7 @@ def test_tool_result_keeps_runtime_contract_with_response_nudge_marker():
     from agent.llm.schemas import LLMMessage
     from core.runtime_engine.prompt_contract import RUNTIME_SYSTEM_PROMPT
     from core.runtime_engine.query_loop import (
-        RESPONSE_ONLY_MARKER,
+        SYNTHESIS_CHECKPOINT_MARKER,
         QUERY_LOOP_SYSTEM_PROMPT,
         QueryLoop,
     )
@@ -201,7 +201,7 @@ def test_tool_result_keeps_runtime_contract_with_response_nudge_marker():
     assert streams is True
 
     response = continuation + [
-        LLMMessage(role="user", content=RESPONSE_ONLY_MARKER),
+        LLMMessage(role="user", content=SYNTHESIS_CHECKPOINT_MARKER),
     ]
     prompt, scope, streams = QueryLoop._llm_call_mode(response, ctx)
     assert prompt == QUERY_LOOP_SYSTEM_PROMPT

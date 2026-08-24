@@ -10,7 +10,7 @@ import pytest
 from agent.llm.schemas import LLMToolCall
 from core.runtime_engine.models import SSOTRuntimeConfig, StatelessContext, ToolResult
 from core.runtime_engine.orchestration import (
-    binding_target_allowed, OrchestrationError, StepEvidence,
+    binding_source_allowed, binding_target_allowed, OrchestrationError, StepEvidence,
     validate_incremental_graph,
 )
 from core.runtime_engine.query_loop import StreamingToolExecutor
@@ -461,8 +461,23 @@ def test_stop_binding_failure_prevents_same_layer_execution():
             result_bindings={"text": "steps.source.output.missing"}, failure_policy="stop",
         ),
     ]
+    registry = {
+        "data.manage": {
+            "args_schema": {
+                "type": "object", "required": ["action"],
+                "properties": {
+                    "action": {"type": "string", "enum": ["source", "independent", "fatal"]},
+                    "text": {"type": "string"},
+                },
+            },
+            "metadata": {
+                "bindable_inputs": {"*": ["text"]},
+                "referenceable_outputs": {"source": ["text", "missing"]},
+            },
+        },
+    }
     results = asyncio.run(StreamingToolExecutor(
-        Runtime(), SSOTRuntimeConfig(), tool_registry=_registry(),
+        Runtime(), SSOTRuntimeConfig(), tool_registry=registry,
     ).execute(calls, ctx=_ctx()))
     assert calls_seen == ["source"]
     assert results[1].output["error_code"] == "PLAN_STOPPED"
@@ -514,9 +529,13 @@ def test_declared_cross_tool_binding_is_accepted_and_undeclared_field_is_denied(
     validator = lambda tool_id, action, target: binding_target_allowed(
         registry, tool_id, action, target,
     )
+    source_validator = lambda tool_id, action, path: binding_source_allowed(
+        registry, tool_id, action, path,
+    )
     assert validate_incremental_graph(
         [allowed], {"source": SimpleNamespace(ok=True)},
         binding_target_validator=validator,
+        binding_source_validator=source_validator,
     ) == [["analyse"]]
 
     denied = LLMToolCall(
@@ -528,7 +547,42 @@ def test_declared_cross_tool_binding_is_accepted_and_undeclared_field_is_denied(
         validate_incremental_graph(
             [denied], {"source": SimpleNamespace(ok=True)},
             binding_target_validator=validator,
+            binding_source_validator=source_validator,
         )
+
+
+def test_same_batch_binding_requires_published_source_field_but_whole_output_is_allowed():
+    registry = _registry()
+    validator = lambda tool_id, action, target: binding_target_allowed(
+        registry, tool_id, action, target,
+    )
+    source_validator = lambda tool_id, action, path: binding_source_allowed(
+        registry, tool_id, action, path,
+    )
+    source = LLMToolCall(
+        id="source", name="web.manage", arguments={"action": "search", "query": "docs"},
+        step_id="source",
+    )
+    invalid = LLMToolCall(
+        id="consume", name="exec.run", arguments={"action": "python", "code": "result = input_data"},
+        step_id="consume", depends_on=["source"],
+        result_bindings={"input_data": "steps.source.output.provider_private_field"},
+    )
+    with pytest.raises(OrchestrationError, match="undeclared binding source"):
+        validate_incremental_graph(
+            [source, invalid], binding_target_validator=validator,
+            binding_source_validator=source_validator,
+        )
+
+    whole = LLMToolCall(
+        id="consume_all", name="exec.run", arguments={"action": "python", "code": "result = input_data"},
+        step_id="consume_all", depends_on=["source"],
+        result_bindings={"input_data": "steps.source.output"},
+    )
+    assert validate_incremental_graph(
+        [source, whole], binding_target_validator=validator,
+        binding_source_validator=source_validator,
+    ) == [["source"], ["consume_all"]]
 
 
 def test_independent_reads_honor_parallel_width():
@@ -575,6 +629,8 @@ def test_engine_executes_dependent_tool_group_then_synthesizes():
     from agent.llm.schemas import LLMResponse
     from core.runtime_engine.engine import SSOTRuntimeEngine
     from core.runtime_engine.tool_runtime import ToolRuntime
+    from core.tools.canonical_registry import get_entry
+    from core.tools.schemas import ToolInvocation
 
     responses = [
         LLMResponse(tool_calls=[
@@ -593,6 +649,7 @@ def test_engine_executes_dependent_tool_group_then_synthesizes():
         LLMResponse(content="分析完成"),
     ]
     received = []
+    handler_outputs = []
     model_messages = []
 
     def llm(**kwargs):
@@ -601,9 +658,14 @@ def test_engine_executes_dependent_tool_group_then_synthesizes():
 
     def handler(arguments):
         received.append(dict(arguments))
-        if arguments["action"] == "parse":
-            return {"ok": True, "rows": [{"value": 7}]}
-        return {"ok": True, "count": len(arguments["rows"])}
+        output = get_entry("data.manage").handler(ToolInvocation(
+            tool_id="data.manage",
+            arguments=dict(arguments),
+            workspace_id="default",
+            session_id="session",
+        ))
+        handler_outputs.append(output)
+        return output
 
     config = SSOTRuntimeConfig(max_query_loop_iterations=4)
     runtime = ToolRuntime(config)
@@ -617,7 +679,10 @@ def test_engine_executes_dependent_tool_group_then_synthesizes():
                     "text": {"type": "string"}, "rows": {"type": "array"},
                 },
             },
-            "metadata": {"bindable_inputs": {"*": ["text", "rows"]}},
+            "metadata": {
+                "bindable_inputs": {"*": ["text", "rows"]},
+                "referenceable_outputs": {"parse": ["rows"]},
+            },
         },
     }
     engine = SSOTRuntimeEngine(config=config, llm_invoke=llm, tool_registry=registry, tool_runtime=runtime)
@@ -625,7 +690,8 @@ def test_engine_executes_dependent_tool_group_then_synthesizes():
 
     assert result.success is True
     assert result.final_response == "分析完成"
-    assert received[1]["rows"] == [{"value": 7}]
+    assert received[1]["rows"] == [{"value": "7"}]
+    assert handler_outputs[1]["stats"]["value"]["mean"] == 7.0
     assert result.metadata["orchestration_batches"][0]["layers"] == [["extract"], ["analyse"]]
     assert [message.role for message in model_messages[1]][-3:] == ["assistant", "tool", "tool"]
     assert model_messages[1][-2].tool_call_id == "provider-a"

@@ -135,16 +135,6 @@ def test_canonical_weather_contract_compiles_25_locations_to_three_calls():
     assert sum(event["source_call_count"] for event in events) == 25
 
 
-def test_response_quality_rejects_denial_of_delivered_visual_evidence():
-    from core.runtime_engine.response_quality import validate_response_quality
-
-    issues = validate_response_quality(
-        "我无法查看图片中的内容。",
-        evidence={"delivered_by_kind": {"image": 3}},
-    )
-    assert [issue.code for issue in issues] == ["DELIVERED_EVIDENCE_DENIED"]
-
-
 def test_filestore_image_output_uses_typed_evidence_only():
     from core.runtime_engine.evidence import managed_image_evidence
 

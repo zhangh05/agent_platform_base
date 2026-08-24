@@ -21,9 +21,11 @@ _SECRET_PATTERNS = [
      lambda m: m.group(0).split(m.group(1))[0] + '[REDACTED]'),
     # Bearer tokens
     (re.compile(r'Bearer\s+[^\s"\'<>]+', re.IGNORECASE), 'Bearer [REDACTED]'),
-    # Password/secret lines
-    (re.compile(r'(?:password|passwd|secret|community)\s+[^\s"\']+', re.IGNORECASE),
-     lambda m: m.group(0).split()[0] + ' [REDACTED]'),
+    # Password/secret assignments and command-style values.
+    (re.compile(
+        r'((?:password|passwd|secret|community)\s*(?::|=|\s)\s*)[^\s"\']+',
+        re.IGNORECASE,
+    ), lambda m: m.group(1) + '[REDACTED]'),
     # API key patterns
     (re.compile(r'(?:api_key|apikey|api-key)\s*[:=]\s*[^\s,}"\']+', re.IGNORECASE),
      lambda m: re.split(r'[:=]', m.group(0), 1)[0] + '=[REDACTED]'),

@@ -148,9 +148,13 @@ def data_parse(text: str = "", rows: list | None = None) -> dict:
 
     return {
         "ok": True,
+        # Preserve a bounded structured payload so parse can genuinely feed
+        # stats/filter/sort/aggregate/Python in a dependent tool step.
+        "rows": parsed[:MAX_OUTPUT_ROWS],
         "columns": cols,
         "types": types,
         "row_count": total,
+        "truncated": total > MAX_OUTPUT_ROWS,
         "null_counts": nulls,
         "markdown_preview": _md_table(parsed, 5, cols),
         "_hint": (

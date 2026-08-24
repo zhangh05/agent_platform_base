@@ -80,7 +80,7 @@ from .cognitive_state import initialize_cognitive_state, restore_cognitive_state
 # Keep this concise: the full tool catalog is already supplied through the
 # function-calling tools field on every planner call.
 QUERY_LOOP_SYSTEM_PROMPT = RUNTIME_SYSTEM_PROMPT
-RESPONSE_ONLY_MARKER = "[RESPONSE_ONLY]"
+SYNTHESIS_CHECKPOINT_MARKER = "[SYNTHESIS_CHECKPOINT]"
 
 def _redact_tool_error(error: Any, *, limit: int = 200) -> str:
     """Return bounded, redacted tool or orchestration error text for model context."""
@@ -144,6 +144,9 @@ def _tool_registry_signature(tool_registry: dict) -> str:
             ),
             "bindable_inputs": _tool_meta_get(
                 _tool_meta_get(meta, "metadata", {}), "bindable_inputs", {},
+            ),
+            "referenceable_outputs": _tool_meta_get(
+                _tool_meta_get(meta, "metadata", {}), "referenceable_outputs", {},
             ),
         })
     encoded = json.dumps(
@@ -483,6 +486,7 @@ class StreamingToolExecutor:
     ) -> List[StreamingToolResult]:
         """Execute one incremental dependency graph and preserve call order."""
         from .orchestration import (
+            binding_source_allowed,
             binding_target_allowed,
             OrchestrationError,
             StepEvidence,
@@ -498,6 +502,9 @@ class StreamingToolExecutor:
                 prior,
                 binding_target_validator=lambda tool_id, action, target: binding_target_allowed(
                     self._tool_registry, tool_id, action, target,
+                ),
+                binding_source_validator=lambda tool_id, action, path: binding_source_allowed(
+                    self._tool_registry, tool_id, action, path,
                 ),
             )
         except OrchestrationError as exc:
@@ -1473,7 +1480,6 @@ class QueryLoop:
         failure_counts: Dict[str, int] = {}
         validation_correction_attempts = 0
         batch_replan_attempts = 0
-        response_quality_attempts = 0
         # In-memory loop deduplication retains the readable canonical key.
         # Cross-restart fences use only fixed-size SHA-256 identities. Prefix-
         # truncated legacy records are deliberately not compared to a new call:
@@ -1585,9 +1591,6 @@ class QueryLoop:
                 "prompt_policy_events": list(ctx.extras.get("prompt_policy_events") or []),
                 "active_capability_playbooks": list(
                     ctx.extras.get("active_capability_playbooks") or []
-                ),
-                "response_quality_events": list(
-                    ctx.extras.get("response_quality_events") or []
                 ),
                 "task_state_execution_manifest": list(
                     ctx.extras.get("task_state_execution_manifest") or []
@@ -1788,21 +1791,11 @@ class QueryLoop:
             if self._has_complete_analysis_artifact(prefetch_results):
                 messages = self._append_turn_nudge(
                     messages,
-                    RESPONSE_ONLY_MARKER
+                    SYNTHESIS_CHECKPOINT_MARKER
                     + " Complete artifacts were prefetched above. Analyze them and "
                     "answer the original request if the evidence is sufficient. "
                     "Tools remain available if more verification is needed.",
                 )
-
-        if ctx.extras.get("response_only") and not self._is_response_only(messages):
-            reason = str(ctx.extras.get("response_only_reason") or "caller_requested")
-            messages = self._append_turn_nudge(
-                messages,
-                RESPONSE_ONLY_MARKER
-                + f" Response-only mode ({reason}). Use the facts already supplied, "
-                "do not invent missing evidence. Tools remain available if the "
-                "current request genuinely needs verification or inspection.",
-            )
 
         while iterations < max_iterations:
             if self._is_cancelled(ctx):
@@ -2308,7 +2301,7 @@ class QueryLoop:
                     ctx.extras["orchestration_stop_reason"] = "tool_execution_budget_exhausted"
                     messages = self._append_turn_nudge(
                         messages,
-                        RESPONSE_ONLY_MARKER
+                        SYNTHESIS_CHECKPOINT_MARKER
                         + " The tool execution budget is exhausted and the proposed calls were not executed. "
                         "Answer the original request now using only successful evidence already collected. "
                         "State exact missing coverage or the concrete blocker; do not issue more tools and do "
@@ -2406,7 +2399,7 @@ class QueryLoop:
                 if failed_results:
                     if ctx.extras.get("orchestration_stop_requested"):
                         recovery_nudge = (
-                            RESPONSE_ONLY_MARKER
+                            SYNTHESIS_CHECKPOINT_MARKER
                             + " A failed plan step requested stop. Do not call more tools in this turn. "
                             "Explain the partial outcome and concrete blocker using only completed evidence."
                         )
@@ -2421,7 +2414,7 @@ class QueryLoop:
                 if self._has_complete_analysis_artifact(results):
                     messages = self._append_turn_nudge(
                         messages,
-                    RESPONSE_ONLY_MARKER
+                        SYNTHESIS_CHECKPOINT_MARKER
                         + " The complete artifact content is included above. "
                         "Analyze it and answer the original request if sufficient. "
                         "Tools remain available if more verification is needed.",
@@ -2429,7 +2422,7 @@ class QueryLoop:
                 if document_images:
                     messages = self._append_turn_nudge(
                         messages,
-                        RESPONSE_ONLY_MARKER
+                        SYNTHESIS_CHECKPOINT_MARKER
                         + " The requested embedded document image is now attached as visual evidence. "
                         "Answer the user's original question from that image when the evidence is sufficient. "
                         "Additional tools remain available for a genuine unresolved evidence gap; never claim "
@@ -2438,7 +2431,7 @@ class QueryLoop:
                 elif iterations >= max_iterations - 1:
                     messages = self._append_turn_nudge(
                         messages,
-                        RESPONSE_ONLY_MARKER
+                        SYNTHESIS_CHECKPOINT_MARKER
                         + " Use the evidence already collected to answer the original request naturally now. "
                         "Do not call more tools and never expose internal tool summaries as the answer.",
                     )
@@ -2557,7 +2550,7 @@ class QueryLoop:
             if not final_text.strip():
                 if all_results and iterations < max_iterations:
                     reminder = (
-                        RESPONSE_ONLY_MARKER
+                        SYNTHESIS_CHECKPOINT_MARKER
                         + " You just received tool results. "
                         "Now answer the user's original question in natural language. "
                         "If the evidence is still insufficient, you may choose another "
@@ -2604,122 +2597,13 @@ class QueryLoop:
                     error="unbacked_approval_claim",
                 )
 
-            from .response_quality import (
-                build_response_quality_nudge,
-                validate_response_quality,
-            )
-            quality_issues = validate_response_quality(
-                final_text,
-                user_input=ctx.user_input,
-                tool_results=all_results,
-                evidence=evidence_summary(ctx.extras),
-                known_reference_ids=(ctx.request_id, ctx.session_id, ctx.workspace_id),
-                task_continuation_contract=ctx.extras.get("task_continuation_contract"),
-            )
-            quality_observation = {}
-            if quality_issues:
-                quality_codes = [issue.code for issue in quality_issues]
-                # Real-world completion claims, runtime references and secret-like
-                # output require a bounded correction through this same QueryLoop.
-                # Writing style and business correctness belong to the prompt and
-                # evidence contracts, not local regex scoring.
-                # Safety violations describe external or sensitive facts and must
-                # never be delivered without evidence. Delivery-contract violations
-                # are recoverable text-shaping defects with independent retries.
-                safety_hard_quality_codes = {
-                    "UNVERIFIED_ACTION_COMPLETION",
-                    "UNVERIFIED_REFERENCE",
-                    "SENSITIVE_OUTPUT",
-                    "DELIVERED_EVIDENCE_DENIED",
-                }
-                contract_quality_codes = {
-                    "TASK_CONTINUATION_CONTRACT_VIOLATION",
-                }
-                delivery_quality_codes = {
-                    "PROCESS_ONLY_RESPONSE",
-                }
-                safety_blocking_issues = [
-                    issue for issue in quality_issues
-                    if issue.code in safety_hard_quality_codes
-                ]
-                contract_issues = [
-                    issue for issue in quality_issues
-                    if issue.code in contract_quality_codes
-                ]
-                delivery_issues = [
-                    issue for issue in quality_issues
-                    if issue.code in delivery_quality_codes
-                ]
-                blocking_issues = safety_blocking_issues + contract_issues + delivery_issues
-                max_quality_corrections = (
-                    2
-                    if (contract_issues or delivery_issues) and not safety_blocking_issues
-                    else 1
-                )
-                if blocking_issues:
-                    if response_quality_attempts < max_quality_corrections and iterations < max_iterations:
-                        response_quality_attempts += 1
-                        ctx.extras.setdefault("response_quality_events", []).append({
-                            "attempt": response_quality_attempts,
-                            "issues": quality_codes,
-                            "observed": True,
-                            "blocking": True,
-                            "corrected": False,
-                        })
-                        cognitive_state.begin_reflection(
-                            quality_codes,
-                            attempt=response_quality_attempts,
-                        )
-                        cognitive_state.complete_reflection(
-                            resolved=False,
-                            attempt=response_quality_attempts,
-                        )
-                        messages = self._append_turn_nudge(
-                            messages,
-                            build_response_quality_nudge(blocking_issues),
-                        )
-                        continue
-                    return finish(
-                        final_response=(
-                            "本轮文本交付未满足数量、编号或前缀合同，未覆盖上一版已交付内容；"
-                            "已完成有界格式纠正但仍未满足服务器校验。请重试或调整交付约束。"
-                            if contract_issues and not safety_blocking_issues and not delivery_issues
-                            else self._build_tool_result_fallback(ctx, all_results)
-                            if delivery_issues and not safety_blocking_issues
-                            else "当前答复包含无法由本轮证据支持的完成声明、引用或敏感内容；"
-                            "为避免误导，未直接交付该内容。请提供可验证结果或允许先执行必要核验。"
-                        ),
-                        tool_results=all_results,
-                        iterations=iterations,
-                        total_tool_calls=len(all_results),
-                        llm_calls=llm_calls,
-                        error=(
-                            "task_continuation_contract_failed"
-                            if contract_issues and not safety_blocking_issues and not delivery_issues
-                            else "response_delivery_incomplete"
-                            if delivery_issues and not safety_blocking_issues
-                            else "response_quality_failed"
-                        ),
-                    )
-                ctx.extras.setdefault("response_quality_events", []).append({
-                    "attempt": 0,
-                    "issues": quality_codes,
-                    "observed": True,
-                    "blocking": False,
-                })
-                quality_observation = {
-                    "codes": quality_codes,
-                    "correction_attempts": 0,
-                    "blocking": False,
-                }
-                cognitive_state.begin_reflection(
-                    quality_codes,
-                    attempt=response_quality_attempts + 1,
-                )
-                cognitive_state.complete_reflection(
-                    resolved=False,
-                    attempt=response_quality_attempts + 1,
-                )
+            # Semantic answer quality belongs to the model, its prompt and the
+            # evidence/tool contracts.  Do not regex-score or regenerate a
+            # completed answer here: those local gates repeatedly replaced
+            # useful responses with generic framework text.  Deterministic
+            # secret/path masking remains a presentation safety boundary.
+            from core.tools.redaction import redact_string
+            final_text = redact_string(final_text)
             elapsed = (time.monotonic() - t_start) * 1000
             self._emit_stage(
                 RESPONSE_COMPLETED, t_start, stage_started_at=response_stage_started_at,
@@ -2745,8 +2629,6 @@ class QueryLoop:
                     "max_parallel_width": self._executor.max_parallel_width,
                     "output_truncated": output_truncated,
                     "output_truncation_reason": output_truncation_reason,
-                    "response_quality_corrections": response_quality_attempts,
-                    "response_quality_observation": quality_observation,
                 },
             )
 
@@ -2956,12 +2838,12 @@ class QueryLoop:
         messages: List[LLMMessage],
         ctx: StatelessContext,
     ) -> tuple[str, str, bool]:
-        response_only = any(
+        synthesis_checkpoint = any(
             message.role == "user"
-            and RESPONSE_ONLY_MARKER in str(message.content or "")
+            and SYNTHESIS_CHECKPOINT_MARKER in str(message.content or "")
             for message in messages[-2:]
         )
-        if response_only:
+        if synthesis_checkpoint:
             return build_runtime_system_prompt(ctx.extras), "response", True
 
         has_tool_context = any(
@@ -2982,10 +2864,10 @@ class QueryLoop:
         return build_runtime_system_prompt(ctx.extras), "planner", True
 
     @staticmethod
-    def _is_response_only(messages: List[LLMMessage]) -> bool:
+    def _has_synthesis_checkpoint(messages: List[LLMMessage]) -> bool:
         return any(
             message.role == "user"
-            and RESPONSE_ONLY_MARKER in str(message.content or "")
+            and SYNTHESIS_CHECKPOINT_MARKER in str(message.content or "")
             for message in messages[-2:]
         )
 
@@ -3227,6 +3109,7 @@ class QueryLoop:
         self._fill_delete_paths_from_verified_history(ctx, nodes)
 
         from .orchestration import (
+            binding_source_allowed,
             binding_target_allowed,
             OrchestrationError,
             validate_incremental_graph,
@@ -3237,6 +3120,9 @@ class QueryLoop:
                 dict(ctx.extras.get("orchestration_evidence") or {}),
                 binding_target_validator=lambda tool_id, action, target: binding_target_allowed(
                     self._tool_registry, tool_id, action, target,
+                ),
+                binding_source_validator=lambda tool_id, action, path: binding_source_allowed(
+                    self._tool_registry, tool_id, action, path,
                 ),
             )
         except OrchestrationError as exc:

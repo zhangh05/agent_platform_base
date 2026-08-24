@@ -19,6 +19,16 @@ def test_parse_detects_common_delimiters_and_escapes_markdown():
     assert "a\\|b" in result["markdown_preview"]
 
 
+def test_parse_returns_bounded_rows_for_real_cross_tool_composition():
+    rows = [{"value": index} for index in range(MAX_OUTPUT_ROWS + 3)]
+    result = data_parse(rows=rows)
+
+    assert result["ok"] is True
+    assert result["row_count"] == MAX_OUTPUT_ROWS + 3
+    assert result["rows"] == rows[:MAX_OUTPUT_ROWS]
+    assert result["truncated"] is True
+
+
 def test_invalid_columns_and_operators_are_reported_to_the_llm():
     rows = [{"device": "PE1", "loss": 0}]
     assert data_distinct(rows=rows, column="missing")["ok"] is False
