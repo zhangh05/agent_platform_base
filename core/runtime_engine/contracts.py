@@ -28,6 +28,10 @@ class ToolContract:
     approval_when_truthy: frozenset[str] = field(default_factory=frozenset)
     always_read_only: bool = False
     read_only_actions: frozenset[str] = field(default_factory=frozenset)
+    # Action-specific semantics are required for merged tools and extension
+    # tools alike.  Keeping them on the runtime contract lets scheduling,
+    # retries and approval use the same declared facts as the catalog.
+    action_contracts: dict[str, dict[str, Any]] = field(default_factory=dict)
 
 
 BUILTIN_CONTRACTS: dict[str, ToolContract] = {
@@ -280,6 +284,10 @@ def is_read_only_call(
     action_contract = action_execution_contract(normalized, action)
     if action_contract:
         return action_contract.get("read_only") is True
+    if contract:
+        declared = (contract.action_contracts or {}).get(action) or {}
+        if declared:
+            return declared.get("read_only") is True
     if contract and action in contract.read_only_actions:
         return True
     for profile in (tool_metadata or {}).get("action_profiles") or ():

@@ -140,6 +140,10 @@ class ToolPolicy:
 
             action = str((invocation.arguments or {}).get("action") or "").strip().lower()
             action_contract = action_execution_contract(spec.tool_id, action)
+            if not action_contract:
+                declared = (spec.metadata or {}).get("action_execution_contracts") or {}
+                candidate = declared.get(action) if isinstance(declared, dict) else None
+                action_contract = dict(candidate) if isinstance(candidate, dict) else {}
         except ImportError:
             action_contract = {}
 

@@ -95,6 +95,25 @@ def test_catalog_snapshot_is_cached_and_canonical():
     assert all(category["count"] >= 0 for category in first["categories"])
 
 
+def test_catalog_snapshot_includes_the_same_extension_tools_as_runtime():
+    """The capability center must not hide installed LLM-callable tools."""
+    from core.tools.catalog_snapshot import build_catalog_snapshot
+    from core.tools.integration import get_default_tool_runtime_client
+
+    catalog = build_catalog_snapshot()
+    catalog_ids = {item["tool_id"] for item in catalog["tools"]}
+    runtime_ids = {
+        item["tool_id"]
+        for item in get_default_tool_runtime_client().list_tools()
+        if item.get("enabled") and item.get("callable_by_llm")
+    }
+    assert catalog_ids == runtime_ids
+    assert "network.operations.device.manage" in catalog_ids
+    assert catalog["planner_visible_count"] == len(runtime_ids)
+    assert all("handler_id" not in tool for category in catalog["categories"]
+               for group in category["groups"] for tool in group["tools"])
+
+
 def test_catalog_module_ids_are_strings():
     for cap in _catalog.list_all():
         for mid in cap["module_ids"]:

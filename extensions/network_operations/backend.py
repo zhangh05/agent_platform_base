@@ -339,6 +339,10 @@ def register():
                 "category": "ops",
                 "risk_level": "medium",
                 "permission_action": "write",
+                "action_execution_contracts": {
+                    "save": {"action_class": "write", "risk_level": "medium", "side_effects": "workspace", "idempotency": "unsafe_to_retry", "read_only": False},
+                    "delete": {"action_class": "delete", "risk_level": "high", "side_effects": "workspace", "idempotency": "unsafe_to_retry", "read_only": False, "requires_approval": True, "destructive": True},
+                },
                 "action_requirements": {
                     "all": {"save": ["asset"], "delete": ["asset_id"]},
                 },
@@ -383,6 +387,10 @@ def register():
                 "category": "ops",
                 "risk_level": "medium",
                 "permission_action": "network",
+                "action_execution_contracts": {
+                    "probe": {"action_class": "network", "risk_level": "medium", "side_effects": "external_read", "idempotency": "safe_to_retry", "read_only": True},
+                    "read": {"action_class": "network", "risk_level": "medium", "side_effects": "external_read", "idempotency": "safe_to_retry", "read_only": True},
+                },
                 "bindable_inputs": {"probe": ["asset_id"], "read": ["asset_id"]},
                 "referenceable_outputs": {
                     "probe": ["asset", "status", "stages", "fingerprint"],
@@ -434,6 +442,13 @@ def register():
                 "category": "ops",
                 "risk_level": "medium",
                 "permission_action": "network",
+                "action_execution_contracts": {
+                    "run": {"action_class": "execute", "risk_level": "medium", "side_effects": "task_state", "idempotency": "unsafe_to_retry", "read_only": False},
+                    "list": {"action_class": "read", "risk_level": "low", "side_effects": "none", "idempotency": "safe_to_retry", "read_only": True},
+                    "get": {"action_class": "read", "risk_level": "low", "side_effects": "none", "idempotency": "safe_to_retry", "read_only": True},
+                    "cancel": {"action_class": "write", "risk_level": "medium", "side_effects": "task_state", "idempotency": "unsafe_to_retry", "read_only": False},
+                    "retry": {"action_class": "execute", "risk_level": "medium", "side_effects": "task_state", "idempotency": "unsafe_to_retry", "read_only": False},
+                },
                 "bindable_inputs": {"run": ["asset_ids"], "get": ["task_id"]},
                 "referenceable_outputs": {
                     "run": ["task"], "get": ["task"], "list": ["inspections"], "retry": ["task"],
@@ -463,6 +478,12 @@ def register():
                 "category": "ops",
                 "risk_level": "medium",
                 "permission_action": "write",
+                "action_execution_contracts": {
+                    "create": {"action_class": "write", "risk_level": "medium", "side_effects": "workspace", "idempotency": "unsafe_to_retry", "read_only": False},
+                    "confirm": {"action_class": "write", "risk_level": "high", "side_effects": "workspace", "idempotency": "unsafe_to_retry", "read_only": False, "requires_approval": True},
+                    "list": {"action_class": "read", "risk_level": "low", "side_effects": "none", "idempotency": "safe_to_retry", "read_only": True},
+                    "diff": {"action_class": "read", "risk_level": "low", "side_effects": "none", "idempotency": "safe_to_retry", "read_only": True},
+                },
                 "bindable_inputs": {
                     "create": ["task_id"], "confirm": ["baseline_id"],
                     "diff": ["task_id"],

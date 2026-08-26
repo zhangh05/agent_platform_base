@@ -106,7 +106,9 @@ class RiskPolicyEngine:
             if contract is None:
                 continue
 
-            node_risk = contract.risk_level
+            action = str(node.args.get("action") or "").lower()
+            action_contract = dict((contract.action_contracts or {}).get(action) or {})
+            node_risk = str(action_contract.get("risk_level") or contract.risk_level)
 
             # ── CRITICAL contract risk → hard block (e.g. credential_access) ──
             if node_risk == RiskLevel.CRITICAL.value:
@@ -125,7 +127,7 @@ class RiskPolicyEngine:
                 node.approval_required = True
 
             # ── Contract-based approval flag ──
-            if contract.requires_approval:
+            if contract.requires_approval or bool(action_contract.get("requires_approval")):
                 if node.id not in assessment.approval_nodes:
                     assessment.approval_nodes.append(node.id)
                 assessment.requires_approval = True
@@ -154,7 +156,6 @@ class RiskPolicyEngine:
             # Recoverable file deletion is still a durable state change.  It
             # belongs to a merged base tool with safe read actions, so keep
             # this approval boundary action-aware.
-            action = str(node.args.get("action") or "").lower()
             guarded_action = node.tool == "workspace.file" and action == "delete"
             if guarded_action:
                 if node.id not in assessment.approval_nodes:
@@ -277,15 +278,19 @@ class RiskPolicyEngine:
             # write actions. Previously the hard-coded contract side_effect
             # counted every call as a write, creating noisy batch warnings
             # when the LLM simply read 3+ files.
-            se = contract.side_effect
             action = str(node.args.get("action", "")).lower()
-            is_read_action = action in ("read", "list", "glob", "read_image", "diff", "export", "references", "status", "log", "get")
-            if se == "execute_command":
+            action_contract = dict((contract.action_contracts or {}).get(action) or {})
+            se = str(action_contract.get("side_effects") or contract.side_effect)
+            action_class = str(action_contract.get("action_class") or "")
+            is_read_action = bool(action_contract.get("read_only")) or action in (
+                "read", "list", "glob", "read_image", "diff", "export", "references", "status", "log", "get",
+            )
+            if action_class == "execute" or se == "execute_command":
                 exec_count += 1
-            elif se in ("write_file", "mutate_local"):
+            elif action_class in {"write", "delete"} or se in ("write_file", "mutate_local"):
                 if not is_read_action:
                     write_count += 1
-            elif se == "external_request":
+            elif action_class == "network" or se in {"external_request", "external_read"}:
                 external_count += 1
             elif se == "credential_access":
                 cred_count += 1
@@ -368,7 +373,10 @@ class RiskPolicyEngine:
         max_risk = RiskLevel.LOW
         risk_order = {"low": 0, "medium": 1, "high": 2, "critical": 3}
         for node in nodes:
-            node_risk = get_risk_level(node.tool)
+            contract = get_contract(node.tool)
+            action = str(node.args.get("action") or "").lower()
+            action_contract = dict((contract.action_contracts or {}).get(action) or {}) if contract else {}
+            node_risk = str(action_contract.get("risk_level") or get_risk_level(node.tool))
             try:
                 rl = RiskLevel(node_risk)
             except ValueError:

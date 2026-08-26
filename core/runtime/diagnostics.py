@@ -54,10 +54,11 @@ def get_diagnostics(workspace_id: str = "default") -> DiagnosticReport:
     # 2. Canonical capability and tool sources
     try:
         from agent.capabilities.catalog import list_all, list_enabled
-        from core.tools.canonical_registry import CANONICAL_REGISTRY
+        from core.tools.integration import get_default_tool_runtime_client
+        tool_count = get_default_tool_runtime_client().tool_count
         components.append(ComponentStatus("capabilities", "ok",
-            f"{len(list_enabled())} capabilities, {len(CANONICAL_REGISTRY)} tools",
-            {"capability_count": len(list_all()), "tool_count": len(CANONICAL_REGISTRY)}))
+            f"{len(list_enabled())} capabilities, {tool_count} tools",
+            {"capability_count": len(list_all()), "tool_count": tool_count}))
     except Exception as e:
         components.append(ComponentStatus("capabilities", "error", f"Catalog failed: {str(e)[:100]}"))
 

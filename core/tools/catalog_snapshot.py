@@ -101,6 +101,7 @@ def build_action_profiles_for_tool(
     category: str = "",
     base_permission: str = "read",
     include_policy: bool = True,
+    action_contracts: dict[str, dict] | None = None,
 ) -> list[dict]:
     return _action_profiles(
         tool_id,
@@ -109,6 +110,7 @@ def build_action_profiles_for_tool(
         category=category,
         base_permission=base_permission,
         include_policy=include_policy,
+        action_contracts=action_contracts,
     )
 
 
@@ -120,6 +122,7 @@ def _action_profiles(
     category: str,
     base_permission: str,
     include_policy: bool = True,
+    action_contracts: dict[str, dict] | None = None,
 ) -> list[dict]:
     if not actions:
         return []
@@ -142,12 +145,11 @@ def _action_profiles(
     for action in actions:
         from core.tools.action_requirements import action_execution_contract
 
-        action_contract = action_execution_contract(tool_id, action)
+        action_contract = dict((action_contracts or {}).get(action) or {})
+        if not action_contract:
+            action_contract = action_execution_contract(tool_id, action)
         risk_level = getattr(manifest, "risk_level", "low") if manifest else "low"
         requires_approval = bool(getattr(manifest, "requires_approval", False)) if manifest else False
-        if action_contract:
-            risk_level = action_contract.get("risk_level", risk_level)
-            requires_approval = bool(action_contract.get("requires_approval", requires_approval))
         if policy and ToolInvocation and ToolSpec:
             decision = policy.check(
                 ToolSpec(
@@ -168,6 +170,13 @@ def _action_profiles(
             )
             risk_level = decision.risk_level or risk_level
             requires_approval = bool(decision.requires_approval)
+        # An action declaration is more specific than the tool-level policy
+        # default. Apply it after the generic policy projection so extension
+        # actions such as baseline.confirm cannot be advertised as safe while
+        # the runtime correctly requires approval.
+        if action_contract:
+            risk_level = action_contract.get("risk_level", risk_level)
+            requires_approval = bool(action_contract.get("requires_approval", requires_approval))
         action_class = action_contract.get("action_class") or base_permission
         side_effects = action_contract.get(
             "side_effects", getattr(manifest, "side_effects", "none") if manifest else "none",
@@ -192,7 +201,7 @@ def _action_profiles(
 def build_catalog_snapshot() -> dict:
     # v3.9.3: capability_actions and tool_governance modules removed.
     # Each canonical_id is its own "capability action" (1:1).
-    from core.tools.canonical_registry import CANONICAL_REGISTRY, list_canonical_ids
+    from core.tools.canonical_registry import CANONICAL_REGISTRY, list_canonical_ids, to_tool_specs
     from core.tools.tool_namespace import TOOL_NAMESPACE, category_tree_from_specs, metadata_for_tool
 
     tools = []
@@ -255,27 +264,96 @@ def build_catalog_snapshot() -> dict:
             ),
         }
         tools.append(item)
+
+    # The runtime and the catalog must describe the same callable surface.
+    # Core tools are projected above from their canonical registry because
+    # they have capability-manifest enrichments.  Extensions are intentionally
+    # owned outside that base registry, so project their validated ToolSpecs
+    # here instead of silently omitting them from the user-visible catalog.
+    # This also makes ``planner_visible_count`` truthful for the actual
+    # QueryLoop registry.
+    for spec, _handler in to_tool_specs():
+        if spec.tool_id in CANONICAL_REGISTRY:
+            continue
+        raw_metadata = dict(spec.metadata or {})
+        extension_id = str(raw_metadata.get("extension_id") or "")
+        actions = _schema_actions(spec.input_schema)
+        action_profiles = _action_profiles(
+            spec.tool_id,
+            actions,
+            input_schema=spec.input_schema,
+            category=spec.category,
+            base_permission=spec.permission_action or "read",
+            include_policy=True,
+            action_contracts=raw_metadata.get("action_execution_contracts"),
+        )
+        tools.append({
+            "tool_id": spec.tool_id,
+            "canonical_tool_id": spec.tool_id,
+            "display_name": spec.name or spec.tool_id,
+            "category": spec.category or "general",
+            "group": extension_id or "extensions",
+            "group_name": str(raw_metadata.get("extension_name") or extension_id or "Extensions"),
+            "action": "use",
+            "usage_hint": str(raw_metadata.get("usage_hint") or ""),
+            "not_for": str(raw_metadata.get("not_for") or ""),
+            "description": spec.description,
+            "risk_level": spec.risk_level,
+            "requires_approval": bool(spec.requires_approval),
+            "input_schema": spec.input_schema,
+            "permission_action": spec.permission_action or "read",
+            "callable_by_llm": bool(spec.callable_by_llm),
+            "enabled": bool(spec.enabled),
+            "governance_status": "active",
+            "planner_visible": bool(spec.callable_by_llm and spec.enabled),
+            "capability_actions": [spec.tool_id],
+            "destructive": False,
+            "idempotency": "unknown",
+            "side_effects": "extension",
+            "output_sensitivity": "internal",
+            "timeout_seconds": spec.timeout_seconds,
+            "action_class": spec.permission_action or "read",
+            "approval_reason": "",
+            "rollback_strategy": "none",
+            "allowed_callers": ["turn_runner"],
+            "reads_artifact": False,
+            "writes_artifact": False,
+            "secret_fields": [],
+            "actions": actions,
+            "action_profiles": action_profiles,
+        })
     tools.sort(key=lambda item: item["canonical_tool_id"])
 
     class _Spec:
         def __init__(self, item):
             canonical_id = item["canonical_tool_id"]
-            registry_entry = CANONICAL_REGISTRY[canonical_id]
             self.tool_id = canonical_id
-            self.metadata = {
-                "canonical_tool_id": canonical_id,
-                "category": item["category"],
-                "group": item["group"],
-                "action": item["action"],
-                "display_name": item["display_name"],
-                "short_label": canonical_id,
-                "usage_hint": "",
-                "not_for": "",
-                "handler_id": registry_entry.handler_id,
-                "governance_status": item["governance_status"],
-                "governance_reason": "",
-                "planner_visible": item["planner_visible"],
-            }
+            self.category = item["category"]
+            self.name = item["display_name"]
+            if canonical_id in CANONICAL_REGISTRY:
+                registry_entry = CANONICAL_REGISTRY[canonical_id]
+                self.metadata = {
+                    "canonical_tool_id": canonical_id,
+                    "category": item["category"],
+                    "group": item["group"],
+                    "action": item["action"],
+                    "display_name": item["display_name"],
+                    "short_label": canonical_id,
+                    "usage_hint": "",
+                    "not_for": "",
+                    "handler_id": registry_entry.handler_id,
+                    "governance_status": item["governance_status"],
+                    "governance_reason": "",
+                    "planner_visible": item["planner_visible"],
+                }
+            else:
+                self.metadata = {
+                    "extension_id": item["group"],
+                    "extension_name": item.get("group_name") or item["group"],
+                    "action": item["action"],
+                    "usage_hint": item.get("usage_hint", ""),
+                    "not_for": item.get("not_for", ""),
+                }
             self.risk_level = item["risk_level"]
             self.requires_approval = item["requires_approval"]
             self.permission_action = item["permission_action"]
@@ -300,7 +378,9 @@ def build_catalog_snapshot() -> dict:
         "tools": tools,
         "categories": categories,
         "count": len(tools),
-        "planner_visible_count": len(list(TOOL_NAMESPACE)),
+        "planner_visible_count": sum(
+            1 for item in tools if item["planner_visible"]
+        ),
         "governance_summary": {'active': 0, 'disabled': 0, 'internal': 0, 'forbidden': 0},
         "catalog_version": CATALOG_VERSION,
         "catalog_fingerprint": fingerprint,

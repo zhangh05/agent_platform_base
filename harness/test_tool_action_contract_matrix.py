@@ -184,6 +184,57 @@ def test_extension_action_requirements_remain_with_the_extension():
     assert device.metadata["bindable_inputs"]["probe"] == ("asset_id",)
 
 
+def test_extension_action_semantics_are_declared_once_and_shared_by_catalog_and_risk():
+    """Extension actions must not rely on base-tool heuristics for safety UI."""
+    from core.runtime_engine.contracts import get_contract, is_read_only_call
+    from core.runtime_engine.risk_policy import RiskPolicyEngine
+    from core.tools.catalog_snapshot import build_catalog_snapshot
+
+    baseline_contract = get_contract("network.operations.baseline")
+    assert baseline_contract is not None
+    assert baseline_contract.action_contracts["confirm"]["requires_approval"] is True
+    assert is_read_only_call("network.operations.baseline", {"action": "diff"}) is True
+    assert is_read_only_call("network.operations.inspection", {"action": "run"}) is False
+
+    catalog = {
+        item["tool_id"]: item
+        for item in build_catalog_snapshot()["tools"]
+    }
+    profiles = {
+        profile["action"]: profile
+        for profile in catalog["network.operations.baseline"]["action_profiles"]
+    }
+    assert profiles["confirm"]["requires_approval"] is True
+    assert profiles["diff"]["read_only"] is True
+
+    decision = RiskPolicyEngine().assess([
+        ExecutionNode(
+            id="confirm", tool="network.operations.baseline",
+            args={"action": "confirm", "baseline_id": "baseline-1"},
+        ),
+    ])
+    assert decision.requires_approval is True
+    assert decision.risk_level == "high"
+
+    from core.tools.canonical_registry import to_tool_specs
+    from core.tools.policy import ToolPolicy
+    from core.tools.schemas import ToolInvocation
+    baseline_spec = next(
+        spec for spec, _handler in to_tool_specs()
+        if spec.tool_id == "network.operations.baseline"
+    )
+    direct_policy = ToolPolicy().check(
+        baseline_spec,
+        ToolInvocation(
+            tool_id=baseline_spec.tool_id,
+            workspace_id="default",
+            arguments={"action": "confirm", "baseline_id": "baseline-1"},
+        ),
+    )
+    assert direct_policy.requires_approval is True
+    assert direct_policy.risk_level == "high"
+
+
 def test_network_asset_schema_teaches_required_nested_fields():
     validator = _validator_for_tool("network.operations.assets_write")
     invalid = validator.validate([

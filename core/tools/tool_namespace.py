@@ -157,9 +157,41 @@ def enrich_spec(spec):
 
 
 def category_tree_from_specs(specs: list) -> list[dict[str, Any]]:
+    def public_metadata(spec: Any) -> dict[str, Any]:
+        """Project a ToolSpec into catalog metadata without leaking handler IDs.
+
+        Core tools have a namespace entry.  Extension tools intentionally do
+        not: their manifest is their ownership boundary.  The old code looked
+        every spec up in the core namespace, which quietly turned every
+        extension into an ``unknown`` miscellaneous tool when a caller built a
+        combined catalog.  Keep the extension's public identity here while
+        preserving the same no-handler-id guarantee as core metadata.
+        """
+        tool_id = str(getattr(spec, "tool_id", "") or "")
+        raw = dict(getattr(spec, "metadata", {}) or {})
+        extension_id = str(raw.get("extension_id") or "")
+        if not extension_id:
+            return metadata_for_tool(tool_id)
+        category = str(getattr(spec, "category", "") or raw.get("category") or "general")
+        extension_name = str(raw.get("extension_name") or extension_id)
+        return {
+            "canonical_tool_id": tool_id,
+            "category": category,
+            "group": extension_id,
+            "group_name": extension_name,
+            "action": str(raw.get("action") or "use"),
+            "display_name": str(getattr(spec, "name", "") or tool_id),
+            "short_label": str(raw.get("short_label") or getattr(spec, "name", "") or tool_id),
+            "usage_hint": str(raw.get("usage_hint") or ""),
+            "not_for": str(raw.get("not_for") or ""),
+            "governance_status": "active",
+            "governance_reason": "validated extension contribution",
+            "planner_visible": bool(getattr(spec, "callable_by_llm", True)),
+        }
+
     by_category: dict[str, dict[str, Any]] = {}
     for spec in specs:
-        meta = metadata_for_tool(getattr(spec, "tool_id", ""))
+        meta = public_metadata(spec)
         category_id = meta["category"]
         group_id = meta["group"]
         cat = by_category.setdefault(category_id, {
@@ -171,7 +203,7 @@ def category_tree_from_specs(specs: list) -> list[dict[str, Any]]:
         })
         group = cat["groups"].setdefault(group_id, {
             "id": group_id,
-            "name": group_id.replace("_", " ").title(),
+            "name": str(meta.get("group_name") or group_id.replace("_", " ").title()),
             "count": 0,
             "tools": [],
         })

@@ -116,6 +116,27 @@ def _build_tools(manifest: ExtensionManifest, contribution: dict[str, Any]) -> t
             raise ExtensionValidationError(f"referenceable_outputs must be an object: {tool_id}")
         properties = (item.get("input_schema") or {}).get("properties") or {}
         actions = set((properties.get("action") or {}).get("enum") or [])
+        action_execution_contracts = item.get("action_execution_contracts") or {}
+        if not isinstance(action_execution_contracts, dict):
+            raise ExtensionValidationError(f"action_execution_contracts must be an object: {tool_id}")
+        if actions and set(action_execution_contracts) != actions:
+            missing = sorted(actions - set(action_execution_contracts))
+            unknown = sorted(set(action_execution_contracts) - actions)
+            raise ExtensionValidationError(
+                f"action_execution_contracts must declare every action for {tool_id}; "
+                f"missing={missing}, unknown={unknown}"
+            )
+        for action, contract in action_execution_contracts.items():
+            if not isinstance(contract, dict):
+                raise ExtensionValidationError(f"action execution contract must be an object: {tool_id}:{action}")
+            if contract.get("action_class") not in {"read", "write", "execute", "network", "delete"}:
+                raise ExtensionValidationError(f"invalid action_class for {tool_id}:{action}")
+            if contract.get("idempotency") not in {"safe_to_retry", "unsafe_to_retry"}:
+                raise ExtensionValidationError(f"invalid idempotency for {tool_id}:{action}")
+            if not isinstance(contract.get("read_only"), bool):
+                raise ExtensionValidationError(f"read_only is required for {tool_id}:{action}")
+            if str(contract.get("risk_level") or "") not in {"low", "medium", "high"}:
+                raise ExtensionValidationError(f"invalid risk_level for {tool_id}:{action}")
         for action, fields in required_all.items():
             if action not in actions or not isinstance(fields, (list, tuple)):
                 raise ExtensionValidationError(f"invalid action requirement for {tool_id}: {action}")
@@ -174,6 +195,11 @@ def _build_tools(manifest: ExtensionManifest, contribution: dict[str, Any]) -> t
             permission_action=permission_action,
             metadata={
                 "extension_id": manifest.extension_id,
+                "extension_name": manifest.name,
+                "action_execution_contracts": {
+                    str(action): dict(contract)
+                    for action, contract in action_execution_contracts.items()
+                },
                 "action_requirements": {
                     "all": {str(action): tuple(str(field) for field in fields) for action, fields in required_all.items()},
                     "any": {
@@ -387,6 +413,7 @@ def _sync_runtime_contracts(specs) -> None:
             category=spec.category,
             base_permission=spec.permission_action or "read",
             include_policy=False,
+            action_contracts=(spec.metadata or {}).get("action_execution_contracts"),
         )
         register_contract(ToolContract(
             name=spec.tool_id,
@@ -407,6 +434,10 @@ def _sync_runtime_contracts(specs) -> None:
                 for profile in action_profiles
                 if profile.get("read_only") is True
             ),
+            action_contracts={
+                str(action).lower(): dict(contract)
+                for action, contract in ((spec.metadata or {}).get("action_execution_contracts") or {}).items()
+            },
         ))
 
 

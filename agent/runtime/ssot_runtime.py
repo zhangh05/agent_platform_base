@@ -1094,6 +1094,7 @@ def _build_ssot_runtime_tool_registry(allowed_tool_ids=None) -> dict[str, dict[s
                     input_schema=args_schema,
                     category=str(item.get("category") or ""),
                     base_permission=str(item.get("permission_action") or "read"),
+                    action_contracts=(item.get("metadata") or {}).get("action_execution_contracts"),
                 )
             except Exception:
                 profiles = []
