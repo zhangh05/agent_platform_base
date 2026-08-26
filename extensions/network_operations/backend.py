@@ -443,11 +443,15 @@ def register():
                 "risk_level": "medium",
                 "permission_action": "network",
                 "action_execution_contracts": {
-                    "run": {"action_class": "execute", "risk_level": "medium", "side_effects": "task_state", "idempotency": "unsafe_to_retry", "read_only": False},
-                    "list": {"action_class": "read", "risk_level": "low", "side_effects": "none", "idempotency": "safe_to_retry", "read_only": True},
-                    "get": {"action_class": "read", "risk_level": "low", "side_effects": "none", "idempotency": "safe_to_retry", "read_only": True},
-                    "cancel": {"action_class": "write", "risk_level": "medium", "side_effects": "task_state", "idempotency": "unsafe_to_retry", "read_only": False},
-                    "retry": {"action_class": "execute", "risk_level": "medium", "side_effects": "task_state", "idempotency": "unsafe_to_retry", "read_only": False},
+                    # Starts a durable task, but the task's external effect is
+                    # still a network observation. Keep the network authority
+                    # class while marking it non-idempotent so the scheduler
+                    # never treats repeated task creation as a free retry.
+                    "run": {"action_class": "network", "risk_level": "medium", "side_effects": "task_state", "idempotency": "unsafe_to_retry", "read_only": False},
+                    "list": {"action_class": "network", "risk_level": "low", "side_effects": "none", "idempotency": "safe_to_retry", "read_only": True},
+                    "get": {"action_class": "network", "risk_level": "low", "side_effects": "none", "idempotency": "safe_to_retry", "read_only": True},
+                    "cancel": {"action_class": "network", "risk_level": "medium", "side_effects": "task_state", "idempotency": "unsafe_to_retry", "read_only": False},
+                    "retry": {"action_class": "network", "risk_level": "medium", "side_effects": "task_state", "idempotency": "unsafe_to_retry", "read_only": False},
                 },
                 "bindable_inputs": {"run": ["asset_ids"], "get": ["task_id"]},
                 "referenceable_outputs": {
