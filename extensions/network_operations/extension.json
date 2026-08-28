@@ -1,21 +1,24 @@
 {
   "extension_id": "network.operations",
   "name": "网络巡检",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "api_version": "1",
   "min_platform_version": "1.1.0",
-  "description": "工作区级设备资产、只读 SSH 巡检、证据、状态基线与差异。",
-  "capabilities": ["network_assets", "network_inspection", "network_baseline"],
+  "description": "工作区级网络健康巡检、证据化发现项、人工闭环、设备资产与状态基线。",
+  "capabilities": ["network_assets", "network_inspection", "network_baseline", "network_assurance"],
   "tools": [
     "network.operations.assets_read",
     "network.operations.assets_write",
     "network.operations.device.manage",
     "network.operations.inspection",
-    "network.operations.baseline"
+    "network.operations.baseline",
+    "network.operations.assurance"
   ],
   "permissions": ["workspace:read", "workspace:write", "network:network"],
   "routes": [
     "/api/extensions/network.operations/overview",
+    "/api/extensions/network.operations/findings",
+    "/api/extensions/network.operations/findings/<finding_id>/state",
     "/api/extensions/network.operations/assets",
     "/api/extensions/network.operations/assets/<asset_id>",
     "/api/extensions/network.operations/assets/<asset_id>/probe",
@@ -41,8 +44,8 @@
     {
       "path": "/extensions/network.operations/overview",
       "module": "frontend/NetworkOperations.tsx",
-      "label": "网络巡检",
-      "description": "管理设备、巡检和状态基线",
+      "label": "网络运行保障",
+      "description": "网络健康巡检、异常发现与人工闭环",
       "icon": "probe",
       "order": 30
     }

@@ -27,10 +27,10 @@ _TEMPLATES: tuple[dict[str, Any], ...] = (
     },
     {
         "template_id": "network-operations-readonly-inspection",
-        "name": "批量只读网络巡检",
-        "description": "对指定的已登记设备发起只读 SSH 巡检任务，不会下发配置。",
+        "name": "网络健康巡检",
+        "description": "对指定设备发起只读健康巡检；完成后在“网络运行保障”查看证据化异常与人工闭环。",
         "audience": "网络运维",
-        "expected_result": "创建可追踪的巡检任务；请在“网络巡检”页面查看设备级证据和最终结果。",
+        "expected_result": "创建可追踪的巡检批次；请在“网络运行保障”查看设备级证据、发现项和人工处置状态。",
         "input_example": {"asset_ids": ["选择已登记设备"], "script_id": "选择巡检脚本"},
         "input_fields": [
             {

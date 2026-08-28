@@ -37,13 +37,13 @@ _TASK_LOCK = threading.Lock()
 
 
 STARTER_SCRIPTS: tuple[dict[str, Any], ...] = (
-    {"script_id": "starter-h3c-health", "name": "H3C 健康巡检", "description": "采集 H3C 设备版本、CPU、内存、接口和日志摘要。", "vendors": ["h3c"], "commands": ["display version", "display cpu-usage", "display memory", "display interface brief", "display logbuffer | include ERROR|WARN"], "readonly": True, "builtin": True, "version": 1},
-    {"script_id": "starter-huawei-health", "name": "华为健康巡检", "description": "采集华为设备版本、CPU、内存、接口和日志摘要。", "vendors": ["huawei"], "commands": ["display version", "display cpu-usage", "display memory-usage", "display interface brief", "display logbuffer | include ERROR|WARN"], "readonly": True, "builtin": True, "version": 1},
-    {"script_id": "starter-cisco-health", "name": "Cisco 健康巡检", "description": "采集 Cisco 设备版本、CPU、内存、接口和日志摘要。", "vendors": ["cisco"], "commands": ["show version", "show processes cpu", "show memory statistics", "show ip interface brief", "show logging | include ERROR|WARN"], "readonly": True, "builtin": True, "version": 1},
+    {"script_id": "starter-h3c-health", "name": "H3C 健康巡检", "description": "采集 H3C 设备版本、CPU、内存、接口和日志摘要。", "vendors": ["h3c"], "commands": ["display version", "display cpu-usage", "display memory", "display interface brief", "display logbuffer | include ERROR|WARN"], "checks": [{"check_id": "log-alert", "name": "日志告警关键字", "description": "日志中出现 ERROR、FATAL 或 CRITICAL。", "severity": "medium", "kind": "output_matches", "pattern": "\\b(?:ERROR|FATAL|CRITICAL)\\b"}], "readonly": True, "builtin": True, "version": 1},
+    {"script_id": "starter-huawei-health", "name": "华为健康巡检", "description": "采集华为设备版本、CPU、内存、接口和日志摘要。", "vendors": ["huawei"], "commands": ["display version", "display cpu-usage", "display memory-usage", "display interface brief", "display logbuffer | include ERROR|WARN"], "checks": [{"check_id": "log-alert", "name": "日志告警关键字", "description": "日志中出现 ERROR、FATAL 或 CRITICAL。", "severity": "medium", "kind": "output_matches", "pattern": "\\b(?:ERROR|FATAL|CRITICAL)\\b"}], "readonly": True, "builtin": True, "version": 1},
+    {"script_id": "starter-cisco-health", "name": "Cisco 健康巡检", "description": "采集 Cisco 设备版本、CPU、内存、接口和日志摘要。", "vendors": ["cisco"], "commands": ["show version", "show processes cpu", "show memory statistics", "show ip interface brief", "show logging | include ERROR|WARN"], "checks": [{"check_id": "log-alert", "name": "日志告警关键字", "description": "日志中出现 ERROR、FATAL 或 CRITICAL。", "severity": "medium", "kind": "output_matches", "pattern": "\\b(?:ERROR|FATAL|CRITICAL)\\b"}], "readonly": True, "builtin": True, "version": 1},
 )
 
 def _script_safe(record: dict[str, Any]) -> dict[str, Any]:
-    return {key: record.get(key) for key in ("script_id", "name", "description", "vendors", "commands", "readonly", "builtin", "version", "created_at", "updated_at") if key in record}
+    return {key: record.get(key) for key in ("script_id", "name", "description", "vendors", "commands", "checks", "readonly", "builtin", "version", "created_at", "updated_at") if key in record}
 
 def _script_id(value: str) -> str:
     result = str(value or "").strip()
@@ -58,6 +58,15 @@ def _ensure_starter_scripts(workspace_id: str) -> None:
     """
     store = _store(workspace_id)
     if store.get("script_meta", "starter_scripts_initialized"):
+        # Older per-workspace starter records predate deterministic health
+        # checks.  Only enrich untouched starter records; custom scripts and
+        # any user-owned rule set remain exactly as saved.
+        for template in STARTER_SCRIPTS:
+            existing = store.get("scripts", template["script_id"])
+            if existing and existing.get("source") == "starter" and int(existing.get("version") or 0) == 1 and "checks" not in existing:
+                existing["checks"] = list(template["checks"])
+                existing["updated_at"] = now_iso()
+                store.save("scripts", template["script_id"], existing)
         return
     for template in STARTER_SCRIPTS:
         record = {**dict(template), "readonly": True, "builtin": False, "source": "starter", "created_at": now_iso(), "updated_at": now_iso()}
@@ -73,6 +82,46 @@ def get_inspection_script(workspace_id: str, script_id: str) -> dict[str, Any] |
     identifier = _script_id(script_id)
     record = _store(workspace_id).get("scripts", identifier)
     return _script_safe(record) if record else None
+
+
+_CHECK_SEVERITIES = {"low", "medium", "high", "critical"}
+
+
+def _normalize_checks(value: Any) -> list[dict[str, str]]:
+    """Validate deterministic checks without pretending every vendor has one parser.
+
+    A check is deliberately a small, auditable evidence rule.  It never uses an
+    LLM or a local "quality gate" to decide whether an operational condition is
+    true: it either matches persisted command output, or it does not.
+    """
+    if value is None:
+        return []
+    if not isinstance(value, list) or len(value) > 30:
+        raise ValueError("checks must be an array containing at most 30 items")
+    normalized: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for raw in value:
+        if not isinstance(raw, dict):
+            raise ValueError("each check must be an object")
+        check_id = str(raw.get("check_id") or "").strip()
+        name = str(raw.get("name") or "").strip()
+        description = str(raw.get("description") or "").strip()
+        severity = str(raw.get("severity") or "medium").strip().lower()
+        kind = str(raw.get("kind") or "output_matches").strip()
+        pattern = str(raw.get("pattern") or "").strip()
+        if not re.fullmatch(r"[A-Za-z0-9_-]{1,80}", check_id) or check_id in seen:
+            raise ValueError("check_id must be unique and use letters, numbers, _ or -")
+        if not name or len(name) > 100 or len(description) > 300:
+            raise ValueError("check name or description is invalid")
+        if severity not in _CHECK_SEVERITIES or kind != "output_matches" or not pattern or len(pattern) > 240:
+            raise ValueError("invalid check severity, kind, or pattern")
+        try:
+            re.compile(pattern, re.IGNORECASE)
+        except re.error as exc:
+            raise ValueError("invalid check pattern") from exc
+        seen.add(check_id)
+        normalized.append({"check_id": check_id, "name": name, "description": description, "severity": severity, "kind": kind, "pattern": pattern})
+    return normalized
 
 def save_inspection_script(workspace_id: str, payload: dict[str, Any]) -> dict[str, Any]:
     script_id = _script_id(str(payload.get("script_id") or _id("script")))
@@ -90,7 +139,8 @@ def save_inspection_script(workspace_id: str, payload: dict[str, Any]) -> dict[s
     for vendor in set(vendors):
         normalize_read_only_commands(commands, vendor)
     existing = _store(workspace_id).get("scripts", script_id) or {}
-    record = {"script_id": script_id, "name": name, "description": description[:300], "vendors": sorted(set(vendors)), "commands": commands, "readonly": True, "builtin": False, "source": str(existing.get("source") or "custom"), "version": int(existing.get("version") or 0) + 1, "created_at": str(existing.get("created_at") or now_iso()), "updated_at": now_iso()}
+    checks = _normalize_checks(payload["checks"]) if "checks" in payload else list(existing.get("checks") or [])
+    record = {"script_id": script_id, "name": name, "description": description[:300], "vendors": sorted(set(vendors)), "commands": commands, "checks": checks, "readonly": True, "builtin": False, "source": str(existing.get("source") or "custom"), "version": int(existing.get("version") or 0) + 1, "created_at": str(existing.get("created_at") or now_iso()), "updated_at": now_iso()}
     _store(workspace_id).save("scripts", script_id, record)
     return _script_safe(record)
 
@@ -334,6 +384,9 @@ def _build_inspection_task(assets: list[dict[str, Any]], commands: list[str] | N
     return {
         "task_id": task_id, "job_id": job_id, "status": "queued",
         "asset_ids": [item["asset_id"] for item in assets],
+        # Results remain attributable after an intentionally hard-deleted asset.
+        # The snapshot is safe: it contains no secret references or credentials.
+        "asset_snapshots": {item["asset_id"]: _safe_asset(item) for item in assets},
         "total": len(assets), "completed": 0, "succeeded": 0, "failed": 0,
         "results": {}, "artifact_id": "",
         "command_plan": _command_plan(commands, script),
@@ -481,6 +534,8 @@ def _execute_inspection(workspace_id: str, task_id: str, assets: list[dict[str, 
     task["updated_at"] = now_iso()
     try:
         task["artifact_id"] = _save_evidence_artifact(workspace_id, task, raw_outputs)
+        task["findings"] = _derive_findings(workspace_id, task, raw_outputs)
+        task["finding_count"] = len(task["findings"])
         store.save("inspections", task_id, task)
     except Exception:
         task.update({"status": "failed", "error": "inspection_evidence_persist_failed", "finished_at": now_iso(), "updated_at": now_iso()})
@@ -506,6 +561,155 @@ def _save_evidence_artifact(workspace_id: str, task: dict[str, Any], raw_outputs
         created_by="extension:network.operations",
     )
     return artifact.artifact_id if artifact else ""
+
+
+def _finding_id(asset_id: str, category: str, rule_id: str) -> str:
+    digest = hashlib.sha256(f"{asset_id}|{category}|{rule_id}".encode()).hexdigest()[:20]
+    return f"finding_{digest}"
+
+
+def _finding_view(record: dict[str, Any]) -> dict[str, Any]:
+    """Project a finding without leaking command output or encrypted secrets."""
+    allowed = (
+        "finding_id", "asset_id", "asset_name", "asset_host", "category", "rule_id",
+        "title", "description", "severity", "status", "first_seen_at", "last_seen_at",
+        "last_seen_task_id", "evidence", "occurrences", "state_history", "updated_at",
+    )
+    return {key: record.get(key) for key in allowed if key in record}
+
+
+def _upsert_finding(
+    workspace_id: str,
+    *,
+    asset: dict[str, Any],
+    category: str,
+    rule_id: str,
+    title: str,
+    description: str,
+    severity: str,
+    task: dict[str, Any],
+    evidence: dict[str, Any],
+) -> dict[str, Any]:
+    """Record an evidence-backed observation while preserving human decisions.
+
+    A re-observed resolved finding becomes open again.  An acknowledged or
+    suppressed finding remains in its human-selected state; the new evidence is
+    visible through ``last_seen_*`` rather than silently overriding that choice.
+    """
+    store = _store(workspace_id)
+    finding_id = _finding_id(str(asset["asset_id"]), category, rule_id)
+    previous = store.get("findings", finding_id) or {}
+    previous_status = str(previous.get("status") or "")
+    status = "open" if previous_status in {"", "resolved"} else previous_status
+    occurrences = int(previous.get("occurrences") or 0) + 1
+    record = {
+        **previous,
+        "finding_id": finding_id,
+        "asset_id": asset["asset_id"],
+        "asset_name": asset.get("name", ""),
+        "asset_host": asset.get("host", ""),
+        "category": category,
+        "rule_id": rule_id,
+        "title": title,
+        "description": description,
+        "severity": severity,
+        "status": status,
+        "first_seen_at": previous.get("first_seen_at") or now_iso(),
+        "last_seen_at": now_iso(),
+        "last_seen_task_id": task["task_id"],
+        "evidence": evidence,
+        "occurrences": occurrences,
+        "state_history": list(previous.get("state_history") or []),
+        "updated_at": now_iso(),
+    }
+    store.save("findings", finding_id, record)
+    return _finding_view(record)
+
+
+def _derive_findings(workspace_id: str, task: dict[str, Any], raw_outputs: dict[str, dict[str, str]]) -> list[dict[str, Any]]:
+    """Turn a completed read-only inspection into stable, traceable findings."""
+    current_assets = {item["asset_id"]: item for item in list_assets(workspace_id)}
+    snapshots = task.get("asset_snapshots") if isinstance(task.get("asset_snapshots"), dict) else {}
+    checks = list((task.get("script") or {}).get("checks") or [])
+    baseline = next((item for item in list_baselines(workspace_id) if item.get("current") and item.get("confirmed")), None)
+    findings: list[dict[str, Any]] = []
+    for asset_id, result in sorted((task.get("results") or {}).items()):
+        asset = current_assets.get(asset_id) or snapshots.get(asset_id)
+        if not asset:
+            continue
+        result_status = str(result.get("status") or "")
+        evidence = {
+            "task_id": task["task_id"],
+            "artifact_id": task.get("artifact_id", ""),
+            "output_hash": result.get("output_hash", ""),
+            "result_status": result_status,
+        }
+        if result_status == "failed":
+            findings.append(_upsert_finding(
+                workspace_id, asset=asset, category="connectivity", rule_id="inspection-failed",
+                title="设备巡检未完成", description="设备无法完成本次只读巡检；请结合连接阶段和凭据状态人工核查。",
+                severity="high", task=task, evidence={**evidence, "error": str(result.get("error") or "")[:240]},
+            ))
+            continue
+        raw = raw_outputs.get(asset_id) or {}
+        joined_output = "\n".join(f"{command}\n{output}" for command, output in sorted(raw.items()))
+        for check in checks:
+            if re.search(str(check["pattern"]), joined_output, re.IGNORECASE):
+                findings.append(_upsert_finding(
+                    workspace_id, asset=asset, category="inspection_rule", rule_id=str(check["check_id"]),
+                    title=str(check["name"]), description=str(check["description"]), severity=str(check["severity"]),
+                    task=task, evidence={**evidence, "check_id": check["check_id"], "check_version": int((task.get("script") or {}).get("version") or 0)},
+                ))
+        before = (baseline or {}).get("devices", {}).get(asset_id) if baseline else None
+        after = {"status": result_status, "output_hash": result.get("output_hash", "")}
+        if before is not None and before != after:
+            findings.append(_upsert_finding(
+                workspace_id, asset=asset, category="baseline_change", rule_id="state-diff",
+                title="状态与已确认基线不一致", description="本次巡检输出或设备状态与当前人工确认基线不同；该结果需要人工判断是否为预期变更。",
+                severity="medium", task=task, evidence={**evidence, "baseline_id": baseline.get("baseline_id", ""), "before": before, "after": after},
+            ))
+    return findings
+
+
+def list_findings(
+    workspace_id: str,
+    *,
+    status: str = "",
+    severity: str = "",
+    asset_id: str = "",
+    limit: int = 200,
+) -> list[dict[str, Any]]:
+    records = _store(workspace_id).list("findings", limit=max(1, min(limit, 1000)))
+    filtered = [record for record in records if (
+        (not status or str(record.get("status") or "") == status)
+        and (not severity or str(record.get("severity") or "") == severity)
+        and (not asset_id or str(record.get("asset_id") or "") == asset_id)
+    )]
+    severity_rank = {"critical": 0, "high": 1, "medium": 2, "low": 3}
+    # Stable two-pass ordering: current high-severity findings first, newest
+    # evidence first within the same business priority.
+    filtered.sort(key=lambda item: str(item.get("last_seen_at") or ""), reverse=True)
+    filtered.sort(key=lambda item: (str(item.get("status") or "") not in {"open", "acknowledged"}, severity_rank.get(str(item.get("severity") or ""), 9)))
+    return [_finding_view(record) for record in filtered]
+
+
+def update_finding_state(workspace_id: str, finding_id: str, action: str, *, comment: str = "", actor: str = "user") -> dict[str, Any]:
+    transitions = {"acknowledge": "acknowledged", "resolve": "resolved", "suppress": "suppressed", "reopen": "open"}
+    target = transitions.get(str(action or "").strip().lower())
+    if not target:
+        raise ValueError("unsupported finding action")
+    store = _store(workspace_id)
+    finding = store.get("findings", finding_id)
+    if not finding:
+        raise ValueError("finding_not_found")
+    note = str(comment or "").strip()
+    if len(note) > 500:
+        raise ValueError("finding comment must be at most 500 characters")
+    history = list(finding.get("state_history") or [])
+    history.append({"from": str(finding.get("status") or "open"), "to": target, "action": action, "comment": note, "actor": actor, "at": now_iso()})
+    finding.update({"status": target, "state_history": history[-50:], "updated_at": now_iso()})
+    store.save("findings", finding_id, finding)
+    return _finding_view(finding)
 
 
 def list_inspections(workspace_id: str) -> list[dict[str, Any]]:
@@ -761,8 +965,20 @@ def overview(workspace_id: str) -> dict[str, Any]:
     assets = list_assets(workspace_id)
     inspections = list_inspections(workspace_id)
     baselines = list_baselines(workspace_id)
+    findings = list_findings(workspace_id)
+    active_findings = [item for item in findings if item.get("status") in {"open", "acknowledged"}]
+    by_severity = {severity: sum(1 for item in active_findings if item.get("severity") == severity) for severity in ("critical", "high", "medium", "low")}
+    latest = inspections[0] if inspections else None
     return {
         "ok": True, "assets": len(assets), "inspections": len(inspections),
         "current_baseline": next((item for item in baselines if item.get("current")), None),
-        "latest_inspection": inspections[0] if inspections else None,
+        "latest_inspection": latest,
+        "health": {
+            "registered_assets": len(assets),
+            "assets_with_credentials": sum(1 for item in assets if item.get("credential_configured")),
+            "active_findings": len(active_findings),
+            "findings_by_severity": by_severity,
+            "latest_inspection_status": str((latest or {}).get("status") or "not_started"),
+            "latest_inspection_at": str((latest or {}).get("finished_at") or (latest or {}).get("created_at") or ""),
+        },
     }

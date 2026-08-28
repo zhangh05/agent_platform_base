@@ -21,6 +21,32 @@ def register_routes(app):
         ws = _workspace()
         return jsonify(service.overview(ws)) if ws else (jsonify({"ok": False, "error": "workspace_id is required"}), 400)
 
+    @app.route("/api/extensions/network.operations/findings")
+    def network_findings():
+        ws = _workspace()
+        if not ws:
+            return jsonify({"ok": False, "error": "workspace_id is required"}), 400
+        return jsonify({"ok": True, "findings": service.list_findings(
+            ws,
+            status=str(request.args.get("status") or ""),
+            severity=str(request.args.get("severity") or ""),
+            asset_id=str(request.args.get("asset_id") or ""),
+        )})
+
+    @app.route("/api/extensions/network.operations/findings/<finding_id>/state", methods=["POST"])
+    def network_finding_state(finding_id):
+        ws = _workspace()
+        if not ws:
+            return jsonify({"ok": False, "error": "workspace_id is required"}), 400
+        data = _payload()
+        try:
+            finding = service.update_finding_state(
+                ws, finding_id, str(data.get("action") or ""), comment=str(data.get("comment") or ""), actor="user",
+            )
+            return jsonify({"ok": True, "finding": finding})
+        except ValueError as exc:
+            return jsonify({"ok": False, "error": str(exc)}), 400
+
     @app.route("/api/extensions/network.operations/assets", methods=["GET", "POST"])
     def network_assets():
         ws = _workspace()
@@ -312,6 +338,22 @@ def baseline(invocation):
     return {"ok": True, "baselines": service.list_baselines(invocation.workspace_id)}
 
 
+def assurance(invocation):
+    args = invocation.arguments or {}
+    action = str(args.get("action") or "overview").strip().lower()
+    if action == "overview":
+        return service.overview(invocation.workspace_id)
+    if action == "list_findings":
+        return {"ok": True, "findings": service.list_findings(
+            invocation.workspace_id,
+            status=str(args.get("status") or ""), severity=str(args.get("severity") or ""), asset_id=str(args.get("asset_id") or ""),
+        )}
+    return {"ok": True, "finding": service.update_finding_state(
+        invocation.workspace_id, str(args.get("finding_id") or ""), action,
+        comment=str(args.get("comment") or ""), actor="llm",
+    )}
+
+
 def register():
     from extensions.network_operations.workflow_templates import workflow_templates
 
@@ -509,6 +551,40 @@ def register():
                         "action": {"type": "string", "enum": ["create", "confirm", "list", "diff"]},
                         "task_id": {"type": "string"},
                         "baseline_id": {"type": "string"},
+                    },
+                    "required": ["action"],
+                },
+            },
+            {
+                "tool_id": "network.operations.assurance",
+                "name": "网络健康与异常闭环",
+                "description": "用于查看网络健康概览与证据化发现项。list_findings 可按状态、严重度或设备读取异常；只有用户明确要求确认、关闭、忽略或重新打开某个 finding_id 时，才执行对应状态动作。发现项来自巡检失败、已配置检查规则或与人工确认基线的差异，不能把工具失败直接等同于业务未完成。",
+                "category": "ops",
+                "permission_action": "write",
+                "action_execution_contracts": {
+                    "overview": {"action_class": "read", "risk_level": "low", "side_effects": "none", "idempotency": "safe_to_retry", "read_only": True},
+                    "list_findings": {"action_class": "read", "risk_level": "low", "side_effects": "none", "idempotency": "safe_to_retry", "read_only": True},
+                    "acknowledge": {"action_class": "write", "risk_level": "low", "side_effects": "workspace", "idempotency": "unsafe_to_retry", "read_only": False},
+                    "resolve": {"action_class": "write", "risk_level": "low", "side_effects": "workspace", "idempotency": "unsafe_to_retry", "read_only": False},
+                    "suppress": {"action_class": "write", "risk_level": "medium", "side_effects": "workspace", "idempotency": "unsafe_to_retry", "read_only": False},
+                    "reopen": {"action_class": "write", "risk_level": "low", "side_effects": "workspace", "idempotency": "unsafe_to_retry", "read_only": False},
+                },
+                "action_requirements": {
+                    "all": {"acknowledge": ["finding_id"], "resolve": ["finding_id"], "suppress": ["finding_id"], "reopen": ["finding_id"]},
+                },
+                "bindable_inputs": {"acknowledge": ["finding_id"], "resolve": ["finding_id"], "suppress": ["finding_id"], "reopen": ["finding_id"]},
+                "referenceable_outputs": {"overview": ["health", "latest_inspection"], "list_findings": ["findings"], "*": ["finding"]},
+                "handler": assurance,
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        **common,
+                        "action": {"type": "string", "enum": ["overview", "list_findings", "acknowledge", "resolve", "suppress", "reopen"]},
+                        "finding_id": {"type": "string"},
+                        "status": {"type": "string", "enum": ["open", "acknowledged", "resolved", "suppressed"]},
+                        "severity": {"type": "string", "enum": ["low", "medium", "high", "critical"]},
+                        "asset_id": {"type": "string"},
+                        "comment": {"type": "string", "maxLength": 500},
                     },
                     "required": ["action"],
                 },

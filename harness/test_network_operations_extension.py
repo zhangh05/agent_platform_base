@@ -4,7 +4,7 @@ import json
 from types import SimpleNamespace
 
 from extensions.network_operations import service
-from extensions.network_operations.backend import assets_read, assets_write, inspection
+from extensions.network_operations.backend import assurance, assets_read, assets_write, inspection
 from extensions.network_operations.device_tools import (
     MAX_READ_ONLY_COMMANDS,
     is_read_only_command as device_is_read_only_command,
@@ -91,6 +91,51 @@ def test_inspection_baseline_and_diff_close_the_read_only_loop(monkeypatch, tmp_
     diff = service.diff_against_current("default", second["task_id"])
     assert diff["changed"] is True
     assert diff["changes"][0]["asset_id"] == asset["asset_id"]
+
+
+def test_health_findings_are_evidence_backed_and_keep_human_state(monkeypatch, tmp_path):
+    _setup(monkeypatch, tmp_path)
+    asset = service.save_asset("default", {
+        "name": "核心交换机", "host": "10.0.0.1", "username": "netops",
+        "password": "sensitive-password", "vendor": "h3c",
+    })
+    script = service.save_inspection_script("default", {
+        "name": "告警验证", "description": "验证规则化发现项", "vendors": ["h3c"],
+        "commands": ["display logbuffer"],
+        "checks": [{
+            "check_id": "alarm", "name": "发现告警", "description": "命中告警文本。",
+            "severity": "high", "kind": "output_matches", "pattern": "ALARM",
+        }],
+    })
+    task = service.start_inspection(
+        "default", [asset["asset_id"]], script_id=script["script_id"],
+        collector=lambda _asset, commands: {command: "ALARM: link down" for command in commands},
+        background=False,
+    )
+    assert task["status"] == "succeeded"
+    findings = service.list_findings("default")
+    assert len(findings) == 1
+    finding = findings[0]
+    assert finding["title"] == "发现告警"
+    assert finding["last_seen_task_id"] == task["task_id"]
+    assert "ALARM" not in json.dumps(finding)
+
+    acknowledged = service.update_finding_state("default", finding["finding_id"], "acknowledge")
+    assert acknowledged["status"] == "acknowledged"
+    repeat = service.start_inspection(
+        "default", [asset["asset_id"]], script_id=script["script_id"],
+        collector=lambda _asset, commands: {command: "ALARM: link down" for command in commands},
+        background=False,
+    )
+    assert repeat["status"] == "succeeded"
+    persisted = service.list_findings("default")[0]
+    assert persisted["status"] == "acknowledged"
+    assert persisted["occurrences"] == 2
+    assert service.overview("default")["health"]["active_findings"] == 1
+
+    tool_result = assurance(SimpleNamespace(workspace_id="default", arguments={"action": "list_findings", "severity": "high"}))
+    assert tool_result["ok"] is True
+    assert tool_result["findings"][0]["finding_id"] == finding["finding_id"]
 
 
 def test_write_commands_are_rejected():
@@ -272,6 +317,13 @@ def test_extension_routes_cover_asset_and_inspection_flow(monkeypatch, tmp_path)
     listed = client.get("/api/extensions/network.operations/assets?workspace_id=default")
     assert listed.status_code == 200
     assert listed.get_json()["assets"][0]["name"] == "R1"
+
+    overview = client.get("/api/extensions/network.operations/overview?workspace_id=default")
+    findings = client.get("/api/extensions/network.operations/findings?workspace_id=default")
+    assert overview.status_code == 200
+    assert overview.get_json()["health"]["registered_assets"] == 1
+    assert findings.status_code == 200
+    assert findings.get_json()["findings"] == []
 
 
 def test_inspection_scripts_are_validated_and_snapshotted(monkeypatch, tmp_path):

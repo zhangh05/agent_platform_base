@@ -28,6 +28,20 @@ the new source module is included in the browser bundle.
   identity, risk policy, redaction, workspace context, and audit behavior remain
   platform-owned.
 
+## Business extensions are not tool consoles
+
+An extension may expose low-level governed operations, but a user-facing business
+extension must also own stable business objects and a closure path. For example,
+the bundled `network.operations` extension turns read-only collection into
+workspace-scoped inspection batches, evidence-backed findings, explicit severity,
+and human acknowledgement/closure. It does not equate an individual tool failure
+with business-task failure, and it never lets an LLM invent a finding without
+recorded inspection evidence.
+
+Keep connection/probe/command primitives behind the business view. New domain
+work should add a deterministic data contract, evidence references, UI actions,
+and focused tests rather than merely adding another catch-all tool.
+
 ## Signed packages and private distribution
 
 Extension packages use the `.apx` format. Every file is indexed with SHA-256 and
