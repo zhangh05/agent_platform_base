@@ -49,10 +49,6 @@ export function AppLayout({ children, navigationItems, advancedNavigationItems, 
   const setMobileNavOpen = useUIStore((s) => s.setMobileNavOpen);
   const location = useLocation();
   const mainRef = useRef<HTMLElement | null>(null);
-  // This is a self-contained operations console. The global conversation
-  // sidebar contains no useful context on this route and only wastes width.
-  const isNetworkOperations = location.pathname.startsWith("/extensions/network.operations/");
-  const showSidebar = sidebarOpen && !isNetworkOperations;
 
   // On route change, move focus to the main region so keyboard / screen-reader
   // users are not stranded on the link they clicked.
@@ -62,7 +58,7 @@ export function AppLayout({ children, navigationItems, advancedNavigationItems, 
 
   const rootClasses = [
     "app-root",
-    !showSidebar ? "no-sidebar" : "",
+    !sidebarOpen ? "no-sidebar" : "",
     mobileNavOpen ? "mobile-nav-open" : "",
   ].filter(Boolean).join(" ");
 
@@ -137,12 +133,12 @@ export function AppLayout({ children, navigationItems, advancedNavigationItems, 
       <a className="skip-link" href="#main">跳到主内容</a>
       <aside
         ref={drawerRef}
-        className={"app-sidebar" + (showSidebar ? "" : " collapsed")}
+        className={"app-sidebar" + (sidebarOpen ? "" : " collapsed")}
         data-testid="layout-left"
         aria-label="侧栏"
         aria-modal={mobileNavOpen ? "true" : undefined}
       >
-        {(showSidebar || mobileNavOpen) && (
+        {(sidebarOpen || mobileNavOpen) && (
           <div className="sidebar-scroll">
             <nav className="mobile-nav" aria-label="页面导航">
               {navigationItems.map((item) => <MobileNavItem key={item.to} {...item} />)}

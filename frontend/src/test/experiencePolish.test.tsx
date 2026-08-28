@@ -1,12 +1,14 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { App } from "../app/App";
+import { AppLayout } from "../layouts/AppLayout";
 import { Sidebar } from "../layouts/Sidebar";
 import { TaskWorkbench } from "../pages/AgentWorkbench/AgentWorkbench";
 import { enqueue, installMockApi, resetMocks } from "./mockServer";
 import { useSessionStore, useUIStore } from "../stores/session";
 import { useWorkbenchStore } from "../stores/workbench";
 import { formatEventTime } from "../utils/runEvent";
+import { MemoryRouter } from "../router";
 
 describe("Experience polish", () => {
   beforeEach(() => {
@@ -71,6 +73,20 @@ describe("Experience polish", () => {
     await waitFor(() => {
       expect(useSessionStore.getState().currentWorkspaceId).toBe("default");
     });
+  });
+
+  it("keeps the global sidebar visible on network operations routes", () => {
+    render(
+      <MemoryRouter initialEntries={["/extensions/network.operations/overview"]}>
+        <AppLayout navigationItems={[]} advancedNavigationItems={[]} settingsNavigationItems={[]}>
+          <div>网络运行保障</div>
+        </AppLayout>
+      </MemoryRouter>,
+    );
+
+    expect(screen.getByTestId("layout-left")).not.toHaveClass("collapsed");
+    expect(screen.getByTestId("layout-left")).toContainElement(screen.getByText("最近会话"));
+    expect(screen.getByTestId("layout-center")).toHaveTextContent("网络运行保障");
   });
 
   it("renders runtime summary in the workbench hint", async () => {
