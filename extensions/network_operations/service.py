@@ -429,7 +429,7 @@ def test_connection(workspace_id: str, connection_id: str, *, accept_host_key: b
         target = _connection_target(workspace_id, record)
         selected = commands or ([] if not read else DEFAULT_COMMANDS.get(target.vendor, DEFAULT_COMMANDS["generic"]))
         result = probe_target(target, commands=selected, accept_host_key=accept_host_key, read=read, timeout=timeout)
-    except Exception as exc:
+    except (ValueError, RuntimeError, OSError) as exc:
         result = {"ok": False, "status": "failed", "error": str(exc)[:300] or "connection_setup_failed"}
     fingerprint = str(result.get("fingerprint") or "")
     if fingerprint and accept_host_key and result.get("ok"):
@@ -646,7 +646,7 @@ def _activate_skill_connections(workspace_id: str, connections: list[dict[str, A
         connection_id = str(connection.get("connection_id") or "")
         try:
             result = test_connection(workspace_id, connection_id, timeout=timeout)
-        except Exception as exc:
+        except (ValueError, RuntimeError, OSError) as exc:
             result = {"ok": False, "status": "failed", "error": str(exc)[:300] or "connection_activation_failed"}
         current = result.get("connection") if isinstance(result.get("connection"), dict) else get_connection(workspace_id, connection_id)
         current = current or connection
@@ -670,7 +670,7 @@ def _activate_skill_connections(workspace_id: str, connections: list[dict[str, A
             connection_id = futures[future]
             try:
                 activated[connection_id] = future.result()
-            except Exception as exc:
+            except (ValueError, RuntimeError, OSError) as exc:
                 connection = next((item for item in connections if str(item.get("connection_id") or "") == connection_id), {})
                 activated[connection_id] = {
                     "connection_id": connection_id,
