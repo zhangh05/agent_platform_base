@@ -25,6 +25,8 @@
    Fix: device deletion confirmation states the number of connections, Skill reconciliation behavior, hard-delete semantics, and irreversibility before execution.
 5. Reference: published Skill rows still exposed generic “编辑/删除” actions and hid their effective resource boundary.
    Fix: every published Skill now has explicit `编辑 Skill`, `启用/停用 Skill`, and `永久删除 Skill` controls plus readable device, connection, capability, and status details. Hard deletion explicitly preserves devices and connections.
+6. Reference: a second independently named device on the same management address was rejected as `device host already exists`.
+   Fix: device identity is now the normalized pair of device name and management address. The same address can serve multiple independently named devices; only a repeated name-and-address pair is rejected. Connections remain scoped to their device and may use different protocols or ports independently.
 
 ## Verification
 
@@ -35,8 +37,9 @@
 - Browser interaction: CE1 `编辑设备` restores its name, address, vendor and region into the edit form; a temporary device was registered, displayed with zero-connection guidance, permanently deleted through confirmation, and absent afterward.
 - Browser DOM: CE1 exposes distinct device and connection management groups with unambiguous accessible labels.
 - Browser interaction: published Skill `测试1` restores its complete edit form, exposes a reversible enable/disable action, and presents an irreversible hard-delete confirmation without mutating its devices or connections.
-- Focused verification: 40 network-extension tests, 11 workbench merge tests, TypeScript typecheck, CSS token validation, and the production frontend build pass.
+- Browser interaction: `同IP临时设备` was successfully registered on `100.117.194.25` alongside CE1 and CE2, then permanently deleted through the product confirmation flow; the two intended devices remained and browser error logs were empty.
+- Focused verification: 41 network-extension tests, 11 workbench merge tests, TypeScript typecheck, CSS token validation, and the production frontend build pass.
 
 ## Result
 
-Final result: passed. Device and published-Skill management now present complete and explicit lifecycle actions, while connection identity and per-turn Skill visibility remain unambiguous.
+Final result: passed. Device and published-Skill management now present complete and explicit lifecycle actions, device identity supports shared management addresses without collapsing distinct devices, and connection identity plus per-turn Skill visibility remain unambiguous.

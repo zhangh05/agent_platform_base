@@ -106,6 +106,31 @@ def test_same_device_protocol_and_port_update_one_logical_connection(monkeypatch
     assert service.get_skill("default", skill["skill_id"])["connection_ids"] == [first["connection_id"]]
 
 
+def test_device_identity_requires_both_name_and_host(monkeypatch, tmp_path):
+    _setup(monkeypatch, tmp_path)
+    monkeypatch.setattr(service, "probe_target", lambda *_args, **_kwargs: {"ok": True, "status": "succeeded"})
+
+    ce1 = service.save_device("default", {"name": "CE1", "host": "100.117.194.25", "vendor": "h3c"})
+    ce2 = service.save_device("default", {"name": "CE2", "host": "100.117.194.25", "vendor": "h3c"})
+    ce1_other_host = service.save_device("default", {"name": "CE1", "host": "100.117.194.26", "vendor": "h3c"})
+
+    assert len({ce1["device_id"], ce2["device_id"], ce1_other_host["device_id"]}) == 3
+    with pytest.raises(ValueError, match="device name and host already exist"):
+        service.save_device("default", {"name": " ce1 ", "host": "100.117.194.25", "vendor": "h3c"})
+
+    first = service.save_connection("default", {
+        "device_id": ce1["device_id"], "protocol": "telnet", "port": 30001, "auth_method": "none",
+    })
+    second = service.save_connection("default", {
+        "device_id": ce2["device_id"], "protocol": "telnet", "port": 30002, "auth_method": "none",
+    })
+    assert first["connection_id"] != second["connection_id"]
+    assert {(item["device_id"], item["port"]) for item in service.list_connections("default")} == {
+        (ce1["device_id"], 30001),
+        (ce2["device_id"], 30002),
+    }
+
+
 def test_legacy_duplicate_connections_are_merged_without_dangling_skill_refs(monkeypatch, tmp_path):
     _setup(monkeypatch, tmp_path)
     device = service.save_device("default", {"name": "CE1", "host": "100.117.194.25", "vendor": "h3c"})

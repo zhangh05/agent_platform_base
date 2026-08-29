@@ -25,6 +25,9 @@ const allowedToolIds = toolOptions.map((item) => item.id);
 const emptyDevice: DeviceForm = { name: "", host: "", vendor: "h3c", device_type: "switch", region_id: "" };
 const emptyConnection: ConnectionForm = { device_id: "", name: "", protocol: "ssh", port: "22", username: "", source_address: "", password: "", private_key: "", passphrase: "", auth_method: "password" };
 const emptySkill: SkillForm = { name: "", description: "", instructions: "", enabled: true, device_ids: [], connection_ids: [], allowed_tool_ids: allowedToolIds };
+const friendlyErrors: Record<string, string> = {
+  "device name and host already exist": "设备名称与管理地址均相同的设备已存在",
+};
 
 export default function NetworkOperations() {
   const workspaceId = useSessionStore((state) => state.currentWorkspaceId);
@@ -72,7 +75,8 @@ export default function NetworkOperations() {
       setNotice(typeof success === "function" ? success(result) : success);
       return { ok: true, result };
     } catch (error) {
-      setNotice(String((error as { message?: string }).message || "操作失败"));
+      const message = String((error as { message?: string }).message || "操作失败");
+      setNotice(friendlyErrors[message] || message);
       return { ok: false };
     } finally { setBusy(false); }
   };

@@ -226,6 +226,11 @@ def get_device(workspace_id: str, device_id: str) -> dict[str, Any] | None:
     return _store(workspace_id).get("devices", device_id)
 
 
+def _device_identity(name: str, host: str) -> tuple[str, str]:
+    """A management address may expose multiple independently named devices."""
+    return (name.strip().casefold(), host.strip().casefold())
+
+
 def save_device(workspace_id: str, payload: dict[str, Any]) -> dict[str, Any]:
     name = str(payload.get("name") or "").strip()
     host = str(payload.get("host") or "").strip()
@@ -239,8 +244,13 @@ def save_device(workspace_id: str, payload: dict[str, Any]) -> dict[str, Any]:
     records = list_devices(workspace_id)
     if not existing and len(records) >= 1000:
         raise ValueError("extension_device_quota_exceeded")
-    if any(item.get("device_id") != device_id and str(item.get("host")) == host for item in records):
-        raise ValueError("device host already exists")
+    identity = _device_identity(name, host)
+    if any(
+        item.get("device_id") != device_id
+        and _device_identity(str(item.get("name") or ""), str(item.get("host") or "")) == identity
+        for item in records
+    ):
+        raise ValueError("device name and host already exist")
     record = {
         "device_id": device_id,
         "name": name,
