@@ -7,10 +7,10 @@ import "./NetworkOperations.css";
 
 type Region = { region_id: string; name: string };
 type Device = { device_id: string; name: string; host: string; vendor: string; device_type: string; region_id: string };
-type Connection = { connection_id: string; device_id: string; name?: string; protocol: "ssh" | "telnet"; port: number; username?: string; auth_method?: string; status: string; verified: boolean; last_error?: string; last_tested_at?: string };
+type Connection = { connection_id: string; device_id: string; name?: string; protocol: "ssh" | "telnet"; port: number; username?: string; source_address?: string; auth_method?: string; status: string; verified: boolean; last_error?: string; last_tested_at?: string };
 type Skill = { skill_id: string; name: string; description: string; instructions?: string; enabled: boolean; device_ids: string[]; connection_ids: string[]; allowed_tool_ids: string[] };
 type DeviceForm = Omit<Device, "device_id"> & { device_id?: string };
-type ConnectionForm = { connection_id?: string; device_id: string; name: string; protocol: "ssh" | "telnet"; port: string; username: string; password: string; private_key: string; passphrase: string; auth_method: string };
+type ConnectionForm = { connection_id?: string; device_id: string; name: string; protocol: "ssh" | "telnet"; port: string; username: string; source_address: string; password: string; private_key: string; passphrase: string; auth_method: string };
 type SkillForm = { skill_id?: string; name: string; description: string; instructions: string; enabled: boolean; device_ids: string[]; connection_ids: string[]; allowed_tool_ids: string[] };
 
 const base = "/extensions/network.operations";
@@ -22,7 +22,7 @@ const toolOptions = [
 ] as const;
 const allowedToolIds = toolOptions.map((item) => item.id);
 const emptyDevice: DeviceForm = { name: "", host: "", vendor: "h3c", device_type: "switch", region_id: "" };
-const emptyConnection: ConnectionForm = { device_id: "", name: "", protocol: "ssh", port: "22", username: "", password: "", private_key: "", passphrase: "", auth_method: "password" };
+const emptyConnection: ConnectionForm = { device_id: "", name: "", protocol: "ssh", port: "22", username: "", source_address: "", password: "", private_key: "", passphrase: "", auth_method: "password" };
 const emptySkill: SkillForm = { name: "", description: "", instructions: "", enabled: true, device_ids: [], connection_ids: [], allowed_tool_ids: allowedToolIds };
 
 export default function NetworkOperations() {
@@ -55,6 +55,11 @@ export default function NetworkOperations() {
   }, [workspaceId]);
 
   useEffect(() => { void load().catch(() => setNotice("数据加载失败，请检查服务。")); }, [load]);
+  useEffect(() => {
+    if (!notice) return;
+    const timer = window.setTimeout(() => setNotice(""), 4500);
+    return () => window.clearTimeout(timer);
+  }, [notice]);
   const byDevice = useMemo(() => new Map(devices.map((item) => [item.device_id, item])), [devices]);
   const byRegion = useMemo(() => new Map(regions.map((item) => [item.region_id, item.name])), [regions]);
 
@@ -130,7 +135,7 @@ export default function NetworkOperations() {
   };
 
   const editConnection = (connection: Connection) => {
-    setConnectionForm({ connection_id: connection.connection_id, device_id: connection.device_id, name: connection.name || "", protocol: connection.protocol, port: String(connection.port), username: connection.username || "", password: "", private_key: "", passphrase: "", auth_method: connection.auth_method || (connection.protocol === "telnet" ? "none" : "password") });
+    setConnectionForm({ connection_id: connection.connection_id, device_id: connection.device_id, name: connection.name || "", protocol: connection.protocol, port: String(connection.port), username: connection.username || "", source_address: connection.source_address || "", password: "", private_key: "", passphrase: "", auth_method: connection.auth_method || (connection.protocol === "telnet" ? "none" : "password") });
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
@@ -159,6 +164,7 @@ export default function NetworkOperations() {
           <label>协议<select value={connectionForm.protocol} onChange={(event) => { const protocol = event.target.value as "ssh" | "telnet"; setConnectionForm({ ...connectionForm, protocol, port: protocol === "ssh" ? "22" : "23", auth_method: protocol === "ssh" ? "password" : "none" }); }}><option value="ssh">SSH</option><option value="telnet">Telnet</option></select></label>
           <label>端口<input required type="number" min="1" max="65535" value={connectionForm.port} onChange={(event) => setConnectionForm({ ...connectionForm, port: event.target.value })} /></label>
           <label>认证<select value={connectionForm.auth_method} onChange={(event) => setConnectionForm({ ...connectionForm, auth_method: event.target.value })}>{connectionForm.protocol === "telnet" ? <option value="none">无认证</option> : null}<option value="password">用户名/密码</option>{connectionForm.protocol === "ssh" ? <option value="private_key">SSH 私钥</option> : null}</select></label>
+          <label>源地址（可选）<input value={connectionForm.source_address} onChange={(event) => setConnectionForm({ ...connectionForm, source_address: event.target.value })} placeholder="多网卡/VPN 时填写本机出口 IP" /></label>
           {connectionForm.auth_method !== "none" ? <label>用户名<input required={connectionForm.protocol === "ssh"} value={connectionForm.username} onChange={(event) => setConnectionForm({ ...connectionForm, username: event.target.value })} /></label> : null}
           {connectionForm.auth_method === "password" ? <label>密码<input type="password" value={connectionForm.password} onChange={(event) => setConnectionForm({ ...connectionForm, password: event.target.value })} placeholder={connectionForm.connection_id ? "留空则保留原密码" : ""} /></label> : null}
           {connectionForm.auth_method === "private_key" ? <><label className="full-field">SSH 私钥<textarea value={connectionForm.private_key} onChange={(event) => setConnectionForm({ ...connectionForm, private_key: event.target.value })} placeholder={connectionForm.connection_id ? "留空则保留原私钥" : "粘贴 PEM/OpenSSH 私钥"} /></label><label>私钥口令<input type="password" value={connectionForm.passphrase} onChange={(event) => setConnectionForm({ ...connectionForm, passphrase: event.target.value })} placeholder="无口令可留空" /></label></> : null}

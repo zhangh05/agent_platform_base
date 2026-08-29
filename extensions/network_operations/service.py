@@ -315,6 +315,7 @@ def _connection_target(workspace_id: str, connection: dict[str, Any]) -> DeviceT
         protocol=str(connection.get("protocol") or "ssh"),
         vendor=str(device.get("vendor") or "generic"),
         name=str(device.get("name") or ""),
+        source_address=str(connection.get("source_address") or ""),
         expected_fingerprint=str(connection.get("host_key_fingerprint") or ""),
         credential=credential,
     )
@@ -363,6 +364,12 @@ def save_connection(workspace_id: str, payload: dict[str, Any], *, auto_test: bo
     if auth_method not in ({"none", "password"} if protocol == "telnet" else {"password", "private_key"}):
         raise ValueError("invalid auth method for protocol")
     username = str(payload.get("username") if "username" in payload else existing.get("username") or "").strip()
+    source_address = str(payload.get("source_address") if "source_address" in payload else existing.get("source_address") or "").strip()
+    if source_address:
+        try:
+            ipaddress.ip_address(source_address)
+        except ValueError as exc:
+            raise ValueError("source_address must be a local IP address") from exc
     if protocol == "ssh" and not username:
         raise ValueError("username is required for ssh")
     secrets = ExtensionSecretStore(EXTENSION_ID, workspace_id)
@@ -400,6 +407,7 @@ def save_connection(workspace_id: str, payload: dict[str, Any], *, auto_test: bo
         "protocol": protocol,
         "port": port,
         "username": username,
+        "source_address": source_address,
         "auth_method": auth_method,
         "password_ref": password_ref,
         "private_key_ref": private_key_ref,

@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 from types import SimpleNamespace
 
+import pytest
+
 from extensions.network_operations import service
 from extensions.network_operations.backend import devices_read, device_manage, inspection, skills_read
 from extensions.network_operations.device_tools import (
@@ -52,17 +54,34 @@ def test_telnet_connection_supports_optional_credentials_custom_port_and_skill_b
     device = service.save_device("default", {"name": "Console-1", "host": "r1", "vendor": "h3c"})
     captured = {}
     def fake_probe(target, **_kwargs):
-        captured.update({"protocol": target.protocol, "port": target.port, "username": target.credential.username})
+        captured.update({"protocol": target.protocol, "port": target.port, "username": target.credential.username, "source_address": target.source_address})
         return {"ok": True, "status": "succeeded", "duration_ms": 4, "stages": []}
     monkeypatch.setattr(service, "probe_target", fake_probe)
-    connection = service.save_connection("default", {"device_id": device["device_id"], "protocol": "telnet", "port": 2323, "auth_method": "none"})
-    assert captured == {"protocol": "telnet", "port": 2323, "username": ""}
+    connection = service.save_connection("default", {"device_id": device["device_id"], "protocol": "telnet", "port": 2323, "auth_method": "none", "source_address": "100.64.0.10"})
+    assert captured == {"protocol": "telnet", "port": 2323, "username": "", "source_address": "100.64.0.10"}
     assert connection["verified"] is True
     skill = service.save_skill("default", {"name": "只读巡检", "device_ids": [device["device_id"]], "connection_ids": [connection["connection_id"]]})
     resolved = service.resolve_workbench_selection("default", {"skill_id": skill["skill_id"], "device_ids": [device["device_id"]]})
     assert resolved["connection_ids"] == [connection["connection_id"]]
     result = device_manage(SimpleNamespace(workspace_id="default", skill=skill["skill_id"], arguments={"action": "probe", "connection_id": connection["connection_id"]}))
     assert result["ok"] is True
+
+
+def test_connection_rejects_invalid_source_address(monkeypatch, tmp_path):
+    _setup(monkeypatch, tmp_path)
+    device = service.save_device("default", {"name": "Console-1", "host": "r1", "vendor": "h3c"})
+
+    with pytest.raises(ValueError, match="source_address must be a local IP address"):
+        service.save_connection(
+            "default",
+            {
+                "device_id": device["device_id"],
+                "protocol": "telnet",
+                "port": 2323,
+                "auth_method": "none",
+                "source_address": "not-an-ip",
+            },
+        )
 
 
 def test_skill_rejects_unverified_connections(monkeypatch, tmp_path):

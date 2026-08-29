@@ -7,7 +7,8 @@
 .network-panel{background:#fff;border:1px solid var(--border);border-radius:14px;padding:22px;box-shadow:0 8px 24px rgba(20,48,54,.04)}
 .network-panel h2{margin:0 0 6px;font-size:19px}.network-panel>p{margin:0 0 18px;color:var(--text-muted)}.network-span{grid-column:1/-1}
 .form-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}.form-grid label{display:grid;gap:6px;font-size:13px;font-weight:650}
-.form-grid input,.form-grid select,.form-grid textarea,.inline-form input{min-width:0;border:1px solid var(--border);border-radius:9px;padding:10px 11px;background:#fff}
+.form-grid input,.form-grid select,.form-grid textarea,.inline-form input{min-width:0;border:1px solid #aebfc2!important;border-radius:9px;padding:10px 11px;background:#fff!important;box-shadow:inset 0 0 0 1px rgba(6,114,120,.04);transition:border-color .16s ease,box-shadow .16s ease}
+.form-grid input:hover,.form-grid select:hover,.form-grid textarea:hover,.inline-form input:hover{border-color:#769b9f!important}.form-grid input:focus,.form-grid select:focus,.form-grid textarea:focus,.inline-form input:focus{outline:none;border-color:#067278!important;box-shadow:0 0 0 3px rgba(6,114,120,.14)}
 .form-grid textarea{min-height:82px;resize:vertical}.form-grid fieldset{grid-column:1/-1;border:1px solid var(--border);border-radius:10px;padding:12px}.form-grid fieldset legend{font-weight:750;padding:0 6px}
 .form-grid .check{display:flex;align-items:center;gap:8px;padding:7px 0;font-weight:500}.form-grid>button,.form-grid>label:has(textarea),.full-field,.form-actions{grid-column:1/-1}
 .form-grid .capability-check{align-items:flex-start}.capability-check span{display:grid;gap:2px}.capability-check small{color:var(--text-muted);font-weight:400}

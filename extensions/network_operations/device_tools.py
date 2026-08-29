@@ -53,6 +53,7 @@ class DeviceTarget:
     protocol: str = "ssh"
     vendor: str = "generic"
     name: str = ""
+    source_address: str = ""
     expected_fingerprint: str = ""
     credential: DeviceCredential | None = None
 
@@ -167,7 +168,8 @@ def probe_target(
     transport: Any = None
     try:
         stages.append(_stage("target", "ok", host=target.host, port=target.port, protocol="ssh", vendor=target.vendor))
-        sock = socket.create_connection((target.host, target.port), timeout=timeout)
+        source = (target.source_address, 0) if target.source_address else None
+        sock = socket.create_connection((target.host, target.port), timeout=timeout, source_address=source)
         stages.append(_stage("tcp", "ok"))
 
         transport = paramiko.Transport(sock)
@@ -299,7 +301,8 @@ def _probe_telnet(
     sock: socket.socket | None = None
     try:
         stages.append(_stage("target", "ok", host=target.host, port=target.port, protocol="telnet", vendor=target.vendor))
-        sock = socket.create_connection((target.host, target.port), timeout=timeout)
+        source = (target.source_address, 0) if target.source_address else None
+        sock = socket.create_connection((target.host, target.port), timeout=timeout, source_address=source)
         sock.settimeout(min(float(timeout), 2.0))
         stages.append(_stage("tcp", "ok"))
         credential = target.credential or DeviceCredential(auth_method="none")
