@@ -22,7 +22,7 @@ stable node order, so concurrency never changes references or audit semantics.
     {
       "node_id": "inspect",
       "tool_id": "network.operations.inspection",
-      "arguments": {"asset_ids": "${input.asset_ids}"}
+      "arguments": {"connection_ids": "${input.connection_ids}"}
     }
   ]
 }
@@ -54,6 +54,5 @@ High-risk tools still require an approval. Pass an approval map keyed by node ID
 
 Roles are explicit in identity mode: viewers can read definitions and runs,
 operators can execute/cancel, developers can create or update, and organization
-administrators inherit those permissions. The 应用编排 page provides the same
-model with Chinese labels, application/tool counts, ordered step cards, parameter
-templates, dependencies, save, and test-run results.
+administrators inherit those permissions. Workflow APIs remain a framework
+capability; the retired generic editor is not part of the current product UI.

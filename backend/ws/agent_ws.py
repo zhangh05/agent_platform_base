@@ -366,6 +366,12 @@ def register_ws_routes(app):
                     metadata = {}
                 from backend.core.agent_contract import normalize_metadata
                 metadata = normalize_metadata(metadata, transport="websocket", stream_mode="live")
+                try:
+                    from backend.core.agent_contract import resolve_workbench_metadata
+                    metadata = resolve_workbench_metadata(metadata, workspace_id)
+                except ValueError as exc:
+                    ws.send(json.dumps({"type": "error", "message": str(exc)}, ensure_ascii=True))
+                    continue
                 if session_id and not str(metadata.get("client_request_id") or "").strip():
                     ws.send(json.dumps({"type": "error", "message": "client_request_id_required"}, ensure_ascii=True))
                     continue

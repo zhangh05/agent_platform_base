@@ -32,15 +32,19 @@ the new source module is included in the browser bundle.
 
 An extension may expose low-level governed operations, but a user-facing business
 extension must also own stable business objects and a closure path. For example,
-the bundled `network.operations` extension turns read-only collection into
-workspace-scoped inspection batches, evidence-backed findings, explicit severity,
-and human acknowledgement/closure. It does not equate an individual tool failure
-with business-task failure, and it never lets an LLM invent a finding without
-recorded inspection evidence.
+the bundled `network.operations` extension owns regions, devices, encrypted
+SSH/Telnet connection profiles and reusable Skills. The workbench receives only
+an extension-projected Skill catalog; every selection is resolved again on the
+server into verified connection IDs before it reaches the model or a tool.
+The selected Skill also narrows only the tools owned by that extension; other
+platform tools remain available for cross-capability composition. Unselected
+owner tools are removed from the QueryLoop catalog instead of failing after the
+model calls them.
 
 Keep connection/probe/command primitives behind the business view. New domain
-work should add a deterministic data contract, evidence references, UI actions,
-and focused tests rather than merely adding another catch-all tool.
+work should add a deterministic data contract, trusted workbench projection,
+evidence references, UI actions, and focused tests rather than merely adding
+another catch-all tool.
 
 ## Signed packages and private distribution
 
@@ -71,9 +75,9 @@ and symbolic-link payloads. Upgrade first moves the prior version to a recoverab
 backup and restores it if the atomic replacement fails. Uninstall is also soft:
 the plugin moves to `plugins/.extension-trash/` and workspace data is untouched.
 
-The workbench **扩展管理** page exposes the same signed repository, install,
-upgrade, lifecycle, migration, and recoverable uninstall controls. Management
-writes require the `admin` role.
+Signed repository, installation, lifecycle, migration and recoverable uninstall
+remain administrator APIs and CLI operations. The retired generic extension
+management page is not part of the current product UI.
 
 Run the focused compatibility gate with:
 

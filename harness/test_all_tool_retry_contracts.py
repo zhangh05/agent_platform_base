@@ -97,9 +97,6 @@ def test_extension_action_profiles_drive_parallel_and_retry_semantics():
     # runtime without naming extension actions in the base contract table.
     get_extension_tool_specs()
     expected = {
-        ("network.operations.baseline", "list"): True,
-        ("network.operations.baseline", "diff"): True,
-        ("network.operations.baseline", "create"): False,
         ("network.operations.inspection", "list"): True,
         ("network.operations.inspection", "get"): True,
         ("network.operations.inspection", "run"): False,

@@ -125,6 +125,11 @@ def agent_message():
         return _json_error("BAD_REQUEST", str(exc), 400)
     from backend.core.agent_contract import normalize_metadata
     metadata = normalize_metadata(metadata, transport="http", stream_mode=stream_mode)
+    try:
+        from backend.core.agent_contract import resolve_workbench_metadata
+        metadata = resolve_workbench_metadata(metadata, ws_id)
+    except ValueError as exc:
+        return _json_error("INVALID_WORKBENCH_SELECTION", str(exc), 400)
 
     client_request_id = str(metadata.get("client_request_id") or "").strip()
     if session_id:

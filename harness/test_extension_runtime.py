@@ -9,6 +9,7 @@ from extensions.manifest import ExtensionManifest, ExtensionValidationError
 from extensions.registry import ExtensionRegistry
 from extensions.runtime import (
     _build_workflow_templates,
+    apply_workbench_tool_boundary,
     load_extensions,
     reset_extension_cache_for_tests,
 )
@@ -19,7 +20,7 @@ def test_network_extension_loads_tool_and_frontend_contract():
     reset_extension_cache_for_tests()
     extensions = load_extensions(refresh=True)
     network = next(item for item in extensions if item.manifest.extension_id == "network.operations")
-    assert network.manifest.frontend_routes[0]["path"] == "/extensions/network.operations/overview"
+    assert network.manifest.frontend_routes[0]["path"] == "/extensions/network.operations/manage"
     assert "network.operations.inspection" in {spec.tool_id for spec, _ in network.tools}
 
 
@@ -29,19 +30,21 @@ def test_network_workflow_templates_are_owned_by_the_extension():
     network = next(item for item in loaded if item.manifest.extension_id == "network.operations")
     declared = set(network.manifest.workflow_templates)
     contributed = {item["template_id"] for item in network.workflow_templates}
-    assert declared == contributed == {
-        "network-operations-asset-inventory",
-        "network-operations-readonly-inspection",
+    assert declared == contributed == set()
+
+
+def test_workbench_skill_hides_only_unselected_owner_tools():
+    reset_extension_cache_for_tests()
+    registry = {
+        "network.operations.devices_read": {"description": "devices"},
+        "network.operations.device.manage": {"description": "manage"},
+        "exec.run": {"description": "python and shell"},
     }
-    inspection = next(
-        item
-        for item in network.workflow_templates
-        if item["template_id"] == "network-operations-readonly-inspection"
-    )
-    assert [field["name"] for field in inspection["input_fields"]] == [
-        "script_id",
-        "asset_ids",
-    ]
+    bounded = apply_workbench_tool_boundary(registry, {
+        "extension_id": "network.operations",
+        "allowed_tool_ids": ["network.operations.device.manage"],
+    })
+    assert set(bounded) == {"network.operations.device.manage", "exec.run"}
 
 
 def test_workflow_template_inputs_can_only_read_declared_owner_routes():
@@ -88,25 +91,25 @@ def test_network_read_tool_runs_through_default_tool_runtime():
     reset_default_client_for_tests()
     client = get_default_tool_runtime_client()
     result = client.invoke(
-        "network.operations.assets_read",
+            "network.operations.devices_read",
         {},
         context=ToolRuntimeContext(workspace_id="default", requested_by="turn_runner"),
     )
     assert result.status == "succeeded"
     assert result.output["ok"] is True
-    assert result.output["assets"] == []
+    assert result.output["devices"] == []
     gate = evaluate_case(
         GoldenCase(
-            "network-assets-read",
-            "读取网络设备资产",
-            required_tools=("network.operations.assets_read",),
-            required_terms=("assets",),
+            "network-devices-read",
+            "读取网络设备与连接",
+            required_tools=("network.operations.devices_read",),
+            required_terms=("devices",),
         ),
         {"tool_ids": [result.tool_id], "final_response": result.summary},
     )
     assert gate["passed"] is True
     missing_scope = client.invoke(
-        "network.operations.assets_read",
+        "network.operations.devices_read",
         {},
         context=ToolRuntimeContext(requested_by="turn_runner"),
     )
@@ -124,9 +127,12 @@ def test_extension_routes_and_catalog_are_registered():
     catalog = client.get("/api/extensions")
     assert catalog.status_code == 200
     assert "network.operations" in {item["extension_id"] for item in catalog.get_json()["extensions"]}
-    overview = client.get("/api/extensions/network.operations/overview?workspace_id=default")
-    assert overview.status_code == 200
-    assert overview.get_json()["ok"] is True
+    devices = client.get("/api/extensions/network.operations/devices?workspace_id=default")
+    assert devices.status_code == 200
+    assert devices.get_json()["ok"] is True
+    skills = client.get("/api/workbench/skills?workspace_id=default")
+    assert skills.status_code == 200
+    assert skills.get_json()["skills"] == []
 
 
 def test_manifest_rejects_contributions_outside_its_namespace():

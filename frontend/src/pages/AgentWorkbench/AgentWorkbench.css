@@ -819,3 +819,4 @@
   box-shadow: none;
   border-color: var(--line-2);
 }
+.wb-skill-picker{display:flex;align-items:center;gap:10px;padding:0 0 10px;border-bottom:1px solid var(--border);margin-bottom:10px}.wb-skill-picker label{display:flex;align-items:center;gap:7px;font-size:12px;font-weight:750;color:var(--text-muted)}.wb-skill-picker select{border:1px solid var(--border);border-radius:8px;background:var(--surface);padding:7px 28px 7px 9px;color:var(--text)}.wb-skill-devices{display:flex;gap:6px;min-width:0;overflow-x:auto}.wb-skill-devices button{flex:0 0 auto;border:1px solid var(--border);border-radius:999px;background:var(--surface);padding:6px 10px;font-size:12px;color:var(--text-muted)}.wb-skill-devices button.active{border-color:#76bfc1;background:#e7f5f4;color:#066f74;font-weight:700}

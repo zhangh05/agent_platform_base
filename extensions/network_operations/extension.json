@@ -1,51 +1,44 @@
 {
   "extension_id": "network.operations",
-  "name": "网络巡检",
-  "version": "1.3.0",
+  "name": "网络设备与 Skill",
+  "version": "2.0.0",
   "api_version": "1",
   "min_platform_version": "1.1.0",
-  "description": "工作区级网络健康巡检、证据化发现项、人工闭环、设备资产与状态基线。",
-  "capabilities": ["network_assets", "network_inspection", "network_baseline", "network_assurance"],
+  "description": "以可信设备连接为基础的网络设备管理、Skill 编排和只读运维执行。",
+  "capabilities": ["network_devices", "network_connections", "network_skills", "network_inspection"],
   "tools": [
-    "network.operations.assets_read",
-    "network.operations.assets_write",
+    "network.operations.devices_read",
+    "network.operations.skills_read",
     "network.operations.device.manage",
-    "network.operations.inspection",
-    "network.operations.baseline",
-    "network.operations.assurance"
+    "network.operations.inspection"
   ],
   "permissions": ["workspace:read", "workspace:write", "network:network"],
   "routes": [
-    "/api/extensions/network.operations/overview",
-    "/api/extensions/network.operations/findings",
-    "/api/extensions/network.operations/findings/<finding_id>/state",
-    "/api/extensions/network.operations/assets",
-    "/api/extensions/network.operations/assets/<asset_id>",
-    "/api/extensions/network.operations/assets/<asset_id>/probe",
+    "/api/extensions/network.operations/regions",
+    "/api/extensions/network.operations/regions/<region_id>",
+    "/api/extensions/network.operations/devices",
+    "/api/extensions/network.operations/devices/<device_id>",
+    "/api/extensions/network.operations/connections",
+    "/api/extensions/network.operations/connections/<connection_id>",
+    "/api/extensions/network.operations/connections/<connection_id>/test",
+    "/api/extensions/network.operations/skills",
+    "/api/extensions/network.operations/skills/<skill_id>",
     "/api/extensions/network.operations/inspections",
     "/api/extensions/network.operations/inspections/<task_id>",
     "/api/extensions/network.operations/inspections/<task_id>/cancel",
     "/api/extensions/network.operations/inspections/<task_id>/evidence",
     "/api/extensions/network.operations/inspections/<task_id>/retry",
     "/api/extensions/network.operations/scripts",
-    "/api/extensions/network.operations/scripts/<script_id>",
-    "/api/extensions/network.operations/schedules",
-    "/api/extensions/network.operations/schedules/<schedule_id>",
-    "/api/extensions/network.operations/baselines",
-    "/api/extensions/network.operations/baselines/<baseline_id>/confirm",
-    "/api/extensions/network.operations/diff"
+    "/api/extensions/network.operations/scripts/<script_id>"
   ],
   "frontend_modules": ["frontend/NetworkOperations.tsx"],
-  "workflow_templates": [
-    "network-operations-asset-inventory",
-    "network-operations-readonly-inspection"
-  ],
+  "workflow_templates": [],
   "frontend_routes": [
     {
-      "path": "/extensions/network.operations/overview",
+      "path": "/extensions/network.operations/manage",
       "module": "frontend/NetworkOperations.tsx",
-      "label": "网络运行保障",
-      "description": "网络健康巡检、异常发现与人工闭环",
+      "label": "网络设备与 Skill",
+      "description": "登记设备、验证连接并配置工作台 Skill",
       "icon": "probe",
       "order": 30
     }
@@ -54,6 +47,6 @@
   "metadata": {
     "minimum_role": "viewer",
     "minimum_write_role": "operator",
-    "quotas": {"daily_calls": 500, "max_concurrency": 5, "max_assets": 1000, "max_schedules": 200}
+    "quotas": {"daily_calls": 500, "max_concurrency": 5, "max_devices": 1000}
   }
 }

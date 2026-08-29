@@ -600,9 +600,8 @@ def test_declared_cross_tool_binding_is_accepted_and_undeclared_field_is_denied(
         ("workspace.artifact", "save", "artifact_id", "knowledge.manage", "import", "artifact_id"),
         ("agent.manage", "spawn", "subtask_id", "agent.manage", "get", "subtask_id"),
         ("location.manage", "resolve_batch", "resolved_entities", "web.manage", "weather_batch", "locations"),
-        ("network.operations.assets_read", "", "asset_ids", "network.operations.inspection", "run", "asset_ids"),
-        ("network.operations.inspection", "run", "task.task_id", "network.operations.baseline", "create", "task_id"),
-        ("network.operations.baseline", "create", "baseline.baseline_id", "network.operations.baseline", "confirm", "baseline_id"),
+        ("network.operations.devices_read", "", "connection_ids", "network.operations.inspection", "run", "connection_ids"),
+        ("network.operations.inspection", "run", "task.task_id", "network.operations.inspection", "get", "task_id"),
     ],
 )
 def test_published_natural_tool_compositions_are_graph_valid(

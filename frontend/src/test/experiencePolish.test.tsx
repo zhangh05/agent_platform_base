@@ -77,16 +77,16 @@ describe("Experience polish", () => {
 
   it("keeps the global sidebar visible on network operations routes", () => {
     render(
-      <MemoryRouter initialEntries={["/extensions/network.operations/overview"]}>
-        <AppLayout navigationItems={[]} advancedNavigationItems={[]} settingsNavigationItems={[]}>
-          <div>网络运行保障</div>
+      <MemoryRouter initialEntries={["/extensions/network.operations/manage"]}>
+        <AppLayout navigationItems={[]} settingsNavigationItems={[]}>
+          <div>网络设备与 Skill</div>
         </AppLayout>
       </MemoryRouter>,
     );
 
     expect(screen.getByTestId("layout-left")).not.toHaveClass("collapsed");
     expect(screen.getByTestId("layout-left")).toContainElement(screen.getByText("最近会话"));
-    expect(screen.getByTestId("layout-center")).toHaveTextContent("网络运行保障");
+    expect(screen.getByTestId("layout-center")).toHaveTextContent("网络设备与 Skill");
   });
 
   it("renders runtime summary in the workbench hint", async () => {

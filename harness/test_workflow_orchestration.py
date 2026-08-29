@@ -11,7 +11,7 @@ def _definition():
         "name": "网络资产只读流程",
         "nodes": [{
             "node_id": "list_assets",
-            "tool_id": "network.operations.assets_read",
+            "tool_id": "network.operations.devices_read",
             "arguments": {},
         }],
     }
@@ -26,7 +26,7 @@ def test_network_asset_read_dag_executes_and_persists_inputs(monkeypatch, tmp_pa
     run = execute_workflow("default", "network_asset_read", {"text": "alpha beta"})
     assert run["status"] == "succeeded"
     assert [item["status"] for item in run["nodes"]] == ["succeeded"]
-    assert run["nodes"][0]["output"]["assets"] == []
+    assert run["nodes"][0]["output"]["devices"] == []
     assert run["inputs"] == {"text": "alpha beta"}
 
 
@@ -69,7 +69,7 @@ def test_workflow_accepts_non_secret_token_metadata(monkeypatch, tmp_path):
 def test_workflow_validation_rejects_cycles_and_unknown_tools(monkeypatch, tmp_path):
     monkeypatch.setenv("LZCORE_WORKSPACE_ROOT", str(tmp_path / "workspaces"))
     cyclic = _definition()
-    cyclic["nodes"].append({"node_id": "second", "tool_id": "network.operations.assets_read", "arguments": {}, "depends_on": ["list_assets"]})
+    cyclic["nodes"].append({"node_id": "second", "tool_id": "network.operations.devices_read", "arguments": {}, "depends_on": ["list_assets"]})
     cyclic["nodes"][0]["depends_on"] = ["second"]
     with pytest.raises(WorkflowError, match="cycle"):
         save_workflow("default", cyclic)

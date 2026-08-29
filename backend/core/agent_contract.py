@@ -51,7 +51,7 @@ _STREAM_CONTRACTS = {
 # deliberately small: runtime-only fields such as runtime_guidance,
 # subagent_profile, history/retrieval blocks, cancellation callbacks and
 # iteration budgets must only be created by server-side code.
-_EXTERNAL_METADATA_KEYS = frozenset({"attachments", "client_request_id"})
+_EXTERNAL_METADATA_KEYS = frozenset({"attachments", "client_request_id", "workbench_selection"})
 
 
 def normalize_metadata(metadata: dict | None, *, transport: str, stream_mode: str) -> dict:
@@ -66,11 +66,24 @@ def normalize_metadata(metadata: dict | None, *, transport: str, stream_mode: st
         for key in _EXTERNAL_METADATA_KEYS
         if key in source
     }
+    selection = normalized.get("workbench_selection")
+    if selection is not None and not isinstance(selection, dict):
+        normalized.pop("workbench_selection", None)
     normalized["transport"] = transport
     normalized["stream_mode"] = stream_mode
     contract = _STREAM_CONTRACTS.get((transport, stream_mode))
     if contract:
         normalized["stream_contract"] = contract
+    return normalized
+
+
+def resolve_workbench_metadata(metadata: dict, workspace_id: str) -> dict:
+    """Turn an allowed but untrusted UI selection into server-owned context."""
+    normalized = dict(metadata or {})
+    selection = normalized.pop("workbench_selection", None)
+    if selection:
+        from extensions.runtime import resolve_workbench_context
+        normalized["workbench_context"] = resolve_workbench_context(workspace_id, selection)
     return normalized
 
 

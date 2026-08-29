@@ -4,7 +4,7 @@ import json
 from types import SimpleNamespace
 
 from extensions.network_operations import service
-from extensions.network_operations.backend import assurance, assets_read, assets_write, inspection
+from extensions.network_operations.backend import devices_read, device_manage, inspection, skills_read
 from extensions.network_operations.device_tools import (
     MAX_READ_ONLY_COMMANDS,
     is_read_only_command as device_is_read_only_command,
@@ -45,6 +45,37 @@ def test_private_key_assets_do_not_expose_plaintext(monkeypatch, tmp_path):
     persisted = (tmp_path / "workspaces" / "_runtime" / "secrets" / "encrypted.json").read_text()
     assert "secret-key" not in persisted
     assert "secret-passphrase" not in persisted
+
+
+def test_telnet_connection_supports_optional_credentials_custom_port_and_skill_binding(monkeypatch, tmp_path):
+    _setup(monkeypatch, tmp_path)
+    device = service.save_device("default", {"name": "Console-1", "host": "r1", "vendor": "h3c"})
+    captured = {}
+    def fake_probe(target, **_kwargs):
+        captured.update({"protocol": target.protocol, "port": target.port, "username": target.credential.username})
+        return {"ok": True, "status": "succeeded", "duration_ms": 4, "stages": []}
+    monkeypatch.setattr(service, "probe_target", fake_probe)
+    connection = service.save_connection("default", {"device_id": device["device_id"], "protocol": "telnet", "port": 2323, "auth_method": "none"})
+    assert captured == {"protocol": "telnet", "port": 2323, "username": ""}
+    assert connection["verified"] is True
+    skill = service.save_skill("default", {"name": "只读巡检", "device_ids": [device["device_id"]], "connection_ids": [connection["connection_id"]]})
+    resolved = service.resolve_workbench_selection("default", {"skill_id": skill["skill_id"], "device_ids": [device["device_id"]]})
+    assert resolved["connection_ids"] == [connection["connection_id"]]
+    result = device_manage(SimpleNamespace(workspace_id="default", skill=skill["skill_id"], arguments={"action": "probe", "connection_id": connection["connection_id"]}))
+    assert result["ok"] is True
+
+
+def test_skill_rejects_unverified_connections(monkeypatch, tmp_path):
+    _setup(monkeypatch, tmp_path)
+    device = service.save_device("default", {"name": "R1", "host": "10.0.0.1"})
+    monkeypatch.setattr(service, "probe_target", lambda *_args, **_kwargs: {"ok": False, "status": "failed", "error": "offline"})
+    connection = service.save_connection("default", {"device_id": device["device_id"], "protocol": "telnet", "auth_method": "none"})
+    try:
+        service.save_skill("default", {"name": "不可用", "device_ids": [device["device_id"]], "connection_ids": [connection["connection_id"]]})
+    except ValueError as exc:
+        assert "verified" in str(exc)
+    else:
+        raise AssertionError("unverified connections must not be published to a Skill")
 
 
 def test_probe_requires_and_then_saves_host_key(monkeypatch, tmp_path):
@@ -133,9 +164,8 @@ def test_health_findings_are_evidence_backed_and_keep_human_state(monkeypatch, t
     assert persisted["occurrences"] == 2
     assert service.overview("default")["health"]["active_findings"] == 1
 
-    tool_result = assurance(SimpleNamespace(workspace_id="default", arguments={"action": "list_findings", "severity": "high"}))
-    assert tool_result["ok"] is True
-    assert tool_result["findings"][0]["finding_id"] == finding["finding_id"]
+    filtered = service.list_findings("default", severity="high")
+    assert filtered[0]["finding_id"] == finding["finding_id"]
 
 
 def test_write_commands_are_rejected():
@@ -175,48 +205,27 @@ def test_read_only_command_limit_is_shared_and_enforced():
         raise AssertionError("command count above the shared limit must fail")
 
 
-def test_assets_write_requires_explicit_action_and_non_empty_asset(monkeypatch, tmp_path):
+def test_device_and_skill_catalog_use_current_entities(monkeypatch, tmp_path):
     _setup(monkeypatch, tmp_path)
-    invocation = SimpleNamespace(workspace_id="default", arguments={"action": "save", "asset": {}})
-    assert assets_write(invocation) == {
-        "ok": False,
-        "error": "non-empty asset object is required for save",
-    }
-
-    invalid = SimpleNamespace(workspace_id="default", arguments={"action": "list", "asset": {"name": "ignored"}})
-    assert assets_write(invalid)["error"] == "unsupported action; expected save or delete"
-
-    saved = assets_write(SimpleNamespace(workspace_id="default", arguments={
-        "action": "save",
-        "asset": {"name": "R1", "host": "10.0.0.8", "username": "ops", "password": "secret"},
-    }))
-    assert saved["ok"] is True
-    assert "action" not in service.get_asset("default", saved["asset"]["asset_id"], include_secret=True)
-
-
-def test_asset_list_publishes_ids_for_direct_inspection_binding(monkeypatch, tmp_path):
-    _setup(monkeypatch, tmp_path)
-    first = service.save_asset("default", {
-        "name": "R1", "host": "10.0.0.1", "username": "ops", "password": "secret",
-    })
-    second = service.save_asset("default", {
-        "name": "R2", "host": "10.0.0.2", "username": "ops", "password": "secret",
-    })
-    result = assets_read(SimpleNamespace(workspace_id="default", arguments={}))
-
-    assert result["ok"] is True
-    assert set(result["asset_ids"]) == {first["asset_id"], second["asset_id"]}
+    first = service.save_device("default", {"name": "R1", "host": "10.0.0.1"})
+    second = service.save_device("default", {"name": "R2", "host": "10.0.0.2"})
+    result = devices_read(SimpleNamespace(workspace_id="default", arguments={}))
+    assert {item["device_id"] for item in result["devices"]} == {first["device_id"], second["device_id"]}
+    monkeypatch.setattr(service, "get_connection", lambda *_args, **_kwargs: {"connection_id": "connection_1", "device_id": first["device_id"], "verified": True})
+    skill = service.save_skill("default", {"name": "核心设备", "device_ids": [first["device_id"]], "connection_ids": ["connection_1"]})
+    listed = skills_read(SimpleNamespace(workspace_id="default", arguments={}, skill=None))
+    assert listed["skills"][0]["skill_id"] == skill["skill_id"]
 
 
 def test_network_reads_report_missing_records_as_failures(monkeypatch, tmp_path):
     _setup(monkeypatch, tmp_path)
-    missing_asset = assets_read(SimpleNamespace(
-        workspace_id="default", arguments={"asset_id": "asset_missing"},
+    missing_asset = devices_read(SimpleNamespace(
+        workspace_id="default", arguments={"device_id": "device_missing"},
     ))
     missing_task = inspection(SimpleNamespace(
         workspace_id="default", arguments={"action": "get", "task_id": "inspection_missing"},
     ))
-    assert missing_asset == {"ok": False, "error": "asset_not_found", "asset_id": "asset_missing"}
+    assert missing_asset == {"ok": False, "error": "device_not_found", "device_id": "device_missing"}
     assert missing_task == {"ok": False, "error": "inspection_not_found", "task_id": "inspection_missing"}
 
 
@@ -230,7 +239,7 @@ def test_device_manage_is_registered_as_network_operations_extension_tool():
     assert spec.risk_level == "medium"
     assert spec.permission_action == "network"
     properties = set((spec.input_schema or {}).get("properties") or {})
-    for required in {"action", "asset_id", "host", "commands", "accept_host_key"}:
+    for required in {"action", "connection_id", "commands"}:
         assert required in properties, required
 
 
@@ -246,7 +255,7 @@ def test_extension_tools_are_registered_with_runtime_risk_contracts():
 def test_read_only_extension_tools_get_safe_retry_contracts():
     from core.runtime_engine.contracts import get_retry_contract
 
-    contract = get_retry_contract("network.operations.assets_read", {})
+    contract = get_retry_contract("network.operations.devices_read", {})
     assert contract is not None
     assert contract.idempotent is True
     assert contract.max_retries >= 1
@@ -274,7 +283,6 @@ def test_network_extension_llm_descriptions_expose_actions_and_arguments():
     registry = _build_ssot_runtime_tool_registry([
         "network.operations.device.manage",
         "network.operations.inspection",
-        "network.operations.baseline",
     ])
     descriptions = {
         tool["function"]["name"]: tool["function"]["description"]
@@ -284,46 +292,148 @@ def test_network_extension_llm_descriptions_expose_actions_and_arguments():
     device = descriptions["network__operations__device__manage"]
     assert "probe=network" in device
     assert "read=network" in device
-    assert "asset_id" in device
-    assert "host" in device
+    assert "connection_id" in device
     assert "commands" in device
 
     inspection = descriptions["network__operations__inspection"]
     assert "run=network" in inspection
     assert "get=network" in inspection
     assert "cancel=network" in inspection
-    assert "asset_ids" in inspection
+    assert "connection_ids" in inspection
     assert "task_id" in inspection
 
-    baseline = descriptions["network__operations__baseline"]
-    assert "create=write" in baseline
-    assert "confirm=write" in baseline
-    assert "diff=read" in baseline
-    assert "baseline_id" in baseline
 
 
-def test_extension_routes_cover_asset_and_inspection_flow(monkeypatch, tmp_path):
+def test_workbench_catalog_only_exposes_skills_with_verified_resources(monkeypatch, tmp_path):
+    _setup(monkeypatch, tmp_path)
+    device = service.save_device("default", {"name": "R1", "host": "10.0.0.1"})
+    monkeypatch.setattr(service, "probe_target", lambda *_args, **_kwargs: {"ok": True, "duration_ms": 1})
+    connection = service.save_connection("default", {"device_id": device["device_id"], "protocol": "telnet", "auth_method": "none"})
+    skill = service.save_skill("default", {"name": "核心巡检", "device_ids": [device["device_id"]], "connection_ids": [connection["connection_id"]]})
+    catalog = service.workbench_skill_catalog("default")
+    assert catalog == [{
+        "skill_id": skill["skill_id"], "name": "核心巡检", "description": "",
+        "resources": [{"resource_id": device["device_id"], "name": "R1", "description": "10.0.0.1", "kind": "network_device"}],
+        "default_resource_ids": [device["device_id"]], "selection_mode": "multiple",
+    }]
+
+
+def test_connection_inspection_keeps_connection_identity_end_to_end(monkeypatch, tmp_path):
+    _setup(monkeypatch, tmp_path)
+    device = service.save_device("default", {"name": "R1", "host": "10.0.0.1", "vendor": "h3c"})
+    monkeypatch.setattr(service, "probe_target", lambda *_args, **_kwargs: {"ok": True, "duration_ms": 1})
+    connection = service.save_connection(
+        "default",
+        {"device_id": device["device_id"], "protocol": "telnet", "auth_method": "none"},
+    )
+    task, targets, script = service._new_connection_inspection_task(
+        "default", [connection["connection_id"]], ["display version"], "",
+    )
+    serialized = json.dumps(task, ensure_ascii=False)
+    assert '"asset_id"' not in serialized
+    assert '"asset_ids"' not in serialized
+    assert task["target_kind"] == "connection"
+    assert task["connection_ids"] == [connection["connection_id"]]
+    assert task["device_ids"] == [device["device_id"]]
+
+    service._store("default").save("inspections", task["task_id"], task)
+    service._execute_inspection(
+        "default", task["task_id"], targets, ["display version"],
+        lambda _target, commands: {command: "ok" for command in commands},
+        service.threading.Event(), script,
+    )
+    evidence = service.inspection_evidence_summary("default", task["task_id"])
+    assert evidence["devices"][0]["connection_id"] == connection["connection_id"]
+    assert evidence["devices"][0]["device_id"] == device["device_id"]
+    assert "asset_id" not in evidence["devices"][0]
+
+
+def test_hard_deleting_last_connection_removes_depleted_skill(monkeypatch, tmp_path):
+    _setup(monkeypatch, tmp_path)
+    device = service.save_device("default", {"name": "R1", "host": "10.0.0.1"})
+    monkeypatch.setattr(service, "probe_target", lambda *_args, **_kwargs: {"ok": True, "duration_ms": 1})
+    connection = service.save_connection("default", {"device_id": device["device_id"], "protocol": "telnet", "auth_method": "none"})
+    skill = service.save_skill("default", {"name": "临时巡检", "device_ids": [device["device_id"]], "connection_ids": [connection["connection_id"]]})
+    assert service.delete_connection("default", connection["connection_id"]) is True
+    assert service.get_skill("default", skill["skill_id"]) is None
+
+
+def test_skill_tool_allowlist_is_validated_and_enforced(monkeypatch, tmp_path):
+    _setup(monkeypatch, tmp_path)
+    device = service.save_device("default", {"name": "R1", "host": "10.0.0.1"})
+    monkeypatch.setattr(service, "probe_target", lambda *_args, **_kwargs: {"ok": True, "duration_ms": 1})
+    connection = service.save_connection("default", {"device_id": device["device_id"], "protocol": "telnet", "auth_method": "none"})
+    skill = service.save_skill("default", {
+        "name": "仅巡检", "device_ids": [device["device_id"]],
+        "connection_ids": [connection["connection_id"]],
+        "allowed_tool_ids": ["network.operations.inspection"],
+    })
+    blocked = device_manage(SimpleNamespace(workspace_id="default", skill=skill["skill_id"], arguments={"action": "probe", "connection_id": connection["connection_id"]}))
+    assert blocked == {"ok": False, "error": "tool_not_allowed_by_skill"}
+
+
+def test_switching_connection_auth_removes_obsolete_secret_refs(monkeypatch, tmp_path):
+    _setup(monkeypatch, tmp_path)
+    device = service.save_device("default", {"name": "R1", "host": "10.0.0.1"})
+    monkeypatch.setattr(service, "probe_target", lambda *_args, **_kwargs: {"ok": True, "duration_ms": 1})
+    connection = service.save_connection("default", {
+        "device_id": device["device_id"], "protocol": "telnet", "auth_method": "password",
+        "username": "ops", "password": "secret-value",
+    })
+    stored = service.get_connection("default", connection["connection_id"], include_secret=True)
+    assert stored and stored["password_ref"]
+    service.save_connection("default", {
+        "connection_id": connection["connection_id"], "device_id": device["device_id"],
+        "protocol": "telnet", "auth_method": "none",
+    })
+    updated = service.get_connection("default", connection["connection_id"], include_secret=True)
+    assert updated and updated["password_ref"] == ""
+
+
+def test_device_identity_change_invalidates_connections_and_connection_cannot_move(monkeypatch, tmp_path):
+    _setup(monkeypatch, tmp_path)
+    first = service.save_device("default", {"name": "R1", "host": "10.0.0.1", "vendor": "h3c"})
+    second = service.save_device("default", {"name": "R2", "host": "10.0.0.2", "vendor": "h3c"})
+    monkeypatch.setattr(service, "probe_target", lambda *_args, **_kwargs: {"ok": True, "duration_ms": 1})
+    connection = service.save_connection(
+        "default", {"device_id": first["device_id"], "protocol": "telnet", "auth_method": "none"},
+    )
+    assert connection["verified"] is True
+
+    service.save_device("default", {**first, "host": "10.0.0.9"})
+    invalidated = service.get_connection("default", connection["connection_id"])
+    assert invalidated and invalidated["verified"] is False
+    assert invalidated["last_error"] == "device_identity_changed_retest_required"
+
+    try:
+        service.save_connection("default", {
+            "connection_id": connection["connection_id"], "device_id": second["device_id"],
+            "protocol": "telnet", "auth_method": "none",
+        })
+    except ValueError as exc:
+        assert str(exc) == "connection_device_is_immutable"
+    else:
+        raise AssertionError("a connection identity must remain bound to its device")
+
+
+def test_extension_routes_cover_device_connection_and_skill_flow(monkeypatch, tmp_path):
     _setup(monkeypatch, tmp_path)
     monkeypatch.setenv("LZCORE_LOGIN_ENABLED", "false")
     from extensions.runtime import reset_extension_cache_for_tests
     reset_extension_cache_for_tests()
     from backend.main import create_app
     client = create_app().test_client()
-    created = client.post("/api/extensions/network.operations/assets", json={
-        "workspace_id": "default", "name": "R1", "host": "10.0.0.2",
-        "username": "ops", "password": "secret-value", "vendor": "huawei",
+    created = client.post("/api/extensions/network.operations/devices", json={
+        "workspace_id": "default", "name": "R1", "host": "10.0.0.2", "vendor": "huawei",
     })
     assert created.status_code == 201
-    listed = client.get("/api/extensions/network.operations/assets?workspace_id=default")
+    listed = client.get("/api/extensions/network.operations/devices?workspace_id=default")
     assert listed.status_code == 200
-    assert listed.get_json()["assets"][0]["name"] == "R1"
-
-    overview = client.get("/api/extensions/network.operations/overview?workspace_id=default")
-    findings = client.get("/api/extensions/network.operations/findings?workspace_id=default")
-    assert overview.status_code == 200
-    assert overview.get_json()["health"]["registered_assets"] == 1
-    assert findings.status_code == 200
-    assert findings.get_json()["findings"] == []
+    assert listed.get_json()["devices"][0]["name"] == "R1"
+    skills = client.get("/api/extensions/network.operations/skills?workspace_id=default")
+    assert skills.status_code == 200
+    assert skills.get_json()["skills"] == []
+    assert client.get("/api/extensions/network.operations/devices/device_missing").status_code == 400
 
 
 def test_inspection_scripts_are_validated_and_snapshotted(monkeypatch, tmp_path):
@@ -409,7 +519,7 @@ def test_inspection_evidence_summary_and_baseline_diff(monkeypatch, tmp_path):
 
 def test_user_inspection_uses_durable_job_worker_and_cancel(monkeypatch, tmp_path):
     _setup(monkeypatch, tmp_path)
-    monkeypatch.setattr(service, "collect_ssh", lambda _asset, commands: {command: "ok" for command in commands})
+    monkeypatch.setattr(service, "collect_connection", lambda _asset, commands: {command: "ok" for command in commands})
     script = service.save_inspection_script("default", {
         "name": "持久 Worker 巡检", "vendors": ["h3c"], "commands": ["display version"],
     })
@@ -471,7 +581,7 @@ def test_durable_default_and_inline_command_plans_are_replayable(monkeypatch, tm
     asset = service.save_asset("default", {
         "name": "Core-Plan", "host": "10.0.0.21", "username": "ops", "password": "secret", "vendor": "h3c",
     })
-    monkeypatch.setattr(service, "collect_ssh", lambda _asset, commands: {command: "ok" for command in commands})
+    monkeypatch.setattr(service, "collect_connection", lambda _asset, commands: {command: "ok" for command in commands})
     from jobs.runner import run_job
 
     default_task = service.enqueue_inspection("default", [asset["asset_id"]])
@@ -493,7 +603,7 @@ def test_all_device_failures_fail_both_inspection_and_job(monkeypatch, tmp_path)
     asset = service.save_asset("default", {
         "name": "Core-Fail", "host": "10.0.0.22", "username": "ops", "password": "secret", "vendor": "h3c",
     })
-    monkeypatch.setattr(service, "collect_ssh", lambda _asset, _commands: (_ for _ in ()).throw(RuntimeError("auth failed")))
+    monkeypatch.setattr(service, "collect_connection", lambda _asset, _commands: (_ for _ in ()).throw(RuntimeError("auth failed")))
     task = service.enqueue_inspection("default", [asset["asset_id"]])
     from jobs.runner import run_job
     from jobs.store import get_job
@@ -541,11 +651,11 @@ def test_script_inspection_retry_uses_original_snapshot_after_script_edit(monkey
 
 def test_llm_inspection_run_uses_durable_queue_and_exposes_retry(monkeypatch):
     captured = {}
-    def fake_enqueue(workspace_id, asset_ids, commands, script_id="", *, created_by="user"):
-        captured.update({"workspace_id": workspace_id, "asset_ids": asset_ids, "commands": commands, "script_id": script_id, "created_by": created_by})
+    def fake_enqueue(workspace_id, connection_ids, commands, script_id="", *, created_by="user"):
+        captured.update({"workspace_id": workspace_id, "connection_ids": connection_ids, "commands": commands, "script_id": script_id, "created_by": created_by})
         return {"task_id": "inspection_durable", "status": "queued"}
-    monkeypatch.setattr(service, "enqueue_inspection", fake_enqueue)
-    result = inspection(SimpleNamespace(workspace_id="default", arguments={"action": "run", "asset_ids": ["asset_1"]}))
+    monkeypatch.setattr(service, "enqueue_connection_inspection", fake_enqueue)
+    result = inspection(SimpleNamespace(workspace_id="default", arguments={"action": "run", "connection_ids": ["connection_1"]}))
     assert result["task"]["status"] == "queued"
     assert captured["created_by"] == "llm"
 

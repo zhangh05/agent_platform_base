@@ -20,7 +20,7 @@ test("builds navigation from an installed bundled extension", async () => {
       capabilities: ["network_inspection"],
       tools: ["network.operations.summarize"],
       frontend_routes: [{
-        path: "/extensions/network.operations/overview",
+        path: "/extensions/network.operations/manage",
         module: "frontend/NetworkOperations.tsx",
         label: "网络巡检",
       }],
@@ -42,14 +42,14 @@ test("registers the bundled network operations route", async () => {
       capabilities: ["network_inspection"],
       tools: ["network.operations.inspection"],
       frontend_routes: [{
-        path: "/extensions/network.operations/overview",
+        path: "/extensions/network.operations/manage",
         module: "frontend/NetworkOperations.tsx",
         label: "网络巡检",
       }],
     }],
   });
   render(<ExtensionRegistryProvider><Probe /></ExtensionRegistryProvider>);
-  await waitFor(() => expect(screen.getByTestId("extension-routes")).toHaveTextContent("/extensions/network.operations/overview"));
+  await waitFor(() => expect(screen.getByTestId("extension-routes")).toHaveTextContent("/extensions/network.operations/manage"));
 });
 
 test("does not expose routes from a disabled extension", async () => {
@@ -65,7 +65,7 @@ test("does not expose routes from a disabled extension", async () => {
       tools: ["network.operations.summarize"],
       lifecycle: { enabled: false, status: "disabled", failure_count: 0, last_error: "", updated_at: "" },
       frontend_routes: [{
-        path: "/extensions/network.operations/overview",
+        path: "/extensions/network.operations/manage",
         module: "frontend/NetworkOperations.tsx",
         label: "网络巡检",
       }],

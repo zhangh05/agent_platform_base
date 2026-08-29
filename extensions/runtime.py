@@ -21,6 +21,8 @@ class LoadedExtension:
     register_routes: Callable[[Any], None] | None = None
     migrations: tuple[tuple[int, Callable], ...] = ()
     workflow_templates: tuple[dict[str, Any], ...] = ()
+    workbench_skill_catalog: Callable[[str], list[dict[str, Any]]] | None = None
+    workbench_context_resolver: Callable[[str, dict[str, Any]], dict[str, Any]] | None = None
 
 
 _CACHE: tuple[LoadedExtension, ...] | None = None
@@ -332,6 +334,12 @@ def load_extensions(*, registry: ExtensionRegistry | None = None, refresh: bool 
         route_registrar = contribution.get("register_routes")
         if route_registrar is not None and not callable(route_registrar):
             raise ExtensionValidationError("register_routes contribution must be callable")
+        context_resolver = contribution.get("workbench_context_resolver")
+        if context_resolver is not None and not callable(context_resolver):
+            raise ExtensionValidationError("workbench_context_resolver contribution must be callable")
+        skill_catalog = contribution.get("workbench_skill_catalog")
+        if skill_catalog is not None and not callable(skill_catalog):
+            raise ExtensionValidationError("workbench_skill_catalog contribution must be callable")
         loaded.append(LoadedExtension(
             manifest=manifest,
             root=root,
@@ -339,6 +347,8 @@ def load_extensions(*, registry: ExtensionRegistry | None = None, refresh: bool 
             register_routes=route_registrar,
             migrations=tuple(contribution.get("migrations") or ()),
             workflow_templates=_build_workflow_templates(manifest, contribution),
+            workbench_skill_catalog=skill_catalog,
+            workbench_context_resolver=context_resolver,
         ))
     result = tuple(loaded)
     # Validate the aggregate extension surface while loading, so a deployment
@@ -374,6 +384,115 @@ def load_extensions(*, registry: ExtensionRegistry | None = None, refresh: bool 
     if use_default_registry and not refresh:
         _CACHE = result
     return result
+
+
+def resolve_workbench_context(workspace_id: str, selection: dict[str, Any]) -> dict[str, Any]:
+    """Resolve an untrusted UI selection through its owning extension."""
+    extension_id = str(selection.get("extension_id") or "").strip()
+    if not extension_id:
+        raise ValueError("workbench_extension_id_required")
+    extension = next((item for item in load_extensions() if item.manifest.extension_id == extension_id), None)
+    if not extension or not extension.workbench_context_resolver:
+        raise ValueError("workbench_context_not_supported")
+    resolved = extension.workbench_context_resolver(workspace_id, dict(selection))
+    if not isinstance(resolved, dict):
+        raise ValueError("invalid_workbench_context")
+    return {**resolved, "extension_id": extension_id}
+
+
+def apply_workbench_tool_boundary(
+    registry: dict[str, dict[str, Any]],
+    context: dict[str, Any] | None,
+) -> dict[str, dict[str, Any]]:
+    """Hide unselected tools owned by the selected Skill's extension.
+
+    A Skill narrows only its owning extension. General platform tools remain
+    available so the model can still combine files, knowledge, Python and
+    other capabilities when they help complete the user's goal.
+    """
+    if not isinstance(context, dict):
+        return registry
+    extension_id = str(context.get("extension_id") or "").strip()
+    if not extension_id:
+        raise ValueError("workbench_context_extension_id_required")
+    extension = next((item for item in load_extensions() if item.manifest.extension_id == extension_id), None)
+    if not extension:
+        raise ValueError("workbench_extension_not_available")
+    owned = set(extension.manifest.tools)
+    raw_allowed = context.get("allowed_tool_ids")
+    if not isinstance(raw_allowed, list):
+        raise ValueError("workbench_allowed_tools_invalid")
+    allowed = {str(item).strip() for item in raw_allowed if str(item).strip()}
+    if not allowed or not allowed.issubset(owned):
+        raise ValueError("workbench_allowed_tools_invalid")
+    return {
+        tool_id: definition
+        for tool_id, definition in registry.items()
+        if tool_id not in owned or tool_id in allowed
+    }
+
+
+def list_workbench_skills(workspace_id: str) -> list[dict[str, Any]]:
+    """Aggregate extension-owned Skills without exposing extension storage APIs."""
+    if not str(workspace_id or "").strip():
+        raise ValueError("workspace_id is required")
+    catalog: list[dict[str, Any]] = []
+    seen: set[tuple[str, str]] = set()
+    for extension in load_extensions():
+        provider = extension.workbench_skill_catalog
+        if provider is None:
+            continue
+        entries = provider(workspace_id)
+        if not isinstance(entries, list):
+            raise ExtensionValidationError(
+                f"workbench_skill_catalog must return a list: {extension.manifest.extension_id}"
+            )
+        if len(entries) > 500:
+            raise ExtensionValidationError("workbench skill catalog exceeds 500 entries")
+        for raw in entries:
+            if not isinstance(raw, dict):
+                raise ExtensionValidationError("workbench skill catalog entries must be objects")
+            skill_id = str(raw.get("skill_id") or "").strip()
+            name = str(raw.get("name") or "").strip()
+            if not skill_id or not name:
+                raise ExtensionValidationError("workbench skill catalog entry requires skill_id and name")
+            key = (extension.manifest.extension_id, skill_id)
+            if key in seen:
+                raise ExtensionValidationError(f"duplicate workbench skill: {key}")
+            raw_resources = raw.get("resources") or []
+            if not isinstance(raw_resources, list) or len(raw_resources) > 200:
+                raise ExtensionValidationError("workbench skill resources must be a bounded list")
+            resources: list[dict[str, str]] = []
+            resource_ids: set[str] = set()
+            for resource in raw_resources:
+                if not isinstance(resource, dict):
+                    raise ExtensionValidationError("workbench skill resources must be objects")
+                resource_id = str(resource.get("resource_id") or "").strip()
+                resource_name = str(resource.get("name") or "").strip()
+                if not resource_id or not resource_name or resource_id in resource_ids:
+                    raise ExtensionValidationError("workbench skill resource ids and names must be unique and non-empty")
+                resource_ids.add(resource_id)
+                resources.append({
+                    "resource_id": resource_id,
+                    "name": resource_name[:120],
+                    "description": str(resource.get("description") or "")[:300],
+                    "kind": str(resource.get("kind") or "resource")[:80],
+                })
+            defaults = [
+                str(item).strip() for item in (raw.get("default_resource_ids") or [])
+                if str(item).strip() in resource_ids
+            ]
+            seen.add(key)
+            catalog.append({
+                "extension_id": extension.manifest.extension_id,
+                "skill_id": skill_id,
+                "name": name[:120],
+                "description": str(raw.get("description") or "")[:500],
+                "resources": resources,
+                "default_resource_ids": list(dict.fromkeys(defaults)),
+                "selection_mode": "single" if raw.get("selection_mode") == "single" else "multiple",
+            })
+    return catalog
 
 
 def _manifest_root(registry: ExtensionRegistry, extension_id: str) -> Path:

@@ -4,7 +4,6 @@ import {
   IconBook,
   IconBrain,
   IconChat,
-  IconCheck,
   IconHistory,
   IconLayers,
   IconProbe,
@@ -19,8 +18,6 @@ export interface NavItem {
   adminOnly?: boolean;
   /** Render this route from a compact utility menu instead of the main nav. */
   utility?: "settings";
-  /** Keep low-frequency governance and build features out of the default nav. */
-  advanced?: boolean;
 }
 
 export interface NavGroup {
@@ -36,25 +33,15 @@ export interface NavGroup {
 export const NAV_ITEMS: NavItem[] = [
   { to: "/workbench", label: "工作台", testid: "nav-workbench", Icon: IconChat },
   { to: "/runs", label: "任务记录", testid: "nav-runs", Icon: IconHistory },
-  { to: "/reviews", label: "结果审核", testid: "nav-reviews", Icon: IconCheck, advanced: true },
   { to: "/capabilities", label: "内置工具", testid: "nav-capabilities", Icon: IconLayers },
   { to: "/knowledge", label: "知识库", testid: "nav-knowledge", Icon: IconBook },
   { to: "/data", label: "文件与数据", testid: "nav-data", Icon: IconBox },
   { to: "/memory", label: "记忆", testid: "nav-memory", Icon: IconBrain },
   { to: "/diagnostics", label: "系统状态", testid: "nav-diagnostics", Icon: IconProbe },
   { to: "/settings", label: "设置", testid: "nav-settings", Icon: IconSettings, utility: "settings" },
-  { to: "/extensions", label: "扩展管理", testid: "nav-extensions", Icon: IconLayers, advanced: true },
-  { to: "/workflows", label: "流程编排", testid: "nav-workflows", Icon: IconLayers, advanced: true },
   { to: "/users", label: "用户与权限", testid: "nav-users", Icon: IconSettings, adminOnly: true, utility: "settings" },
 ];
 
-/** Page-level entry for the low-frequency governance and build surface. */
-export const ADVANCED_HOME_NAV_ITEM: NavItem = {
-  to: "/advanced",
-  label: "高级",
-  testid: "nav-advanced",
-  Icon: IconLayers,
-};
 
 const GROUP_META: Omit<NavGroup, "items">[] = [
   { id: "workbench", label: "工作台", description: "开始对话、上传材料、获取结果", to: "/workbench", testid: "nav-group-workbench", Icon: IconChat },
@@ -68,13 +55,10 @@ const GROUP_BY_PATH: Record<string, NavGroup["id"]> = {
   "/workbench": "workbench",
   "/runs": "tasks",
   "/audit": "tasks",
-  "/reviews": "tasks",
   "/data": "materials",
   "/knowledge": "materials",
   "/memory": "materials",
   "/capabilities": "capabilities",
-  "/workflows": "capabilities",
-  "/extensions": "capabilities",
   "/diagnostics": "system",
   "/settings": "system",
   "/users": "system",

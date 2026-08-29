@@ -92,6 +92,10 @@ class AgentApp:
                 metadata = {}
             metadata = dict(metadata)
             metadata.setdefault("turn_serialization", "per_session")
+            selection = metadata.pop("workbench_selection", None)
+            if selection and "workbench_context" not in metadata:
+                from extensions.runtime import resolve_workbench_context
+                metadata["workbench_context"] = resolve_workbench_context(workspace_id, selection)
 
             op = AgentOp.user_message(
                 user_input=user_input,

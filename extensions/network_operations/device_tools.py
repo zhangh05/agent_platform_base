@@ -50,6 +50,7 @@ class DeviceCredential:
 class DeviceTarget:
     host: str
     port: int = 22
+    protocol: str = "ssh"
     vendor: str = "generic"
     name: str = ""
     expected_fingerprint: str = ""
@@ -153,6 +154,11 @@ def probe_target(
     read: bool = False,
     timeout: int = 15,
 ) -> dict[str, Any]:
+    protocol = str(target.protocol or "ssh").strip().lower()
+    if protocol == "telnet":
+        return _probe_telnet(target, commands=commands, read=read, timeout=timeout)
+    if protocol != "ssh":
+        return _result(False, [_stage("target", "failed")], time.monotonic(), error="unsupported_protocol")
     import paramiko
 
     stages: list[dict[str, Any]] = []
@@ -160,7 +166,7 @@ def probe_target(
     sock: socket.socket | None = None
     transport: Any = None
     try:
-        stages.append(_stage("target", "ok", host=target.host, port=target.port, vendor=target.vendor))
+        stages.append(_stage("target", "ok", host=target.host, port=target.port, protocol="ssh", vendor=target.vendor))
         sock = socket.create_connection((target.host, target.port), timeout=timeout)
         stages.append(_stage("tcp", "ok"))
 
@@ -226,3 +232,112 @@ def _result(ok: bool, stages: list[dict[str, Any]], started: float, **extra: Any
         "duration_ms": int((time.monotonic() - started) * 1000),
         **{k: v for k, v in extra.items() if v not in ("", None)},
     }
+
+
+_TELNET_IAC = 255
+_TELNET_DO = 253
+_TELNET_DONT = 254
+_TELNET_WILL = 251
+_TELNET_WONT = 252
+_LOGIN_PROMPT = re.compile(r"(?:login|username|user\s*name)\s*[:：]\s*$", re.IGNORECASE)
+_PASSWORD_PROMPT = re.compile(r"password\s*[:：]\s*$", re.IGNORECASE)
+_DEVICE_PROMPT = re.compile(r"(?:^|\r?\n)[^\r\n]{0,120}[>#\]]\s*$")
+
+
+def _telnet_negotiate(sock: socket.socket, data: bytes) -> bytes:
+    """Strip Telnet negotiation and reject optional features safely."""
+    clean = bytearray()
+    index = 0
+    while index < len(data):
+        if data[index] != _TELNET_IAC:
+            clean.append(data[index])
+            index += 1
+            continue
+        if index + 1 >= len(data):
+            break
+        command = data[index + 1]
+        if command == _TELNET_IAC:
+            clean.append(_TELNET_IAC)
+            index += 2
+            continue
+        if command in {_TELNET_DO, _TELNET_DONT, _TELNET_WILL, _TELNET_WONT} and index + 2 < len(data):
+            option = data[index + 2]
+            reply = _TELNET_WONT if command in {_TELNET_DO, _TELNET_DONT} else _TELNET_DONT
+            sock.sendall(bytes((_TELNET_IAC, reply, option)))
+            index += 3
+            continue
+        index += 2
+    return bytes(clean)
+
+
+def _telnet_read(sock: socket.socket, *, timeout: float, stop_on_prompt: bool = True) -> str:
+    deadline = time.monotonic() + timeout
+    chunks: list[bytes] = []
+    while time.monotonic() < deadline:
+        try:
+            data = sock.recv(65535)
+        except socket.timeout:
+            break
+        if not data:
+            break
+        chunks.append(_telnet_negotiate(sock, data))
+        text = b"".join(chunks).decode("utf-8", errors="replace")[-200_000:]
+        if stop_on_prompt and (_LOGIN_PROMPT.search(text) or _PASSWORD_PROMPT.search(text) or _DEVICE_PROMPT.search(text)):
+            break
+    return b"".join(chunks).decode("utf-8", errors="replace")[-200_000:]
+
+
+def _probe_telnet(
+    target: DeviceTarget,
+    *,
+    commands: list[str] | None,
+    read: bool,
+    timeout: int,
+) -> dict[str, Any]:
+    stages: list[dict[str, Any]] = []
+    started = time.monotonic()
+    sock: socket.socket | None = None
+    try:
+        stages.append(_stage("target", "ok", host=target.host, port=target.port, protocol="telnet", vendor=target.vendor))
+        sock = socket.create_connection((target.host, target.port), timeout=timeout)
+        sock.settimeout(min(float(timeout), 2.0))
+        stages.append(_stage("tcp", "ok"))
+        credential = target.credential or DeviceCredential(auth_method="none")
+        banner = _telnet_read(sock, timeout=min(timeout, 4))
+        if _LOGIN_PROMPT.search(banner):
+            if not credential.username:
+                return _result(False, stages + [_stage("auth", "failed")], started, error="username_required_by_device")
+            sock.sendall((credential.username + "\r\n").encode())
+            banner += _telnet_read(sock, timeout=min(timeout, 4))
+        if _PASSWORD_PROMPT.search(banner):
+            if not credential.password:
+                return _result(False, stages + [_stage("auth", "failed")], started, error="password_required_by_device")
+            sock.sendall((credential.password + "\r\n").encode())
+            banner += _telnet_read(sock, timeout=min(timeout, 4))
+        # Telnet devices may expose a prompt immediately and require no login.
+        if not _DEVICE_PROMPT.search(banner):
+            sock.sendall(b"\r\n")
+            banner += _telnet_read(sock, timeout=min(timeout, 3))
+        if not _DEVICE_PROMPT.search(banner):
+            return _result(False, stages + [_stage("prompt", "failed")], started, error="device_prompt_not_detected")
+        stages.append(_stage("auth", "ok", method="none" if not credential.username and not credential.password else "password"))
+        if not read:
+            stages.append(_stage("prompt", "ok"))
+            return _result(True, stages, started, banner=banner[-2000:])
+        safe_commands = normalize_read_only_commands(commands, target.vendor)
+        pager = PAGING_COMMANDS.get(target.vendor.lower())
+        if pager:
+            sock.sendall((pager + "\r\n").encode())
+            _telnet_read(sock, timeout=min(timeout, 3))
+        output: dict[str, str] = {}
+        for command in safe_commands:
+            sock.sendall((command + "\r\n").encode())
+            output[command] = _telnet_read(sock, timeout=timeout)
+        stages.extend((_stage("prompt", "ok"), _stage("read", "ok", command_count=len(output))))
+        return _result(True, stages, started, output=output)
+    except Exception as exc:
+        stages.append(_stage("telnet", "failed"))
+        return _result(False, stages, started, error=str(exc)[:300])
+    finally:
+        if sock:
+            sock.close()

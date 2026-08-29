@@ -4,10 +4,22 @@ from flask import jsonify, request
 from pathlib import Path
 import tempfile
 
-from extensions.runtime import public_extension_catalog, register_extension_routes
+from extensions.manifest import ExtensionValidationError
+from extensions.runtime import list_workbench_skills, public_extension_catalog, register_extension_routes
 
 
 def register_extensions(app) -> None:
+    @app.route("/api/workbench/skills")
+    def workbench_skills():
+        workspace_id = str(request.args.get("workspace_id") or "").strip()
+        if not workspace_id:
+            return jsonify({"ok": False, "error": "workspace_id is required"}), 400
+        try:
+            skills = list_workbench_skills(workspace_id)
+        except (ValueError, ExtensionValidationError) as exc:
+            return jsonify({"ok": False, "error": str(exc)}), 400
+        return jsonify({"ok": True, "skills": skills, "count": len(skills)})
+
     @app.route("/api/extensions")
     def list_extensions():
         catalog = public_extension_catalog()

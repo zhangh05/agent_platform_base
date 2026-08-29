@@ -112,6 +112,7 @@ class ToolInvocation:
     job_id: Optional[str] = None
     dry_run: bool = False
     requested_by: str = ""            # e.g. "module:example", "agent:admin"
+    skill: Optional[str] = None         # server-resolved workbench skill binding
     approval_id: Optional[str] = None  # Required for high-risk tools
     approval_run_id: Optional[str] = None  # Parent run bound to the approval
     # Process-local server callback; never supplied by JSON or persisted.

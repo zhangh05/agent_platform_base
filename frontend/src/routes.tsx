@@ -48,20 +48,8 @@ export const DataCenter = lazyWithPreload(() =>
 export const MemoryPage = lazyWithPreload(() =>
   import("./pages/MemoryPage/MemoryPage").then((m) => ({ default: m.MemoryPage })),
 );
-export const ReviewCenter = lazyWithPreload(() =>
-  import("./pages/ReviewCenter/ReviewCenter").then((m) => ({ default: m.ReviewCenter })),
-);
-export const ExtensionCenter = lazyWithPreload(() =>
-  import("./pages/ExtensionCenter/ExtensionCenter").then((m) => ({ default: m.ExtensionCenter })),
-);
-export const WorkflowStudio = lazyWithPreload(() =>
-  import("./pages/WorkflowStudio/WorkflowStudio").then((m) => ({ default: m.WorkflowStudio })),
-);
 export const UserManagement = lazyWithPreload(() =>
   import("./pages/UserManagement/UserManagement").then((m) => ({ default: m.UserManagement })),
-);
-export const AdvancedCenter = lazyWithPreload(() =>
-  import("./pages/AdvancedCenter/AdvancedCenter").then((m) => ({ default: m.AdvancedCenter })),
 );
 // Path → preload thunk. Keys match `NAV_ITEMS.to` plus the secondary routes.
 const PRELOAD: Record<string, () => PageModule> = {
@@ -73,11 +61,7 @@ const PRELOAD: Record<string, () => PageModule> = {
   "/diagnostics": Diagnostics.preload,
   "/settings": Settings.preload,
   "/runs": OperationsPage.preload,
-  "/reviews": ReviewCenter.preload,
-  "/extensions": ExtensionCenter.preload,
-  "/workflows": WorkflowStudio.preload,
   "/users": UserManagement.preload,
-  "/advanced": AdvancedCenter.preload,
 };
 
 const ROUTE_PATHS = Object.keys(PRELOAD);

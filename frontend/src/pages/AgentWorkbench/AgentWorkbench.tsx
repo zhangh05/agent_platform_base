@@ -1,5 +1,6 @@
 import React, { lazy, Suspense, useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo } from "react";
 import { jobsApi, sessionsApi, settingsApi } from "../../api";
+import { apiRequest } from "../../api/client";
 import { useSessionStore } from "../../stores/session";
 import { useWorkbenchStore, type ChatMsg } from "../../stores/workbench";
 import { useToastStore } from "../../stores/toast";
@@ -25,6 +26,16 @@ type ViewMode = "chat" | "timeline";
 interface WorkbenchAutoPrompt {
   prompt?: string;
   metadata?: Record<string, unknown>;
+}
+
+interface WorkbenchSkill {
+  extension_id: string;
+  skill_id: string;
+  name: string;
+  description: string;
+  resources: Array<{ resource_id: string; name: string; description: string; kind: string }>;
+  default_resource_ids: string[];
+  selection_mode: "single" | "multiple";
 }
 
 const EMPTY_CHAT_MESSAGES: ChatMsg[] = [];
@@ -60,6 +71,15 @@ function safeRemoveSession(key: string): void {
 
 export function TaskWorkbench() {
   const { currentWorkspaceId, currentSessionId } = useSessionStore();
+  const [workbenchSkills, setWorkbenchSkills] = useState<WorkbenchSkill[]>([]);
+  const [skillCatalogLoaded, setSkillCatalogLoaded] = useState(false);
+  const [selectedSkillKey, setSelectedSkillKey] = useState("");
+  const [selectedResourceIds, setSelectedResourceIds] = useState<string[]>([]);
+  const [selectionSessionId, setSelectionSessionId] = useState("");
+  const selectedSkill = useMemo(
+    () => workbenchSkills.find((item) => `${item.extension_id}:${item.skill_id}` === selectedSkillKey),
+    [selectedSkillKey, workbenchSkills],
+  );
   const sending = useWorkbenchStore((s) => s.sending);
   const lastUserInput = useWorkbenchStore((s) => s.lastUserInput);
   // Granular selector: only re-render when THIS session's messages change.
@@ -72,6 +92,45 @@ export function TaskWorkbench() {
   const switchSession = useWorkbenchStore((s) => s.switchSession);
   const mergeFromBackend = useWorkbenchStore((s) => s.mergeFromBackend);
   const approvalRefreshTimerRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    if (!currentWorkspaceId) return;
+    const params = { workspace_id: currentWorkspaceId, enabled: "1" };
+    setSkillCatalogLoaded(false);
+    apiRequest<{ skills: WorkbenchSkill[] }>({ method: "GET", url: "/workbench/skills", params })
+      .then((response) => setWorkbenchSkills(response.skills || []))
+      .catch(() => setWorkbenchSkills([]))
+      .finally(() => setSkillCatalogLoaded(true));
+  }, [currentWorkspaceId]);
+  useEffect(() => {
+    if (!currentSessionId) { setSelectedSkillKey(""); setSelectedResourceIds([]); setSelectionSessionId(""); return; }
+    const key = scopedLocalStorageKey(`workbench_skill:${currentSessionId}`);
+    try {
+      const saved = JSON.parse(localStorage.getItem(key) || "{}") as { skill_key?: string; resource_ids?: string[] };
+      setSelectedSkillKey(saved.skill_key || "");
+      setSelectedResourceIds(Array.isArray(saved.resource_ids) ? saved.resource_ids : []);
+      setSelectionSessionId(currentSessionId);
+    } catch { setSelectedSkillKey(""); setSelectedResourceIds([]); setSelectionSessionId(currentSessionId); }
+  }, [currentSessionId]);
+  useEffect(() => {
+    if (!currentSessionId || selectionSessionId !== currentSessionId) return;
+    const key = scopedLocalStorageKey(`workbench_skill:${currentSessionId}`);
+    try { localStorage.setItem(key, JSON.stringify({ skill_key: selectedSkillKey, resource_ids: selectedResourceIds })); } catch { /* noop */ }
+  }, [currentSessionId, selectedResourceIds, selectedSkillKey, selectionSessionId]);
+  useEffect(() => {
+    if (!skillCatalogLoaded || !selectedSkillKey) return;
+    if (!selectedSkill) {
+      setSelectedSkillKey("");
+      setSelectedResourceIds([]);
+      return;
+    }
+    const available = new Set(selectedSkill.resources.map((item) => item.resource_id));
+    const valid = selectedResourceIds.filter((item) => available.has(item));
+    const normalized = valid.length ? valid : selectedSkill.default_resource_ids;
+    if (normalized.length !== selectedResourceIds.length || normalized.some((item, index) => item !== selectedResourceIds[index])) {
+      setSelectedResourceIds(normalized);
+    }
+  }, [selectedResourceIds, selectedSkill, selectedSkillKey, skillCatalogLoaded]);
 
   useEffect(() => () => {
     if (approvalRefreshTimerRef.current !== null) {
@@ -295,7 +354,7 @@ export function TaskWorkbench() {
     safeRemoveLocal(draftKey);
   }, [draftKey]);
 
-  const { send: onSend, stop: stopGeneration } = useWorkbenchSend({
+  const { send: sendPrepared, stop: stopGeneration } = useWorkbenchSend({
     workspaceId: currentWorkspaceId,
     sessionId: currentSessionId,
     input,
@@ -310,6 +369,18 @@ export function TaskWorkbench() {
     toast,
     pendingAutoMetadataRef,
   });
+  const onSend = useCallback((text?: string, metadata?: Record<string, unknown>) => {
+    if (selectedSkill && selectedResourceIds.length === 0) {
+      toast({ kind: "warning", title: "尚未选择资源", body: "当前 Skill 至少需要选择一项可用资源后才能执行。" });
+      return Promise.resolve();
+    }
+    const workbenchSelection = selectedSkill ? {
+      extension_id: selectedSkill.extension_id,
+      skill_id: selectedSkill.skill_id,
+      resource_ids: selectedResourceIds,
+    } : undefined;
+    return sendPrepared(text, { ...(metadata || {}), ...(workbenchSelection ? { workbench_selection: workbenchSelection } : {}) });
+  }, [selectedResourceIds, selectedSkill, sendPrepared, toast]);
 
   const latestAssistant = [...visibleHistory].reverse().find((message) => message.role === "assistant");
   // The progress panel consumes stages, tool calls and terminal result, not the
@@ -599,6 +670,28 @@ export function TaskWorkbench() {
         })()}
 
         <div className="wb-input-bar" onDragOver={handleDragOver} onDrop={handleDrop}>
+          {currentSessionId && workbenchSkills.length > 0 ? (
+            <div className="wb-skill-picker" data-testid="workbench-skill-picker">
+              <label>
+                <span>Skill</span>
+                <select value={selectedSkillKey} onChange={(event) => {
+                  const skillKey = event.target.value;
+                  const skill = workbenchSkills.find((item) => `${item.extension_id}:${item.skill_id}` === skillKey);
+                  setSelectedSkillKey(skillKey);
+                  setSelectedResourceIds(skill?.default_resource_ids || []);
+                }}>
+                  <option value="">通用对话</option>
+                  {workbenchSkills.map((skill) => <option key={`${skill.extension_id}:${skill.skill_id}`} value={`${skill.extension_id}:${skill.skill_id}`}>{skill.name}</option>)}
+                </select>
+              </label>
+              {selectedSkill ? <div className="wb-skill-devices" aria-label="选择 Skill 资源">
+                {selectedSkill.resources.map((resource) => {
+                  const active = selectedResourceIds.includes(resource.resource_id);
+                  return <button key={resource.resource_id} type="button" className={active ? "active" : ""} title={resource.description} onClick={() => setSelectedResourceIds((items) => active ? items.filter((item) => item !== resource.resource_id) : selectedSkill.selection_mode === "single" ? [resource.resource_id] : [...items, resource.resource_id])}>{resource.name}</button>;
+                })}
+              </div> : null}
+            </div>
+          ) : null}
           {attachments.length > 0 ? (
             <div className="wb-attachments">
               {attachments.map((attachment) => (

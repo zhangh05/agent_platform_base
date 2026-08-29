@@ -20,6 +20,7 @@ _TRUSTED_SOURCE_KINDS = frozenset({
     "runtime_clock",
     "cognitive_state",
     "managed_attachment",
+    "workbench_skill",
     "task_continuation",
     "task_state",
     "operational_guard",

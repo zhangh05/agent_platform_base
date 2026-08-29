@@ -15,7 +15,6 @@ import { ACTIVE_USER_KEY, scopedLocalStorageKey, setActiveUserScope, setActiveWo
 import {
   IconChevronLeft,
   IconChevronRight,
-  IconLayers,
   IconSettings,
   IconMoon,
   IconSun,
@@ -33,11 +32,7 @@ import {
   KnowledgeLibrary,
   DataCenter,
   MemoryPage,
-  ReviewCenter,
-  ExtensionCenter,
-  WorkflowStudio,
   UserManagement,
-  AdvancedCenter,
   preloadRoute,
 } from "../routes";
 
@@ -176,7 +171,6 @@ const SettingsNav = memo(function SettingsNav({ items, currentPath }: { items: N
 const SKELETON_BY_PATH: Record<string, "list" | "table"> = {
   "/workbench": "list",
   "/runs": "list",
-  "/reviews": "list",
   "/knowledge": "list",
   "/data": "table",
   "/memory": "list",
@@ -208,12 +202,8 @@ function AppRoutes({ canManageUsers }: { canManageUsers: boolean }) {
     "/capabilities": <ErrorBoundary><CapabilityCenter /></ErrorBoundary>,
     "/diagnostics": <ErrorBoundary><Diagnostics /></ErrorBoundary>,
     "/settings": <ErrorBoundary><Settings /></ErrorBoundary>,
-    "/advanced": <ErrorBoundary><AdvancedCenter /></ErrorBoundary>,
     "/runs": <ErrorBoundary><OperationsPage /></ErrorBoundary>,
     "/audit": <Navigate to="/runs?view=audit" replace />,
-    "/reviews": <ErrorBoundary><ReviewCenter /></ErrorBoundary>,
-    "/extensions": <ErrorBoundary><ExtensionCenter /></ErrorBoundary>,
-    "/workflows": <ErrorBoundary><WorkflowStudio /></ErrorBoundary>,
     "/users": canManageUsers ? <ErrorBoundary><UserManagement /></ErrorBoundary> : <Navigate to="/workbench" replace />,
     "/organizations": <Navigate to={canManageUsers ? "/users" : "/workbench"} replace />,
   };
@@ -341,8 +331,7 @@ function AppShell({ canLogout, onLogout, session }: { canLogout: boolean; onLogo
   const extensionRegistry = useExtensionRegistry();
   const canManageUsers = session?.platform_admin === true;
   const availableNavigationItems = [...NAV_ITEMS.filter((item) => !item.adminOnly || canManageUsers), ...extensionRegistry.navItems];
-  const navigationItems = availableNavigationItems.filter((item) => !item.advanced && !item.utility);
-  const advancedNavigationItems = availableNavigationItems.filter((item) => item.advanced);
+  const navigationItems = availableNavigationItems.filter((item) => !item.utility);
   const settingsNavigationItems = availableNavigationItems.filter((item) => item.utility === "settings");
   const navigationGroups = useMemo(() => buildNavGroups(navigationItems), [navigationItems]);
 
@@ -403,17 +392,6 @@ function AppShell({ canLogout, onLogout, session }: { canLogout: boolean; onLogo
 
         <nav className="app-nav" aria-label="主导航">
           {navigationGroups.map((group) => <NavGroupItem key={group.id} group={group} currentPath={location.pathname} />)}
-          <NavLink
-            to="/advanced"
-            data-testid="nav-advanced"
-            className={({ isActive }) => "app-nav-item" + (isActive ? " active" : "")}
-            onMouseEnter={() => preloadRoute("/advanced")}
-            onFocus={() => preloadRoute("/advanced")}
-            viewTransition
-          >
-            <IconLayers size={14} />
-            <span>高级</span>
-          </NavLink>
         </nav>
 
         <div className="app-actions" aria-label="页面操作">
@@ -458,7 +436,7 @@ function AppShell({ canLogout, onLogout, session }: { canLogout: boolean; onLogo
         {/* AppLayout renders the persistent sidebar + main grid once; the
             Suspense boundary keeps it visible while a route's chunk loads,
             so navigation never tears down the shell. */}
-        <AppLayout navigationItems={navigationItems} advancedNavigationItems={advancedNavigationItems} settingsNavigationItems={settingsNavigationItems}>
+        <AppLayout navigationItems={navigationItems} settingsNavigationItems={settingsNavigationItems}>
           <AppRoutes canManageUsers={canManageUsers} />
         </AppLayout>
       </div>

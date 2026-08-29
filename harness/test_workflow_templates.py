@@ -6,7 +6,7 @@ def _setup(monkeypatch, tmp_path):
     monkeypatch.setenv("LZCORE_LOGIN_ENABLED", "false")
 
 
-def test_workflow_templates_are_listed_and_instantiated(monkeypatch, tmp_path):
+def test_network_extension_no_longer_publishes_advanced_workflow_templates(monkeypatch, tmp_path):
     _setup(monkeypatch, tmp_path)
     from backend.main import create_app
 
@@ -14,27 +14,7 @@ def test_workflow_templates_are_listed_and_instantiated(monkeypatch, tmp_path):
     listed = client.get("/api/workflow-templates")
     assert listed.status_code == 200
     templates = listed.get_json()["templates"]
-    asset_template = next(
-        template
-        for template in templates
-        if template["template_id"] == "network-operations-asset-inventory"
-    )
-    assert asset_template["input_example"] == {}
-    assert "definition" not in asset_template
-
-    created = client.post(
-        "/api/workflow-templates/network-operations-asset-inventory/instantiate",
-        json={"workspace_id": "default"},
-    )
-    assert created.status_code == 201
-    workflow = created.get_json()["workflow"]
-    assert workflow["name"] == "网络资产清单核对"
-    assert workflow["template_id"] == "network-operations-asset-inventory"
-    assert workflow["nodes"][0]["tool_id"] == "network.operations.assets_read"
-
-    found = client.get("/api/workflows", query_string={"workspace_id": "default"})
-    assert found.status_code == 200
-    assert [item["workflow_id"] for item in found.get_json()["workflows"]] == [workflow["workflow_id"]]
+    assert all(not item["template_id"].startswith("network-operations-") for item in templates)
 
 
 def test_workflow_template_rejects_unknown_template(monkeypatch, tmp_path):
@@ -53,10 +33,7 @@ def test_workflow_delete_requires_confirmation_and_removes_definition(monkeypatc
     _setup(monkeypatch, tmp_path)
     from backend.main import create_app
     client = create_app().test_client()
-    created = client.post(
-        "/api/workflow-templates/network-operations-asset-inventory/instantiate",
-        json={"workspace_id": "default"},
-    )
+    created = client.post("/api/workflows", json={"workspace_id": "default", "workflow_id": "delete-test", "name": "删除测试", "nodes": [{"node_id": "read", "tool_id": "network.operations.devices_read", "arguments": {}}]})
     assert created.status_code == 201
     workflow_id = created.get_json()["workflow"]["workflow_id"]
     blocked = client.delete(f"/api/workflows/{workflow_id}", json={"workspace_id": "default"})
@@ -82,7 +59,7 @@ def test_workflow_hard_delete_removes_all_runs_without_list_limit(monkeypatch, t
         "name": "硬删除验证",
         "nodes": [{
             "node_id": "read",
-            "tool_id": "network.operations.assets_read",
+            "tool_id": "network.operations.devices_read",
             "arguments": {},
         }],
     })

@@ -241,9 +241,26 @@ def run_ssot_turn(
     except Exception:
         _LOG.warning("attachment runtime guidance preparation failed", exc_info=True)
 
+    workbench_context = metadata_in.get("workbench_context")
+    if isinstance(workbench_context, dict):
+        import json as _json
+        from core.runtime_engine.prompt_contract import trusted_prompt_item
+        metadata_in.setdefault("trusted_prompt_items", []).append(
+            trusted_prompt_item(
+                "workbench_skill",
+                "当前用户已在工作台选择并由服务器验证以下 Skill 与设备连接。"
+                "仅使用列出的 connection_id 操作对应设备；凭据由平台托管，不得索取或猜测。"
+                "可根据目标自主组合允许的工具，多设备可并行，存在依赖时按顺序执行。\n"
+                + _json.dumps(workbench_context, ensure_ascii=False, separators=(",", ":")),
+            )
+        )
+
     # Build the full LLM-visible tool registry first. RuntimeContextBudget
     # deducts its schema cost before assigning history/retrieval capacity.
     ssot_registry = _build_ssot_runtime_tool_registry(allowed_tool_ids)
+    if isinstance(workbench_context, dict):
+        from extensions.runtime import apply_workbench_tool_boundary
+        ssot_registry = apply_workbench_tool_boundary(ssot_registry, workbench_context)
     runtime_context_budget = _build_runtime_context_budget(ssot_registry)
 
     # ── Build canonical conversation context for prompt injection ──
@@ -443,6 +460,7 @@ def run_ssot_turn(
                 if metadata_in.get("__approval_continuation_resume")
                 else ""
             ),
+            workbench_context=workbench_context if isinstance(workbench_context, dict) else None,
         )
         runtime_result = _run_async(
             engine.run(
@@ -856,6 +874,7 @@ def _build_engine(
     context_budget=None,
     approved_tool_grant=None,
     approval_run_id: str = "",
+    workbench_context: dict[str, Any] | None = None,
 ):
     from core.runtime_engine import SSOTRuntimeConfig, SSOTRuntimeEngine
     from core.runtime_engine.tool_runtime import ToolRuntime
@@ -917,6 +936,7 @@ def _build_engine(
                 trace_id=trace_id,
                 requested_by=requested_by,
                 approved_call_grants=approved_call_grants,
+                skill_id=str((workbench_context or {}).get("skill_id") or ""),
             ),
             description=registry[tool_id].get("description", ""),
             args_schema=registry[tool_id].get("args_schema", {}),
@@ -2326,6 +2346,7 @@ def _make_tool_handler(
     trace_id: str,
     requested_by: str,
     approved_call_grants: dict[str, list[str]] | None = None,
+    skill_id: str = "",
 ):
     single_use_grants = approved_call_grants if approved_call_grants is not None else {}
 
@@ -2345,6 +2366,7 @@ def _make_tool_handler(
             approval_run_id=approval_run_id or None,
             trace_id=trace_id,
             requested_by=requested_by,
+            skill=skill_id or None,
             module="ssot_runtime",
             approval_id=approval_id,
             cancel_check=get_runtime_cancel_check(),

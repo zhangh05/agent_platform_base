@@ -57,6 +57,13 @@ def _rich_context() -> dict:
     }
 
 
+def test_workbench_skill_is_a_registered_server_trusted_prompt_source():
+    from core.runtime_engine.prompt_contract import render_trusted_prompt_item, trusted_prompt_item
+
+    rendered = render_trusted_prompt_item(trusted_prompt_item("workbench_skill", "verified skill context"))
+    assert 'source_kind="workbench_skill"' in rendered
+
+
 def test_every_enabled_template_renders_without_template_syntax():
     from prompts.loader import load_prompt_registry, render_prompt
 

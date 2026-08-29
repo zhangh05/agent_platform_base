@@ -55,7 +55,7 @@ def test_extension_routes_enforce_role_and_lifecycle(monkeypatch, tmp_path):
 
     viewer = app.test_client()
     viewer.post("/api/auth/login", json={"username": "viewer", "password": "password"}, headers=origin)
-    denied = viewer.post("/api/extensions/network.operations/assets", json={"workspace_id": "default"}, headers=origin)
+    denied = viewer.post("/api/extensions/network.operations/devices", json={"workspace_id": "default"}, headers=origin)
     assert denied.status_code == 403
     assert denied.get_json()["error"] == "extension_write_forbidden"
     assert viewer.get("/api/admin/backups", headers=origin).status_code == 403
@@ -66,9 +66,8 @@ def test_extension_routes_enforce_role_and_lifecycle(monkeypatch, tmp_path):
 
     operator = app.test_client()
     operator.post("/api/auth/login", json={"username": "operator", "password": "password"}, headers=origin)
-    created = operator.post("/api/extensions/network.operations/assets", json={
-        "workspace_id": "default", "name": "R1", "host": "10.0.0.1",
-        "username": "ops", "password": "secret", "vendor": "h3c",
+    created = operator.post("/api/extensions/network.operations/devices", json={
+        "workspace_id": "default", "name": "R1", "host": "10.0.0.1", "vendor": "h3c",
     }, headers=origin)
     assert created.status_code == 201
     assert operator.post("/api/extensions/network.operations/disable", headers=origin).status_code == 403
@@ -93,7 +92,7 @@ def test_extension_routes_enforce_role_and_lifecycle(monkeypatch, tmp_path):
     assert admin.get("/api/extensions/repository", headers=origin).status_code == 403
     assert admin.post("/api/extensions/repository/publish", headers=origin).status_code == 403
     assert admin.post("/api/extensions/network.operations/disable", headers=origin).status_code == 200
-    blocked = admin.get("/api/extensions/network.operations/assets?workspace_id=default", headers=origin)
+    blocked = admin.get("/api/extensions/network.operations/devices?workspace_id=default", headers=origin)
     assert blocked.status_code == 409
     assert admin.post("/api/extensions/network.operations/enable", headers=origin).status_code == 200
 

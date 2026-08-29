@@ -51,11 +51,6 @@ def run_once() -> dict:
     """Poll and execute one queued job. Returns result."""
     from jobs.runner import run_job
     from jobs.queue import get_job_queue
-    try:
-        from extensions.network_operations.service import run_due_inspection_schedules
-        run_due_inspection_schedules()
-    except Exception:
-        _LOG.exception("network inspection schedule tick failed")
 
     # Filesystem queues need a host lock around claim+execution. Redis already
     # provides leases and fencing; retaining the file lock there silently

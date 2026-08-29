@@ -174,14 +174,9 @@ def test_extension_action_requirements_remain_with_the_extension():
     device = specs["network.operations.device.manage"]
     requirements = device.metadata["action_requirements"]
 
-    expected = (
-        ("asset_id", "host"),
-        ("asset_id", "username"),
-        ("asset_id", "password", "private_key"),
-    )
-    assert requirements["any"]["probe"] == expected
-    assert requirements["any"]["read"] == expected
-    assert device.metadata["bindable_inputs"]["probe"] == ("asset_id",)
+    assert requirements["all"]["probe"] == ("connection_id",)
+    assert requirements["all"]["read"] == ("connection_id",)
+    assert device.metadata["bindable_inputs"]["probe"] == ("connection_id",)
 
 
 def test_extension_action_semantics_are_declared_once_and_shared_by_catalog_and_risk():
@@ -190,10 +185,10 @@ def test_extension_action_semantics_are_declared_once_and_shared_by_catalog_and_
     from core.runtime_engine.risk_policy import RiskPolicyEngine
     from core.tools.catalog_snapshot import build_catalog_snapshot
 
-    baseline_contract = get_contract("network.operations.baseline")
-    assert baseline_contract is not None
-    assert baseline_contract.action_contracts["confirm"]["requires_approval"] is True
-    assert is_read_only_call("network.operations.baseline", {"action": "diff"}) is True
+    inspection_contract = get_contract("network.operations.inspection")
+    assert inspection_contract is not None
+    assert inspection_contract.action_contracts["run"]["idempotency"] == "unsafe_to_retry"
+    assert is_read_only_call("network.operations.inspection", {"action": "get"}) is True
     assert is_read_only_call("network.operations.inspection", {"action": "run"}) is False
 
     catalog = {
@@ -202,59 +197,37 @@ def test_extension_action_semantics_are_declared_once_and_shared_by_catalog_and_
     }
     profiles = {
         profile["action"]: profile
-        for profile in catalog["network.operations.baseline"]["action_profiles"]
+        for profile in catalog["network.operations.inspection"]["action_profiles"]
     }
-    assert profiles["confirm"]["requires_approval"] is True
-    assert profiles["diff"]["read_only"] is True
+    assert profiles["run"]["read_only"] is False
+    assert profiles["get"]["read_only"] is True
 
     decision = RiskPolicyEngine().assess([
         ExecutionNode(
-            id="confirm", tool="network.operations.baseline",
-            args={"action": "confirm", "baseline_id": "baseline-1"},
+            id="inspect", tool="network.operations.inspection",
+            args={"action": "run", "connection_ids": ["connection-1"]},
         ),
     ])
-    assert decision.requires_approval is True
-    assert decision.risk_level == "high"
+    assert decision.requires_approval is False
+    assert decision.risk_level == "medium"
 
     from core.tools.canonical_registry import to_tool_specs
     from core.tools.policy import ToolPolicy
     from core.tools.schemas import ToolInvocation
-    baseline_spec = next(
+    inspection_spec = next(
         spec for spec, _handler in to_tool_specs()
-        if spec.tool_id == "network.operations.baseline"
+        if spec.tool_id == "network.operations.inspection"
     )
     direct_policy = ToolPolicy().check(
-        baseline_spec,
+        inspection_spec,
         ToolInvocation(
-            tool_id=baseline_spec.tool_id,
+            tool_id=inspection_spec.tool_id,
             workspace_id="default",
-            arguments={"action": "confirm", "baseline_id": "baseline-1"},
+            arguments={"action": "run", "connection_ids": ["connection-1"]},
         ),
     )
-    assert direct_policy.requires_approval is True
-    assert direct_policy.risk_level == "high"
-
-
-def test_network_asset_schema_teaches_required_nested_fields():
-    validator = _validator_for_tool("network.operations.assets_write")
-    invalid = validator.validate([
-        ExecutionNode(
-            id="asset", tool="network.operations.assets_write",
-            args={"action": "save", "asset": {"host": "192.0.2.1"}},
-        ),
-    ])
-    valid = validator.validate([
-        ExecutionNode(
-            id="asset", tool="network.operations.assets_write",
-            args={
-                "action": "save",
-                "asset": {"name": "edge-1", "host": "192.0.2.1", "username": "ops"},
-            },
-        ),
-    ])
-
-    assert invalid.valid is False
-    assert valid.valid is True
+    assert direct_policy.requires_approval is False
+    assert direct_policy.risk_level == "medium"
 
 
 def test_every_declared_binding_target_is_a_public_tool_argument():
