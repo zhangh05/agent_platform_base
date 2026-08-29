@@ -275,7 +275,7 @@ def test_llm_tool_schema_is_action_relevant_and_explains_required_args():
 
     network_desc = tools["network__operations__device__manage"]["description"]
     assert "Required arguments by action" in network_desc
-    assert "probe=>asset_id or host" in network_desc
+    assert "probe=>connection_id" in network_desc
     network_props = tools["network__operations__device__manage"]["parameters"]["properties"]
     assert network_props["commands"]["items"]["type"] == "string"
     assert "Read-only commands" in network_props["commands"]["description"]
