@@ -671,12 +671,40 @@ def _anthropic_messages_generate(req: LLMRequest, cfg: dict) -> LLMResponse:
             "x-api-key": cfg.get("api_key", ""),
             "anthropic-version": "2023-06-01",
         }
-        if not req.stream:
-            response = _requests.post(url, json=body, headers=headers, timeout=cfg.get("timeout", 120))
+        def send(active_body: dict) -> LLMResponse:
+            if req.stream:
+                return _anthropic_messages_stream(url, active_body, headers, cfg, req)
+            response = _requests.post(
+                url, json=active_body, headers=headers, timeout=cfg.get("timeout", 120)
+            )
             if response.status_code != 200:
-                return LLMResponse(error=f"provider_http_{response.status_code}: {response.text[:300]}", metadata={"http_status": response.status_code})
+                detail = response.text[:500]
+                return LLMResponse(
+                    error=f"provider_http_{response.status_code}: {detail[:300]}",
+                    metadata={
+                        "error_type": f"provider_http_{response.status_code}",
+                        "http_status": response.status_code,
+                        "error_detail": detail[:200],
+                    },
+                )
             return _parse_anthropic_messages_response(response.json(), cfg)
-        return _anthropic_messages_stream(url, body, headers, cfg, req)
+
+        result = send(body)
+        cache_requested = _anthropic_prompt_cache_enabled(cfg) and _has_anthropic_prompt_cache(body)
+        if cache_requested and _anthropic_prompt_cache_rejected(result):
+            result = send(_without_anthropic_prompt_cache(body))
+            result.metadata = {
+                **(result.metadata or {}),
+                "prompt_cache_requested": True,
+                "prompt_cache_fallback": True,
+            }
+        else:
+            result.metadata = {
+                **(result.metadata or {}),
+                "prompt_cache_requested": cache_requested,
+                "prompt_cache_fallback": False,
+            }
+        return result
     except Exception as exc:
         return LLMResponse(error=f"provider_anthropic_error: {str(exc)[:300]}")
 
@@ -740,7 +768,17 @@ def _to_anthropic_messages_request(req: LLMRequest, cfg: dict) -> dict:
         "messages": messages,
     }
     if system:
-        body["system"] = system
+        if _anthropic_prompt_cache_enabled(cfg):
+            # Anthropic's prefix hierarchy is tools -> system -> messages. A
+            # breakpoint here caches the stable tool/system prefix while all
+            # per-turn and selected-Skill context stays after it in messages.
+            body["system"] = [{
+                "type": "text",
+                "text": system,
+                "cache_control": {"type": "ephemeral"},
+            }]
+        else:
+            body["system"] = system
     if req.tools:
         body["tools"] = [{
             "name": item.get("function", {}).get("name", ""),
@@ -751,6 +789,55 @@ def _to_anthropic_messages_request(req: LLMRequest, cfg: dict) -> dict:
     if req.stream:
         body["stream"] = True
     return body
+
+
+def _anthropic_prompt_cache_enabled(cfg: dict) -> bool:
+    """Return the explicit cache policy for Anthropic-compatible transports."""
+    raw = cfg.get("prompt_cache_enabled")
+    if raw is None:
+        raw = os.environ.get("LZCORE_PROMPT_CACHE_ENABLED", "true")
+    if isinstance(raw, bool):
+        return raw
+    return str(raw).strip().lower() not in {"0", "false", "no", "off", "disabled"}
+
+
+def _has_anthropic_prompt_cache(body: dict) -> bool:
+    system = body.get("system")
+    return bool(
+        isinstance(system, list)
+        and any(isinstance(block, dict) and block.get("cache_control") for block in system)
+    )
+
+
+def _without_anthropic_prompt_cache(body: dict) -> dict:
+    """Remove cache annotations without changing the request's semantics."""
+    clean = json.loads(json.dumps(body))
+    system = clean.get("system")
+    if isinstance(system, list):
+        blocks = []
+        for block in system:
+            if not isinstance(block, dict):
+                continue
+            item = dict(block)
+            item.pop("cache_control", None)
+            blocks.append(item)
+        if len(blocks) == 1 and blocks[0].get("type") == "text":
+            clean["system"] = str(blocks[0].get("text") or "")
+        else:
+            clean["system"] = blocks
+    for tool in clean.get("tools") or []:
+        if isinstance(tool, dict):
+            tool.pop("cache_control", None)
+    return clean
+
+
+def _anthropic_prompt_cache_rejected(response: LLMResponse) -> bool:
+    metadata = response.metadata or {}
+    # Gateways often collapse an unsupported extension field into a generic
+    # invalid-request response. Retrying the identical semantic request once
+    # without cache metadata is safe; any genuine schema error remains visible
+    # on the second response.
+    return int(metadata.get("http_status") or 0) in {400, 422}
 
 
 def _to_anthropic_tool_use(call: dict) -> dict:
@@ -800,7 +887,15 @@ def _anthropic_messages_stream(url, body, headers, cfg, req) -> LLMResponse:
     try:
         response = _requests.post(url, json=body, headers=headers, timeout=cfg.get("timeout", 120), stream=True)
         if response.status_code != 200:
-            return LLMResponse(error=f"provider_http_{response.status_code}: {response.text[:300]}", metadata={"http_status": response.status_code})
+            detail = response.text[:500]
+            return LLMResponse(
+                error=f"provider_http_{response.status_code}: {detail[:300]}",
+                metadata={
+                    "error_type": f"provider_http_{response.status_code}",
+                    "http_status": response.status_code,
+                    "error_detail": detail[:200],
+                },
+            )
         for raw in response.iter_lines(decode_unicode=True):
             if _is_stream_cancelled(req):
                 response.close()
@@ -834,7 +929,11 @@ def _anthropic_messages_stream(url, body, headers, cfg, req) -> LLMResponse:
                 elif delta.get("type") == "input_json_delta":
                     block["_partial_json"] = block.get("_partial_json", "") + str(delta.get("partial_json") or "")
             elif kind == "message_delta":
-                delta = event.get("delta") or {}; stop_reason = str(delta.get("stop_reason") or stop_reason); usage = event.get("usage") or usage
+                delta = event.get("delta") or {}
+                stop_reason = str(delta.get("stop_reason") or stop_reason)
+                delta_usage = event.get("usage")
+                if isinstance(delta_usage, dict):
+                    usage = {**(usage or {}), **delta_usage}
     except Exception as exc:
         return LLMResponse(error=f"provider_anthropic_error: {str(exc)[:300]}")
     calls = []

@@ -26,6 +26,8 @@ const CACHE_KEY = "diagnostics_v1";
 type UsageStats = {
   call_count: number; total_tokens: number; input_tokens: number;
   output_tokens: number; estimated_cost: number; last_updated: string;
+  cache_creation_input_tokens?: number; cache_read_input_tokens?: number;
+  cache_hit_ratio?: number;
 };
 
 type HealthComponent = {
@@ -470,6 +472,8 @@ export function Diagnostics() {
                   <div className="diag-usage-rows">
                     <Row label="Token 总量" value={usage.total_tokens.toLocaleString()} />
                     <Row label="输入 / 输出" value={`${usage.input_tokens.toLocaleString()} / ${usage.output_tokens.toLocaleString()}`} dim />
+                    <Row label="缓存读取 / 写入" value={`${Number(usage.cache_read_input_tokens ?? 0).toLocaleString()} / ${Number(usage.cache_creation_input_tokens ?? 0).toLocaleString()}`} dim />
+                    <Row label="输入缓存命中" value={`${(Number(usage.cache_hit_ratio ?? 0) * 100).toFixed(1)}%`} dim />
                     <div className="diag-cost-row">
                       <span className="diag-cost-label">预估费用</span>
                       <b className="diag-cost">¥{Number(usage.estimated_cost ?? 0).toFixed(4)}</b>

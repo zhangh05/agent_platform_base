@@ -45,9 +45,13 @@ def trusted_prompt_item(source_kind: str, content: Any, *, label: str = "") -> T
     value = str(content or "").replace("\x00", "").strip()
     if not value:
         raise ValueError("trusted prompt content is required")
+    # A selected Skill can legitimately carry a bounded multi-resource
+    # authorization snapshot. Never silently cut connection ids or the Skill's
+    # operating contract; ordinary guidance remains intentionally compact.
+    content_limit = 40_000 if kind == "workbench_skill" else 4_000
     return TrustedPromptItem(
         source_kind=kind,
-        content=value[:4000],
+        content=value[:content_limit],
         label=_clean(label, 80),
     )
 

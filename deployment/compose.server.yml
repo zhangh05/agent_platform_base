@@ -15,6 +15,7 @@ x-backend-common: &backend-common
     LZCORE_QUEUE_MODE: filesystem
     LZCORE_SESSION_SECURE: "false"
     LZCORE_PYTHON_REQUIRE_STRONG_ISOLATION: "true"
+    LZCORE_PROMPT_CACHE_ENABLED: "true"
     DOCKER_HOST: unix:///run/docker.sock
   volumes:
     - ../workspaces:/var/lib/lzcore/workspaces
@@ -51,6 +52,7 @@ services:
       LZCORE_QUEUE_MODE: filesystem
       LZCORE_SESSION_SECURE: "false"
       LZCORE_PYTHON_REQUIRE_STRONG_ISOLATION: "true"
+      LZCORE_PROMPT_CACHE_ENABLED: "true"
       LZCORE_WORKER_ID: server-worker-1
       DOCKER_HOST: unix:///run/docker.sock
     depends_on:

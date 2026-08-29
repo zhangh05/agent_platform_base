@@ -370,6 +370,7 @@ class SSOTRuntimeEngine:
                     node_results,
                     loop_result.metrics.get("max_parallel_width", 0),
             )
+            metrics.capture_llm_usage(loop_result.metrics.get("llm_usage", {}))
             self._emit_stage(
                 TURN_COMPLETED,
                 t_total,

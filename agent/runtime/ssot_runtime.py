@@ -247,17 +247,13 @@ def run_ssot_turn(
 
     workbench_context = metadata_in.get("workbench_context")
     if isinstance(workbench_context, dict):
-        import json as _json
         from core.runtime_engine.prompt_contract import trusted_prompt_item
+        from extensions.runtime import render_workbench_prompt
         metadata_in.setdefault("trusted_prompt_items", []).append(
             trusted_prompt_item(
                 "workbench_skill",
-                "当前用户已在工作台选择以下 Skill，服务器已对所选设备连接执行本轮主动连接。"
-                "connection_ids 是授权边界，ready_connection_ids 是本轮已连接目标，connection_activation 包含每条连接的独立结果。"
-                "仅使用列出的 connection_id 操作对应设备；工具会在执行时再次主动连接，凭据由平台托管，不得索取或猜测。"
-                "某条连接失败不等于整个任务失败：继续处理可用设备，必要时尝试同一 Skill 内的替代连接，并把失败证据纳入最终判断和用户反馈。"
-                "可根据目标自主组合允许的工具，多设备可并行，存在依赖时按顺序执行。\n"
-                + _json.dumps(workbench_context, ensure_ascii=False, separators=(",", ":")),
+                render_workbench_prompt(workbench_context),
+                label=str(workbench_context.get("skill_id") or "selected_skill"),
             )
         )
 
@@ -1286,9 +1282,14 @@ def _invoke_llm_for_ssot_runtime(**kwargs):
     if workspace_id:
         try:
             usage = resp.usage or {}
+            uncached_input = int(usage.get("prompt_tokens", usage.get("input_tokens", 0)) or 0)
+            cache_creation = int(usage.get("cache_creation_input_tokens", 0) or 0)
+            cache_read = int(usage.get("cache_read_input_tokens", 0) or 0)
             record_llm_call(
-                input_tokens=usage.get("prompt_tokens", 0),
-                output_tokens=usage.get("completion_tokens", 0),
+                input_tokens=uncached_input + cache_creation + cache_read,
+                output_tokens=int(usage.get("completion_tokens", usage.get("output_tokens", 0)) or 0),
+                cache_creation_input_tokens=cache_creation,
+                cache_read_input_tokens=cache_read,
                 session_id=session_id,
                 workspace_id=workspace_id,
                 model=resp.model or "",
@@ -1588,14 +1589,16 @@ def _event(event_type: str, name: str, trace_id: str, turn_id: str, *, started_a
 
 
 def _timeline_summary(*, started: float, events: list, tool_calls: list, runtime_result) -> dict[str, Any]:
+    runtime_metadata = runtime_result.metadata or {}
     return {
         "node_count": max(len(events), 1),
         "total_duration_ms": int((time.monotonic() - started) * 1000),
         "artifact_saved_count": sum(len(c.get("artifacts") or []) for c in tool_calls),
         "execution_duration_ms": int(getattr(runtime_result, "execution_latency_ms", 0) or 0),
-        "llm_calls": int((runtime_result.metadata or {}).get("llm_calls", 0) or 0),
+        "llm_calls": int(runtime_metadata.get("llm_calls", 0) or 0),
+        "llm_usage": dict(runtime_metadata.get("llm_usage") or {}),
         "tool_calls": len(tool_calls),
-        "max_parallel_width": int((runtime_result.metadata or {}).get("metrics", {}).get("max_parallel_width", 0) or 0),
+        "max_parallel_width": int(runtime_metadata.get("metrics", {}).get("max_parallel_width", 0) or 0),
     }
 
 

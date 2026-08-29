@@ -11,6 +11,7 @@ from extensions.runtime import (
     _build_workflow_templates,
     apply_workbench_tool_boundary,
     load_extensions,
+    render_workbench_prompt,
     reset_extension_cache_for_tests,
 )
 from evaluation.runner import GoldenCase, evaluate_case
@@ -22,6 +23,56 @@ def test_network_extension_loads_tool_and_frontend_contract():
     network = next(item for item in extensions if item.manifest.extension_id == "network.operations")
     assert network.manifest.frontend_routes[0]["path"] == "/extensions/network.operations/manage"
     assert "network.operations.inspection" in {spec.tool_id for spec, _ in network.tools}
+    assert callable(network.workbench_prompt_renderer)
+
+
+def test_selected_network_skill_owns_a_domain_prompt_contract():
+    reset_extension_cache_for_tests()
+    rendered = render_workbench_prompt({
+        "extension_id": "network.operations",
+        "skill_id": "skill-1",
+        "skill_name": "生产巡检",
+        "instructions": "采集版本与接口状态",
+        "allowed_tool_ids": ["network.operations.device.manage"],
+        "device_ids": ["device-1"],
+        "connection_ids": ["connection-1"],
+        "ready_connection_ids": [],
+        "connection_activation": [{"connection_id": "connection-1", "ready": False}],
+        "devices": [{"device_id": "device-1", "vendor": "H3C"}],
+        "connections": [{"connection_id": "connection-1", "protocol": "telnet"}],
+        "source": "server_validated_extension_context",
+    })
+
+    assert "network.operations.skill.v1" in rendered
+    assert "network.operations.device.manage" in rendered
+    assert "network__operations__device__manage" in rendered
+    assert "one device CLI command" in rendered
+    assert "Pagination control" in rendered
+    assert "connection-1" in rendered
+    assert "采集版本与接口状态" in rendered
+
+
+def test_selected_skill_prompt_does_not_silently_drop_large_resource_scope():
+    from core.runtime_engine.prompt_contract import trusted_prompt_item
+    from extensions.network_operations.skill_prompt import render_network_skill_prompt
+
+    connection_ids = [f"connection-{index:03d}" for index in range(100)]
+    rendered = render_network_skill_prompt({
+        "skill_id": "skill-large",
+        "skill_name": "全量巡检",
+        "allowed_tool_ids": ["network.operations.inspection"],
+        "device_ids": [f"device-{index:03d}" for index in range(100)],
+        "connection_ids": connection_ids,
+        "ready_connection_ids": connection_ids,
+        "connection_activation": [],
+        "devices": [],
+        "connections": [],
+        "source": "server_validated_extension_context",
+    })
+    item = trusted_prompt_item("workbench_skill", rendered)
+
+    assert connection_ids[-1] in item.content
+    assert "network__operations__inspection" in item.content
 
 
 def test_network_workflow_templates_are_owned_by_the_extension():

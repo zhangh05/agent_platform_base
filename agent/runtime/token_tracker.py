@@ -71,6 +71,8 @@ class TokenRecord:
     input_tokens: int = 0
     output_tokens: int = 0
     total_tokens: int = 0
+    cache_creation_input_tokens: int = 0
+    cache_read_input_tokens: int = 0
     estimated_cost: float = 0.0
     source: str = "estimated"
     created_at: str = ""
@@ -102,6 +104,8 @@ def record_llm_call(
     model: str = "",
     input_tokens: int = 0,
     output_tokens: int = 0,
+    cache_creation_input_tokens: int = 0,
+    cache_read_input_tokens: int = 0,
 ) -> dict:
     """Record an LLM call and persist to JSONL."""
     total = input_tokens + output_tokens
@@ -119,6 +123,8 @@ def record_llm_call(
         input_tokens=input_tokens,
         output_tokens=output_tokens,
         total_tokens=total,
+        cache_creation_input_tokens=cache_creation_input_tokens,
+        cache_read_input_tokens=cache_read_input_tokens,
         estimated_cost=round(cost, 6),
         created_at=now_iso(),
     )
@@ -133,6 +139,8 @@ def record_llm_call(
             "input_tokens": record.input_tokens,
             "output_tokens": record.output_tokens,
             "total_tokens": record.total_tokens,
+            "cache_creation_input_tokens": record.cache_creation_input_tokens,
+            "cache_read_input_tokens": record.cache_read_input_tokens,
             "estimated_cost": record.estimated_cost,
             "source": "estimated",
             "created_at": record.created_at,
@@ -143,6 +151,8 @@ def record_llm_call(
         "input_tokens": input_tokens,
         "output_tokens": output_tokens,
         "total_tokens": total,
+        "cache_creation_input_tokens": cache_creation_input_tokens,
+        "cache_read_input_tokens": cache_read_input_tokens,
         "estimated_cost": record.estimated_cost,
     }
 
@@ -154,6 +164,7 @@ def get_usage(workspace_id: str = "default", session_id: str = "") -> dict:
         return _empty_usage(workspace_id, session_id)
 
     input_t, output_t, total_t, cost, count = 0, 0, 0, 0.0, 0
+    cache_creation_t, cache_read_t = 0, 0
     latest = ""
     try:
         for rec in rows:
@@ -161,6 +172,8 @@ def get_usage(workspace_id: str = "default", session_id: str = "") -> dict:
                 continue
             input_t += rec.get("input_tokens", 0)
             output_t += rec.get("output_tokens", 0)
+            cache_creation_t += rec.get("cache_creation_input_tokens", 0)
+            cache_read_t += rec.get("cache_read_input_tokens", 0)
             cost += rec.get("estimated_cost", 0)
             count += 1
             latest = rec.get("created_at", "")
@@ -174,6 +187,9 @@ def get_usage(workspace_id: str = "default", session_id: str = "") -> dict:
         "input_tokens": input_t,
         "output_tokens": output_t,
         "total_tokens": input_t + output_t,
+        "cache_creation_input_tokens": cache_creation_t,
+        "cache_read_input_tokens": cache_read_t,
+        "cache_hit_ratio": round(cache_read_t / max(input_t, 1), 4),
         "estimated_cost": round(cost, 6),
         "call_count": count,
         "last_updated": latest,
@@ -188,6 +204,9 @@ def _empty_usage(workspace_id: str, session_id: str) -> dict:
         "input_tokens": 0,
         "output_tokens": 0,
         "total_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "cache_hit_ratio": 0.0,
         "estimated_cost": 0,
         "call_count": 0,
         "last_updated": "",

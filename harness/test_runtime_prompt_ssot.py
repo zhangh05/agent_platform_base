@@ -115,6 +115,21 @@ def test_query_loop_combines_attachment_and_operational_guidance():
     assert "operational guidance" in messages[1].content
 
 
+def test_unselected_workbench_does_not_inject_network_skill_prompt():
+    loop = QueryLoop.__new__(QueryLoop)
+    ctx = StatelessContext(
+        request_id="request-without-skill",
+        user_input="你好",
+        workspace_id="ws1",
+        session_id="s1",
+        extras={},
+    )
+    messages = loop._build_initial(ctx)
+
+    assert "Selected network Skill operating contract" not in messages[1].content
+    assert "network.operations.skill.v1" not in messages[1].content
+
+
 def test_capability_playbooks_are_additive_and_do_not_change_tool_visibility():
     from core.runtime_engine.prompt_contract import resolve_capability_playbooks
 

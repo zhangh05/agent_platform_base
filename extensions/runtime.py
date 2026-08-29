@@ -23,6 +23,7 @@ class LoadedExtension:
     workflow_templates: tuple[dict[str, Any], ...] = ()
     workbench_skill_catalog: Callable[[str], list[dict[str, Any]]] | None = None
     workbench_context_resolver: Callable[[str, dict[str, Any]], dict[str, Any]] | None = None
+    workbench_prompt_renderer: Callable[[dict[str, Any]], str] | None = None
 
 
 _CACHE: tuple[LoadedExtension, ...] | None = None
@@ -340,6 +341,9 @@ def load_extensions(*, registry: ExtensionRegistry | None = None, refresh: bool 
         skill_catalog = contribution.get("workbench_skill_catalog")
         if skill_catalog is not None and not callable(skill_catalog):
             raise ExtensionValidationError("workbench_skill_catalog contribution must be callable")
+        prompt_renderer = contribution.get("workbench_prompt_renderer")
+        if prompt_renderer is not None and not callable(prompt_renderer):
+            raise ExtensionValidationError("workbench_prompt_renderer contribution must be callable")
         loaded.append(LoadedExtension(
             manifest=manifest,
             root=root,
@@ -349,6 +353,7 @@ def load_extensions(*, registry: ExtensionRegistry | None = None, refresh: bool 
             workflow_templates=_build_workflow_templates(manifest, contribution),
             workbench_skill_catalog=skill_catalog,
             workbench_context_resolver=context_resolver,
+            workbench_prompt_renderer=prompt_renderer,
         ))
     result = tuple(loaded)
     # Validate the aggregate extension surface while loading, so a deployment
@@ -398,6 +403,32 @@ def resolve_workbench_context(workspace_id: str, selection: dict[str, Any]) -> d
     if not isinstance(resolved, dict):
         raise ValueError("invalid_workbench_context")
     return {**resolved, "extension_id": extension_id}
+
+
+def render_workbench_prompt(context: dict[str, Any]) -> str:
+    """Render extension-owned guidance only for a validated Skill selection.
+
+    The caller must pass the server-resolved context, never the raw browser
+    selection.  Extensions own domain behavior while the platform keeps the
+    trust boundary, size bound and injection lifecycle uniform.
+    """
+    if not isinstance(context, dict):
+        raise ValueError("workbench_context_required")
+    extension_id = str(context.get("extension_id") or "").strip()
+    if not extension_id:
+        raise ValueError("workbench_context_extension_id_required")
+    extension = next(
+        (item for item in load_extensions() if item.manifest.extension_id == extension_id),
+        None,
+    )
+    if not extension or not extension.workbench_prompt_renderer:
+        raise ValueError("workbench_prompt_not_supported")
+    rendered = extension.workbench_prompt_renderer(dict(context))
+    if not isinstance(rendered, str) or not rendered.strip():
+        raise ExtensionValidationError("workbench prompt renderer must return non-empty text")
+    if len(rendered) > 40_000:
+        raise ExtensionValidationError("workbench prompt exceeds 40000 characters")
+    return rendered.strip()
 
 
 def apply_workbench_tool_boundary(

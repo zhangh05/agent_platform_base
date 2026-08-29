@@ -262,6 +262,11 @@ def test_anthropic_transport_translates_query_loop_tool_messages_to_native_block
     )
     body = _to_anthropic_messages_request(request, {"model": "MiniMax-M3", "max_tokens": 1000})
 
+    assert body["system"] == [{
+        "type": "text",
+        "text": "system",
+        "cache_control": {"type": "ephemeral"},
+    }]
     assert [message["role"] for message in body["messages"]] == [
         "user", "assistant", "user",
     ]
@@ -342,3 +347,125 @@ def test_anthropic_messages_url_accepts_base_or_full_endpoint():
         "provider": "anthropic",
         "base_url": "https://api.anthropic.com/v1",
     }) == "https://api.anthropic.com/v1/messages"
+
+
+def test_anthropic_prompt_cache_can_be_disabled(monkeypatch):
+    from agent.llm.provider import _to_anthropic_messages_request
+    from agent.llm.schemas import LLMMessage, LLMRequest
+
+    monkeypatch.setenv("LZCORE_PROMPT_CACHE_ENABLED", "false")
+    body = _to_anthropic_messages_request(
+        LLMRequest(task="assistant_chat", messages=[
+            LLMMessage(role="system", content="stable"),
+            LLMMessage(role="user", content="dynamic"),
+        ]),
+        {"model": "MiniMax-M3"},
+    )
+    assert body["system"] == "stable"
+
+
+def test_anthropic_cache_rejection_retries_without_changing_prompt(monkeypatch):
+    from agent.llm.provider import generate
+    from agent.llm.schemas import LLMMessage, LLMRequest
+
+    requests = []
+
+    class Response:
+        def __init__(self, status_code, text=""):
+            self.status_code = status_code
+            self.text = text
+
+        def json(self):
+            return {
+                "content": [{"type": "text", "text": "ok"}],
+                "model": "MiniMax-M3",
+                "stop_reason": "end_turn",
+                "usage": {"input_tokens": 3, "output_tokens": 1},
+            }
+
+    def fake_post(_url, **kwargs):
+        requests.append(kwargs["json"])
+        if len(requests) == 1:
+            return Response(400, "cache_control is not supported")
+        return Response(200)
+
+    monkeypatch.setattr("requests.post", fake_post)
+    response = generate(
+        LLMRequest(task="assistant_chat", stream=False, messages=[
+            LLMMessage(role="system", content="stable"),
+            LLMMessage(role="user", content="dynamic"),
+        ]),
+        {
+            "enabled": True,
+            "provider": "minimax",
+            "provider_type": "anthropic_messages",
+            "base_url": "https://api.minimaxi.com/anthropic/v1",
+            "model": "MiniMax-M3",
+            "api_key": "sk-test",
+        },
+    )
+
+    assert response.content == "ok"
+    assert len(requests) == 2
+    assert isinstance(requests[0]["system"], list)
+    assert requests[1]["system"] == "stable"
+    assert response.metadata["prompt_cache_fallback"] is True
+
+
+def test_anthropic_stream_preserves_input_cache_and_output_usage(monkeypatch):
+    import json
+
+    from agent.llm.provider import generate
+    from agent.llm.schemas import LLMMessage, LLMRequest
+
+    class Response:
+        status_code = 200
+        text = ""
+
+        @staticmethod
+        def iter_lines(decode_unicode=True):
+            events = [
+                {
+                    "type": "message_start",
+                    "message": {
+                        "model": "MiniMax-M3",
+                        "usage": {
+                            "input_tokens": 1800,
+                            "cache_creation_input_tokens": 0,
+                            "cache_read_input_tokens": 128,
+                        },
+                    },
+                },
+                {"type": "content_block_start", "index": 0, "content_block": {"type": "text"}},
+                {"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": "ok"}},
+                {"type": "message_delta", "delta": {"stop_reason": "end_turn"}, "usage": {"output_tokens": 2}},
+            ]
+            return [f"data: {json.dumps(event)}" for event in events]
+
+        @staticmethod
+        def close():
+            return None
+
+    monkeypatch.setattr("requests.post", lambda *_args, **_kwargs: Response())
+    response = generate(
+        LLMRequest(task="assistant_chat", stream=True, messages=[
+            LLMMessage(role="system", content="stable"),
+            LLMMessage(role="user", content="dynamic"),
+        ]),
+        {
+            "enabled": True,
+            "provider": "minimax",
+            "provider_type": "anthropic_messages",
+            "base_url": "https://api.minimaxi.com/anthropic/v1",
+            "model": "MiniMax-M3",
+            "api_key": "sk-test",
+        },
+    )
+
+    assert response.content == "ok"
+    assert response.usage == {
+        "input_tokens": 1800,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 128,
+        "output_tokens": 2,
+    }

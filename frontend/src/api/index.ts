@@ -1192,6 +1192,9 @@ export const agentUsageApi = {
       estimated_cost: number;
       call_count: number;
       last_updated: string;
+      cache_creation_input_tokens: number;
+      cache_read_input_tokens: number;
+      cache_hit_ratio: number;
     }>({ method: "GET", url: "/agent/usage", params: { workspace_id } }, signal),
 };
 

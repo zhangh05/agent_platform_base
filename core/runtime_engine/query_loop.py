@@ -1595,6 +1595,7 @@ class QueryLoop:
                 "output_truncation_reason": output_truncation_reason,
                 "evidence": evidence_summary(ctx.extras),
                 "prompt_policy_events": list(ctx.extras.get("prompt_policy_events") or []),
+                "llm_usage": self._aggregate_llm_usage(ctx.extras),
                 "active_capability_playbooks": list(
                     ctx.extras.get("active_capability_playbooks") or []
                 ),
@@ -2813,6 +2814,14 @@ class QueryLoop:
                     timeout=300,
                 )
                 response = self._coerce_llm_response(raw)
+                if isinstance(response.usage, dict):
+                    ctx.extras.setdefault("llm_usage_events", []).append(dict(response.usage))
+                provider_metadata = response.metadata or {}
+                if provider_metadata.get("prompt_cache_requested"):
+                    ctx.extras.setdefault("prompt_cache_events", []).append({
+                        "requested": True,
+                        "fallback": bool(provider_metadata.get("prompt_cache_fallback")),
+                    })
                 policy = (response.metadata or {}).get("prompt_policy")
                 if isinstance(policy, dict):
                     ctx.extras.setdefault("prompt_policy_events", []).append({
@@ -2969,6 +2978,35 @@ class QueryLoop:
             )
         text = self._strip_think_tags(str(raw))
         return LLMResponse(content=text)
+
+    @staticmethod
+    def _aggregate_llm_usage(extras: dict[str, Any]) -> dict[str, Any]:
+        """Aggregate provider-native usage without hiding cache semantics."""
+        input_tokens = 0
+        output_tokens = 0
+        cache_creation = 0
+        cache_read = 0
+        for usage in extras.get("llm_usage_events") or []:
+            if not isinstance(usage, dict):
+                continue
+            input_tokens += int(usage.get("prompt_tokens", usage.get("input_tokens", 0)) or 0)
+            output_tokens += int(usage.get("completion_tokens", usage.get("output_tokens", 0)) or 0)
+            cache_creation += int(usage.get("cache_creation_input_tokens", 0) or 0)
+            cache_read += int(usage.get("cache_read_input_tokens", 0) or 0)
+        logical_input = input_tokens + cache_creation + cache_read
+        cache_events = [
+            event for event in (extras.get("prompt_cache_events") or [])
+            if isinstance(event, dict)
+        ]
+        return {
+            "input_tokens": logical_input,
+            "output_tokens": output_tokens,
+            "cache_creation_input_tokens": cache_creation,
+            "cache_read_input_tokens": cache_read,
+            "cache_hit_ratio": round(cache_read / max(logical_input, 1), 4),
+            "prompt_cache_requested_calls": sum(bool(event.get("requested")) for event in cache_events),
+            "prompt_cache_fallback_calls": sum(bool(event.get("fallback")) for event in cache_events),
+        }
     
     @staticmethod
     def _strip_think_tags(text: str) -> str:

@@ -59,6 +59,17 @@ class MetricsCollector:
     def set_risk_level(self, level: str) -> None:
         self._snapshot.risk_level = level
 
+    def capture_llm_usage(self, usage: dict[str, Any]) -> None:
+        """Project provider cache effectiveness into run-level metrics."""
+        if not isinstance(usage, dict):
+            return
+        try:
+            self._snapshot.cache_hit_ratio = max(
+                0.0, min(1.0, float(usage.get("cache_hit_ratio") or 0.0))
+            )
+        except (TypeError, ValueError):
+            self._snapshot.cache_hit_ratio = 0.0
+
     def capture_context_usage(
         self,
         estimated_chars: int,

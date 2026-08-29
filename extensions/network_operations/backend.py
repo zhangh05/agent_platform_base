@@ -5,6 +5,7 @@ from __future__ import annotations
 from flask import jsonify, request
 
 from extensions.network_operations import service
+from extensions.network_operations.skill_prompt import render_network_skill_prompt
 
 
 def _workspace() -> str:
@@ -431,6 +432,7 @@ def register():
         "register_routes": register_routes,
         "workbench_skill_catalog": service.workbench_skill_catalog,
         "workbench_context_resolver": service.resolve_workbench_selection,
+        "workbench_prompt_renderer": render_network_skill_prompt,
         "migrations": [(1, lambda store: store.root())],
         "workflow_templates": (),
     }
