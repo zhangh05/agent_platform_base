@@ -85,6 +85,51 @@ def test_connection_rejects_invalid_source_address(monkeypatch, tmp_path):
         )
 
 
+def test_same_device_protocol_and_port_update_one_logical_connection(monkeypatch, tmp_path):
+    _setup(monkeypatch, tmp_path)
+    device = service.save_device("default", {"name": "CE1", "host": "100.117.194.25", "vendor": "h3c"})
+    monkeypatch.setattr(service, "probe_target", lambda *_args, **_kwargs: {"ok": True, "status": "succeeded", "duration_ms": 3})
+    first = service.save_connection("default", {
+        "device_id": device["device_id"], "name": "首次登记", "protocol": "telnet", "port": 30001, "auth_method": "none",
+    })
+    skill = service.save_skill("default", {
+        "name": "测试 Skill", "device_ids": [device["device_id"]], "connection_ids": [first["connection_id"]],
+    })
+
+    updated = service.save_connection("default", {
+        "device_id": device["device_id"], "name": "更新后的连接", "protocol": "telnet", "port": 30001, "auth_method": "none",
+    })
+
+    assert updated["connection_id"] == first["connection_id"]
+    assert updated["name"] == "更新后的连接"
+    assert len(service.list_connections("default")) == 1
+    assert service.get_skill("default", skill["skill_id"])["connection_ids"] == [first["connection_id"]]
+
+
+def test_legacy_duplicate_connections_are_merged_without_dangling_skill_refs(monkeypatch, tmp_path):
+    _setup(monkeypatch, tmp_path)
+    device = service.save_device("default", {"name": "CE1", "host": "100.117.194.25", "vendor": "h3c"})
+    monkeypatch.setattr(service, "probe_target", lambda *_args, **_kwargs: {"ok": True, "status": "succeeded"})
+    canonical = service.save_connection("default", {
+        "device_id": device["device_id"], "protocol": "telnet", "port": 30001, "auth_method": "none",
+    })
+    skill = service.save_skill("default", {
+        "name": "测试 Skill", "device_ids": [device["device_id"]], "connection_ids": [canonical["connection_id"]],
+    })
+    duplicate = {
+        **service.get_connection("default", canonical["connection_id"], include_secret=True),
+        "connection_id": "connection_legacy_duplicate",
+        "updated_at": "2099-01-01T00:00:00+00:00",
+    }
+    service._store("default").save("connections", duplicate["connection_id"], duplicate)
+
+    visible = service.list_connections("default")
+
+    assert [item["connection_id"] for item in visible] == [canonical["connection_id"]]
+    assert service.get_connection("default", duplicate["connection_id"]) is None
+    assert service.get_skill("default", skill["skill_id"])["connection_ids"] == [canonical["connection_id"]]
+
+
 def test_source_address_is_automatically_selected_for_vpn_scope(monkeypatch):
     monkeypatch.setattr(
         "extensions.network_operations.device_tools.local_ipv4_addresses",

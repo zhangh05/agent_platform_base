@@ -1,36 +1,32 @@
-# Design QA — 网络设备与 Skill 连接表单
+# Design QA — 连接唯一性与对话 Skill 标识
 
 ## Visual truth
 
 - Reference screenshots:
-  - `/var/folders/yg/hf791pl16b3g8n4001_tjngc0000gn/T/codex-clipboard-6c134029-a857-4e5d-bff4-bb696d101af8.png`
-  - `/var/folders/yg/hf791pl16b3g8n4001_tjngc0000gn/T/codex-clipboard-816164da-84db-49cb-89f5-5ce2edcf34c9.png`
-  - `/var/folders/yg/hf791pl16b3g8n4001_tjngc0000gn/T/codex-clipboard-cb124cc8-a9a5-44c9-86a1-87cc6d84bbd8.png`
-- Implementation route: `http://127.0.0.1:5273/extensions/network.operations/manage`
-- Implementation capture: `/tmp/lzcore-network-operations-after.png`
-- Latest scroll/connection capture: `/tmp/lzcore-network-scroll-after.png`
-- State checked: 设备与连接页、CE1 Telnet 连接已验证、连接编辑态。
+  - `/var/folders/yg/hf791pl16b3g8n4001_tjngc0000gn/T/codex-clipboard-107605a3-2b2f-4a9f-a601-e54e80968e74.png`
+  - `/var/folders/yg/hf791pl16b3g8n4001_tjngc0000gn/T/codex-clipboard-a48f0709-e163-4ec8-9a7c-cc6a791adcea.png`
+  - `/var/folders/yg/hf791pl16b3g8n4001_tjngc0000gn/T/codex-clipboard-ff0bfad5-8a3a-4c5f-b184-6fb508dff6d5.png`
+- Implementation routes:
+  - `http://127.0.0.1:5273/extensions/network.operations/manage`
+  - `http://127.0.0.1:5273/workbench`
+- Implementation capture: `/tmp/lzcore-workbench-skill-badge.png`
+- State checked: CE1 连接列表、Skill 配置可用连接、带 Skill 的用户消息、刷新后的持久化消息。
 
 ## Findings and fixes
 
-1. Reference: 输入框和下拉框边界过浅，表单填写区域不易识别。
-   Fix: all form inputs, selects, textareas, and inline inputs now use a visible neutral border, white background, hover emphasis, and teal focus ring.
-2. Reference: yellow feedback notice remains on screen too long.
-   Fix: feedback notices now expire 4.5 seconds after their latest value is shown.
-3. Runtime: the CE1 target is reachable only when the local Tailscale source address is selected; the default macOS route sends the target through `en1` and times out.
-   Fix: connection profiles support an optional validated local source IP; when left blank, the runtime now discovers local interfaces and automatically selects the best matching private/VPN source before SSH or Telnet connects.
-4. Reference: the registered-device section is clipped at the bottom of the page and cannot be reached by scrolling.
-   Fix: the extension root now owns a bounded vertical scroll container instead of inheriting the application shell's `overflow: hidden` clipping behavior.
+1. Reference: one CE1 endpoint appeared twice in both the registered-device and Skill connection lists.
+   Fix: one logical endpoint is now identified by device, protocol, and port. Repeated saves update it; legacy duplicates are merged and Skill references are rewritten before the duplicate is hard-deleted.
+2. Reference: the composer showed the selected Skill, but the submitted user message did not state which Skill governed that turn.
+   Fix: each user bubble now carries a compact `Skill / name` label. The server writes a validated Skill snapshot with the message, so the label survives refresh and cannot depend on the current composer selection.
 
 ## Verification
 
-- Browser DOM: source-address field is present and connection edit state restores `100.124.182.34`.
-- Browser computed styles: form controls have a visible `#aebfc2` solid border and white background; no console warnings or errors were recorded.
-- Browser interaction: connection test reports `连接测试完成`; the notice disappears after the configured timeout.
-- Browser layout: the network page reports `overflow-y: auto`, and the registered-device content remains inside that scroll owner.
-- Live probe: both saved CE1 `100.117.194.25:30001` Telnet profiles reach the H3C prompt through automatically selected source `100.124.182.34`; status is `connected` and `verified=true`.
-- Focused automated tests and TypeScript checks pass.
+- Browser DOM: the CE1 card contains exactly one `TELNET:30001` connection.
+- API state: local workspace contains one CE1 connection and Skill `测试1` references that surviving connection ID.
+- Browser interaction: sending `验证 Skill 标签显示` shows `Skill / 测试1` on the user bubble immediately.
+- Refresh recovery: after the successful turn completed and the page reloaded, the same Skill label was restored from durable session-message metadata.
+- Focused verification: 40 network-extension tests, 11 workbench merge tests, TypeScript typecheck, and the production frontend build pass.
 
 ## Result
 
-Passed. The requested visual affordance, transient feedback, and real local connection path are verified without changing the product layout or the host routing table.
+Final result: passed. Connection identity is unambiguous and the selected Skill is visible on the exact user turn it governed, including after refresh.

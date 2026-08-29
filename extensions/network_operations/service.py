@@ -21,6 +21,7 @@ from extensions.network_operations.device_tools import (
     resolve_source_address,
 )
 from extensions.sdk import ExtensionDataStore, ExtensionSecretStore
+from storage.locking import FileLock
 from storage.time_utils import now_iso
 
 
@@ -166,6 +167,11 @@ def _store(workspace_id: str) -> ExtensionDataStore:
     return ExtensionDataStore(EXTENSION_ID, workspace_id)
 
 
+def _connection_lock(workspace_id: str) -> FileLock:
+    """Serialize endpoint identity changes across workers and processes."""
+    return FileLock(_store(workspace_id).root() / ".connections.lock", timeout=10.0)
+
+
 def _id(prefix: str) -> str:
     return f"{prefix}_{uuid.uuid4().hex[:12]}"
 
@@ -285,8 +291,87 @@ def delete_device(workspace_id: str, device_id: str) -> bool:
     return _store(workspace_id).delete("devices", device_id)
 
 
+def _raw_connections(workspace_id: str) -> list[dict[str, Any]]:
+    return _store(workspace_id).list("connections", limit=2000)
+
+
+def _connection_identity(record: dict[str, Any]) -> tuple[str, str, int]:
+    protocol = str(record.get("protocol") or "ssh").strip().lower()
+    default_port = 23 if protocol == "telnet" else 22
+    return (
+        str(record.get("device_id") or "").strip(),
+        protocol,
+        int(record.get("port") or default_port),
+    )
+
+
+def _referenced_connection_ids(workspace_id: str) -> set[str]:
+    return {
+        str(connection_id)
+        for skill in list_skills(workspace_id)
+        for connection_id in (skill.get("connection_ids") or [])
+        if str(connection_id)
+    }
+
+
+def _canonical_connection(records: list[dict[str, Any]], referenced: set[str]) -> dict[str, Any]:
+    """Keep the most useful stable record when legacy duplicates exist."""
+    return max(
+        records,
+        key=lambda item: (
+            str(item.get("connection_id") or "") in referenced,
+            bool(_public_connection(item).get("verified")),
+            str(item.get("updated_at") or item.get("created_at") or ""),
+            str(item.get("connection_id") or ""),
+        ),
+    )
+
+
+def _replace_connection_references(workspace_id: str, old_ids: set[str], canonical_id: str) -> None:
+    if not old_ids:
+        return
+    for skill in list_skills(workspace_id):
+        current = [str(item) for item in (skill.get("connection_ids") or [])]
+        if not old_ids.intersection(current):
+            continue
+        skill["connection_ids"] = list(dict.fromkeys(
+            canonical_id if item in old_ids else item for item in current
+        ))
+        skill["updated_at"] = now_iso()
+        _store(workspace_id).save("skills", str(skill.get("skill_id") or ""), skill)
+
+
+def _reconcile_duplicate_connections_unlocked(workspace_id: str) -> int:
+    groups: dict[tuple[str, str, int], list[dict[str, Any]]] = {}
+    for record in _raw_connections(workspace_id):
+        groups.setdefault(_connection_identity(record), []).append(record)
+    referenced = _referenced_connection_ids(workspace_id)
+    removed = 0
+    for records in groups.values():
+        if len(records) < 2:
+            continue
+        canonical = _canonical_connection(records, referenced)
+        canonical_id = str(canonical.get("connection_id") or "")
+        duplicate_ids = {
+            str(item.get("connection_id") or "")
+            for item in records
+            if str(item.get("connection_id") or "") != canonical_id
+        }
+        _replace_connection_references(workspace_id, duplicate_ids, canonical_id)
+        for duplicate_id in duplicate_ids:
+            removed += int(_delete_connection_record(workspace_id, duplicate_id))
+    return removed
+
+
+def reconcile_duplicate_connections(workspace_id: str) -> int:
+    """Enforce one logical connection for each device/protocol/port endpoint."""
+    with _connection_lock(workspace_id):
+        return _reconcile_duplicate_connections_unlocked(workspace_id)
+
+
 def list_connections(workspace_id: str, *, device_id: str = "") -> list[dict[str, Any]]:
-    records = _store(workspace_id).list("connections", limit=2000)
+    reconcile_duplicate_connections(workspace_id)
+    records = _raw_connections(workspace_id)
     if device_id:
         records = [item for item in records if str(item.get("device_id") or "") == device_id]
     return [_public_connection(item) for item in records]
@@ -348,23 +433,34 @@ def test_connection(workspace_id: str, connection_id: str, *, accept_host_key: b
     return result
 
 
-def save_connection(workspace_id: str, payload: dict[str, Any], *, auto_test: bool = True) -> dict[str, Any]:
+def _save_connection_unlocked(workspace_id: str, payload: dict[str, Any]) -> dict[str, Any]:
     device_id = str(payload.get("device_id") or "").strip()
     if not get_device(workspace_id, device_id):
         raise ValueError("device_not_found")
     protocol = str(payload.get("protocol") or "ssh").strip().lower()
     if protocol not in {"ssh", "telnet"}:
         raise ValueError("protocol must be ssh or telnet")
-    connection_id = str(payload.get("connection_id") or _id("connection"))
-    existing = get_connection(workspace_id, connection_id, include_secret=True) or {}
-    if existing and str(existing.get("device_id") or "") != device_id:
-        raise ValueError("connection_device_is_immutable")
     try:
         port = int(payload.get("port") or (23 if protocol == "telnet" else 22))
     except (TypeError, ValueError) as exc:
         raise ValueError("invalid port") from exc
     if not 1 <= port <= 65535:
         raise ValueError("invalid port")
+    requested_id = str(payload.get("connection_id") or "").strip()
+    if requested_id:
+        connection_id = requested_id
+    else:
+        matches = [
+            item for item in _raw_connections(workspace_id)
+            if _connection_identity(item) == (device_id, protocol, port)
+        ]
+        connection_id = (
+            str(_canonical_connection(matches, _referenced_connection_ids(workspace_id)).get("connection_id") or "")
+            if matches else _id("connection")
+        )
+    existing = get_connection(workspace_id, connection_id, include_secret=True) or {}
+    if existing and str(existing.get("device_id") or "") != device_id:
+        raise ValueError("connection_device_is_immutable")
     auth_method = str(payload.get("auth_method") or existing.get("auth_method") or ("none" if protocol == "telnet" else "password")).lower()
     if auth_method not in ({"none", "password"} if protocol == "telnet" else {"password", "private_key"}):
         raise ValueError("invalid auth method for protocol")
@@ -425,9 +521,22 @@ def save_connection(workspace_id: str, payload: dict[str, Any], *, auto_test: bo
         "updated_at": now_iso(),
     }
     _store(workspace_id).save("connections", connection_id, record)
-    if auto_test:
-        return test_connection(workspace_id, connection_id).get("connection") or _public_connection(record)
     return _public_connection(record)
+
+
+def save_connection(workspace_id: str, payload: dict[str, Any], *, auto_test: bool = True) -> dict[str, Any]:
+    """Create or update a connection by its stable endpoint identity.
+
+    A device may have distinct SSH/Telnet endpoints or ports, but repeated
+    submissions for the same ``device + protocol + port`` update the existing
+    logical connection instead of creating ambiguous duplicate credentials.
+    """
+    with _connection_lock(workspace_id):
+        _reconcile_duplicate_connections_unlocked(workspace_id)
+        record = _save_connection_unlocked(workspace_id, payload)
+    if auto_test:
+        return test_connection(workspace_id, str(record.get("connection_id") or "")).get("connection") or record
+    return record
 
 
 def _delete_connection_record(workspace_id: str, connection_id: str) -> bool:

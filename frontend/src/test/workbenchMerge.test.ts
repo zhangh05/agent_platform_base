@@ -52,6 +52,25 @@ describe("workbench backend message merge", () => {
     ]);
   });
 
+  it("restores the immutable Skill label on a persisted user message", () => {
+    const store = useWorkbenchStore.getState();
+    store.switchSession("sess-skill");
+    store.mergeFromBackend("sess-skill", [{
+      message_id: "run-skill:user",
+      session_id: "sess-skill",
+      role: "user",
+      content: "连接设备，并查看版本",
+      created_at: "2026-08-29T10:00:00Z",
+      run_id: "run-skill",
+      metadata: { workbench_skill: { skill_id: "skill-1", name: "测试1" } },
+    }]);
+
+    expect(useWorkbenchStore.getState().bySession["sess-skill"][0].skill).toEqual({
+      skill_id: "skill-1",
+      name: "测试1",
+    });
+  });
+
   it("keeps backend turn ordering when replacing optimistic local messages", () => {
     const store = useWorkbenchStore.getState();
     store.switchSession("sess-order");

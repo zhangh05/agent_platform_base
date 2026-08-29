@@ -220,6 +220,7 @@ class SessionMessageStore:
                                               "manual_review_count", "trace_id",
                                               "llm_metadata", "attachments", "tool_context",
                                               "history_state", "client_request_id", "provisional",
+                                              "workbench_skill",
                                               "redacted")
                         if k in meta
                     }

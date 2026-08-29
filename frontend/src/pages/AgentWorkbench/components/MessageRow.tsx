@@ -91,6 +91,7 @@ export const MessageRow = memo(function MessageRow({ m, idx: _idx, total: _total
     return (
       <div className="message-row user" data-testid="chat-user">
         <div className="message-stack"><div className="chat-bubble user">
+          {m.skill ? <div className="user-message-skill" aria-label={`使用 Skill：${m.skill.name}`}><span>Skill</span><strong>{m.skill.name}</strong></div> : null}
           {m.text && <div className="user-message-text">{m.text}</div>}
           {m.attachments?.length ? <div className="chat-attachments">
             {m.attachments.map((attachment) => attachment.kind === "image" ? (

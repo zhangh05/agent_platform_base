@@ -197,7 +197,13 @@ export function useChatStream(
     const clientRequestId = typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
       ? crypto.randomUUID()
       : `request-${Date.now()}-${Math.random().toString(16).slice(2)}`;
-    const turnMetadata = { ...metadataOverride, client_request_id: clientRequestId };
+    const turnMetadata: Record<string, unknown> = { ...metadataOverride, client_request_id: clientRequestId };
+    const selectedSkill = turnMetadata.workbench_selection && typeof turnMetadata.workbench_selection === "object"
+      ? turnMetadata.workbench_selection as { skill_id?: unknown; skill_name?: unknown }
+      : undefined;
+    const skillSnapshot = selectedSkill && typeof selectedSkill.skill_id === "string" && typeof selectedSkill.skill_name === "string"
+      ? { skill_id: selectedSkill.skill_id, name: selectedSkill.skill_name }
+      : undefined;
     // Append both optimistic messages with the same durable client-turn key.
     // A delayed result can then replace exactly this pair after a WebSocket loss.
     const store = useWorkbenchStore.getState();
@@ -206,6 +212,7 @@ export function useChatStream(
       scratch,
       attachments.length ? attachments : undefined,
       clientRequestId,
+      skillSnapshot,
     );
     const streamingMsgId = store.appendAssistantStreaming(scratch, clientRequestId);
     useWorkbenchStore.getState().setSending(true);

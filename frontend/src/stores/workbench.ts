@@ -91,6 +91,8 @@ export interface ChatMsg {
   runtimeEvents?: RuntimeEvent[];
   /** Durable session-job id for explicit cancellation and refresh recovery. */
   activeJobId?: string;
+  /** Immutable Skill snapshot used for this user turn. */
+  skill?: { skill_id: string; name: string };
   attachments?: Array<{ file_id: string; name: string; mime_type: string; size_bytes: number; kind: "image" | "file"; previewUrl?: string }>;
 }
 
@@ -254,7 +256,7 @@ interface WorkbenchState {
 
   switchSession: (session_id: string | null) => void;
   moveSessionMessages: (from_session_id: string, to_session_id: string) => void;
-  appendUser: (text: string, session_id: string | null, attachments?: ChatMsg["attachments"], client_request_id?: string) => string;
+  appendUser: (text: string, session_id: string | null, attachments?: ChatMsg["attachments"], client_request_id?: string, skill?: ChatMsg["skill"]) => string;
   /** Create a streaming assistant placeholder before response arrives */
   appendAssistantStreaming: (session_id: string | null, client_request_id?: string) => string;
   /** Remove local-only placeholders when the server did not accept a turn. */
@@ -337,7 +339,7 @@ export const useWorkbenchStore = create<WorkbenchState>()(
         });
       },
 
-      appendUser: (text, session_id, attachments, client_request_id) => {
+      appendUser: (text, session_id, attachments, client_request_id, skill) => {
         const sid = session_id ?? get().currentSessionId ?? "_scratch";
         const msg: ChatMsg = {
           id: nextId(),
@@ -347,6 +349,7 @@ export const useWorkbenchStore = create<WorkbenchState>()(
           status: "ready",
           created_at: new Date().toISOString(),
           attachments,
+          skill,
         };
         set((s) => {
           const cur = s.bySession[sid] ?? [];
@@ -651,6 +654,9 @@ export const useWorkbenchStore = create<WorkbenchState>()(
           attachments: Array.isArray(m.metadata?.attachments)
             ? m.metadata.attachments as ChatMsg["attachments"]
             : undefined,
+          skill: m.metadata?.workbench_skill && typeof m.metadata.workbench_skill === "object"
+            ? m.metadata.workbench_skill as ChatMsg["skill"]
+            : undefined,
           // `result` 不可从后端还原, 渲染为纯文本气泡 (无 inline 工具调用)
         })));
         set((s) => {
@@ -684,6 +690,7 @@ export const useWorkbenchStore = create<WorkbenchState>()(
                       ? serverMsg.text
                       : localMatch.text,
                   attachments: serverMsg.attachments ?? localMatch.attachments,
+                  skill: serverMsg.skill ?? localMatch.skill,
                 }
               : serverMsg;
             combined.push(nextMsg);

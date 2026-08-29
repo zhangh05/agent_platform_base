@@ -143,11 +143,14 @@ def persist_run_record(session, turn, result, context) -> bool:
                 user_message_run_id = user_message_storage_run_id(
                     client_request_id, run_id,
                 )
+                from agent.runtime.message_identity import workbench_message_metadata
+
                 store.write_message(user_message_run_id, "user", user_input, metadata={
                     "created_at": state.created_at,
                     "intent": state.intent,
                     "client_request_id": client_request_id,
                     "attachments": user_attachments,
+                    **workbench_message_metadata(getattr(turn.op, "metadata", {}) or {}),
                     "history_state": build_history_state_record(
                         "user", user_input, references=user_attachments,
                     ),

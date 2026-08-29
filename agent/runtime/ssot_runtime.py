@@ -130,9 +130,12 @@ def _persist_inflight_user_message(session, turn, user_input: str) -> None:
         getattr(turn.op, "runtime_control", None)
     ):
         return
-    from storage.message_store import SessionMessageStore
+    from agent.runtime.message_identity import (
+        user_message_storage_run_id,
+        workbench_message_metadata,
+    )
     from core.runtime_engine.context_compaction import build_history_state_record
-    from agent.runtime.message_identity import user_message_storage_run_id
+    from storage.message_store import SessionMessageStore
     metadata = dict(getattr(turn.op, "metadata", {}) or {})
     message_run_id = user_message_storage_run_id(
         str(metadata.get("client_request_id") or ""), turn.turn_id,
@@ -145,6 +148,7 @@ def _persist_inflight_user_message(session, turn, user_input: str) -> None:
             "created_at": now_iso(),
             "client_request_id": str(metadata.get("client_request_id") or ""),
             "attachments": list(metadata.get("attachments") or []),
+            **workbench_message_metadata(metadata),
             "history_state": build_history_state_record(
                 "user", user_input, references=list(metadata.get("attachments") or [])
             ),

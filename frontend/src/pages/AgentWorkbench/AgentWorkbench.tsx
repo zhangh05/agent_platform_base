@@ -377,6 +377,7 @@ export function TaskWorkbench() {
     const workbenchSelection = selectedSkill ? {
       extension_id: selectedSkill.extension_id,
       skill_id: selectedSkill.skill_id,
+      skill_name: selectedSkill.name,
       resource_ids: selectedResourceIds,
     } : undefined;
     return sendPrepared(text, { ...(metadata || {}), ...(workbenchSelection ? { workbench_selection: workbenchSelection } : {}) });
