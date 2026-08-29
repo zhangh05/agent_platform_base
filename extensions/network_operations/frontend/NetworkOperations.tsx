@@ -144,8 +144,37 @@ export default function NetworkOperations() {
   };
 
   const removeSkill = async (skill: Skill) => {
-    if (!await confirm({ title: "删除 Skill", body: `将硬删除“${skill.name}”，不会删除设备和连接。`, confirmLabel: "删除", destructive: true })) return;
-    void run(() => apiRequest({ method: "DELETE", url: `${base}/skills/${skill.skill_id}`, data: { workspace_id: workspaceId } }), "Skill 已删除");
+    if (!await confirm({
+      title: "永久删除 Skill",
+      body: `将硬删除“${skill.name}”，工作台将无法再选择它；已登记设备和连接不会被删除。此操作不可恢复。`,
+      confirmLabel: "永久删除",
+      destructive: true,
+    })) return;
+    void run(
+      () => apiRequest({ method: "DELETE", url: `${base}/skills/${skill.skill_id}`, data: { workspace_id: workspaceId } }),
+      "Skill 已永久删除",
+    ).then((outcome) => {
+      if (outcome.ok && skillForm.skill_id === skill.skill_id) setSkillForm(emptySkill);
+    });
+  };
+
+  const toggleSkill = (skill: Skill) => void run(
+    () => apiRequest({
+      method: "PUT",
+      url: `${base}/skills/${skill.skill_id}`,
+      data: { ...skill, workspace_id: workspaceId, enabled: !skill.enabled },
+    }),
+    skill.enabled ? "Skill 已停用，工作台不再展示" : "Skill 已启用，可在工作台选择",
+  );
+
+  const editSkill = (skill: Skill) => {
+    setSkillForm({
+      ...emptySkill,
+      ...skill,
+      instructions: skill.instructions || "",
+      allowed_tool_ids: skill.allowed_tool_ids?.length ? skill.allowed_tool_ids : allowedToolIds,
+    });
+    window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
   const editConnection = (connection: Connection) => {
@@ -245,7 +274,38 @@ export default function NetworkOperations() {
         <label className="full-field">使用说明<textarea value={skillForm.instructions} onChange={(event) => setSkillForm({ ...skillForm, instructions: event.target.value })} placeholder="描述目标、证据要求和操作边界；模型自行决定工具顺序与并行关系。" /></label>
         <div className="form-actions"><Button type="submit" disabled={busy || !skillForm.device_ids.length || !skillForm.connection_ids.length || !skillForm.allowed_tool_ids.length}>{skillForm.skill_id ? "保存 Skill" : "发布到工作台"}</Button>{skillForm.skill_id ? <Button type="button" onClick={() => setSkillForm(emptySkill)}>取消</Button> : null}</div>
       </form></section>
-      <section className="network-panel"><h2>已发布 Skill</h2><div className="skill-list">{skills.length ? skills.map((skill) => <article key={skill.skill_id}><div><strong>{skill.name}</strong><p>{skill.description || "暂无说明"}</p></div><span>{skill.device_ids.length} 台设备 · {skill.connection_ids.length} 条连接 · {skill.allowed_tool_ids.length} 项能力 · {skill.enabled ? "已启用" : "已停用"}</span><div className="row-actions"><Button onClick={() => setSkillForm({ ...emptySkill, ...skill, instructions: skill.instructions || "", allowed_tool_ids: skill.allowed_tool_ids?.length ? skill.allowed_tool_ids : allowedToolIds })}>编辑</Button><Button variant="danger" onClick={() => void removeSkill(skill)}>删除</Button></div></article>) : <div className="empty">尚未创建 Skill</div>}</div></section>
+      <section className="network-panel published-skills">
+        <div className="panel-heading">
+          <div><h2>已发布 Skill</h2><p>维护工作台可选 Skill 的状态、设备、连接与能力边界。</p></div>
+          <span className="record-count">{skills.length} 个 Skill</span>
+        </div>
+        <div className="skill-list">{skills.length ? skills.map((skill) => {
+          const skillDevices = skill.device_ids.map((id) => byDevice.get(id)?.name).filter(Boolean);
+          const skillConnections = skill.connection_ids.map((id) => {
+            const connection = connections.find((item) => item.connection_id === id);
+            return connection ? `${byDevice.get(connection.device_id)?.name || "未知设备"} ${connection.protocol.toUpperCase()}:${connection.port}` : "失效连接";
+          });
+          return <article key={skill.skill_id} className="skill-card" data-testid={`skill-card-${skill.skill_id}`}>
+            <header className="skill-card-header">
+              <div className="skill-title">
+                <strong>{skill.name}</strong>
+                <span className={`skill-state ${skill.enabled ? "enabled" : "disabled"}`}>{skill.enabled ? "已启用" : "已停用"}</span>
+              </div>
+              <div className="skill-actions" aria-label={`${skill.name} Skill 管理`}>
+                <Button size="sm" icon={<IconEdit size={13} />} onClick={() => editSkill(skill)}>编辑 Skill</Button>
+                <Button size="sm" onClick={() => toggleSkill(skill)}>{skill.enabled ? "停用 Skill" : "启用 Skill"}</Button>
+                <Button size="sm" variant="danger" icon={<IconTrash size={13} />} onClick={() => void removeSkill(skill)}>永久删除 Skill</Button>
+              </div>
+            </header>
+            <p className="skill-description">{skill.description || "暂无说明"}</p>
+            <dl className="skill-scope">
+              <div><dt>设备</dt><dd>{skillDevices.length ? skillDevices.join("、") : "无可用设备"}</dd></div>
+              <div><dt>连接</dt><dd>{skillConnections.length ? skillConnections.join("、") : "无可用连接"}</dd></div>
+              <div><dt>能力</dt><dd>{skill.allowed_tool_ids.length} 项已授权</dd></div>
+            </dl>
+          </article>;
+        }) : <div className="empty">尚未创建 Skill</div>}</div>
+      </section>
     </div>}
   </div>;
 }

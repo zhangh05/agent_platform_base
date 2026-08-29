@@ -23,6 +23,8 @@
    Fix: each device is now a management card with a fixed header and explicit `编辑设备` / `永久删除设备` controls. Connections have their own section and explicit `添加连接` / `编辑连接` / `测试连接` / `永久删除连接` controls.
 4. Reference: destructive scope was unclear.
    Fix: device deletion confirmation states the number of connections, Skill reconciliation behavior, hard-delete semantics, and irreversibility before execution.
+5. Reference: published Skill rows still exposed generic “编辑/删除” actions and hid their effective resource boundary.
+   Fix: every published Skill now has explicit `编辑 Skill`, `启用/停用 Skill`, and `永久删除 Skill` controls plus readable device, connection, capability, and status details. Hard deletion explicitly preserves devices and connections.
 
 ## Verification
 
@@ -32,8 +34,9 @@
 - Refresh recovery: after the successful turn completed and the page reloaded, the same Skill label was restored from durable session-message metadata.
 - Browser interaction: CE1 `编辑设备` restores its name, address, vendor and region into the edit form; a temporary device was registered, displayed with zero-connection guidance, permanently deleted through confirmation, and absent afterward.
 - Browser DOM: CE1 exposes distinct device and connection management groups with unambiguous accessible labels.
+- Browser interaction: published Skill `测试1` restores its complete edit form, exposes a reversible enable/disable action, and presents an irreversible hard-delete confirmation without mutating its devices or connections.
 - Focused verification: 40 network-extension tests, 11 workbench merge tests, TypeScript typecheck, CSS token validation, and the production frontend build pass.
 
 ## Result
 
-Final result: passed. Device management now presents complete, explicit edit/add/test/hard-delete actions, while connection identity and per-turn Skill visibility remain unambiguous.
+Final result: passed. Device and published-Skill management now present complete and explicit lifecycle actions, while connection identity and per-turn Skill visibility remain unambiguous.
