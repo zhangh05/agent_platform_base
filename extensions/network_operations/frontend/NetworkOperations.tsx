@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
 import { apiRequest } from "../../../frontend/src/api/client";
 import { confirm } from "../../../frontend/src/components/ConfirmDialog";
+import { IconEdit, IconPlus, IconRefresh, IconTrash } from "../../../frontend/src/components/Icon";
 import { Button, PageHeader } from "../../../frontend/src/components/ui";
 import { useSessionStore } from "../../../frontend/src/stores/session";
 import "./NetworkOperations.css";
@@ -118,8 +119,21 @@ export default function NetworkOperations() {
   };
 
   const removeDevice = async (device: Device) => {
-    if (!await confirm({ title: "删除设备", body: `将硬删除“${device.name}”及其连接；失去有效资源的 Skill 将一并删除。`, confirmLabel: "删除", destructive: true })) return;
-    void run(() => apiRequest({ method: "DELETE", url: `${base}/devices/${device.device_id}`, data: { workspace_id: workspaceId } }), "设备已删除");
+    const connectionCount = connections.filter((item) => item.device_id === device.device_id).length;
+    if (!await confirm({
+      title: "永久删除设备",
+      body: `将硬删除“${device.name}”及其 ${connectionCount} 条连接。关联 Skill 会移除该设备；失去全部设备或连接的 Skill 将一并硬删除。此操作不可恢复。`,
+      confirmLabel: "永久删除",
+      destructive: true,
+    })) return;
+    void run(
+      () => apiRequest({ method: "DELETE", url: `${base}/devices/${device.device_id}`, data: { workspace_id: workspaceId } }),
+      "设备及其连接已永久删除",
+    ).then((outcome) => {
+      if (!outcome.ok) return;
+      if (deviceForm.device_id === device.device_id) setDeviceForm(emptyDevice);
+      if (connectionForm.device_id === device.device_id) setConnectionForm(emptyConnection);
+    });
   };
 
   const saveSkill = (event: FormEvent) => {
@@ -139,8 +153,18 @@ export default function NetworkOperations() {
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
+  const editDevice = (device: Device) => {
+    setDeviceForm({ ...device });
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  };
+
+  const addConnectionFor = (device: Device) => {
+    setConnectionForm({ ...emptyConnection, device_id: device.device_id });
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  };
+
   return <div className="network-admin">
-    <PageHeader title="网络设备与 Skill" description="先登记设备并验证 SSH/Telnet 连接，再把多台设备组合成工作台可选 Skill。" actions={<Button onClick={() => void load()} disabled={busy}>刷新</Button>} />
+    <PageHeader title="网络设备与 Skill" description="先登记设备并验证 SSH/Telnet 连接，再把多台设备组合成工作台可选 Skill。" actions={<Button icon={<IconRefresh size={14} />} onClick={() => void load()} disabled={busy}>刷新</Button>} />
     <div className="network-tabs"><button className={view === "devices" ? "active" : ""} onClick={() => setView("devices")}>设备与连接</button><button className={view === "skills" ? "active" : ""} onClick={() => setView("skills")}>Skill 配置</button></div>
     {notice ? <div className="network-notice">{notice}</div> : null}
     {view === "devices" ? <div className="network-grid">
@@ -171,11 +195,45 @@ export default function NetworkOperations() {
           <div className="form-actions"><Button type="submit" disabled={busy}>保存并测试</Button>{connectionForm.connection_id ? <Button type="button" onClick={() => setConnectionForm(emptyConnection)}>取消</Button> : null}</div>
         </form>
       </section>
-      <section className="network-panel network-span"><h2>已登记设备</h2><div className="device-list">{devices.length ? devices.map((device) => <article key={device.device_id} className="device-card">
-        <div><strong>{device.name}</strong><span>{device.host} · {device.vendor.toUpperCase()} · {byRegion.get(device.region_id) || "未分区"}</span></div>
-        <div className="connection-list">{connections.filter((item) => item.device_id === device.device_id).map((connection) => <div key={connection.connection_id}><span className={`status ${connection.status}`}>{connection.verified ? "已连接" : connection.status === "trust_required" ? "待确认指纹" : "连接失败"}</span><b>{connection.protocol.toUpperCase()}:{connection.port}</b><small title={connection.last_error || connection.last_tested_at}>{connection.verified && connection.effective_source_address ? `源地址 ${connection.effective_source_address}` : connection.last_error || connection.last_tested_at || "尚未测试"}</small><div className="row-actions"><Button onClick={() => editConnection(connection)}>编辑</Button><Button onClick={() => testConnection(connection)}>{connection.status === "trust_required" ? "确认并重试" : "测试"}</Button><Button variant="danger" onClick={() => void removeConnection(connection)}>删除</Button></div></div>)}</div>
-        <div className="row-actions"><Button onClick={() => setDeviceForm({ ...device })}>编辑</Button><Button variant="danger" onClick={() => void removeDevice(device)}>删除</Button></div>
-      </article>) : <div className="empty">尚未登记设备</div>}</div></section>
+      <section className="network-panel network-span registered-devices">
+        <div className="panel-heading">
+          <div><h2>已登记设备</h2><p>在这里维护设备身份、连接和删除操作。</p></div>
+          <span className="record-count">{devices.length} 台设备</span>
+        </div>
+        <div className="device-list">{devices.length ? devices.map((device) => {
+          const deviceConnections = connections.filter((item) => item.device_id === device.device_id);
+          return <article key={device.device_id} className="device-card" data-testid={`device-card-${device.device_id}`}>
+            <header className="device-card-header">
+              <div className="device-identity">
+                <strong>{device.name}</strong>
+                <span>{device.host} · {device.vendor.toUpperCase()} · {byRegion.get(device.region_id) || "未分区"}</span>
+              </div>
+              <div className="device-actions" aria-label={`${device.name} 设备管理`}>
+                <Button size="sm" icon={<IconEdit size={13} />} onClick={() => editDevice(device)}>编辑设备</Button>
+                <Button size="sm" variant="danger" icon={<IconTrash size={13} />} onClick={() => void removeDevice(device)}>永久删除设备</Button>
+              </div>
+            </header>
+            <div className="connection-section">
+              <div className="connection-heading">
+                <div><b>设备连接</b><span>{deviceConnections.length} 条</span></div>
+                <Button size="sm" icon={<IconPlus size={13} />} onClick={() => addConnectionFor(device)}>添加连接</Button>
+              </div>
+              <div className="connection-list">{deviceConnections.length ? deviceConnections.map((connection) => <div key={connection.connection_id} className="connection-row">
+                <div className="connection-summary">
+                  <span className={`status ${connection.status}`}>{connection.verified ? "已连接" : connection.status === "trust_required" ? "待确认指纹" : "连接失败"}</span>
+                  <b>{connection.protocol.toUpperCase()}:{connection.port}</b>
+                  <small title={connection.last_error || connection.last_tested_at}>{connection.verified && connection.effective_source_address ? `源地址 ${connection.effective_source_address}` : connection.last_error || connection.last_tested_at || "尚未测试"}</small>
+                </div>
+                <div className="connection-actions" aria-label={`${device.name} ${connection.protocol.toUpperCase()}:${connection.port} 连接管理`}>
+                  <Button size="sm" onClick={() => editConnection(connection)}>编辑连接</Button>
+                  <Button size="sm" onClick={() => testConnection(connection)}>{connection.status === "trust_required" ? "确认并重试" : "测试连接"}</Button>
+                  <Button size="sm" variant="danger-ghost" onClick={() => void removeConnection(connection)}>永久删除连接</Button>
+                </div>
+              </div>) : <div className="connection-empty">尚未配置连接。添加并测试连接后，设备才能加入 Skill。</div>}</div>
+            </div>
+          </article>;
+        }) : <div className="empty">尚未登记设备</div>}</div>
+      </section>
     </div> : <div className="network-grid">
       <section className="network-panel"><h2>{skillForm.skill_id ? "编辑 Skill" : "创建 Skill"}</h2><p>Skill 决定工作台可选设备与可信连接，模型在此边界内自主编排工具。</p><form onSubmit={saveSkill} className="form-grid">
         <label>名称<input required value={skillForm.name} onChange={(event) => setSkillForm({ ...skillForm, name: event.target.value })} /></label>
