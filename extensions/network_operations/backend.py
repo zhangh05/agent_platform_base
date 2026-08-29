@@ -208,7 +208,14 @@ def devices_read(invocation):
             return {"ok": False, "error": "device_not_found", "device_id": device_id}
         return {"ok": True, "device": device, "connections": service.list_connections(invocation.workspace_id, device_id=device_id)}
     connections = service.list_connections(invocation.workspace_id)
-    return {"ok": True, "devices": service.list_devices(invocation.workspace_id), "connections": connections, "connection_ids": [str(item.get("connection_id") or "") for item in connections if item.get("verified")], "regions": service.list_regions(invocation.workspace_id)}
+    return {
+        "ok": True,
+        "devices": service.list_devices(invocation.workspace_id),
+        "connections": connections,
+        "connection_ids": [str(item.get("connection_id") or "") for item in connections],
+        "ready_connection_ids": [str(item.get("connection_id") or "") for item in connections if item.get("verified")],
+        "regions": service.list_regions(invocation.workspace_id),
+    }
 
 
 def skills_read(invocation):
@@ -224,8 +231,9 @@ def skills_read(invocation):
 def device_manage(invocation):
     """Probe or read a network device.
 
-    Only a server-registered and verified connection is accepted. Raw hosts
-    and credentials are never accepted from model arguments.
+    Only a server-registered, Skill-authorized connection is accepted. Each
+    call actively reconnects; raw hosts and credentials are never accepted
+    from model arguments.
     """
     if not _skill_allows(invocation, "network.operations.device.manage"):
         return {"ok": False, "error": "tool_not_allowed_by_skill"}
@@ -240,13 +248,40 @@ def device_manage(invocation):
     if not connection_id:
         return {"ok": False, "error": "connection_id is required"}
     connection = service.get_connection(invocation.workspace_id, connection_id)
-    if not connection or not connection.get("verified"):
-        return {"ok": False, "error": "verified_connection_required"}
+    if not connection:
+        return {"ok": False, "error": "connection_not_found", "connection_id": connection_id}
     if getattr(invocation, "skill", None):
         skill = service.get_skill(invocation.workspace_id, str(invocation.skill))
         if not skill or connection_id not in set(skill.get("connection_ids") or []):
             return {"ok": False, "error": "connection_not_allowed_by_skill"}
-    return service.test_connection(invocation.workspace_id, connection_id, commands=[str(item) for item in (args.get("commands") or [])], read=action == "read", timeout=int(args.get("timeout") or 15))
+        selected_connections = set(getattr(invocation, "skill_connection_ids", ()) or ())
+        if selected_connections and connection_id not in selected_connections:
+            return {"ok": False, "error": "connection_not_selected_in_workbench"}
+    result = service.test_connection(
+        invocation.workspace_id,
+        connection_id,
+        commands=[str(item) for item in (args.get("commands") or [])],
+        read=action == "read",
+        timeout=int(args.get("timeout") or 15),
+    )
+    if result.get("ok"):
+        return {**result, "connection_ok": True}
+    current = result.get("connection") if isinstance(result.get("connection"), dict) else service.get_connection(invocation.workspace_id, connection_id)
+    return {
+        "ok": True,
+        "connection_ok": False,
+        "status": "unavailable",
+        "connection_id": connection_id,
+        "device_id": str((current or {}).get("device_id") or ""),
+        "protocol": str((current or {}).get("protocol") or ""),
+        "port": int((current or {}).get("port") or 0),
+        "error": str(result.get("error") or (current or {}).get("last_error") or "connection_unavailable")[:300],
+        "retryable": not bool(result.get("requires_host_key_acceptance")),
+        "requires_host_key_acceptance": bool(result.get("requires_host_key_acceptance")),
+        "decision_required": True,
+        "guidance": "继续处理其他可用设备；如无替代连接，向用户说明该设备当前不可达及错误证据。",
+        "connection": current or {},
+    }
 
 
 def inspection(invocation):
@@ -259,7 +294,9 @@ def inspection(invocation):
         if getattr(invocation, "skill", None):
             skill = service.get_skill(invocation.workspace_id, str(invocation.skill))
             allowed = set((skill or {}).get("connection_ids") or [])
-            if not isinstance(connection_ids, list) or not set(connection_ids).issubset(allowed):
+            selected = set(getattr(invocation, "skill_connection_ids", ()) or ())
+            effective_allowed = allowed.intersection(selected) if selected else allowed
+            if not isinstance(connection_ids, list) or not set(connection_ids).issubset(effective_allowed):
                 return {"ok": False, "error": "inspection_connections_not_allowed_by_skill"}
         return {"ok": True, "task": service.enqueue_connection_inspection(invocation.workspace_id, connection_ids, args.get("commands"), script_id=str(args.get("script_id") or ""), created_by="llm")}
     if action == "get":
@@ -290,7 +327,7 @@ def register():
             {
                 "tool_id": "network.operations.devices_read",
                 "name": "读取设备与连接",
-                "description": "需要了解工作台可用设备、区域和连接状态时使用。传 device_id 返回该设备及其连接；不传则列出。只有 verified=true 的 connection_id 可用于实时操作，记录本身不替代当前设备证据。",
+                "description": "需要了解工作台可用设备、区域和连接状态时使用。传 device_id 返回该设备及其连接；不传则列出。connection_ids 是已配置且可主动重连的连接，ready_connection_ids 仅表示最近一次连接成功；实时操作仍会重新连接，记录本身不替代当前设备证据。",
                 "category": "ops",
                 "permission_action": "read",
                 "bindable_inputs": {"*": ["device_id"]},
@@ -320,7 +357,7 @@ def register():
             {
                 "tool_id": "network.operations.device.manage",
                 "name": "网络设备只读探测",
-                "description": "需要设备当前证据时主动调用。只接受后台登记、测试成功且由当前 Skill 授权的 connection_id；probe 验证当前 SSH/Telnet 连接，read 必须传 commands 执行明确只读命令。不得传裸 host、用户名或凭据，不得把登记状态当成实时结果。",
+                "description": "需要设备当前证据时主动调用。只接受后台登记且由当前 Skill 授权的 connection_id；每次 probe/read 都主动建立或恢复 SSH/Telnet 连接。连接失败会作为结构化工具结果返回，模型应据此继续处理其他设备、选择替代连接或向用户说明，不得让单台失败阻断其余目标。read 必须传 commands 执行明确只读命令；不得传裸 host、用户名或凭据。",
                 "category": "ops",
                 "risk_level": "medium",
                 "permission_action": "network",
@@ -330,8 +367,8 @@ def register():
                 },
                 "bindable_inputs": {"probe": ["connection_id"], "read": ["connection_id"]},
                 "referenceable_outputs": {
-                    "probe": ["connection", "status", "stages", "fingerprint"],
-                    "read": ["connection", "status", "stages", "fingerprint", "output"],
+                    "probe": ["connection_ok", "connection", "status", "error", "stages", "fingerprint"],
+                    "read": ["connection_ok", "connection", "status", "error", "stages", "fingerprint", "output"],
                 },
                 "action_requirements": {
                     "all": {"probe": ["connection_id"], "read": ["connection_id"]},
@@ -353,7 +390,7 @@ def register():
             {
                 "tool_id": "network.operations.inspection",
                 "name": "执行只读巡检",
-                "description": "对当前 Skill 授权的多个 verified connection_id 执行持久、可追踪的只读巡检。run 必须传非空 connection_ids，返回 task_id 后用 get 跟踪到终态；多设备独立采集可并行，分析和后续动作须基于已完成证据。",
+                "description": "对当前 Skill 授权的多个已配置 connection_id 执行持久、可追踪的只读巡检。每台设备在执行时主动连接并独立记录成功或失败；单台失败不会取消其他设备，任务可返回 partial。run 必须传非空 connection_ids，返回 task_id 后用 get 跟踪到终态；模型应基于各设备结果继续分析、降级或反馈。",
                 "category": "ops",
                 "risk_level": "medium",
                 "permission_action": "network",

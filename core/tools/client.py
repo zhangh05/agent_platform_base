@@ -96,6 +96,7 @@ class ToolRuntimeClient:
             dry_run=dry_run,
             requested_by=getattr(context, "requested_by", "") if context else "",
             skill=getattr(context, "skill", None) if context else None,
+            skill_connection_ids=tuple(getattr(context, "skill_connection_ids", ()) or ()) if context else (),
             approval_id=getattr(context, "approval_id", None) if context else None,
             approval_run_id=getattr(context, "approval_run_id", None) if context else None,
             cancel_check=getattr(context, "cancel_check", None) if context else None,

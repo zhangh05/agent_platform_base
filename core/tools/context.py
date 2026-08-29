@@ -82,6 +82,7 @@ class ToolRuntimeContext:
     job_id: Optional[str] = None
     capability: Optional[str] = None
     skill: Optional[str] = None
+    skill_connection_ids: tuple[str, ...] = ()
     module: Optional[str] = None
     requested_by: str = ""
     dry_run_default: bool = False
@@ -104,6 +105,7 @@ class ToolRuntimeContext:
             "job_id": self.job_id,
             "capability": self.capability,
             "skill": self.skill,
+            "skill_connection_ids": list(self.skill_connection_ids),
             "module": self.module,
             "requested_by": self.requested_by,
             "dry_run_default": self.dry_run_default,

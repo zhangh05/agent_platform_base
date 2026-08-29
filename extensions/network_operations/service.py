@@ -424,9 +424,13 @@ def test_connection(workspace_id: str, connection_id: str, *, accept_host_key: b
     record = get_connection(workspace_id, connection_id, include_secret=True)
     if not record:
         return {"ok": False, "error": "connection_not_found"}
-    target = _connection_target(workspace_id, record)
-    selected = commands or ([] if not read else DEFAULT_COMMANDS.get(target.vendor, DEFAULT_COMMANDS["generic"]))
-    result = probe_target(target, commands=selected, accept_host_key=accept_host_key, read=read, timeout=timeout)
+    target: DeviceTarget | None = None
+    try:
+        target = _connection_target(workspace_id, record)
+        selected = commands or ([] if not read else DEFAULT_COMMANDS.get(target.vendor, DEFAULT_COMMANDS["generic"]))
+        result = probe_target(target, commands=selected, accept_host_key=accept_host_key, read=read, timeout=timeout)
+    except Exception as exc:
+        result = {"ok": False, "status": "failed", "error": str(exc)[:300] or "connection_setup_failed"}
     fingerprint = str(result.get("fingerprint") or "")
     if fingerprint and accept_host_key and result.get("ok"):
         record["host_key_fingerprint"] = fingerprint
@@ -435,7 +439,7 @@ def test_connection(workspace_id: str, connection_id: str, *, accept_host_key: b
         "last_tested_at": now_iso(),
         "last_error": "" if result.get("ok") else str(result.get("error") or "connection_test_failed")[:300],
         "latency_ms": int(result.get("duration_ms") or 0),
-        "effective_source_address": target.source_address,
+        "effective_source_address": target.source_address if target else str(record.get("effective_source_address") or ""),
         "updated_at": now_iso(),
     })
     _store(workspace_id).save("connections", connection_id, record)
@@ -594,14 +598,12 @@ def save_skill(workspace_id: str, payload: dict[str, Any]) -> dict[str, Any]:
     device_ids = list(dict.fromkeys(str(item).strip() for item in (payload.get("device_ids") or []) if str(item).strip()))
     connection_ids = list(dict.fromkeys(str(item).strip() for item in (payload.get("connection_ids") or []) if str(item).strip()))
     if not device_ids or not connection_ids:
-        raise ValueError("skill requires at least one device and one verified connection")
+        raise ValueError("skill requires at least one device and one configured connection")
     if any(not get_device(workspace_id, item) for item in device_ids):
         raise ValueError("skill contains unknown device")
     connections = [get_connection(workspace_id, item) for item in connection_ids]
     if any(not item for item in connections):
         raise ValueError("skill contains unknown connection")
-    if any(not item.get("verified") for item in connections if item):
-        raise ValueError("skill connections must be verified")
     if any(str(item.get("device_id") or "") not in set(device_ids) for item in connections if item):
         raise ValueError("skill connection is not owned by a selected device")
     allowed_tool_ids = list(dict.fromkeys(
@@ -635,8 +637,57 @@ def delete_skill(workspace_id: str, skill_id: str) -> bool:
     return _store(workspace_id).delete("skills", skill_id)
 
 
+def _activate_skill_connections(workspace_id: str, connections: list[dict[str, Any]], *, timeout: int = 12) -> list[dict[str, Any]]:
+    """Actively probe Skill connections without allowing one target to abort the set."""
+    if not connections:
+        return []
+
+    def activate(connection: dict[str, Any]) -> dict[str, Any]:
+        connection_id = str(connection.get("connection_id") or "")
+        try:
+            result = test_connection(workspace_id, connection_id, timeout=timeout)
+        except Exception as exc:
+            result = {"ok": False, "status": "failed", "error": str(exc)[:300] or "connection_activation_failed"}
+        current = result.get("connection") if isinstance(result.get("connection"), dict) else get_connection(workspace_id, connection_id)
+        current = current or connection
+        return {
+            "connection_id": connection_id,
+            "device_id": str(current.get("device_id") or connection.get("device_id") or ""),
+            "protocol": str(current.get("protocol") or connection.get("protocol") or ""),
+            "port": int(current.get("port") or connection.get("port") or 0),
+            "ready": bool(result.get("ok")),
+            "status": str(current.get("status") or result.get("status") or "failed"),
+            "error": "" if result.get("ok") else str(result.get("error") or current.get("last_error") or "connection_activation_failed")[:300],
+            "latency_ms": int(current.get("latency_ms") or result.get("duration_ms") or 0),
+            "last_tested_at": str(current.get("last_tested_at") or ""),
+        }
+
+    workers = min(8, max(1, len(connections)))
+    activated: dict[str, dict[str, Any]] = {}
+    with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="skill-connect") as pool:
+        futures = {pool.submit(activate, connection): str(connection.get("connection_id") or "") for connection in connections}
+        for future in as_completed(futures):
+            connection_id = futures[future]
+            try:
+                activated[connection_id] = future.result()
+            except Exception as exc:
+                connection = next((item for item in connections if str(item.get("connection_id") or "") == connection_id), {})
+                activated[connection_id] = {
+                    "connection_id": connection_id,
+                    "device_id": str(connection.get("device_id") or ""),
+                    "protocol": str(connection.get("protocol") or ""),
+                    "port": int(connection.get("port") or 0),
+                    "ready": False,
+                    "status": "failed",
+                    "error": str(exc)[:300] or "connection_activation_failed",
+                    "latency_ms": 0,
+                    "last_tested_at": "",
+                }
+    return [activated[str(item.get("connection_id") or "")] for item in connections]
+
+
 def resolve_workbench_selection(workspace_id: str, selection: dict[str, Any]) -> dict[str, Any]:
-    """Validate client selection and return server-owned LLM/tool context."""
+    """Validate a Skill selection, actively connect its targets, and return LLM context."""
     if not isinstance(selection, dict):
         raise ValueError("invalid_workbench_skill_selection")
     skill_id = str(selection.get("skill_id") or "").strip()
@@ -660,9 +711,22 @@ def resolve_workbench_selection(workspace_id: str, selection: dict[str, Any]) ->
         raise ValueError("workbench_skill_device_forbidden")
     devices = [get_device(workspace_id, item) for item in selected]
     connection_allowlist = set(skill.get("connection_ids") or [])
-    connections = [item for item in list_connections(workspace_id) if item.get("connection_id") in connection_allowlist and item.get("device_id") in selected and item.get("verified")]
+    visible_connections = {
+        str(item.get("connection_id") or ""): item
+        for item in list_connections(workspace_id)
+        if item.get("connection_id") in connection_allowlist and item.get("device_id") in selected
+    }
+    connections = [
+        visible_connections[connection_id]
+        for connection_id in skill.get("connection_ids") or []
+        if connection_id in visible_connections
+    ]
     if not connections:
-        raise ValueError("workbench_skill_has_no_verified_connection")
+        raise ValueError("workbench_skill_has_no_configured_connection")
+    activation = _activate_skill_connections(workspace_id, connections)
+    activation_by_id = {item["connection_id"]: item for item in activation}
+    ready_ids = [item["connection_id"] for item in activation if item.get("ready")]
+    unavailable = [item for item in activation if not item.get("ready")]
     return {
         "skill_id": skill_id,
         "skill_name": str(skill.get("name") or ""),
@@ -670,8 +734,18 @@ def resolve_workbench_selection(workspace_id: str, selection: dict[str, Any]) ->
         "allowed_tool_ids": list(skill.get("allowed_tool_ids") or []),
         "device_ids": selected,
         "connection_ids": [str(item.get("connection_id") or "") for item in connections],
+        "ready_connection_ids": ready_ids,
+        "connection_activation": activation,
+        "degraded": bool(unavailable),
         "devices": [{"device_id": item.get("device_id"), "name": item.get("name"), "host": item.get("host"), "vendor": item.get("vendor")} for item in devices if item],
-        "connections": [{"connection_id": item.get("connection_id"), "device_id": item.get("device_id"), "protocol": item.get("protocol"), "status": item.get("status")} for item in connections],
+        "connections": [{
+            "connection_id": item.get("connection_id"),
+            "device_id": item.get("device_id"),
+            "protocol": item.get("protocol"),
+            "port": item.get("port"),
+            "status": activation_by_id[str(item.get("connection_id") or "")]["status"],
+            "ready": activation_by_id[str(item.get("connection_id") or "")]["ready"],
+        } for item in connections],
         "source": "server_validated_extension_context",
     }
 
@@ -683,10 +757,10 @@ def workbench_skill_catalog(workspace_id: str) -> list[dict[str, Any]]:
     catalog: list[dict[str, Any]] = []
     for skill in list_skills(workspace_id, enabled_only=True):
         allowed_connections = set(skill.get("connection_ids") or [])
-        usable_devices = {
+        configured_devices = {
             str(item.get("device_id") or "")
             for item in connections
-            if item.get("verified") and item.get("connection_id") in allowed_connections
+            if item.get("connection_id") in allowed_connections
         }
         resources = [
             {
@@ -696,7 +770,7 @@ def workbench_skill_catalog(workspace_id: str) -> list[dict[str, Any]]:
                 "kind": "network_device",
             }
             for device_id in skill.get("device_ids") or []
-            if device_id in devices and device_id in usable_devices
+            if device_id in devices and device_id in configured_devices
         ]
         if resources:
             catalog.append({
@@ -916,8 +990,8 @@ def _inspection_connections(workspace_id: str, connection_ids: list[str] | None)
     targets: list[dict[str, Any]] = []
     for connection_id in normalized:
         connection = get_connection(workspace_id, connection_id)
-        if not connection or not connection.get("verified"):
-            raise ValueError(f"verified_inspection_connection_required:{connection_id}")
+        if not connection:
+            raise ValueError(f"inspection_connection_not_found:{connection_id}")
         device = get_device(workspace_id, str(connection.get("device_id") or ""))
         if not device:
             raise ValueError(f"inspection_connection_device_not_found:{connection_id}")
@@ -1010,7 +1084,7 @@ def _build_inspection_task(targets: list[dict[str, Any]], commands: list[str] | 
     else:
         task["asset_ids"] = target_ids
         # Internal legacy tasks keep their historical field without leaking it
-        # into the verified-connection path.
+        # into the registered-connection path.
         task["asset_snapshots"] = dict(task["target_snapshots"])
     return task
 
@@ -1096,7 +1170,7 @@ def enqueue_inspection(workspace_id: str, asset_ids: list[str] | None = None, co
 
 
 def enqueue_connection_inspection(workspace_id: str, connection_ids: list[str] | None, commands: list[str] | None = None, script_id: str = "", *, created_by: str = "user") -> dict[str, Any]:
-    """Create a durable inspection exclusively from verified logical connections."""
+    """Create a durable inspection; each target reconnects and fails independently."""
     task, _targets, _script = _new_connection_inspection_task(workspace_id, connection_ids, commands, script_id)
     return _enqueue_prepared_inspection(workspace_id, task, created_by=created_by)
 

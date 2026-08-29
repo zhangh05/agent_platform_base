@@ -113,6 +113,7 @@ class ToolInvocation:
     dry_run: bool = False
     requested_by: str = ""            # e.g. "module:example", "agent:admin"
     skill: Optional[str] = None         # server-resolved workbench skill binding
+    skill_connection_ids: tuple[str, ...] = ()  # server-resolved selected connection boundary
     approval_id: Optional[str] = None  # Required for high-risk tools
     approval_run_id: Optional[str] = None  # Parent run bound to the approval
     # Process-local server callback; never supplied by JSON or persisted.

@@ -252,8 +252,10 @@ def run_ssot_turn(
         metadata_in.setdefault("trusted_prompt_items", []).append(
             trusted_prompt_item(
                 "workbench_skill",
-                "当前用户已在工作台选择并由服务器验证以下 Skill 与设备连接。"
-                "仅使用列出的 connection_id 操作对应设备；凭据由平台托管，不得索取或猜测。"
+                "当前用户已在工作台选择以下 Skill，服务器已对所选设备连接执行本轮主动连接。"
+                "connection_ids 是授权边界，ready_connection_ids 是本轮已连接目标，connection_activation 包含每条连接的独立结果。"
+                "仅使用列出的 connection_id 操作对应设备；工具会在执行时再次主动连接，凭据由平台托管，不得索取或猜测。"
+                "某条连接失败不等于整个任务失败：继续处理可用设备，必要时尝试同一 Skill 内的替代连接，并把失败证据纳入最终判断和用户反馈。"
                 "可根据目标自主组合允许的工具，多设备可并行，存在依赖时按顺序执行。\n"
                 + _json.dumps(workbench_context, ensure_ascii=False, separators=(",", ":")),
             )
@@ -941,6 +943,7 @@ def _build_engine(
                 requested_by=requested_by,
                 approved_call_grants=approved_call_grants,
                 skill_id=str((workbench_context or {}).get("skill_id") or ""),
+                skill_connection_ids=tuple(str(item) for item in ((workbench_context or {}).get("connection_ids") or [])),
             ),
             description=registry[tool_id].get("description", ""),
             args_schema=registry[tool_id].get("args_schema", {}),
@@ -2351,6 +2354,7 @@ def _make_tool_handler(
     requested_by: str,
     approved_call_grants: dict[str, list[str]] | None = None,
     skill_id: str = "",
+    skill_connection_ids: tuple[str, ...] = (),
 ):
     single_use_grants = approved_call_grants if approved_call_grants is not None else {}
 
@@ -2371,6 +2375,7 @@ def _make_tool_handler(
             trace_id=trace_id,
             requested_by=requested_by,
             skill=skill_id or None,
+            skill_connection_ids=skill_connection_ids,
             module="ssot_runtime",
             approval_id=approval_id,
             cancel_check=get_runtime_cancel_check(),

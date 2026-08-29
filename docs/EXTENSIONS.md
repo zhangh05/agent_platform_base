@@ -35,7 +35,10 @@ extension must also own stable business objects and a closure path. For example,
 the bundled `network.operations` extension owns regions, devices, encrypted
 SSH/Telnet connection profiles and reusable Skills. The workbench receives only
 an extension-projected Skill catalog; every selection is resolved again on the
-server into verified connection IDs before it reaches the model or a tool.
+server into authorized connection IDs plus a fresh, per-connection activation
+result before it reaches the model or a tool. Liveness is runtime evidence, not
+a persistent authorization gate: one unavailable target must not invalidate the
+Skill or prevent the model from using the remaining targets.
 The selected Skill also narrows only the tools owned by that extension; other
 platform tools remain available for cross-capability composition. Unselected
 owner tools are removed from the QueryLoop catalog instead of failing after the

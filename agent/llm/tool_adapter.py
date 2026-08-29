@@ -249,7 +249,7 @@ _PARAM_DESCRIPTIONS = {
     "snapshot_id": "Session snapshot id.",
     "file_id": "FileStore file id.",
     "asset_id": "Optional producer or domain asset id used to associate a workspace artifact.",
-    "connection_ids": "List of server-verified network connection ids authorized for the selected Skill.",
+    "connection_ids": "List of server-authorized network connection ids for the selected Skill; each operation reconnects and reports per-target failures.",
     "host": "Target host or IP address.",
     "port": "Target TCP port.",
     "vendor": "Network vendor/platform hint such as h3c, huawei, cisco, or generic.",
