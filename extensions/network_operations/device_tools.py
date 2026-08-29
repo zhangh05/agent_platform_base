@@ -4,8 +4,11 @@ from __future__ import annotations
 
 import base64
 import io
+import ipaddress
 import re
+import shutil
 import socket
+import subprocess
 import time
 from dataclasses import dataclass
 from typing import Any
@@ -56,6 +59,70 @@ class DeviceTarget:
     source_address: str = ""
     expected_fingerprint: str = ""
     credential: DeviceCredential | None = None
+
+
+_AUTO_SOURCE_NETWORKS = tuple(
+    ipaddress.ip_network(value)
+    for value in ("100.64.0.0/10", "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "169.254.0.0/16")
+)
+
+
+def local_ipv4_addresses() -> list[str]:
+    """Return local IPv4 addresses without requiring a platform dependency."""
+    found: set[str] = set()
+    try:
+        for item in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET, socket.SOCK_STREAM):
+            found.add(str(item[4][0]))
+    except OSError:
+        pass
+    command = shutil.which("ip")
+    argv = [command, "-o", "-4", "addr", "show"] if command else []
+    if not argv:
+        command = shutil.which("ifconfig")
+        argv = [command] if command else []
+    if argv:
+        try:
+            output = subprocess.run(argv, capture_output=True, check=False, text=True, timeout=2).stdout
+            found.update(re.findall(r"\binet\s+(\d{1,3}(?:\.\d{1,3}){3})\b", output))
+        except (OSError, subprocess.SubprocessError):
+            pass
+    valid = []
+    for value in found:
+        try:
+            address = ipaddress.ip_address(value)
+        except ValueError:
+            continue
+        if address.version == 4 and not address.is_loopback and not address.is_unspecified:
+            valid.append(str(address))
+    return sorted(valid, key=lambda value: int(ipaddress.ip_address(value)))
+
+
+def resolve_source_address(host: str, configured: str = "") -> str:
+    """Select a local source for scoped private/VPN destinations.
+
+    Explicit configuration always wins. Blank configuration means automatic:
+    only addresses in the same well-defined private/VPN scope are considered,
+    so public destinations continue to use the operating-system route.
+    """
+    explicit = str(configured or "").strip()
+    if explicit:
+        return explicit
+    try:
+        target = ipaddress.ip_address(str(host or "").strip())
+    except ValueError:
+        return ""
+    if target.version != 4:
+        return ""
+    scope = next((network for network in _AUTO_SOURCE_NETWORKS if target in network), None)
+    if scope is None:
+        return ""
+    candidates = []
+    for value in local_ipv4_addresses():
+        address = ipaddress.ip_address(value)
+        if address in scope:
+            common_prefix = 32 - (int(target) ^ int(address)).bit_length()
+            candidates.append((common_prefix, int(address), value))
+    return max(candidates, default=(-1, -1, ""))[2]
 
 
 def fingerprint_for_key(key: Any) -> str:
@@ -167,7 +234,7 @@ def probe_target(
     sock: socket.socket | None = None
     transport: Any = None
     try:
-        stages.append(_stage("target", "ok", host=target.host, port=target.port, protocol="ssh", vendor=target.vendor))
+        stages.append(_stage("target", "ok", host=target.host, port=target.port, protocol="ssh", vendor=target.vendor, source_address=target.source_address))
         source = (target.source_address, 0) if target.source_address else None
         sock = socket.create_connection((target.host, target.port), timeout=timeout, source_address=source)
         stages.append(_stage("tcp", "ok"))
@@ -300,7 +367,7 @@ def _probe_telnet(
     started = time.monotonic()
     sock: socket.socket | None = None
     try:
-        stages.append(_stage("target", "ok", host=target.host, port=target.port, protocol="telnet", vendor=target.vendor))
+        stages.append(_stage("target", "ok", host=target.host, port=target.port, protocol="telnet", vendor=target.vendor, source_address=target.source_address))
         source = (target.source_address, 0) if target.source_address else None
         sock = socket.create_connection((target.host, target.port), timeout=timeout, source_address=source)
         sock.settimeout(min(float(timeout), 2.0))

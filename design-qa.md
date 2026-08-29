@@ -8,6 +8,7 @@
   - `/var/folders/yg/hf791pl16b3g8n4001_tjngc0000gn/T/codex-clipboard-cb124cc8-a9a5-44c9-86a1-87cc6d84bbd8.png`
 - Implementation route: `http://127.0.0.1:5273/extensions/network.operations/manage`
 - Implementation capture: `/tmp/lzcore-network-operations-after.png`
+- Latest scroll/connection capture: `/tmp/lzcore-network-scroll-after.png`
 - State checked: 设备与连接页、CE1 Telnet 连接已验证、连接编辑态。
 
 ## Findings and fixes
@@ -17,14 +18,17 @@
 2. Reference: yellow feedback notice remains on screen too long.
    Fix: feedback notices now expire 4.5 seconds after their latest value is shown.
 3. Runtime: the CE1 target is reachable only when the local Tailscale source address is selected; the default macOS route sends the target through `en1` and times out.
-   Fix: connection profiles now support an optional validated local source IP and both SSH and Telnet transports bind to it.
+   Fix: connection profiles support an optional validated local source IP; when left blank, the runtime now discovers local interfaces and automatically selects the best matching private/VPN source before SSH or Telnet connects.
+4. Reference: the registered-device section is clipped at the bottom of the page and cannot be reached by scrolling.
+   Fix: the extension root now owns a bounded vertical scroll container instead of inheriting the application shell's `overflow: hidden` clipping behavior.
 
 ## Verification
 
 - Browser DOM: source-address field is present and connection edit state restores `100.124.182.34`.
 - Browser computed styles: form controls have a visible `#aebfc2` solid border and white background; no console warnings or errors were recorded.
 - Browser interaction: connection test reports `连接测试完成`; the notice disappears after the configured timeout.
-- Live probe: CE1 `100.117.194.25:30001` over Telnet reaches the H3C prompt through source `100.124.182.34`; status is `connected` and `verified=true`.
+- Browser layout: the network page reports `overflow-y: auto`, and the registered-device content remains inside that scroll owner.
+- Live probe: both saved CE1 `100.117.194.25:30001` Telnet profiles reach the H3C prompt through automatically selected source `100.124.182.34`; status is `connected` and `verified=true`.
 - Focused automated tests and TypeScript checks pass.
 
 ## Result

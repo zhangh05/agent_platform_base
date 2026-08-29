@@ -18,6 +18,7 @@ from extensions.network_operations.device_tools import (
     is_read_only_command,
     normalize_read_only_commands,
     probe_target,
+    resolve_source_address,
 )
 from extensions.sdk import ExtensionDataStore, ExtensionSecretStore
 from storage.time_utils import now_iso
@@ -315,7 +316,10 @@ def _connection_target(workspace_id: str, connection: dict[str, Any]) -> DeviceT
         protocol=str(connection.get("protocol") or "ssh"),
         vendor=str(device.get("vendor") or "generic"),
         name=str(device.get("name") or ""),
-        source_address=str(connection.get("source_address") or ""),
+        source_address=resolve_source_address(
+            str(device.get("host") or ""),
+            str(connection.get("source_address") or ""),
+        ),
         expected_fingerprint=str(connection.get("host_key_fingerprint") or ""),
         credential=credential,
     )
@@ -336,6 +340,7 @@ def test_connection(workspace_id: str, connection_id: str, *, accept_host_key: b
         "last_tested_at": now_iso(),
         "last_error": "" if result.get("ok") else str(result.get("error") or "connection_test_failed")[:300],
         "latency_ms": int(result.get("duration_ms") or 0),
+        "effective_source_address": target.source_address,
         "updated_at": now_iso(),
     })
     _store(workspace_id).save("connections", connection_id, record)

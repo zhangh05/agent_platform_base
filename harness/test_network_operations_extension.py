@@ -11,6 +11,7 @@ from extensions.network_operations.device_tools import (
     MAX_READ_ONLY_COMMANDS,
     is_read_only_command as device_is_read_only_command,
     normalize_read_only_commands,
+    resolve_source_address,
 )
 
 
@@ -82,6 +83,16 @@ def test_connection_rejects_invalid_source_address(monkeypatch, tmp_path):
                 "source_address": "not-an-ip",
             },
         )
+
+
+def test_source_address_is_automatically_selected_for_vpn_scope(monkeypatch):
+    monkeypatch.setattr(
+        "extensions.network_operations.device_tools.local_ipv4_addresses",
+        lambda: ["192.168.5.12", "100.124.182.34", "198.19.0.1"],
+    )
+    assert resolve_source_address("100.117.194.25") == "100.124.182.34"
+    assert resolve_source_address("8.8.8.8") == ""
+    assert resolve_source_address("100.117.194.25", "100.64.1.2") == "100.64.1.2"
 
 
 def test_skill_rejects_unverified_connections(monkeypatch, tmp_path):
