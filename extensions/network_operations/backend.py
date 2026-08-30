@@ -418,6 +418,7 @@ def _inspection_analysis_projection(task: dict[str, Any]) -> dict[str, Any]:
                 "characters": int(config.get("characters") or 0),
                 "content_hash": str(config.get("content_hash") or ""),
                 "signals": dict(config.get("signals") or {}),
+                "interface_addresses": list(config.get("interface_addresses") or []),
                 "projection_complete": bool(config.get("projection_complete", False)),
                 "omitted_signal_counts": dict(config.get("omitted_signal_counts") or {}),
             } if config else {},
@@ -433,6 +434,9 @@ def _inspection_analysis_projection(task: dict[str, Any]) -> dict[str, Any]:
         "devices": devices,
         "artifact_id": str((task or {}).get("artifact_id") or ""),
         "evidence_contract": {
+            "observation_scope": "configuration_and_read_only_state_tables",
+            "end_to_end_packet_delivery_tested": False,
+            "reachability_limit": "routing_and_label_entries_are_not_packet_delivery_measurements",
             "collected_means": "command_completed_without_transport_or_cli_error",
             "collected_does_not_mean": "protocol_healthy_or_expected_state_present",
             "assertion_rule": "assert_only_literal_observations_or_normalized_signals; otherwise report unknown",

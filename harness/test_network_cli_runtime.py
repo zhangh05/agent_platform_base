@@ -270,6 +270,31 @@ route-policy LABEL permit node 10
     assert "[interface GigabitEthernet0/0] ip address 10.0.0.1 255.255.255.0" in facts["signals"]["interfaces"]
     assert "[route-policy LABEL permit node 10] if-match mpls-label" in facts["signals"]["policy"]
     assert facts["projection_complete"] is True
+    assert facts["interface_addresses"] == [{
+        "interface": "GigabitEthernet0/0", "address": "10.0.0.1",
+        "prefix_length": 24, "network": "10.0.0.0/24",
+        "configured_line": "ip address 10.0.0.1 255.255.255.0",
+    }]
+
+
+def test_configuration_address_normalization_preserves_different_masks_and_ipv6():
+    driver, _source = resolve_driver("h3c")
+    config = """interface GigabitEthernet0/0
+ ip address 9.1.1.1 255.0.0.0
+ ipv6 address 2001:db8::1/64
+#
+interface GigabitEthernet0/1
+ ip address 9.1.1.2 255.255.255.0
+#
+role name level-0
+ description Not an interface description
+"""
+    fact = driver.parse_facts(
+        {"display current-configuration": config},
+        {"display current-configuration": "current_config"},
+    )["current_config"]
+    assert [item["prefix_length"] for item in fact["interface_addresses"]] == [8, 64, 24]
+    assert all("Not an interface" not in line for line in fact["signals"]["interfaces"])
 
 
 def test_semantic_collect_persists_detected_profile_and_returns_facts(monkeypatch, tmp_path):

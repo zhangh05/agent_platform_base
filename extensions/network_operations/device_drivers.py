@@ -7,6 +7,7 @@ does not need to memorize pager commands, prompts, or vendor-specific CLI.
 from __future__ import annotations
 
 import hashlib
+import ipaddress
 import re
 from collections.abc import Iterable
 from dataclasses import dataclass, field
@@ -431,6 +432,7 @@ def _parse_configuration_snapshot(driver: DeviceDriver, output: str) -> dict[str
     counts: dict[str, int] = {name: 0 for name, _pattern in _CONFIG_SIGNAL_PATTERNS}
     current_section = "global"
     section_names: list[str] = []
+    interface_addresses: list[dict[str, Any]] = []
     for raw_line in text.splitlines():
         line = raw_line.strip()
         if not line:
@@ -451,8 +453,29 @@ def _parse_configuration_snapshot(driver: DeviceDriver, output: str) -> dict[str
             current_section = line[:160]
             if current_section not in section_names and len(section_names) < 128:
                 section_names.append(current_section)
+        in_interface = current_section.lower().startswith("interface ")
+        address_match = re.match(r"^(ip|ipv6) address\s+(\S+)(?:\s+(\S+))?", line, re.IGNORECASE)
+        if in_interface and address_match:
+            address = address_match.group(2)
+            mask = address_match.group(3) or ""
+            try:
+                # Literal normalization only; do not infer adjacency or health
+                # from shared subnets or configured addresses.
+                value = ipaddress.ip_interface(address if "/" in address else f"{address}/{mask}")
+            except ValueError:
+                pass  # DHCP/unnumbered/unsupported syntax remains in raw signals.
+            else:
+                interface_addresses.append({
+                    "interface": current_section.split(None, 1)[1],
+                    "address": str(value.ip),
+                    "prefix_length": value.network.prefixlen,
+                    "network": str(value.network),
+                    "configured_line": line,
+                })
         for name, pattern in _CONFIG_SIGNAL_PATTERNS:
             if not pattern.search(line):
+                continue
+            if name == "interfaces" and not in_interface:
                 continue
             counts[name] += 1
             if len(signals[name]) < 80:
@@ -472,5 +495,6 @@ def _parse_configuration_snapshot(driver: DeviceDriver, output: str) -> dict[str
         "projection_complete": all(counts[key] <= 80 for key in counts),
         "omitted_signal_counts": {key: count - 80 for key, count in counts.items() if count > 80},
         "signals": {key: value for key, value in signals.items() if value},
+        "interface_addresses": interface_addresses,
         "content_hash": hashlib.sha256(text.encode("utf-8")).hexdigest(),
     }
