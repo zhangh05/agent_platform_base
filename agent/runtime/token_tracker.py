@@ -73,6 +73,8 @@ class TokenRecord:
     total_tokens: int = 0
     cache_creation_input_tokens: int = 0
     cache_read_input_tokens: int = 0
+    prompt_cache_strategy: str = ""
+    prompt_profile: dict = field(default_factory=dict)
     estimated_cost: float = 0.0
     source: str = "estimated"
     created_at: str = ""
@@ -106,6 +108,8 @@ def record_llm_call(
     output_tokens: int = 0,
     cache_creation_input_tokens: int = 0,
     cache_read_input_tokens: int = 0,
+    prompt_cache_strategy: str = "",
+    prompt_profile: dict | None = None,
 ) -> dict:
     """Record an LLM call and persist to JSONL."""
     total = input_tokens + output_tokens
@@ -125,6 +129,8 @@ def record_llm_call(
         total_tokens=total,
         cache_creation_input_tokens=cache_creation_input_tokens,
         cache_read_input_tokens=cache_read_input_tokens,
+        prompt_cache_strategy=str(prompt_cache_strategy or "")[:80],
+        prompt_profile=dict(prompt_profile or {}),
         estimated_cost=round(cost, 6),
         created_at=now_iso(),
     )
@@ -141,6 +147,8 @@ def record_llm_call(
             "total_tokens": record.total_tokens,
             "cache_creation_input_tokens": record.cache_creation_input_tokens,
             "cache_read_input_tokens": record.cache_read_input_tokens,
+            "prompt_cache_strategy": record.prompt_cache_strategy,
+            "prompt_profile": record.prompt_profile,
             "estimated_cost": record.estimated_cost,
             "source": "estimated",
             "created_at": record.created_at,
@@ -153,6 +161,7 @@ def record_llm_call(
         "total_tokens": total,
         "cache_creation_input_tokens": cache_creation_input_tokens,
         "cache_read_input_tokens": cache_read_input_tokens,
+        "prompt_cache_strategy": record.prompt_cache_strategy,
         "estimated_cost": record.estimated_cost,
     }
 
@@ -166,6 +175,8 @@ def get_usage(workspace_id: str = "default", session_id: str = "") -> dict:
     input_t, output_t, total_t, cost, count = 0, 0, 0, 0.0, 0
     cache_creation_t, cache_read_t = 0, 0
     latest = ""
+    latest_prompt_profile: dict = {}
+    cache_strategies: dict[str, int] = {}
     try:
         for rec in rows:
             if session_id and rec.get("session_id") != session_id:
@@ -177,6 +188,12 @@ def get_usage(workspace_id: str = "default", session_id: str = "") -> dict:
             cost += rec.get("estimated_cost", 0)
             count += 1
             latest = rec.get("created_at", "")
+            strategy = str(rec.get("prompt_cache_strategy") or "")
+            if strategy:
+                cache_strategies[strategy] = cache_strategies.get(strategy, 0) + 1
+            profile = rec.get("prompt_profile")
+            if isinstance(profile, dict) and profile:
+                latest_prompt_profile = profile
     except Exception:
         pass
 
@@ -190,6 +207,8 @@ def get_usage(workspace_id: str = "default", session_id: str = "") -> dict:
         "cache_creation_input_tokens": cache_creation_t,
         "cache_read_input_tokens": cache_read_t,
         "cache_hit_ratio": round(cache_read_t / max(input_t, 1), 4),
+        "prompt_cache_strategies": cache_strategies,
+        "latest_prompt_profile": latest_prompt_profile,
         "estimated_cost": round(cost, 6),
         "call_count": count,
         "last_updated": latest,
@@ -207,6 +226,8 @@ def _empty_usage(workspace_id: str, session_id: str) -> dict:
         "cache_creation_input_tokens": 0,
         "cache_read_input_tokens": 0,
         "cache_hit_ratio": 0.0,
+        "prompt_cache_strategies": {},
+        "latest_prompt_profile": {},
         "estimated_cost": 0,
         "call_count": 0,
         "last_updated": "",

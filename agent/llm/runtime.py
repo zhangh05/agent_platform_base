@@ -157,8 +157,18 @@ def invoke_llm(
                 skipped_incompatible.append(candidate_name)
                 continue
         req.model = candidate.get("model", req.model)
+        from agent.llm.prompt_assembly import build_prompt_profile
+        prompt_profile = build_prompt_profile(req, candidate)
+        # Server-owned diagnostic metadata. Provider adapters may read the
+        # cache key/strategy, but it is never rendered into model-visible text.
+        req.metadata["prompt_assembly"] = prompt_profile
         attempts.append(candidate_name)
         resp = _generate_with_retry(req, candidate)
+        resp.metadata = {
+            **(resp.metadata or {}),
+            "prompt_assembly": prompt_profile,
+            "prompt_cache_strategy": prompt_profile["strategy"],
+        }
         if not resp.error:
             break
     if resp is None:

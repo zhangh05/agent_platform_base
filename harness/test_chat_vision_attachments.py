@@ -463,9 +463,10 @@ def test_anthropic_stream_preserves_input_cache_and_output_usage(monkeypatch):
     )
 
     assert response.content == "ok"
-    assert response.usage == {
-        "input_tokens": 1800,
-        "cache_creation_input_tokens": 0,
-        "cache_read_input_tokens": 128,
-        "output_tokens": 2,
-    }
+    assert response.usage["input_tokens"] == 1800
+    assert response.usage["cache_creation_input_tokens"] == 0
+    assert response.usage["cache_read_input_tokens"] == 128
+    assert response.usage["output_tokens"] == 2
+    assert response.usage["logical_input_tokens"] == 1928
+    assert response.usage["uncached_input_tokens"] == 1800
+    assert response.usage["normalized_output_tokens"] == 2

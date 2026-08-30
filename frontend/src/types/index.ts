@@ -625,6 +625,7 @@ export interface LlmConfig {
   enabled: boolean;
   provider: string;
   safe_mode: boolean;
+  prompt_cache_enabled: boolean;
   base_url: string;
   model: string;
   temperature: number;
@@ -650,6 +651,7 @@ export interface ProviderConfig {
   temperature: number;
   max_tokens: number;
   safe_mode: boolean;
+  prompt_cache_enabled: boolean;
   key_configured: boolean;
   key_preview?: string | null;
   hint?: string;

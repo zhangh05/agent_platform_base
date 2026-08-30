@@ -12,6 +12,8 @@ def test_cache_usage_is_persisted_and_aggregated(monkeypatch):
         output_tokens=20,
         cache_creation_input_tokens=30,
         cache_read_input_tokens=60,
+        prompt_cache_strategy="openai_automatic",
+        prompt_profile={"stable_prefix_fingerprint": "abc", "selected_skill": False},
     )
     usage = token_tracker.get_usage("ws-cache")
 
@@ -20,3 +22,5 @@ def test_cache_usage_is_persisted_and_aggregated(monkeypatch):
     assert usage["cache_creation_input_tokens"] == 30
     assert usage["cache_read_input_tokens"] == 60
     assert usage["cache_hit_ratio"] == 0.6
+    assert usage["prompt_cache_strategies"] == {"openai_automatic": 1}
+    assert usage["latest_prompt_profile"]["stable_prefix_fingerprint"] == "abc"

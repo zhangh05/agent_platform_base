@@ -1195,6 +1195,14 @@ export const agentUsageApi = {
       cache_creation_input_tokens: number;
       cache_read_input_tokens: number;
       cache_hit_ratio: number;
+      prompt_cache_strategies: Record<string, number>;
+      latest_prompt_profile: {
+        strategy?: string;
+        stable_prefix_fingerprint?: string;
+        stable_prefix_estimated_tokens?: number;
+        selected_skill?: boolean;
+        layers?: Record<string, { estimated_tokens?: number; present?: boolean; cacheable?: boolean }>;
+      };
     }>({ method: "GET", url: "/agent/usage", params: { workspace_id } }, signal),
 };
 

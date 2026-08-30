@@ -35,13 +35,46 @@ def get_provider_config() -> dict:
 def generate(req: LLMRequest, cfg: dict = None) -> LLMResponse:
     """Generate LLM response using unified effective config."""
     cfg = cfg or get_provider_config()
+    if not isinstance(req.metadata.get("prompt_assembly"), dict):
+        from agent.llm.prompt_assembly import build_prompt_profile
+        req.metadata["prompt_assembly"] = build_prompt_profile(req, cfg)
     if not cfg.get("enabled") or cfg.get("provider_type") == "disabled":
         return LLMResponse(error="LLM disabled", metadata={"error_type": ERROR_TYPE_DISABLED_BY_USER})
     if cfg.get("provider_type") == "mock":
-        return _mock_generate(req, cfg)
-    if cfg.get("provider_type") == "anthropic_messages":
-        return _anthropic_messages_generate(req, cfg)
-    return _api_generate(req, cfg)
+        response = _mock_generate(req, cfg)
+    elif cfg.get("provider_type") == "anthropic_messages":
+        response = _anthropic_messages_generate(req, cfg)
+    else:
+        response = _api_generate(req, cfg)
+    return _finalize_provider_response(response, req, cfg)
+
+
+def _finalize_provider_response(
+    response: LLMResponse,
+    req: LLMRequest,
+    cfg: dict,
+) -> LLMResponse:
+    """Attach provider-neutral prompt/cache facts to every transport result."""
+    from agent.llm.prompt_assembly import build_prompt_profile, normalize_usage
+
+    profile = req.metadata.get("prompt_assembly")
+    if not isinstance(profile, dict):
+        profile = build_prompt_profile(req, cfg)
+    response.usage = normalize_usage(response.usage)
+    strategy = str(profile.get("strategy") or "unsupported")
+    response.metadata = {
+        **(response.metadata or {}),
+        "prompt_assembly": profile,
+        "prompt_cache_strategy": strategy,
+        "prompt_cache_requested": bool(
+            (response.metadata or {}).get("prompt_cache_requested")
+            or strategy in {"anthropic_explicit", "openai_automatic"}
+        ),
+        "prompt_cache_fallback": bool(
+            (response.metadata or {}).get("prompt_cache_fallback")
+        ),
+    }
+    return response
 
 
 def health(cfg: dict = None) -> dict:
@@ -196,6 +229,61 @@ def _mock_generate(req: LLMRequest, cfg: dict) -> LLMResponse:
     )
 
 
+def _to_openai_compatible_messages(messages: list[LLMMessage]) -> list[dict]:
+    """Keep the reusable system kernel first and dynamic system facts after it."""
+    from agent.llm.prompt_assembly import split_stable_system
+
+    formatted: list[dict] = []
+    for message in messages:
+        if message.role != "system" or not isinstance(message.content, str):
+            formatted.append(_format_message(message))
+            continue
+        stable, dynamic = split_stable_system(message.content)
+        if stable:
+            formatted.append({"role": "system", "content": stable})
+        if dynamic:
+            formatted.append({"role": "system", "content": dynamic})
+    return formatted
+
+
+def _is_official_openai(cfg: dict) -> bool:
+    provider = str(cfg.get("provider") or cfg.get("default_provider") or "")
+    base_url = str(cfg.get("base_url") or "").lower()
+    return provider == "openai" and "api.openai.com" in base_url
+
+
+def _apply_openai_cache_fields(body: dict, req: LLMRequest, cfg: dict) -> bool:
+    """Apply only fields documented by the official OpenAI endpoint.
+
+    Generic compatible gateways retain the stable prefix ordering but receive
+    no OpenAI-private parameters.  This prevents a cache optimization from
+    breaking DeepSeek, Ark, Ollama or a custom gateway.
+    """
+    if not _is_official_openai(cfg):
+        return False
+    profile = req.metadata.get("prompt_assembly")
+    if not isinstance(profile, dict) or profile.get("strategy") != "openai_automatic":
+        return False
+    cache_key = str(profile.get("cache_key") or "")[:128]
+    if not cache_key:
+        return False
+    body["prompt_cache_key"] = cache_key
+    return True
+
+
+def _without_optional_openai_fields(body: dict) -> dict:
+    clean = json.loads(json.dumps(body))
+    clean.pop("prompt_cache_key", None)
+    clean.pop("prompt_cache_retention", None)
+    clean.pop("prompt_cache_options", None)
+    clean.pop("stream_options", None)
+    return clean
+
+
+def _optional_openai_fields_rejected(response: LLMResponse) -> bool:
+    return int((response.metadata or {}).get("http_status") or 0) in {400, 422}
+
+
 def _api_generate(req: LLMRequest, cfg: dict) -> LLMResponse:
     if not cfg.get("api_key"):
         return LLMResponse(
@@ -206,7 +294,7 @@ def _api_generate(req: LLMRequest, cfg: dict) -> LLMResponse:
         url = cfg.get("base_url", "https://api.minimaxi.com/v1").rstrip("/") + "/chat/completions"
         body_dict = {
             "model": cfg.get("model", req.model),
-            "messages": [_format_message(m) for m in req.messages],
+            "messages": _to_openai_compatible_messages(req.messages),
             "temperature": cfg.get("temperature", req.temperature),
             "max_tokens": cfg.get("max_tokens", req.max_tokens),
         }
@@ -214,12 +302,25 @@ def _api_generate(req: LLMRequest, cfg: dict) -> LLMResponse:
             body_dict["tools"] = req.tools
             body_dict["tool_choice"] = "auto"
 
+        cache_fields_added = _apply_openai_cache_fields(body_dict, req, cfg)
+
         # Streaming mode: use requests with stream=True
         if req.stream:
             body_dict["stream"] = True
-            return _api_generate_stream(url, body_dict, cfg, req)
+            if _is_official_openai(cfg):
+                body_dict["stream_options"] = {"include_usage": True}
+            result = _api_generate_stream(url, body_dict, cfg, req)
+            if cache_fields_added and _optional_openai_fields_rejected(result):
+                result = _api_generate_stream(
+                    url, _without_optional_openai_fields(body_dict), cfg, req
+                )
+                result.metadata = {
+                    **(result.metadata or {}),
+                    "prompt_cache_requested": True,
+                    "prompt_cache_fallback": True,
+                }
+            return result
 
-        body = json.dumps(body_dict).encode()
         # v3.2.1: log multimodal messages for vision debugging
         last = body_dict["messages"][-1] if body_dict["messages"] else {}
         cont = last.get("content", "")
@@ -231,9 +332,21 @@ def _api_generate(req: LLMRequest, cfg: dict) -> LLMResponse:
             "Content-Type": "application/json",
             "Authorization": "Bearer " + cfg.get("api_key", ""),
         }
-        r = urllib.request.Request(url, data=body, headers=headers, method="POST")
-        with urllib.request.urlopen(r, timeout=cfg.get("timeout", 90)) as resp:
-            d = json.loads(resp.read().decode())
+        cache_fallback = False
+
+        def _send(active_body: dict) -> dict:
+            body = json.dumps(active_body).encode()
+            request = urllib.request.Request(url, data=body, headers=headers, method="POST")
+            with urllib.request.urlopen(request, timeout=cfg.get("timeout", 90)) as resp:
+                return json.loads(resp.read().decode())
+
+        try:
+            d = _send(body_dict)
+        except urllib.error.HTTPError as error:
+            if not (cache_fields_added and error.code in {400, 422}):
+                raise
+            d = _send(_without_optional_openai_fields(body_dict))
+            cache_fallback = True
         choice = d.get("choices", [{}])[0]
         message = choice.get("message", {})
         content = message.get("content", "") or ""
@@ -246,6 +359,10 @@ def _api_generate(req: LLMRequest, cfg: dict) -> LLMResponse:
             finish_reason=choice.get("finish_reason", ""),
             raw=d,
             tool_calls=tool_calls,
+            metadata={
+                "prompt_cache_requested": cache_fields_added,
+                "prompt_cache_fallback": cache_fallback,
+            },
         )
     except urllib.error.HTTPError as e:
         # Extract HTTP status and error detail
@@ -442,6 +559,14 @@ def _api_generate_stream(url: str, body_dict: dict, cfg: dict, req: "LLMRequest"
                 raw_chunks.pop(0)
             raw_chunk_count += 1
 
+            # OpenAI sends a usage-only terminal chunk when
+            # stream_options.include_usage is enabled. Capture it before the
+            # choices guard so cached-token counters are not discarded.
+            if chunk.get("usage"):
+                usage = chunk["usage"]
+            if chunk.get("model"):
+                provider_model = chunk["model"]
+
             choices = chunk.get("choices", [])
             if not choices:
                 continue
@@ -485,12 +610,6 @@ def _api_generate_stream(url: str, body_dict: dict, cfg: dict, req: "LLMRequest"
                         tc_acc.setdefault("arguments", "")
                     if tc.get("function", {}).get("arguments"):
                         tc_acc["arguments"] = tc_acc.get("arguments", "") + tc["function"]["arguments"]
-
-            # Usage (usually in last chunk)
-            if chunk.get("usage"):
-                usage = chunk["usage"]
-            if chunk.get("model"):
-                provider_model = chunk["model"]
 
     except _requests.exceptions.Timeout:
         text = "".join(content_parts)
@@ -727,7 +846,9 @@ def _anthropic_messages_url(cfg: dict) -> str:
 
 
 def _to_anthropic_messages_request(req: LLMRequest, cfg: dict) -> dict:
-    system = "\n\n".join(str(m.content) for m in req.messages if m.role == "system" and isinstance(m.content, str))
+    from agent.llm.prompt_assembly import stable_and_dynamic_system
+
+    stable_system, dynamic_system = stable_and_dynamic_system(req.messages)
     messages: list[dict] = []
 
     def append_message(role: str, content: list[dict]) -> None:
@@ -767,18 +888,23 @@ def _to_anthropic_messages_request(req: LLMRequest, cfg: dict) -> dict:
         "temperature": cfg.get("temperature", req.temperature),
         "messages": messages,
     }
-    if system:
+    if stable_system or dynamic_system:
         if _anthropic_prompt_cache_enabled(cfg):
             # Anthropic's prefix hierarchy is tools -> system -> messages. A
-            # breakpoint here caches the stable tool/system prefix while all
-            # per-turn and selected-Skill context stays after it in messages.
-            body["system"] = [{
-                "type": "text",
-                "text": system,
-                "cache_control": {"type": "ephemeral"},
-            }]
+            # breakpoint follows only the stable kernel. Per-call subagent
+            # assignment stays in a later uncached system block.
+            system_blocks = []
+            if stable_system:
+                stable_block = {"type": "text", "text": stable_system}
+                stable_block["cache_control"] = {"type": "ephemeral"}
+                system_blocks.append(stable_block)
+            if dynamic_system:
+                system_blocks.append({"type": "text", "text": dynamic_system})
+            body["system"] = system_blocks
         else:
-            body["system"] = system
+            body["system"] = "\n\n".join(
+                part for part in (stable_system, dynamic_system) if part
+            )
     if req.tools:
         body["tools"] = [{
             "name": item.get("function", {}).get("name", ""),
@@ -793,12 +919,8 @@ def _to_anthropic_messages_request(req: LLMRequest, cfg: dict) -> dict:
 
 def _anthropic_prompt_cache_enabled(cfg: dict) -> bool:
     """Return the explicit cache policy for Anthropic-compatible transports."""
-    raw = cfg.get("prompt_cache_enabled")
-    if raw is None:
-        raw = os.environ.get("LZCORE_PROMPT_CACHE_ENABLED", "true")
-    if isinstance(raw, bool):
-        return raw
-    return str(raw).strip().lower() not in {"0", "false", "no", "off", "disabled"}
+    from agent.llm.prompt_assembly import prompt_cache_enabled
+    return prompt_cache_enabled(cfg)
 
 
 def _has_anthropic_prompt_cache(body: dict) -> bool:

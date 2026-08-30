@@ -59,6 +59,7 @@ def resolve_provider_config(llm_config: dict = None) -> dict:
         "enabled": llm_config.get("enabled", False),
         "default_provider": default,
         "safe_mode": llm_config.get("safe_mode", True),
+        "prompt_cache_enabled": llm_config.get("prompt_cache_enabled", True),
         "provider_type": "disabled",
         "provider": default,
         "base_url": "",
@@ -91,6 +92,9 @@ def resolve_provider_config(llm_config: dict = None) -> dict:
 
     result["temperature"] = provider_cfg.get("temperature", 0.2)
     result["max_tokens"] = provider_cfg.get("max_tokens", 4096)
+    result["prompt_cache_enabled"] = provider_cfg.get(
+        "prompt_cache_enabled", llm_config.get("prompt_cache_enabled", True)
+    )
 
     # Resolve API key from env/file
     env = provider_cfg.get("api_key_env", "")
@@ -125,6 +129,7 @@ def get_llm_status() -> dict:
         "provider_type": provider.get("provider_type", "disabled"),
         "model": provider.get("model", ""),
         "safe_mode": provider.get("safe_mode", True),
+        "prompt_cache_enabled": provider.get("prompt_cache_enabled", True),
         "allowed_tasks": sorted(ALLOWED_TASKS),
         "blocked_tasks": sorted(BLOCKED_TASKS),
         "config_source": provider.get("config_source", "default"),
@@ -210,6 +215,7 @@ def _read_recent_failure() -> dict | None:
 def _default_config() -> dict:
     return {
         "enabled": False, "default_provider": "disabled", "safe_mode": True,
+        "prompt_cache_enabled": True,
         "timeout_seconds": 90, "providers": {},
     }
 

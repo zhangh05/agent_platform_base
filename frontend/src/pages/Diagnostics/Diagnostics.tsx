@@ -28,6 +28,14 @@ type UsageStats = {
   output_tokens: number; estimated_cost: number; last_updated: string;
   cache_creation_input_tokens?: number; cache_read_input_tokens?: number;
   cache_hit_ratio?: number;
+  prompt_cache_strategies?: Record<string, number>;
+  latest_prompt_profile?: {
+    strategy?: string;
+    stable_prefix_fingerprint?: string;
+    stable_prefix_estimated_tokens?: number;
+    selected_skill?: boolean;
+    layers?: Record<string, { estimated_tokens?: number; present?: boolean; cacheable?: boolean }>;
+  };
 };
 
 type HealthComponent = {
@@ -474,6 +482,9 @@ export function Diagnostics() {
                     <Row label="输入 / 输出" value={`${usage.input_tokens.toLocaleString()} / ${usage.output_tokens.toLocaleString()}`} dim />
                     <Row label="缓存读取 / 写入" value={`${Number(usage.cache_read_input_tokens ?? 0).toLocaleString()} / ${Number(usage.cache_creation_input_tokens ?? 0).toLocaleString()}`} dim />
                     <Row label="输入缓存命中" value={`${(Number(usage.cache_hit_ratio ?? 0) * 100).toFixed(1)}%`} dim />
+                    <Row label="缓存策略" value={usage.latest_prompt_profile?.strategy || Object.keys(usage.prompt_cache_strategies || {}).join("、") || "未报告"} dim />
+                    <Row label="稳定前缀" value={usage.latest_prompt_profile ? `${Number(usage.latest_prompt_profile.stable_prefix_estimated_tokens ?? 0).toLocaleString()} tokens · ${(usage.latest_prompt_profile.stable_prefix_fingerprint || "").slice(0, 12)}` : "暂无装配记录"} dim />
+                    <Row label="Skill 提示词" value={usage.latest_prompt_profile?.selected_skill ? "本轮按需装配" : "本轮未装配"} dim />
                     <div className="diag-cost-row">
                       <span className="diag-cost-label">预估费用</span>
                       <b className="diag-cost">¥{Number(usage.estimated_cost ?? 0).toFixed(4)}</b>

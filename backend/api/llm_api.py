@@ -217,7 +217,7 @@ def handle_llm_activate():
     # Optionally save config fields before activating
     save_fields = {}
     for key in ("enabled", "base_url", "model", "temperature", "max_tokens",
-                 "safe_mode", "api_key"):
+                 "safe_mode", "prompt_cache_enabled", "api_key"):
         if key in data:
             save_fields[key] = data[key]
     if data.get("clear_api_key"):

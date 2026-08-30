@@ -2817,6 +2817,9 @@ class QueryLoop:
                 if isinstance(response.usage, dict):
                     ctx.extras.setdefault("llm_usage_events", []).append(dict(response.usage))
                 provider_metadata = response.metadata or {}
+                prompt_profile = provider_metadata.get("prompt_assembly")
+                if isinstance(prompt_profile, dict):
+                    ctx.extras.setdefault("prompt_assembly_events", []).append(prompt_profile)
                 if provider_metadata.get("prompt_cache_requested"):
                     ctx.extras.setdefault("prompt_cache_events", []).append({
                         "requested": True,
@@ -2989,15 +2992,31 @@ class QueryLoop:
         for usage in extras.get("llm_usage_events") or []:
             if not isinstance(usage, dict):
                 continue
-            input_tokens += int(usage.get("prompt_tokens", usage.get("input_tokens", 0)) or 0)
-            output_tokens += int(usage.get("completion_tokens", usage.get("output_tokens", 0)) or 0)
+            input_tokens += int(usage.get(
+                "logical_input_tokens",
+                usage.get("prompt_tokens", usage.get("input_tokens", 0)),
+            ) or 0)
+            output_tokens += int(usage.get(
+                "normalized_output_tokens",
+                usage.get("completion_tokens", usage.get("output_tokens", 0)),
+            ) or 0)
             cache_creation += int(usage.get("cache_creation_input_tokens", 0) or 0)
             cache_read += int(usage.get("cache_read_input_tokens", 0) or 0)
-        logical_input = input_tokens + cache_creation + cache_read
+        logical_input = input_tokens
         cache_events = [
             event for event in (extras.get("prompt_cache_events") or [])
             if isinstance(event, dict)
         ]
+        prompt_profiles = [
+            profile for profile in (extras.get("prompt_assembly_events") or [])
+            if isinstance(profile, dict)
+        ]
+        latest_profile = prompt_profiles[-1] if prompt_profiles else {}
+        prefix_fingerprints = {
+            str(profile.get("stable_prefix_fingerprint") or "")
+            for profile in prompt_profiles
+            if profile.get("stable_prefix_fingerprint")
+        }
         return {
             "input_tokens": logical_input,
             "output_tokens": output_tokens,
@@ -3006,6 +3025,10 @@ class QueryLoop:
             "cache_hit_ratio": round(cache_read / max(logical_input, 1), 4),
             "prompt_cache_requested_calls": sum(bool(event.get("requested")) for event in cache_events),
             "prompt_cache_fallback_calls": sum(bool(event.get("fallback")) for event in cache_events),
+            "prompt_cache_strategy": str(latest_profile.get("strategy") or ""),
+            "prompt_prefix_fingerprint": str(latest_profile.get("stable_prefix_fingerprint") or ""),
+            "prompt_prefix_variants": len(prefix_fingerprints),
+            "prompt_layers": dict(latest_profile.get("layers") or {}),
         }
     
     @staticmethod

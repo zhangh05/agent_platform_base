@@ -2,6 +2,7 @@ llm:
   enabled: true
   default_provider: minimax
   safe_mode: true
+  prompt_cache_enabled: true
   timeout_seconds: 90
   providers:
     minimax:

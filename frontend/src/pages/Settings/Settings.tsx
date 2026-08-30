@@ -161,6 +161,7 @@ export function Settings() {
           temperature: 0.2,
           max_tokens: 4096,
           safe_mode: true,
+          prompt_cache_enabled: true,
           key_configured: false,
           is_active: false,
         });
@@ -191,6 +192,7 @@ export function Settings() {
         temperature: draft.temperature,
         max_tokens: draft.max_tokens,
         safe_mode: draft.safe_mode,
+        prompt_cache_enabled: draft.prompt_cache_enabled,
       };
       if (apiKeyDirty) {
         if (clearKeyOnSave) payload.clear_api_key = true;
@@ -222,6 +224,7 @@ export function Settings() {
         temperature: draft.temperature,
         max_tokens: draft.max_tokens,
         safe_mode: draft.safe_mode,
+        prompt_cache_enabled: draft.prompt_cache_enabled,
       };
       if (apiKeyDirty) {
         if (clearKeyOnSave) payload.clear_api_key = true;
@@ -456,6 +459,13 @@ export function Settings() {
                     checked={!!draft.safe_mode}
                     onChange={(v) => setDraft({ ...draft, safe_mode: v })}
                     testid="toggle-safe_mode"
+                  />
+                  <ToggleField
+                    label="提示词缓存"
+                    hint="按模型服务能力复用稳定前缀；历史、当前请求与按需 Skill 保持动态装配"
+                    checked={draft.prompt_cache_enabled !== false}
+                    onChange={(v) => setDraft({ ...draft, prompt_cache_enabled: v })}
+                    testid="toggle-prompt_cache"
                   />
                 </div>
 

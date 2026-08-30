@@ -4,10 +4,10 @@
 
 LZCore 将长期稳定的通用 Agent 契约与业务 Skill 契约分开。基础系统提示词在所有任务中保持稳定；业务提示词只在用户于工作台明确选择、并由服务端完成资源与权限解析后注入。
 
-## 请求装配顺序
+## Provider 无关的请求装配顺序
 
-1. 稳定工具定义与基础系统提示词构成缓存前缀。
-2. 服务端生成时间、运行状态和能力指引。
+1. 稳定排序的工具定义与基础系统提示词构成缓存前缀。
+2. 子 Agent 分工、服务端时间、运行状态和能力指引位于动态层，不改变基础系统前缀。
 3. 若工作台选择 Skill，平台调用该扩展的 `workbench_prompt_renderer`，把独立 Skill 提示词作为受控运行指引加入当前用户消息。
 4. 加入受治理历史、检索上下文和当前用户请求。
 5. 工具结果追加到同一回合；后续模型调用继续看到已选 Skill 契约。
@@ -28,8 +28,21 @@ LZCore 将长期稳定的通用 Agent 契约与业务 Skill 契约分开。基�
 
 扩展只负责领域行为，服务端仍负责验证 Skill、设备、连接和工具授权。浏览器提交的原始选择不能直接成为提示词。
 
-## 缓存与降级
+## 分层、指纹与缓存
 
-Anthropic Messages 兼容传输默认在稳定 system 块设置 `cache_control`。动态用户请求和 Skill 上下文位于缓存断点之后。若兼容网关以 HTTP 400/422 拒绝缓存字段，传输层会去掉缓存元数据重试一次；缓存优化不得影响请求可用性。
+`agent/llm/prompt_assembly.py` 是 Provider 无关的装配观测层。每次真实调用都生成：
 
-可通过 `LZCORE_PROMPT_CACHE_ENABLED=false` 禁用显式缓存。诊断用量记录缓存写入 token、缓存读取 token、命中比例以及运行中发生的缓存降级次数。
+- 稳定系统契约、工具 schema、动态系统约束、历史、检索、附件、能力指引、Skill 和当前请求的独立大小与指纹；
+- 稳定前缀指纹、工具面指纹和完整装配指纹；
+- 不含提示词正文、用户输入、设备数据或工具参数的安全诊断快照。
+
+协议适配如下：
+
+- Anthropic 与使用 Anthropic Messages 协议的 MiniMax：在稳定 system 块设置 `cache_control`，动态子 Agent 约束放在后续非缓存 system 块；
+- OpenAI 官方接口：保持稳定前缀在最前，使用自动前缀缓存和按工作区/会话哈希分片的稳定 `prompt_cache_key`，流式请求收集 provider 原生缓存用量；分片数量可用 `LZCORE_PROMPT_CACHE_SHARDS` 调整；
+- DeepSeek、方舟、Ollama 和自定义 OpenAI-compatible 网关：保持相同稳定前缀顺序，但不发送 OpenAI 私有缓存参数，只读取网关实际返回的缓存统计；
+- Mock/禁用 Provider：明确标记为不缓存。
+
+任何可选缓存字段被 HTTP 400/422 拒绝时，传输层只移除缓存增强字段并重试一次，消息、工具和模型语义保持不变。缓存优化不得影响请求可用性。
+
+可在每个 Provider 的设置中关闭提示词缓存，也可通过 `LZCORE_PROMPT_CACHE_ENABLED=false` 全局禁用。诊断记录 Provider 策略、稳定前缀大小/指纹、Skill 是否按需装配、缓存写入 token、缓存读取 token、命中比例和缓存降级次数。

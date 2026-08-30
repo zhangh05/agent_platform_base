@@ -58,6 +58,7 @@ def sanitize_llm_settings(data: dict) -> dict:
         "enabled": data.get("enabled", False),
         "provider": data.get("provider", "disabled"),
         "safe_mode": data.get("safe_mode", True),
+        "prompt_cache_enabled": data.get("prompt_cache_enabled", True),
         "base_url": data.get("base_url", ""),
         "model": data.get("model", ""),
         "temperature": data.get("temperature", 0.2),
@@ -94,6 +95,7 @@ def resolve_effective_llm_config() -> dict:
         "enabled": cfg.get("enabled", False) or bool(env_key),
         "provider": cfg.get("default_provider", "disabled"),
         "safe_mode": cfg.get("safe_mode", True),
+        "prompt_cache_enabled": cfg.get("prompt_cache_enabled", True),
         "base_url": "",
         "model": "",
         "temperature": 0.2,
@@ -116,6 +118,7 @@ def resolve_effective_llm_config() -> dict:
         result["model"] = provider_cfg.get("model", "")
         result["temperature"] = provider_cfg.get("temperature", 0.2)
         result["max_tokens"] = provider_cfg.get("max_tokens", 4096)
+        result["prompt_cache_enabled"] = provider_cfg.get("prompt_cache_enabled", True)
         if not env_key:
             file_key = resolve_api_key(
                 env_name=provider_cfg.get("api_key_env", ""),
@@ -151,6 +154,7 @@ def _provider_runtime_config(provider_id: str, cfg: dict, api_key: str) -> dict:
         "enabled": cfg.get("enabled", True),
         "provider": provider_id,
         "safe_mode": cfg.get("safe_mode", True),
+        "prompt_cache_enabled": cfg.get("prompt_cache_enabled", True),
         "base_url": cfg.get("base_url", ""),
         "model": cfg.get("model", ""),
         "temperature": cfg.get("temperature", 0.2),
@@ -214,4 +218,6 @@ def validate_llm_settings(data: dict) -> list:
     mt = data.get("max_tokens", 4096)
     if not isinstance(mt, int) or mt < 1 or mt > 128000:
         errors.append("max_tokens must be 1-128000")
+    if "prompt_cache_enabled" in data and not isinstance(data.get("prompt_cache_enabled"), bool):
+        errors.append("prompt_cache_enabled must be boolean")
     return errors

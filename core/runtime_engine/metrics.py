@@ -60,7 +60,7 @@ class MetricsCollector:
         self._snapshot.risk_level = level
 
     def capture_llm_usage(self, usage: dict[str, Any]) -> None:
-        """Project provider cache effectiveness into run-level metrics."""
+        """Project provider-neutral prompt/cache facts into run-level metrics."""
         if not isinstance(usage, dict):
             return
         try:
@@ -69,6 +69,20 @@ class MetricsCollector:
             )
         except (TypeError, ValueError):
             self._snapshot.cache_hit_ratio = 0.0
+        self._snapshot.prompt_cache_strategy = str(
+            usage.get("prompt_cache_strategy") or ""
+        )[:80]
+        self._snapshot.prompt_prefix_fingerprint = str(
+            usage.get("prompt_prefix_fingerprint") or ""
+        )[:64]
+        try:
+            self._snapshot.prompt_prefix_variants = max(
+                0, int(usage.get("prompt_prefix_variants") or 0)
+            )
+        except (TypeError, ValueError):
+            self._snapshot.prompt_prefix_variants = 0
+        layers = usage.get("prompt_layers")
+        self._snapshot.prompt_layers = dict(layers) if isinstance(layers, dict) else {}
 
     def capture_context_usage(
         self,
@@ -126,6 +140,10 @@ class MetricsCollector:
             "tool_success": s.tool_success,
             "tool_failed": s.tool_failed,
             "cache_hit_ratio": s.cache_hit_ratio,
+            "prompt_cache_strategy": s.prompt_cache_strategy,
+            "prompt_prefix_fingerprint": s.prompt_prefix_fingerprint,
+            "prompt_prefix_variants": s.prompt_prefix_variants,
+            "prompt_layers": s.prompt_layers,
             "max_parallel_width": s.max_parallel_width,
             "risk_level": s.risk_level,
             "context_compacted": s.context_compacted,

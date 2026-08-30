@@ -97,13 +97,14 @@ def _build_provider_config(provider_id: str, data: Optional[dict] = None) -> dic
         "temperature": 0.2,
         "max_tokens": 4096,
         "safe_mode": True,
+        "prompt_cache_enabled": True,
         "api_key": "",
         "hint": preset.get("hint", ""),
         "updated_at": None,
     }
     if data:
         for key in ("enabled", "base_url", "model", "temperature", "max_tokens",
-                     "safe_mode", "api_key", "secret_ref", "label"):
+                     "safe_mode", "prompt_cache_enabled", "api_key", "secret_ref", "label"):
             if key in data:
                 cfg[key] = data[key]
         if cfg.get("secret_ref"):
@@ -192,7 +193,7 @@ def save_provider_config(provider_id: str, data: dict) -> dict:
 
     # Merge allowed fields from incoming data
     for key in ("enabled", "base_url", "model", "temperature", "max_tokens",
-                 "safe_mode", "label"):
+                 "safe_mode", "prompt_cache_enabled", "label"):
         if key in data:
             existing[key] = data[key]
 

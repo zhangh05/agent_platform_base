@@ -300,6 +300,10 @@ class MetricSnapshot:
     tool_success: int = 0
     tool_failed: int = 0
     cache_hit_ratio: float = 0.0
+    prompt_cache_strategy: str = ""
+    prompt_prefix_fingerprint: str = ""
+    prompt_prefix_variants: int = 0
+    prompt_layers: dict = field(default_factory=dict)
     max_parallel_width: int = 0
     risk_level: str = "low"
     context_compacted: bool = False

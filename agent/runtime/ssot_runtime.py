@@ -1282,18 +1282,27 @@ def _invoke_llm_for_ssot_runtime(**kwargs):
     if workspace_id:
         try:
             usage = resp.usage or {}
-            uncached_input = int(usage.get("prompt_tokens", usage.get("input_tokens", 0)) or 0)
+            logical_input = int(usage.get(
+                "logical_input_tokens",
+                usage.get("prompt_tokens", usage.get("input_tokens", 0)),
+            ) or 0)
             cache_creation = int(usage.get("cache_creation_input_tokens", 0) or 0)
             cache_read = int(usage.get("cache_read_input_tokens", 0) or 0)
+            prompt_profile = (resp.metadata or {}).get("prompt_assembly")
             record_llm_call(
-                input_tokens=uncached_input + cache_creation + cache_read,
-                output_tokens=int(usage.get("completion_tokens", usage.get("output_tokens", 0)) or 0),
+                input_tokens=logical_input,
+                output_tokens=int(usage.get(
+                    "normalized_output_tokens",
+                    usage.get("completion_tokens", usage.get("output_tokens", 0)),
+                ) or 0),
                 cache_creation_input_tokens=cache_creation,
                 cache_read_input_tokens=cache_read,
                 session_id=session_id,
                 workspace_id=workspace_id,
                 model=resp.model or "",
                 provider=resp.provider or "",
+                prompt_cache_strategy=str((resp.metadata or {}).get("prompt_cache_strategy") or ""),
+                prompt_profile=prompt_profile if isinstance(prompt_profile, dict) else None,
             )
         except Exception:
             _LOG.debug("record_llm_call failed", exc_info=True)

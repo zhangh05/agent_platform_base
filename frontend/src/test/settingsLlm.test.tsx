@@ -36,6 +36,7 @@ const baseProvider: ProviderConfig = {
   temperature: 0.2,
   max_tokens: 1200,
   safe_mode: true,
+  prompt_cache_enabled: true,
   key_configured: false,
   key_preview: null,
   hint: "api.minimaxi.com",
@@ -63,6 +64,7 @@ function makeProviders(active: string = "minimax"): ProviderListResponse {
       temperature: 0.2,
       max_tokens: 1200,
       safe_mode: true,
+      prompt_cache_enabled: true,
       key_configured: id === "minimax",
       key_preview: id === "minimax" ? "eyJ0****8a3f" : null,
       hint: hints[i],
@@ -133,6 +135,7 @@ describe("Settings — LLM Provider configuration v2", () => {
     expect(screen.getByTestId("field-api_key")).toBeInTheDocument();
     expect(screen.getByTestId("toggle-enabled")).toBeInTheDocument();
     expect(screen.getByTestId("toggle-safe_mode")).toBeInTheDocument();
+    expect(screen.getByTestId("toggle-prompt_cache")).toBeInTheDocument();
     // Buttons
     expect(screen.getByTestId("btn-save-llm")).toBeInTheDocument();
     expect(screen.getByTestId("btn-apply-llm")).toBeInTheDocument();
@@ -278,6 +281,20 @@ describe("Settings — LLM Provider configuration v2", () => {
 
     fireEvent.click(toggle);
     expect(toggle.getAttribute("aria-checked")).toBe("false");
+  });
+
+  it("prompt cache toggle 按 Provider 保存", async () => {
+    const spy = mockApi();
+    render(<Settings />);
+    await waitFor(() => screen.getByTestId("toggle-prompt_cache"));
+
+    fireEvent.click(screen.getByTestId("toggle-prompt_cache"));
+    await act(async () => fireEvent.click(screen.getByTestId("btn-save-llm")));
+
+    expect(spy.providerSave).toHaveBeenCalledWith(
+      "minimax",
+      expect.objectContaining({ prompt_cache_enabled: false }),
+    );
   });
 
   it("记忆门控读取并写入当前 workspace", async () => {
