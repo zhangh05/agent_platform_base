@@ -245,3 +245,14 @@ def test_storage_redaction_distinguishes_secret_fields_from_token_metadata():
     assert redacted["token_count"] == 42
     assert redacted["max_tokens"] == 1024
     assert redacted["credential_ref"] == "vault-entry-1"
+
+
+def test_tool_redaction_preserves_extended_community_but_masks_credentials():
+    from core.tools.redaction import redact_tool_output
+    from storage.redaction import redact_text
+
+    evidence = "import-extcommunity 1:1 2:2 3:3; export-extcommunity 3:3"
+    for redact in (redact_tool_output, redact_text):
+        assert redact(evidence) == evidence
+        assert "private-value" not in redact("community private-value")
+        assert "password-value" not in redact("password=password-value")

@@ -23,7 +23,7 @@ _SECRET_PATTERNS = [
     (re.compile(r'Bearer\s+[^\s"\'<>]+', re.IGNORECASE), 'Bearer [REDACTED]'),
     # Password/secret assignments and command-style values.
     (re.compile(
-        r'((?:password|passwd|secret|community)\s*(?::|=|\s)\s*)[^\s"\']+',
+        r'(?<![-\w])((?:password|passwd|secret|community)\b\s*(?::|=|\s)\s*)[^\s"\']+',
         re.IGNORECASE,
     ), lambda m: m.group(1) + '[REDACTED]'),
     # API key patterns
