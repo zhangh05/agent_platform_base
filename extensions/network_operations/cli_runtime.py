@@ -1,0 +1,260 @@
+"""Interactive, vendor-aware CLI state machine for network devices."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+import hashlib
+import re
+import time
+from typing import Callable
+
+from extensions.network_operations.device_drivers import DeviceDriver, resolve_driver
+
+
+ANSI_ESCAPE = re.compile(r"\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1b\\))")
+CONTROL_EXCEPT_LAYOUT = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
+MAX_OUTPUT_BYTES = 200_000
+MAX_PAGER_ADVANCES = 500
+
+
+@dataclass
+class CLIReadResult:
+    text: str
+    prompt: str = ""
+    complete: bool = False
+    pages: int = 0
+    encoding: str = "utf-8"
+    error_code: str = ""
+    truncated: bool = False
+    duration_ms: int = 0
+
+    def as_dict(self) -> dict:
+        return {
+            "text": self.text,
+            "prompt": self.prompt,
+            "complete": self.complete,
+            "pages": self.pages,
+            "encoding": self.encoding,
+            "error_code": self.error_code,
+            "truncated": self.truncated,
+            "duration_ms": self.duration_ms,
+            "output_hash": hashlib.sha256(self.text.encode("utf-8")).hexdigest(),
+        }
+
+
+@dataclass
+class CLICommandResult:
+    command: str
+    output: str
+    prompt: str
+    complete: bool
+    pages: int
+    encoding: str
+    duration_ms: int
+    error_code: str = ""
+    device_error: str = ""
+    truncated: bool = False
+
+    def as_dict(self) -> dict:
+        return {
+            "command": self.command,
+            "output": self.output,
+            "prompt": self.prompt,
+            "complete": self.complete,
+            "pages": self.pages,
+            "encoding": self.encoding,
+            "duration_ms": self.duration_ms,
+            "error_code": self.error_code,
+            "device_error": self.device_error,
+            "truncated": self.truncated,
+            "output_hash": hashlib.sha256(self.output.encode("utf-8")).hexdigest(),
+        }
+
+
+def decode_terminal_bytes(data: bytes, encodings: tuple[str, ...] = ("utf-8", "gb18030")) -> tuple[str, str]:
+    for encoding in dict.fromkeys((*encodings, "utf-8", "gb18030", "latin-1")):
+        try:
+            return data.decode(encoding), encoding
+        except (UnicodeDecodeError, LookupError):
+            continue
+    return data.decode("utf-8", errors="replace"), "utf-8-replace"
+
+
+def normalize_terminal_text(text: str) -> str:
+    """Normalize terminal redraws while retaining meaningful line layout."""
+    value = ANSI_ESCAPE.sub("", str(text or ""))
+    # Apply destructive backspace semantics instead of merely deleting the
+    # backspace byte; many pagers erase their own marker this way.
+    reduced: list[str] = []
+    for char in value:
+        if char == "\b":
+            if reduced and reduced[-1] not in {"\n", "\r"}:
+                reduced.pop()
+            continue
+        reduced.append(char)
+    value = "".join(reduced).replace("\r\n", "\n").replace("\r", "\n")
+    value = CONTROL_EXCEPT_LAYOUT.sub("", value)
+    return value
+
+
+def strip_command_envelope(text: str, command: str, prompt: str) -> str:
+    lines = normalize_terminal_text(text).splitlines()
+    while lines and not lines[0].strip():
+        lines.pop(0)
+    if lines and lines[0].strip() == command.strip():
+        lines.pop(0)
+    while lines and not lines[-1].strip():
+        lines.pop()
+    if lines and prompt and lines[-1].strip() == prompt.strip():
+        lines.pop()
+    return "\n".join(lines).strip()
+
+
+class InteractiveCLISession:
+    """Stateful reader over an authenticated SSH shell or Telnet socket.
+
+    ``receive`` returns bytes when data is available, ``None`` when no data is
+    currently ready, and ``b''`` when the peer closed the session.
+    """
+
+    def __init__(
+        self,
+        *,
+        send: Callable[[bytes], None],
+        receive: Callable[[], bytes | None],
+        driver: DeviceDriver,
+        timeout: float = 15,
+        initial_text: str = "",
+    ):
+        self._send = send
+        self._receive = receive
+        self.driver = driver
+        self.timeout = max(1.0, float(timeout))
+        self.prompt = driver.extract_prompt(initial_text)
+        self.banner = normalize_terminal_text(initial_text)
+        self.encoding = "utf-8"
+
+    def bootstrap(self) -> CLIReadResult:
+        if self.prompt:
+            return CLIReadResult(self.banner, self.prompt, True, encoding=self.encoding)
+        self._send(b"\r\n")
+        result = self.read_until_prompt(timeout=min(self.timeout, 8.0))
+        self.banner = (self.banner + "\n" + result.text).strip()
+        if result.prompt:
+            self.prompt = result.prompt
+        return result
+
+    def refine_driver(self, transcript: str) -> dict:
+        resolved, source = resolve_driver(self.driver.vendor, self.banner + "\n" + str(transcript or ""))
+        self.driver = resolved
+        return resolved.public_profile(detected_from=source)
+
+    def disable_paging(self) -> CLICommandResult | None:
+        command = self.driver.disable_paging_command
+        return self.run_command(command, internal=True) if command else None
+
+    def run_command(self, command: str, *, internal: bool = False) -> CLICommandResult:
+        started = time.monotonic()
+        self._send((str(command).strip() + "\r\n").encode("ascii", errors="strict"))
+        read = self.read_until_prompt(timeout=self.timeout)
+        if read.prompt:
+            self.prompt = read.prompt
+        output = strip_command_envelope(read.text, command, self.prompt)
+        device_error = self.driver.command_error(output)
+        error_code = read.error_code
+        if device_error and not error_code:
+            error_code = "device_command_rejected"
+        if internal and device_error:
+            # Disabling pagination is an optimization. Interactive pager
+            # handling remains active when the device rejects the command.
+            error_code = "paging_disable_rejected"
+        return CLICommandResult(
+            command=command,
+            output=output,
+            prompt=self.prompt,
+            complete=read.complete,
+            pages=read.pages,
+            encoding=read.encoding,
+            duration_ms=int((time.monotonic() - started) * 1000),
+            error_code=error_code,
+            device_error=device_error,
+            truncated=read.truncated,
+        )
+
+    def read_until_prompt(self, *, timeout: float | None = None) -> CLIReadResult:
+        started = time.monotonic()
+        deadline = started + max(0.5, float(timeout or self.timeout))
+        raw = bytearray()
+        pages = 0
+        peer_closed = False
+        truncated = False
+        matched_spans: set[tuple[int, int, str]] = set()
+        encoding = self.encoding
+
+        while time.monotonic() < deadline:
+            chunk = self._receive()
+            if chunk == b"":
+                peer_closed = True
+                break
+            if chunk:
+                raw.extend(chunk)
+                if len(raw) > MAX_OUTPUT_BYTES:
+                    del raw[MAX_OUTPUT_BYTES:]
+                    truncated = True
+                    break
+                decoded, encoding = decode_terminal_bytes(bytes(raw), self.driver.encodings)
+                normalized = normalize_terminal_text(decoded)
+                for rule in self.driver.pager_rules:
+                    for match in rule.pattern.finditer(normalized):
+                        key = (match.start(), match.end(), rule.name)
+                        if key in matched_spans:
+                            continue
+                        matched_spans.add(key)
+                        pages += 1
+                        if pages > MAX_PAGER_ADVANCES:
+                            return CLIReadResult(
+                                _remove_pagers(normalized, self.driver),
+                                pages=pages,
+                                encoding=encoding,
+                                error_code="pager_limit_exceeded",
+                                duration_ms=int((time.monotonic() - started) * 1000),
+                            )
+                        self._send(rule.response)
+                prompt = self.driver.extract_prompt(_remove_pagers(normalized, self.driver))
+                if prompt:
+                    text = _remove_pagers(normalized, self.driver)
+                    self.encoding = encoding
+                    return CLIReadResult(
+                        text=text,
+                        prompt=prompt,
+                        complete=True,
+                        pages=pages,
+                        encoding=encoding,
+                        duration_ms=int((time.monotonic() - started) * 1000),
+                    )
+            else:
+                time.sleep(0.02)
+
+        decoded, encoding = decode_terminal_bytes(bytes(raw), self.driver.encodings)
+        text = _remove_pagers(normalize_terminal_text(decoded), self.driver)
+        error_code = (
+            "output_limit_exceeded" if truncated else
+            "connection_closed" if peer_closed else
+            "prompt_timeout"
+        )
+        return CLIReadResult(
+            text=text,
+            complete=False,
+            pages=pages,
+            encoding=encoding,
+            error_code=error_code,
+            truncated=truncated,
+            duration_ms=int((time.monotonic() - started) * 1000),
+        )
+
+
+def _remove_pagers(text: str, driver: DeviceDriver) -> str:
+    value = text
+    for rule in driver.pager_rules:
+        value = rule.pattern.sub("", value)
+    return value

@@ -1,11 +1,11 @@
 {
   "extension_id": "network.operations",
   "name": "网络设备与 Skill",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "api_version": "1",
   "min_platform_version": "1.1.0",
-  "description": "以可信设备连接为基础的网络设备管理、Skill 编排和只读运维执行。",
-  "capabilities": ["network_devices", "network_connections", "network_skills", "network_inspection"],
+  "description": "以可信设备连接为基础，提供厂商感知的交互式 CLI、语义事实采集、Skill 编排和只读运维执行。",
+  "capabilities": ["network_devices", "network_connections", "network_skills", "network_cli_runtime", "semantic_collection", "network_inspection"],
   "tools": [
     "network.operations.devices_read",
     "network.operations.skills_read",

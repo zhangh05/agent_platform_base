@@ -8,7 +8,7 @@ import "./NetworkOperations.css";
 
 type Region = { region_id: string; name: string };
 type Device = { device_id: string; name: string; host: string; vendor: string; device_type: string; region_id: string };
-type Connection = { connection_id: string; device_id: string; name?: string; protocol: "ssh" | "telnet"; port: number; username?: string; source_address?: string; effective_source_address?: string; auth_method?: string; status: string; verified: boolean; credential_configured?: boolean; last_error?: string; last_tested_at?: string };
+type Connection = { connection_id: string; device_id: string; name?: string; protocol: "ssh" | "telnet"; port: number; username?: string; source_address?: string; effective_source_address?: string; auth_method?: string; status: string; verified: boolean; credential_configured?: boolean; last_error?: string; last_tested_at?: string; driver_id?: string; detected_vendor?: string; os_family?: string; semantic_facts?: string[]; profile_detected_from?: string };
 type Skill = { skill_id: string; name: string; description: string; instructions?: string; enabled: boolean; device_ids: string[]; connection_ids: string[]; allowed_tool_ids: string[] };
 type DeviceForm = Omit<Device, "device_id"> & { device_id?: string };
 type ConnectionForm = { connection_id?: string; device_id: string; name: string; protocol: "ssh" | "telnet"; port: string; username: string; source_address: string; password: string; private_key: string; passphrase: string; auth_method: string };
@@ -18,7 +18,7 @@ const base = "/extensions/network.operations";
 const toolOptions = [
   { id: "network.operations.devices_read", label: "设备与连接目录", description: "允许模型读取已登记设备、区域和连接状态" },
   { id: "network.operations.skills_read", label: "Skill 配置读取", description: "允许模型核对当前 Skill 的配置边界" },
-  { id: "network.operations.device.manage", label: "实时设备只读操作", description: "允许模型探测连接并执行明确的只读命令" },
+  { id: "network.operations.device.manage", label: "实时设备只读操作", description: "允许模型按语义采集设备事实；运行时负责厂商命令、分页和终端交互" },
   { id: "network.operations.inspection", label: "多设备巡检", description: "允许模型发起、跟踪和重试持久巡检任务" },
 ] as const;
 const allowedToolIds = toolOptions.map((item) => item.id);
@@ -255,7 +255,7 @@ export default function NetworkOperations() {
                 <div className="connection-summary">
                   <span className={`status ${connection.status}`}>{connection.verified ? "已连接" : connection.status === "trust_required" ? "待确认指纹" : "连接失败"}</span>
                   <b>{connection.protocol.toUpperCase()}:{connection.port}</b>
-                  <small title={connection.last_error || connection.last_tested_at}>{connection.verified && connection.effective_source_address ? `源地址 ${connection.effective_source_address}` : connection.last_error || connection.last_tested_at || "尚未测试"}</small>
+                  <small title={connection.last_error || connection.last_tested_at}>{connection.verified ? [connection.driver_id || connection.os_family, connection.effective_source_address ? `源地址 ${connection.effective_source_address}` : ""].filter(Boolean).join(" · ") || connection.last_tested_at : connection.last_error || connection.last_tested_at || "尚未测试"}</small>
                 </div>
                 <div className="connection-actions" aria-label={`${device.name} ${connection.protocol.toUpperCase()}:${connection.port} 连接管理`}>
                   <Button size="sm" onClick={() => editConnection(connection)}>编辑连接</Button>

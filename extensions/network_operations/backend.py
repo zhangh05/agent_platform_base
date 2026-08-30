@@ -139,7 +139,13 @@ def register_routes(app):
             return jsonify({"ok": True, "inspections": service.list_inspections(ws)})
         data = _payload()
         try:
-            task = service.enqueue_connection_inspection(ws, data.get("connection_ids"), data.get("commands"), script_id=str(data.get("script_id") or ""))
+            task = service.enqueue_connection_inspection(
+                ws,
+                data.get("connection_ids"),
+                data.get("commands"),
+                script_id=str(data.get("script_id") or ""),
+                facts=data.get("facts"),
+            )
             return jsonify({"ok": True, "task": task}), 202
         except ValueError as exc:
             return jsonify({"ok": False, "error": str(exc)}), 400
@@ -240,10 +246,10 @@ def device_manage(invocation):
         return {"ok": False, "error": "tool_not_allowed_by_skill"}
     args = invocation.arguments or {}
     action = str(args.get("action") or "probe").lower()
-    if action not in {"probe", "read"}:
+    if action not in {"probe", "read", "collect"}:
         return {
             "ok": False,
-            "error": f"unsupported action for network.operations.device.manage; expected probe|read, got {action}",
+            "error": f"unsupported action for network.operations.device.manage; expected probe|read|collect, got {action}",
         }
     connection_id = str(args.get("connection_id") or "").strip()
     if not connection_id:
@@ -258,11 +264,16 @@ def device_manage(invocation):
         selected_connections = set(getattr(invocation, "skill_connection_ids", ()) or ())
         if selected_connections and connection_id not in selected_connections:
             return {"ok": False, "error": "connection_not_selected_in_workbench"}
+    raw_commands = args.get("commands")
+    requested_facts = [str(item) for item in (args.get("facts") or [])]
+    if action == "collect" and not requested_facts:
+        return {"ok": False, "error": "facts are required for collect"}
     result = service.test_connection(
         invocation.workspace_id,
         connection_id,
-        commands=[str(item) for item in (args.get("commands") or [])],
-        read=action == "read",
+        commands=[str(item) for item in raw_commands] if action == "read" and raw_commands else None,
+        facts=requested_facts if action == "collect" else None,
+        read=action in {"read", "collect"},
         timeout=int(args.get("timeout") or 15),
     )
     if result.get("ok"):
@@ -299,7 +310,18 @@ def inspection(invocation):
             effective_allowed = allowed.intersection(selected) if selected else allowed
             if not isinstance(connection_ids, list) or not set(connection_ids).issubset(effective_allowed):
                 return {"ok": False, "error": "inspection_connections_not_allowed_by_skill"}
-        return {"ok": True, "task": service.enqueue_connection_inspection(invocation.workspace_id, connection_ids, args.get("commands"), script_id=str(args.get("script_id") or ""), created_by="llm")}
+        enqueue_options = {
+            "script_id": str(args.get("script_id") or ""),
+            "created_by": "llm",
+        }
+        if args.get("facts") is not None:
+            enqueue_options["facts"] = args.get("facts")
+        return {"ok": True, "task": service.enqueue_connection_inspection(
+            invocation.workspace_id,
+            connection_ids,
+            args.get("commands"),
+            **enqueue_options,
+        )}
     if action == "get":
         task_id = str(args.get("task_id") or "")
         task = service.get_inspection(invocation.workspace_id, task_id)
@@ -358,21 +380,23 @@ def register():
             {
                 "tool_id": "network.operations.device.manage",
                 "name": "网络设备只读探测",
-                "description": "需要设备当前证据时主动调用。只接受后台登记且由当前 Skill 授权的 connection_id；每次 probe/read 都主动建立或恢复 SSH/Telnet 连接。连接失败会作为结构化工具结果返回，模型应据此继续处理其他设备、选择替代连接或向用户说明，不得让单台失败阻断其余目标。read 必须传 commands 执行明确只读命令；不得传裸 host、用户名或凭据。",
+                "description": "需要设备当前证据时主动调用。只接受后台登记且由当前 Skill 授权的 connection_id；每次操作都主动建立 SSH/Telnet CLI 会话。优先用 collect + facts 请求版本、接口、路由、邻居、ARP、MAC、配置、日志或资源使用等语义事实，由厂商驱动选择命令并处理分页、提示符和编码；只有语义目录无法表达时才用 read + commands 发送明确只读原生命令。probe 只验证连接。单台失败作为结构化证据返回，不阻断其他设备。",
                 "category": "ops",
                 "risk_level": "medium",
                 "permission_action": "network",
                 "action_execution_contracts": {
                     "probe": {"action_class": "network", "risk_level": "medium", "side_effects": "external_read", "idempotency": "safe_to_retry", "read_only": True},
                     "read": {"action_class": "network", "risk_level": "medium", "side_effects": "external_read", "idempotency": "safe_to_retry", "read_only": True},
+                    "collect": {"action_class": "network", "risk_level": "medium", "side_effects": "external_read", "idempotency": "safe_to_retry", "read_only": True},
                 },
-                "bindable_inputs": {"probe": ["connection_id"], "read": ["connection_id"]},
+                "bindable_inputs": {"probe": ["connection_id"], "read": ["connection_id"], "collect": ["connection_id"]},
                 "referenceable_outputs": {
                     "probe": ["connection_ok", "connection", "status", "error", "stages", "fingerprint"],
-                    "read": ["connection_ok", "connection", "status", "error", "stages", "fingerprint", "output"],
+                    "read": ["connection_ok", "connection", "status", "error", "stages", "fingerprint", "output", "command_results", "device_profile"],
+                    "collect": ["connection_ok", "connection", "status", "error", "stages", "fingerprint", "facts", "output", "command_results", "device_profile"],
                 },
                 "action_requirements": {
-                    "all": {"probe": ["connection_id"], "read": ["connection_id"]},
+                    "all": {"probe": ["connection_id"], "read": ["connection_id"], "collect": ["connection_id", "facts"]},
                 },
                 "handler": device_manage,
                 "timeout_seconds": 90,
@@ -380,9 +404,10 @@ def register():
                     "type": "object",
                     "properties": {
                         **common,
-                        "action": {"type": "string", "enum": ["probe", "read"]},
+                        "action": {"type": "string", "enum": ["probe", "read", "collect"]},
                         "connection_id": {"type": "string", "minLength": 1},
                         "commands": {"type": "array", "items": {"type": "string"}, "maxItems": 20},
+                        "facts": {"type": "array", "items": {"type": "string", "enum": list(service.SEMANTIC_FACTS)}, "minItems": 1, "maxItems": 10},
                         "timeout": {"type": "integer", "minimum": 1, "maximum": 90},
                     },
                     "required": ["action"],
@@ -391,7 +416,7 @@ def register():
             {
                 "tool_id": "network.operations.inspection",
                 "name": "执行只读巡检",
-                "description": "对当前 Skill 授权的多个已配置 connection_id 执行持久、可追踪的只读巡检。每台设备在执行时主动连接并独立记录成功或失败；单台失败不会取消其他设备，任务可返回 partial。run 必须传非空 connection_ids，返回 task_id 后用 get 跟踪到终态；模型应基于各设备结果继续分析、降级或反馈。",
+                "description": "对当前 Skill 授权的多个 connection_id 执行持久、可追踪的只读巡检。run 必须传非空 connection_ids，并优先传 facts 让各设备的厂商驱动分别选择命令；只有语义目录无法表达时才传 commands，facts/commands/script_id 三者互斥。每台设备独立连接、处理分页并记录成功或失败，单台失败不会取消其他设备。返回 task_id 后用 get 跟踪同一任务到终态。",
                 "category": "ops",
                 "risk_level": "medium",
                 "permission_action": "network",
@@ -422,6 +447,7 @@ def register():
                         "action": {"type": "string", "enum": ["run", "list", "get", "cancel", "retry"]},
                         "connection_ids": {"type": "array", "items": {"type": "string"}, "minItems": 1, "maxItems": 100},
                         "commands": {"type": "array", "items": {"type": "string"}, "maxItems": 20},
+                        "facts": {"type": "array", "items": {"type": "string", "enum": list(service.SEMANTIC_FACTS)}, "minItems": 1, "maxItems": 10},
                         "script_id": {"type": "string"},
                         "task_id": {"type": "string"},
                     },

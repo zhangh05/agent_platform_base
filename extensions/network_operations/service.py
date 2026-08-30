@@ -20,6 +20,7 @@ from extensions.network_operations.device_tools import (
     probe_target,
     resolve_source_address,
 )
+from extensions.network_operations.device_drivers import SEMANTIC_FACTS, semantic_catalog
 from extensions.sdk import ExtensionDataStore, ExtensionSecretStore
 from storage.locking import FileLock
 from storage.time_utils import now_iso
@@ -420,20 +421,53 @@ def _connection_target(workspace_id: str, connection: dict[str, Any]) -> DeviceT
     )
 
 
-def test_connection(workspace_id: str, connection_id: str, *, accept_host_key: bool = False, read: bool = False, commands: list[str] | None = None, timeout: int = 15) -> dict[str, Any]:
+def test_connection(
+    workspace_id: str,
+    connection_id: str,
+    *,
+    accept_host_key: bool = False,
+    read: bool = False,
+    commands: list[str] | None = None,
+    facts: list[str] | None = None,
+    timeout: int = 15,
+) -> dict[str, Any]:
     record = get_connection(workspace_id, connection_id, include_secret=True)
     if not record:
         return {"ok": False, "error": "connection_not_found"}
     target: DeviceTarget | None = None
     try:
         target = _connection_target(workspace_id, record)
-        selected = commands or ([] if not read else DEFAULT_COMMANDS.get(target.vendor, DEFAULT_COMMANDS["generic"]))
-        result = probe_target(target, commands=selected, accept_host_key=accept_host_key, read=read, timeout=timeout)
+        if commands is not None and facts:
+            raise ValueError("commands_and_facts_are_mutually_exclusive")
+        normalized_facts = _normalize_semantic_facts(facts) if facts else []
+        selected = (
+            commands if commands is not None else
+            [] if not read or normalized_facts else
+            DEFAULT_COMMANDS.get(target.vendor, DEFAULT_COMMANDS["generic"])
+        )
+        result = probe_target(
+            target,
+            commands=selected,
+            facts=normalized_facts,
+            accept_host_key=accept_host_key,
+            read=read,
+            timeout=timeout,
+        )
     except (ValueError, RuntimeError, OSError) as exc:
         result = {"ok": False, "status": "failed", "error": str(exc)[:300] or "connection_setup_failed"}
     fingerprint = str(result.get("fingerprint") or "")
     if fingerprint and accept_host_key and result.get("ok"):
         record["host_key_fingerprint"] = fingerprint
+    profile = result.get("device_profile") if isinstance(result.get("device_profile"), dict) else {}
+    if profile and result.get("ok"):
+        record.update({
+            "driver_id": str(profile.get("driver_id") or ""),
+            "detected_vendor": str(profile.get("vendor") or ""),
+            "os_family": str(profile.get("os_family") or ""),
+            "semantic_facts": list(profile.get("semantic_facts") or []),
+            "profile_detected_from": str(profile.get("detected_from") or ""),
+            "profile_updated_at": now_iso(),
+        })
     record.update({
         "status": "connected" if result.get("ok") else ("trust_required" if result.get("requires_host_key_acceptance") else "failed"),
         "last_tested_at": now_iso(),
@@ -445,6 +479,18 @@ def test_connection(workspace_id: str, connection_id: str, *, accept_host_key: b
     _store(workspace_id).save("connections", connection_id, record)
     result["connection"] = _public_connection(record)
     return result
+
+
+def _normalize_semantic_facts(facts: list[str] | tuple[str, ...] | None) -> list[str]:
+    if not isinstance(facts, (list, tuple)) or any(not isinstance(item, str) for item in facts):
+        raise ValueError("facts must be an array of semantic fact names")
+    normalized = list(dict.fromkeys(item.strip() for item in facts if item.strip()))
+    if not normalized or len(normalized) > 10:
+        raise ValueError("facts must contain 1 to 10 semantic fact names")
+    unsupported = [item for item in normalized if item not in SEMANTIC_FACTS]
+    if unsupported:
+        raise ValueError(f"unsupported_semantic_fact:{unsupported[0]}")
+    return normalized
 
 
 def _save_connection_unlocked(workspace_id: str, payload: dict[str, Any]) -> dict[str, Any]:
@@ -745,7 +791,14 @@ def resolve_workbench_selection(workspace_id: str, selection: dict[str, Any]) ->
             "port": item.get("port"),
             "status": activation_by_id[str(item.get("connection_id") or "")]["status"],
             "ready": activation_by_id[str(item.get("connection_id") or "")]["ready"],
+            "driver_id": item.get("driver_id"),
+            "detected_vendor": item.get("detected_vendor"),
+            "os_family": item.get("os_family"),
+            "semantic_facts": list(item.get("semantic_facts") or []),
+            "profile_detected_from": item.get("profile_detected_from"),
         } for item in connections],
+        "semantic_catalog": semantic_catalog(),
+        "network_runtime_version": "network.cli.v2",
         "source": "server_validated_extension_context",
     }
 
@@ -1025,15 +1078,21 @@ def _safe_inspection_target(target: dict[str, Any]) -> dict[str, Any]:
     return _safe_asset(target)
 
 
-def _command_plan(commands: list[str] | None, script: dict[str, Any] | None) -> dict[str, Any]:
+def _command_plan(
+    commands: list[str] | None,
+    script: dict[str, Any] | None,
+    facts: list[str] | None = None,
+) -> dict[str, Any]:
     if script:
         return {"mode": "script", "script": _script_safe(script)}
+    if facts:
+        return {"mode": "semantic_facts", "facts": _normalize_semantic_facts(facts)}
     if commands is not None:
         return {"mode": "inline_commands", "commands": list(commands)}
     return {"mode": "vendor_defaults"}
 
 
-def _restore_command_plan(task: dict[str, Any]) -> tuple[list[str] | None, dict[str, Any] | None]:
+def _restore_command_plan(task: dict[str, Any]) -> tuple[list[str] | None, dict[str, Any] | None, list[str] | None]:
     plan = task.get("command_plan")
     if not isinstance(plan, dict):
         raise ValueError("inspection_command_plan_missing")
@@ -1042,20 +1101,37 @@ def _restore_command_plan(task: dict[str, Any]) -> tuple[list[str] | None, dict[
         script = plan.get("script")
         if not isinstance(script, dict) or not script.get("script_id"):
             raise ValueError("inspection_script_snapshot_invalid")
-        return None, dict(script)
+        return None, dict(script), None
+    if mode == "semantic_facts":
+        facts = plan.get("facts")
+        if not isinstance(facts, list):
+            raise ValueError("inspection_semantic_facts_invalid")
+        return None, None, _normalize_semantic_facts(facts)
     if mode == "inline_commands":
         commands = plan.get("commands")
         if not isinstance(commands, list):
             raise ValueError("inspection_inline_commands_invalid")
-        return list(commands), None
+        return list(commands), None, None
     if mode == "vendor_defaults":
-        return None, None
+        return None, None, None
     raise ValueError("inspection_command_plan_invalid")
 
 
-def _build_inspection_task(targets: list[dict[str, Any]], commands: list[str] | None, script: dict[str, Any] | None, *, job_id: str = "") -> dict[str, Any]:
+def _build_inspection_task(
+    targets: list[dict[str, Any]],
+    commands: list[str] | None,
+    script: dict[str, Any] | None,
+    *,
+    facts: list[str] | None = None,
+    job_id: str = "",
+) -> dict[str, Any]:
     for target in targets:
-        commands_for(target, commands, script)
+        if facts:
+            # Validate vocabulary now, but defer vendor command selection to
+            # the live session after runtime driver detection.
+            _normalize_semantic_facts(facts)
+        else:
+            commands_for(target, commands, script)
     task_id = _id("inspection")
     is_connection_task = all(bool(item.get("connection_id")) for item in targets)
     target_ids = [_inspection_target_id(item) for item in targets]
@@ -1068,13 +1144,14 @@ def _build_inspection_task(targets: list[dict[str, Any]], commands: list[str] | 
             identifier: _safe_inspection_target(item)
             for identifier, item in zip(target_ids, targets)
         },
-        "total": len(targets), "completed": 0, "succeeded": 0, "failed": 0,
+        "total": len(targets), "completed": 0, "succeeded": 0, "partial": 0, "failed": 0,
         "results": {}, "artifact_id": "",
-        "command_plan": _command_plan(commands, script),
+        "command_plan": _command_plan(commands, script, facts),
         "script": _script_safe(script) if script else {
-            "script_id": "inline-commands" if commands is not None else "vendor-defaults",
-            "name": "临时只读命令" if commands is not None else "厂商默认命令",
+            "script_id": "semantic-facts" if facts else "inline-commands" if commands is not None else "vendor-defaults",
+            "name": "语义事实采集" if facts else "临时只读命令" if commands is not None else "厂商默认命令",
             "commands": list(commands or []),
+            "facts": list(facts or []),
         },
         "created_at": now_iso(), "updated_at": now_iso(),
     }
@@ -1096,10 +1173,22 @@ def _new_inspection_task(workspace_id: str, asset_ids: list[str] | None, command
     return task, assets, script
 
 
-def _new_connection_inspection_task(workspace_id: str, connection_ids: list[str] | None, commands: list[str] | None, script_id: str, *, job_id: str = "") -> tuple[dict[str, Any], list[dict[str, Any]], dict[str, Any] | None]:
+def _new_connection_inspection_task(
+    workspace_id: str,
+    connection_ids: list[str] | None,
+    commands: list[str] | None,
+    script_id: str,
+    *,
+    facts: list[str] | None = None,
+    job_id: str = "",
+) -> tuple[dict[str, Any], list[dict[str, Any]], dict[str, Any] | None]:
+    if commands is not None and facts:
+        raise ValueError("commands_and_facts_are_mutually_exclusive")
     targets = _inspection_connections(workspace_id, connection_ids)
     script = _resolve_script(workspace_id, script_id)
-    task = _build_inspection_task(targets, commands, script, job_id=job_id)
+    if script and facts:
+        raise ValueError("script_and_facts_are_mutually_exclusive")
+    task = _build_inspection_task(targets, commands, script, facts=facts, job_id=job_id)
     return task, targets, script
 
 
@@ -1169,9 +1258,19 @@ def enqueue_inspection(workspace_id: str, asset_ids: list[str] | None = None, co
     return _enqueue_prepared_inspection(workspace_id, task, created_by=created_by)
 
 
-def enqueue_connection_inspection(workspace_id: str, connection_ids: list[str] | None, commands: list[str] | None = None, script_id: str = "", *, created_by: str = "user") -> dict[str, Any]:
+def enqueue_connection_inspection(
+    workspace_id: str,
+    connection_ids: list[str] | None,
+    commands: list[str] | None = None,
+    script_id: str = "",
+    *,
+    facts: list[str] | None = None,
+    created_by: str = "user",
+) -> dict[str, Any]:
     """Create a durable inspection; each target reconnects and fails independently."""
-    task, _targets, _script = _new_connection_inspection_task(workspace_id, connection_ids, commands, script_id)
+    task, _targets, _script = _new_connection_inspection_task(
+        workspace_id, connection_ids, commands, script_id, facts=facts
+    )
     return _enqueue_prepared_inspection(workspace_id, task, created_by=created_by)
 
 
@@ -1184,13 +1283,22 @@ def execute_queued_inspection(workspace_id: str, task_id: str, job_id: str) -> d
         if task.get("connection_ids") else
         _inspection_assets(workspace_id, list(task.get("asset_ids") or []))
     )
-    commands, script = _restore_command_plan(task)
+    commands, script, facts = _restore_command_plan(task)
     cancel = _DurableCancellation(workspace_id, job_id)
-    _execute_inspection(workspace_id, task_id, assets, commands, collect_connection, cancel, script)
+    _execute_inspection(workspace_id, task_id, assets, commands, collect_connection, cancel, script, facts)
     return get_inspection(workspace_id, task_id) or task
 
 
-def _execute_inspection(workspace_id: str, task_id: str, targets: list[dict[str, Any]], commands: list[str] | None, collector: Callable, cancel: Any, script: dict[str, Any] | None = None) -> None:
+def _execute_inspection(
+    workspace_id: str,
+    task_id: str,
+    targets: list[dict[str, Any]],
+    commands: list[str] | None,
+    collector: Callable,
+    cancel: Any,
+    script: dict[str, Any] | None = None,
+    facts: list[str] | None = None,
+) -> None:
     store = _store(workspace_id)
     task = store.get("inspections", task_id) or {}
     if cancel.is_set():
@@ -1205,12 +1313,42 @@ def _execute_inspection(workspace_id: str, task_id: str, targets: list[dict[str,
             return target_id, {"status": "cancelled", "name": target["name"]}
         started = time.monotonic()
         try:
-            selected = commands_for(target, commands, script)
-            raw = collector(target, selected)
+            if facts:
+                if not target.get("connection_id"):
+                    raise ValueError("semantic_facts_require_registered_connection")
+                live = test_connection(
+                    workspace_id,
+                    str(target.get("connection_id") or ""),
+                    facts=facts,
+                    read=True,
+                )
+                if not live.get("ok"):
+                    raise RuntimeError(str(live.get("error") or "device connection failed"))
+                raw = {str(key): str(value) for key, value in (live.get("output") or {}).items()}
+                selected = [
+                    str(item.get("command") or "")
+                    for item in (live.get("command_results") or [])
+                    if item.get("command")
+                ]
+                target_status = "succeeded" if live.get("read_ok") else "partial"
+                diagnostics = [
+                    {
+                        key: item.get(key)
+                        for key in ("command", "fact", "complete", "pages", "encoding", "error_code", "device_error", "truncated", "duration_ms")
+                    }
+                    for item in (live.get("command_results") or [])
+                ]
+            else:
+                selected = commands_for(target, commands, script)
+                raw = collector(target, selected)
+                target_status = "succeeded"
+                diagnostics = []
             normalized = json.dumps(raw, ensure_ascii=False, sort_keys=True)
             return target_id, {
-                "status": "succeeded", "name": target["name"], "host": target["host"],
+                "status": target_status, "name": target["name"], "host": target["host"],
                 "commands": selected, "output_hash": hashlib.sha256(normalized.encode()).hexdigest(),
+                "facts": live.get("facts") if facts else None,
+                "command_results": diagnostics,
                 "_raw_output": raw, "duration_ms": int((time.monotonic() - started) * 1000),
             }
         except Exception as exc:
@@ -1229,13 +1367,14 @@ def _execute_inspection(workspace_id: str, task_id: str, targets: list[dict[str,
             task["results"][target_id] = result
             task["completed"] += 1
             task["succeeded"] += int(result["status"] == "succeeded")
+            task["partial"] = int(task.get("partial") or 0) + int(result["status"] == "partial")
             task["failed"] += int(result["status"] == "failed")
             task["updated_at"] = now_iso()
             store.save("inspections", task_id, task)
     task["status"] = (
         "cancelled" if cancel.is_set()
-        else "succeeded" if task["failed"] == 0
-        else "partial" if task["succeeded"] > 0
+        else "succeeded" if task["failed"] == 0 and int(task.get("partial") or 0) == 0
+        else "partial" if task["succeeded"] > 0 or int(task.get("partial") or 0) > 0
         else "failed"
     )
     task["finished_at"] = now_iso()
@@ -1450,14 +1589,14 @@ def retry_inspection(workspace_id: str, task_id: str) -> dict[str, Any]:
     task = get_inspection(workspace_id, task_id)
     if not task or task.get("status") not in {"failed", "cancelled", "partial"}:
         raise ValueError("retryable inspection task is required")
-    commands, script = _restore_command_plan(task)
+    commands, script, facts = _restore_command_plan(task)
     is_connection_task = bool(task.get("connection_ids"))
     assets = (
         _inspection_connections(workspace_id, list(task.get("connection_ids") or []))
         if is_connection_task else
         _inspection_assets(workspace_id, list(task.get("asset_ids") or []))
     )
-    next_task = _build_inspection_task(assets, commands, script)
+    next_task = _build_inspection_task(assets, commands, script, facts=facts)
     retried = _enqueue_prepared_inspection(
         workspace_id,
         next_task,

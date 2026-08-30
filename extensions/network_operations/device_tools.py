@@ -13,6 +13,9 @@ import time
 from dataclasses import dataclass
 from typing import Any
 
+from extensions.network_operations.cli_runtime import InteractiveCLISession
+from extensions.network_operations.device_drivers import resolve_driver
+
 READ_ONLY_DENY = re.compile(
     r"(^|\s)(undo|delete|remove|erase|format|reload|reboot|shutdown|write|copy|configure|system-view|enable|install|upgrade|reset|clear)(\s|$)",
     re.IGNORECASE,
@@ -32,13 +35,6 @@ _GENERIC_READ_COMMANDS = (
     re.compile(r"^hostname$", re.IGNORECASE),
     re.compile(r"^date$", re.IGNORECASE),
 )
-
-PAGING_COMMANDS = {
-    "h3c": "screen-length disable",
-    "huawei": "screen-length 0 temporary",
-    "cisco": "terminal length 0",
-}
-
 
 @dataclass
 class DeviceCredential:
@@ -154,6 +150,8 @@ def normalize_read_only_commands(commands: list[str] | tuple[str, ...] | None, v
     selected = [command.strip() for command in commands]
     if not selected or len(selected) > MAX_READ_ONLY_COMMANDS:
         raise ValueError("commands must contain 1 to 20 read-only commands")
+    if len(set(selected)) != len(selected):
+        raise ValueError("commands must be unique")
     if any(not is_read_only_command(command, vendor) for command in selected):
         raise ValueError("commands_must_be_read_only")
     return selected
@@ -175,56 +173,88 @@ def _load_private_key(private_key: str, passphrase: str = ""):
     raise RuntimeError(f"private key could not be loaded: {last_error}")
 
 
-def _read_channel(channel: Any, *, idle: float = 0.35, timeout: float = 6.0, limit: int = 200_000) -> str:
-    chunks: list[str] = []
-    deadline = time.monotonic() + timeout
-    idle_deadline = time.monotonic() + idle
-    while time.monotonic() < deadline and len("".join(chunks)) < limit:
-        if channel.recv_ready():
-            data = channel.recv(65535)
-            if not data:
-                break
-            chunks.append(data.decode("utf-8", errors="replace"))
-            idle_deadline = time.monotonic() + idle
-            continue
-        if chunks and time.monotonic() >= idle_deadline:
-            break
-        time.sleep(0.05)
-    return "".join(chunks)[-limit:]
-
-
-def _run_shell_commands(transport: Any, vendor: str, commands: list[str], timeout: int) -> dict[str, str]:
+def _run_shell_commands(
+    transport: Any,
+    vendor: str,
+    commands: list[str] | None,
+    timeout: int,
+    *,
+    facts: list[str] | None = None,
+) -> dict[str, Any]:
     channel = transport.open_session(timeout=timeout)
     channel.get_pty(width=200, height=80)
     channel.invoke_shell()
     channel.settimeout(timeout)
-    _read_channel(channel, timeout=min(timeout, 5))
 
-    pager = PAGING_COMMANDS.get(vendor.lower())
-    if pager:
-        channel.send(pager + "\n")
-        _read_channel(channel, timeout=min(timeout, 5))
+    def receive() -> bytes | None:
+        return channel.recv(65535) if channel.recv_ready() else None
 
-    output: dict[str, str] = {}
-    for command in commands:
-        channel.send(command + "\n")
-        text = _read_channel(channel, timeout=timeout)
-        output[command] = text[:200_000]
-    channel.close()
-    return output
+    driver, source = resolve_driver(vendor)
+    session = InteractiveCLISession(
+        send=lambda data: channel.send(data),
+        receive=receive,
+        driver=driver,
+        timeout=timeout,
+    )
+    try:
+        bootstrap = session.bootstrap()
+        if not bootstrap.complete:
+            return {
+                "ok": False,
+                "error": bootstrap.error_code or "device_prompt_not_detected",
+                "session": bootstrap.as_dict(),
+                "device_profile": driver.public_profile(detected_from=source),
+                "output": {},
+                "command_results": [],
+            }
+        profile = session.refine_driver(bootstrap.text)
+        if facts:
+            command_plan = session.driver.commands_for(facts)
+            selected_commands = [command for _fact, command in command_plan]
+            command_facts = {command: fact for fact, command in command_plan}
+        else:
+            selected_commands = list(commands or [])
+            command_facts = {}
+        selected_commands = normalize_read_only_commands(selected_commands, session.driver.vendor) if selected_commands else []
+        paging = session.disable_paging() if selected_commands else None
+        output: dict[str, str] = {}
+        command_results: list[dict[str, Any]] = []
+        for command in selected_commands:
+            result = session.run_command(command)
+            output[command] = result.output
+            command_results.append({**result.as_dict(), "fact": command_facts.get(command, "")})
+        complete = all(item.get("complete") and not item.get("error_code") for item in command_results)
+        parsed_facts = session.driver.parse_facts(output, command_facts)
+        return {
+            "ok": True,
+            "read_ok": complete,
+            "status": "succeeded" if complete else "partial",
+            "output": output,
+            "facts": parsed_facts,
+            "command_results": command_results,
+            "device_profile": profile,
+            "session": {
+                "prompt": session.prompt,
+                "encoding": session.encoding,
+                "pagination": paging.as_dict() if paging else None,
+            },
+        }
+    finally:
+        channel.close()
 
 
 def probe_target(
     target: DeviceTarget,
     *,
     commands: list[str] | None = None,
+    facts: list[str] | None = None,
     accept_host_key: bool = False,
     read: bool = False,
     timeout: int = 15,
 ) -> dict[str, Any]:
     protocol = str(target.protocol or "ssh").strip().lower()
     if protocol == "telnet":
-        return _probe_telnet(target, commands=commands, read=read, timeout=timeout)
+        return _probe_telnet(target, commands=commands, facts=facts, read=read, timeout=timeout)
     if protocol != "ssh":
         return _result(False, [_stage("target", "failed")], time.monotonic(), error="unsupported_protocol")
     import paramiko
@@ -267,18 +297,46 @@ def probe_target(
         stages.append(_stage("auth", "ok", username=credential.username, method=credential.auth_method))
 
         if not read:
-            stages.append(_stage("prompt", "skipped"))
-            return _result(True, stages, started, fingerprint=fingerprint)
+            shell_result = _run_shell_commands(transport, target.vendor, [], timeout)
+            if not shell_result.get("ok"):
+                stages.append(_stage("prompt", "failed"))
+                return _result(
+                    False, stages, started,
+                    error=str(shell_result.get("error") or "device_prompt_not_detected"),
+                    fingerprint=fingerprint,
+                    device_profile=shell_result.get("device_profile"),
+                    session=shell_result.get("session"),
+                )
+            stages.append(_stage("prompt", "ok"))
+            return _result(
+                True, stages, started, fingerprint=fingerprint,
+                device_profile=shell_result.get("device_profile"),
+                session=shell_result.get("session"),
+            )
 
-        try:
-            safe_commands = normalize_read_only_commands(commands, target.vendor)
-        except ValueError as exc:
-            stages.append(_stage("read", "failed"))
-            return _result(False, stages, started, error=str(exc), fingerprint=fingerprint)
-        output = _run_shell_commands(transport, target.vendor, safe_commands, timeout)
+        execution = _run_shell_commands(transport, target.vendor, commands, timeout, facts=facts)
+        if not execution.get("ok"):
+            stages.append(_stage("prompt", "failed"))
+            return _result(
+                False, stages, started,
+                error=str(execution.get("error") or "device_cli_session_failed"),
+                fingerprint=fingerprint,
+                device_profile=execution.get("device_profile"),
+                session=execution.get("session"),
+            )
         stages.append(_stage("prompt", "ok"))
-        stages.append(_stage("read", "ok", command_count=len(output)))
-        return _result(True, stages, started, fingerprint=fingerprint, output=output)
+        stages.append(_stage("read", "ok" if execution.get("read_ok") else "partial", command_count=len(execution.get("command_results") or [])))
+        return _result(
+            True, stages, started,
+            status=str(execution.get("status") or "succeeded"),
+            fingerprint=fingerprint,
+            output=execution.get("output") or {},
+            facts=execution.get("facts") or {},
+            command_results=execution.get("command_results") or [],
+            device_profile=execution.get("device_profile") or {},
+            session=execution.get("session") or {},
+            read_ok=bool(execution.get("read_ok")),
+        )
     except Exception as exc:
         failed_stage = "ssh" if any(item["name"] == "tcp" and item["status"] == "ok" for item in stages) else "tcp"
         stages.append(_stage(failed_stage, "failed"))
@@ -360,6 +418,7 @@ def _probe_telnet(
     target: DeviceTarget,
     *,
     commands: list[str] | None,
+    facts: list[str] | None,
     read: bool,
     timeout: int,
 ) -> dict[str, Any]:
@@ -391,20 +450,72 @@ def _probe_telnet(
         if not _DEVICE_PROMPT.search(banner):
             return _result(False, stages + [_stage("prompt", "failed")], started, error="device_prompt_not_detected")
         stages.append(_stage("auth", "ok", method="none" if not credential.username and not credential.password else "password"))
+        driver, source = resolve_driver(target.vendor, banner)
+
+        def receive() -> bytes | None:
+            try:
+                data = sock.recv(65535)
+            except socket.timeout:
+                return None
+            return _telnet_negotiate(sock, data) if data else b""
+
+        session = InteractiveCLISession(
+            send=sock.sendall,
+            receive=receive,
+            driver=driver,
+            timeout=timeout,
+            initial_text=banner,
+        )
+        bootstrap = session.bootstrap()
+        if not bootstrap.complete:
+            return _result(
+                False, stages + [_stage("prompt", "failed")], started,
+                error=bootstrap.error_code or "device_prompt_not_detected",
+                session=bootstrap.as_dict(),
+                device_profile=driver.public_profile(detected_from=source),
+            )
+        profile = session.refine_driver(banner + "\n" + bootstrap.text)
         if not read:
             stages.append(_stage("prompt", "ok"))
-            return _result(True, stages, started, banner=banner[-2000:])
-        safe_commands = normalize_read_only_commands(commands, target.vendor)
-        pager = PAGING_COMMANDS.get(target.vendor.lower())
-        if pager:
-            sock.sendall((pager + "\r\n").encode())
-            _telnet_read(sock, timeout=min(timeout, 3))
+            return _result(
+                True, stages, started,
+                banner=banner[-2000:],
+                device_profile=profile,
+                session={"prompt": session.prompt, "encoding": session.encoding},
+            )
+        if facts:
+            command_plan = session.driver.commands_for(facts)
+            commands = [command for _fact, command in command_plan]
+            command_facts = {command: fact for fact, command in command_plan}
+        else:
+            command_facts = {}
+        safe_commands = normalize_read_only_commands(commands, session.driver.vendor)
+        paging = session.disable_paging()
         output: dict[str, str] = {}
+        command_results: list[dict[str, Any]] = []
         for command in safe_commands:
-            sock.sendall((command + "\r\n").encode())
-            output[command] = _telnet_read(sock, timeout=timeout)
-        stages.extend((_stage("prompt", "ok"), _stage("read", "ok", command_count=len(output))))
-        return _result(True, stages, started, output=output)
+            command_result = session.run_command(command)
+            output[command] = command_result.output
+            command_results.append({**command_result.as_dict(), "fact": command_facts.get(command, "")})
+        read_ok = all(item.get("complete") and not item.get("error_code") for item in command_results)
+        stages.extend((
+            _stage("prompt", "ok"),
+            _stage("read", "ok" if read_ok else "partial", command_count=len(output)),
+        ))
+        return _result(
+            True, stages, started,
+            status="succeeded" if read_ok else "partial",
+            output=output,
+            facts=session.driver.parse_facts(output, command_facts),
+            command_results=command_results,
+            device_profile=profile,
+            session={
+                "prompt": session.prompt,
+                "encoding": session.encoding,
+                "pagination": paging.as_dict() if paging else None,
+            },
+            read_ok=read_ok,
+        )
     except Exception as exc:
         stages.append(_stage("telnet", "failed"))
         return _result(False, stages, started, error=str(exc)[:300])
