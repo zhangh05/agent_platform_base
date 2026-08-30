@@ -32,6 +32,7 @@ def test_unix_start_is_idempotent_and_persistent():
     assert "port_pid" in script
     assert "nohup" in script
     assert "already running" in script.lower()
+    assert "LZCORE_EMBEDDED_WORKER" in script
 
 
 def test_unix_start_rolls_back_on_failed_health_check():

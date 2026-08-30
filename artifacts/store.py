@@ -454,6 +454,12 @@ def list_artifacts(workspace_id: str, run_id: str = None, artifact_type: str = N
             continue
         if rec.lifecycle != "deleted":
             all_active_records.append(rec)
+        metadata = rec.metadata if isinstance(rec.metadata, dict) else {}
+        if (
+            metadata.get("hidden_from_default_listing") is True
+            and not any((run_id, artifact_type, producer_id, asset_id))
+        ):
+            continue
         if run_id and rec.run_id != run_id:
             continue
         if artifact_type and rec.artifact_type != artifact_type:

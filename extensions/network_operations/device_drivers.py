@@ -6,18 +6,22 @@ does not need to memorize pager commands, prompts, or vendor-specific CLI.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
 import hashlib
 import re
-from typing import Any, Iterable
-
+from collections.abc import Iterable
+from dataclasses import dataclass, field
+from typing import Any
 
 SEMANTIC_FACTS = (
     "device_version",
     "interface_status",
     "routing_table",
     "ospf_neighbors",
+    "isis_neighbors",
     "bgp_peers",
+    "ldp_neighbors",
+    "mpls_lsp",
+    "vpnv4_routes",
     "arp_table",
     "mac_table",
     "current_config",
@@ -90,11 +94,28 @@ class DeviceDriver:
             "encodings": list(self.encodings),
         }
 
-    def parse_facts(self, outputs: dict[str, str], command_facts: dict[str, str]) -> dict[str, Any]:
+    def parse_facts(
+        self,
+        outputs: dict[str, str],
+        command_facts: dict[str, str],
+        command_results: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
+        result_by_command = {
+            str(item.get("command") or ""): item
+            for item in (command_results or [])
+            if item.get("command")
+        }
         grouped: dict[str, list[tuple[str, str]]] = {}
         for command, output in outputs.items():
             fact = command_facts.get(command, "")
             if not fact:
+                continue
+            result = result_by_command.get(command)
+            if result and (
+                not result.get("complete")
+                or result.get("error_code")
+                or result.get("truncated")
+            ):
                 continue
             grouped.setdefault(fact, []).append((command, output))
         facts: dict[str, Any] = {}
@@ -109,9 +130,91 @@ class DeviceDriver:
             ]
             if fact == "device_version":
                 facts[fact] = {**_parse_version(self, evidence[0][1]), "sources": sources}
+            elif fact == "current_config":
+                facts[fact] = {
+                    **_parse_configuration_snapshot(self, evidence[0][1]),
+                    "sources": sources,
+                }
             else:
-                facts[fact] = {"status": "collected", "sources": sources}
+                facts[fact] = {
+                    "status": "collected",
+                    "observation_status": (
+                        "observed"
+                        if any(_meaningful_cli_output(self, command, output) for command, output in evidence)
+                        else "empty"
+                    ),
+                    "observations": [
+                        _operational_observation(self, command, output)
+                        for command, output in evidence
+                    ],
+                    "sources": sources,
+                }
+        for fact in dict.fromkeys(command_facts.values()):
+            if not fact or fact in facts:
+                continue
+            failures = [
+                {
+                    "command": command,
+                    "error_code": str(result_by_command.get(command, {}).get("error_code") or "observation_unavailable"),
+                    "device_error": str(result_by_command.get(command, {}).get("device_error") or "")[:240],
+                }
+                for command, expected_fact in command_facts.items()
+                if expected_fact == fact
+            ]
+            facts[fact] = {
+                "status": "unavailable",
+                "driver_id": self.driver_id,
+                "failures": failures,
+            }
         return facts
+
+
+def _meaningful_cli_output(driver: DeviceDriver, command: str, output: str) -> str:
+    """Remove command echoes and prompts without interpreting device state."""
+    command_text = str(command or "").strip().lower()
+    lines: list[str] = []
+    for raw_line in str(output or "").replace("\r", "\n").splitlines():
+        line = raw_line.strip()
+        if not line or line.lower() == command_text:
+            continue
+        if any(pattern.fullmatch(line) for pattern in driver.prompt_patterns):
+            continue
+        lines.append(raw_line.rstrip())
+    return "\n".join(lines).strip()
+
+
+def _operational_observation(
+    driver: DeviceDriver,
+    command: str,
+    output: str,
+    *,
+    max_chars: int = 1800,
+) -> dict[str, Any]:
+    """Create a bounded, literal evidence view for any semantic command.
+
+    Vendor-specific parsers may add normalized fields later, but the runtime
+    must always retain enough literal observation for a model to distinguish
+    "command completed" from "peer established" or "no data returned".
+    """
+    cleaned = _meaningful_cli_output(driver, command, output)
+    if len(cleaned) > max_chars:
+        head = int(max_chars * 0.72)
+        tail = max_chars - head
+        excerpt = (
+            cleaned[:head]
+            + f"\n...[observation truncated, {len(cleaned)} chars total]...\n"
+            + cleaned[-tail:]
+        )
+    else:
+        excerpt = cleaned
+    return {
+        "command": str(command or ""),
+        "observation_status": "observed" if cleaned else "empty",
+        "characters": len(cleaned),
+        "line_count": len(cleaned.splitlines()) if cleaned else 0,
+        "literal_excerpt": excerpt,
+        "content_hash": hashlib.sha256(str(output or "").encode("utf-8")).hexdigest(),
+    }
 
 
 _COMMON_PROMPTS = (
@@ -125,7 +228,10 @@ _COMMON_PAGERS = (
     PagerRule(re.compile(r"press\s+q\s+to\s+quit", re.IGNORECASE), b" ", "press_q_to_quit"),
 )
 _H3C_ERRORS = (
-    re.compile(r"%\s*(?:Unrecognized command|Too many parameters|Incomplete command)", re.IGNORECASE),
+    re.compile(
+        r"%\s*(?:Unrecognized command|Too many parameters|Incomplete command|Wrong parameter[^\r\n]*)",
+        re.IGNORECASE,
+    ),
     re.compile(r"Error:\s*[^\r\n]+", re.IGNORECASE),
 )
 _HUAWEI_ERRORS = (
@@ -155,7 +261,11 @@ DRIVERS: tuple[DeviceDriver, ...] = (
             "interface_status": ("display interface brief",),
             "routing_table": ("display ip routing-table",),
             "ospf_neighbors": ("display ospf peer",),
-            "bgp_peers": ("display bgp peer",),
+            "isis_neighbors": ("display isis peer",),
+            "bgp_peers": ("display bgp peer ipv4", "display bgp peer vpnv4"),
+            "ldp_neighbors": ("display mpls ldp peer",),
+            "mpls_lsp": ("display mpls lsp",),
+            "vpnv4_routes": ("display bgp routing-table vpnv4",),
             "arp_table": ("display arp",),
             "mac_table": ("display mac-address",),
             "current_config": ("display current-configuration",),
@@ -182,7 +292,11 @@ DRIVERS: tuple[DeviceDriver, ...] = (
             "interface_status": ("display interface brief",),
             "routing_table": ("display ip routing-table",),
             "ospf_neighbors": ("display ospf peer",),
+            "isis_neighbors": ("display isis peer",),
             "bgp_peers": ("display bgp peer",),
+            "ldp_neighbors": ("display mpls ldp peer",),
+            "mpls_lsp": ("display mpls lsp",),
+            "vpnv4_routes": ("display bgp vpnv4 all routing-table",),
             "arp_table": ("display arp",),
             "mac_table": ("display mac-address",),
             "current_config": ("display current-configuration",),
@@ -208,7 +322,11 @@ DRIVERS: tuple[DeviceDriver, ...] = (
             "interface_status": ("show ip interface brief",),
             "routing_table": ("show ip route",),
             "ospf_neighbors": ("show ip ospf neighbor",),
+            "isis_neighbors": ("show isis neighbors",),
             "bgp_peers": ("show ip bgp summary",),
+            "ldp_neighbors": ("show mpls ldp neighbor",),
+            "mpls_lsp": ("show mpls forwarding-table",),
+            "vpnv4_routes": ("show bgp vpnv4 unicast all",),
             "arp_table": ("show arp",),
             "mac_table": ("show mac address-table",),
             "current_config": ("show running-config",),
@@ -280,3 +398,79 @@ def _parse_version(driver: DeviceDriver, output: str) -> dict[str, Any]:
             result[key] = match.group(1).strip()[:160]
     result["characters"] = len(text)
     return result
+
+
+_CONFIG_SIGNAL_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
+    ("identity", re.compile(r"^(?:sysname|hostname)\s+", re.IGNORECASE)),
+    ("interfaces", re.compile(
+        r"^(?:interface\s+|(?:ip|ipv6)\s+address\s+|(?:undo\s+|no\s+)?shutdown\b|description\s+)",
+        re.IGNORECASE,
+    )),
+    ("routing_processes", re.compile(
+        r"^(?:bgp|ospf|isis|is-is|router\s+(?:bgp|ospf|isis|is-is))\b",
+        re.IGNORECASE,
+    )),
+    ("neighbors", re.compile(r"^(?:peer|neighbor)\s+", re.IGNORECASE)),
+    ("address_families", re.compile(r"^(?:ipv4-family|ipv6-family|address-family)\b", re.IGNORECASE)),
+    ("mpls", re.compile(r"\b(?:mpls|ldp|lsp|label(?:ed|-unicast)?)\b", re.IGNORECASE)),
+    ("vpn", re.compile(
+        r"\b(?:vpn-instance|vpn-target|vrf|vpnv4|vpnv6|route-distinguisher|route-target)\b",
+        re.IGNORECASE,
+    )),
+    ("policy", re.compile(
+        r"\b(?:route-policy|route-map|ip-prefix|prefix-list|community-filter)\b|^(?:if-match|apply|match|set)\s+",
+        re.IGNORECASE,
+    )),
+)
+
+
+def _parse_configuration_snapshot(driver: DeviceDriver, output: str) -> dict[str, Any]:
+    """Build a bounded vendor-neutral map while preserving raw output separately."""
+    text = str(output or "")
+    signals: dict[str, list[str]] = {name: [] for name, _pattern in _CONFIG_SIGNAL_PATTERNS}
+    counts: dict[str, int] = {name: 0 for name, _pattern in _CONFIG_SIGNAL_PATTERNS}
+    current_section = "global"
+    section_names: list[str] = []
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        if line.startswith(("#", "!")):
+            current_section = "global"
+            continue
+        if line.lower() == "return":
+            current_section = "global"
+            continue
+        if re.match(
+            r"^(?:interface\s+|bgp\s+\d+|router\s+(?:bgp|ospf|isis|is-is)\b|"
+            r"ospf\s+\d+|isis\s+\d+|ip\s+vpn-instance\s+|route-policy\s+|"
+            r"route-map\s+|ipv[46]-family\s+|address-family\s+)",
+            line,
+            re.IGNORECASE,
+        ):
+            current_section = line[:160]
+            if current_section not in section_names and len(section_names) < 128:
+                section_names.append(current_section)
+        for name, pattern in _CONFIG_SIGNAL_PATTERNS:
+            if not pattern.search(line):
+                continue
+            counts[name] += 1
+            if len(signals[name]) < 80:
+                rendered = line[:400]
+                if current_section != "global" and name != "identity" and line != current_section:
+                    rendered = f"[{current_section}] {rendered}"
+                if rendered not in signals[name]:
+                    signals[name].append(rendered)
+    return {
+        "status": "collected",
+        "driver_id": driver.driver_id,
+        "characters": len(text),
+        "line_count": len(text.splitlines()),
+        "section_count": len(section_names),
+        "sections": section_names,
+        "signal_counts": {key: value for key, value in counts.items() if value},
+        "projection_complete": all(counts[key] <= 80 for key in counts),
+        "omitted_signal_counts": {key: count - 80 for key, count in counts.items() if count > 80},
+        "signals": {key: value for key, value in signals.items() if value},
+        "content_hash": hashlib.sha256(text.encode("utf-8")).hexdigest(),
+    }

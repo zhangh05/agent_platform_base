@@ -901,11 +901,80 @@ def test_llm_inspection_run_uses_durable_queue_and_exposes_retry(monkeypatch):
     monkeypatch.setattr(service, "enqueue_connection_inspection", fake_enqueue)
     result = inspection(SimpleNamespace(workspace_id="default", arguments={"action": "run", "connection_ids": ["connection_1"]}))
     assert result["task"]["status"] == "queued"
+    assert result["coverage_status"] == "pending"
+    assert result["tracking"]["task_id"] == "inspection_durable"
+    assert result["tracking"]["done"] is False
+    assert result["tracking"]["poll_arguments"] == {
+        "action": "get", "task_id": "inspection_durable",
+    }
     assert captured["created_by"] == "llm"
 
     monkeypatch.setattr(service, "retry_inspection", lambda workspace_id, task_id: {"task_id": "inspection_retry", "retry_of_task_id": task_id})
     retried = inspection(SimpleNamespace(workspace_id="default", arguments={"action": "retry", "task_id": "inspection_failed"}))
     assert retried["task"]["retry_of_task_id"] == "inspection_failed"
+
+
+def test_llm_inspection_terminal_result_declares_coverage(monkeypatch):
+    monkeypatch.setattr(service, "get_inspection", lambda *_args: {
+        "task_id": "inspection_done", "status": "partial", "total": 6,
+        "completed": 6, "succeeded": 5, "partial": 0, "failed": 1,
+    })
+    result = inspection(SimpleNamespace(
+        workspace_id="default", arguments={"action": "get", "task_id": "inspection_done"},
+    ))
+    assert result["coverage_status"] == "partial"
+    assert result["tracking"]["done"] is True
+    assert result["tracking"]["suggested_next_action"] == "synthesize_results"
+
+
+def test_inspection_analysis_projection_preserves_every_device(monkeypatch):
+    monkeypatch.setattr(service, "get_inspection", lambda *_args: {
+        "task_id": "inspection-two", "status": "succeeded", "total": 2,
+        "completed": 2, "succeeded": 2, "partial": 0, "failed": 0,
+        "results": {
+            "connection-b": {
+                "name": "PE-2", "status": "succeeded",
+                "facts": {"current_config": {
+                    "status": "collected", "characters": 20,
+                    "content_hash": "b", "signals": {"identity": ["sysname PE-2"]},
+                }},
+                "command_results": [],
+            },
+            "connection-a": {
+                "name": "PE-1", "status": "succeeded",
+                "facts": {
+                    "current_config": {
+                        "status": "collected", "characters": 20,
+                        "content_hash": "a", "signals": {"identity": ["sysname PE-1"]},
+                    },
+                    "bgp_peers": {
+                        "status": "collected", "observation_status": "observed",
+                        "observations": [{
+                            "command": "display bgp peer ipv4",
+                            "literal_excerpt": "1.1.1.1 65000 Established",
+                        }],
+                        "sources": [{"output_hash": "secret-detail"}],
+                    },
+                },
+                "command_results": [],
+            },
+        },
+    })
+
+    result = inspection(SimpleNamespace(
+        workspace_id="default", arguments={"action": "get", "task_id": "inspection-two"},
+    ))
+    projection = result["analysis_projection"]
+
+    assert projection["coverage"] == {
+        "total": 2, "completed": 2, "succeeded": 2, "partial": 0, "failed": 0,
+    }
+    assert [item["name"] for item in projection["devices"]] == ["PE-1", "PE-2"]
+    assert projection["devices"][0]["fact_evidence"]["bgp_peers"]["observations"][0][
+        "literal_excerpt"
+    ] == "1.1.1.1 65000 Established"
+    assert "sources" not in projection["devices"][0]["fact_evidence"]["bgp_peers"]
+    assert projection["evidence_contract"]["collected_does_not_mean"].startswith("protocol_healthy")
 
 
 def test_evidence_failure_transitions_task_to_terminal_failure(monkeypatch, tmp_path):

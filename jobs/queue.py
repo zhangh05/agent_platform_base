@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Protocol, Any
+from typing import Any, Protocol
 
 
 @dataclass(frozen=True)
@@ -43,9 +43,17 @@ class FileJobQueue:
 
     def claim(self, worker_id: str) -> QueueReceipt | None:
         from jobs.store import get_next_queued_job
-        from storage.principal import current_storage_principal, known_storage_principals, storage_principal
+        from storage.principal import (
+            current_storage_principal,
+            known_storage_principals,
+            storage_principal,
+        )
         principals = [current_storage_principal(), *known_storage_principals()]
-        for principal in dict.fromkeys(principal for principal in principals if principal):
+        # The empty principal is the durable legacy/bootstrap storage domain,
+        # not an invalid identity.  Workers must scan it alongside every
+        # user-scoped domain or queued jobs created before identity binding can
+        # never be claimed after a restart.
+        for principal in dict.fromkeys(principals):
             with storage_principal(principal):
                 job = get_next_queued_job()
             if job:

@@ -430,6 +430,11 @@ def create_app():
                 "[continuation startup] reconcile failed: %s", exc,
                 exc_info=True,
             )
+        if os.environ.get("LZCORE_EMBEDDED_WORKER", "").strip().lower() in {
+            "1", "true", "yes", "on",
+        }:
+            from jobs.worker import start_worker
+            start_worker()
 
     _recon_t = _threading.Thread(
         target=_startup_reconcile_async,

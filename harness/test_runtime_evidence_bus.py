@@ -236,3 +236,65 @@ def test_evidence_ledger_rejects_inline_data_before_llm_delivery():
     assert pending_llm_evidence(extras) == []
     assert secret not in str(extras)
     assert evidence_summary(extras)["rejected"] == 1
+
+
+def test_successful_text_tool_results_share_one_canonical_evidence_ledger():
+    from core.runtime_engine.evidence import evidence_manifest, evidence_summary, register_tool_evidence
+    from core.runtime_engine.query_loop import StreamingToolResult
+
+    extras = {}
+    results = [
+        StreamingToolResult(
+            tool_name="network.operations.device.manage",
+            call_id=f"call-{index}",
+            ok=True,
+            output={
+                "status": "succeeded",
+                "device_id": f"device-{index}",
+                "facts": {"current_config": {"status": "collected"}},
+                "output": {"display current-configuration": "mpls lsr-id 10.0.0.1\npeer 10.0.0.2 as-number 65001\n"},
+            },
+        )
+        for index in range(6)
+    ]
+
+    ids = register_tool_evidence(extras, results, user_input="分析 MPLS VPN option C")
+
+    assert len(ids) == 6
+    assert evidence_summary(extras)["registered"] == 6
+    assert evidence_summary(extras)["delivered"] == 6
+    manifest = evidence_manifest(extras)
+    assert len(manifest) == 6
+    assert all(item["kind"] == "tool_result" for item in manifest)
+    assert all(item["reference"]["kind"] == "tool_result" for item in manifest)
+
+
+def test_large_text_evidence_projection_keeps_query_relevant_sections():
+    from core.runtime_engine.evidence import evidence_manifest, register_tool_evidence
+    from core.runtime_engine.query_loop import StreamingToolResult
+
+    config = "\n".join(
+        [f"interface GigabitEthernet0/0/{index}" for index in range(800)]
+        + [
+            "mpls lsr-id 10.0.0.1",
+            "bgp 65000",
+            "peer 10.0.0.2 as-number 65001",
+            "ipv4-family labeled-unicast",
+        ]
+        + [f"description tail-{index}" for index in range(800)]
+    )
+    extras = {}
+    register_tool_evidence(
+        extras,
+        [StreamingToolResult(
+            tool_name="network.operations.device.manage",
+            call_id="call-config",
+            ok=True,
+            output={"status": "succeeded", "output": {"display current-configuration": config}},
+        )],
+        user_input="分析 MPLS VPN BGP labeled-unicast",
+    )
+
+    rendered = str(evidence_manifest(extras)[0]["projection"])
+    assert "mpls lsr-id" in rendered
+    assert "ipv4-family labeled-unicast" in rendered

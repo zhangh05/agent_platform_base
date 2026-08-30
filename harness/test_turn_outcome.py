@@ -5,6 +5,12 @@ def item(ok, may_continue=False):
     return types.SimpleNamespace(ok=ok, execution_may_continue=may_continue)
 
 
+def covered(status):
+    return types.SimpleNamespace(
+        ok=True, execution_may_continue=False, output={"coverage_status": status},
+    )
+
+
 def test_derive_tool_execution_outcome_preserves_attempt_states():
     from core.runtime_engine.turn_outcome import derive_tool_execution_outcome
     assert derive_tool_execution_outcome([]) == "complete"
@@ -12,6 +18,8 @@ def test_derive_tool_execution_outcome_preserves_attempt_states():
     assert derive_tool_execution_outcome([item(False)]) == "failed"
     assert derive_tool_execution_outcome([item(True), item(False)]) == "partial"
     assert derive_tool_execution_outcome([item(True), item(False, may_continue=True)]) == "unknown"
+    assert derive_tool_execution_outcome([covered("failed")]) == "failed"
+    assert derive_tool_execution_outcome([covered("partial")]) == "partial"
 
 
 def test_derive_execution_outcome_treats_recovered_attempt_as_complete():
@@ -21,6 +29,8 @@ def test_derive_execution_outcome_treats_recovered_attempt_as_complete():
     assert derive_execution_outcome([item(False)]) == "failed"
     assert derive_execution_outcome([item(True), item(False)]) == "complete"
     assert derive_execution_outcome([item(True), item(False, may_continue=True)]) == "unknown"
+    assert derive_execution_outcome([covered("failed"), item(True)]) == "complete"
+    assert derive_execution_outcome([covered("partial")]) == "complete"
 
 
 def test_derive_execution_outcome_keeps_real_terminal_blockers_partial():

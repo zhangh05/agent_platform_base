@@ -9,7 +9,10 @@ from extensions.network_operations.cli_runtime import (
     InteractiveCLISession,
     normalize_terminal_text,
 )
-from extensions.network_operations.device_drivers import resolve_driver, semantic_catalog
+from extensions.network_operations.device_drivers import (
+    resolve_driver,
+    semantic_catalog,
+)
 from extensions.network_operations.skill_prompt import render_network_skill_prompt
 
 
@@ -94,8 +97,44 @@ def test_cli_runtime_only_accepts_prompt_on_final_nonempty_line():
     assert "still running" in result.output
 
 
+def test_cli_runtime_ignores_stale_prompt_before_command_response():
+    driver, _source = resolve_driver("h3c")
+    io = ScriptedIO([
+        b"<CE1>\r\n",
+        b"display current-configuration\r\nsysname CE1\r\n<CE1>",
+    ])
+    session = InteractiveCLISession(
+        send=io.send,
+        receive=io.receive,
+        driver=driver,
+        initial_text="<CE1>",
+        timeout=0.1,
+    )
+
+    result = session.run_command("display current-configuration")
+
+    assert result.complete is True
+    assert result.output == "sysname CE1"
+    assert io.sent == [b"display current-configuration\r\n"]
+
+
 def test_terminal_normalization_applies_backspaces_and_ansi_sequences():
     assert normalize_terminal_text("abc\b \bdef\x1b[31m!\x1b[0m") == "abdef!"
+
+
+def test_stale_prompt_followed_by_partial_output_fences_remaining_commands():
+    driver, _source = resolve_driver("h3c")
+    io = ScriptedIO([b"<CE1>\r\n", b"display current-configuration\r\nsysname CE1\r\n"])
+    session = InteractiveCLISession(
+        send=io.send, receive=io.receive, driver=driver,
+        initial_text="<CE1>", timeout=0.1,
+    )
+    first = session.run_command("display current-configuration")
+    second = session.run_command("display version")
+    assert first.complete is False
+    assert "sysname CE1" in first.output
+    assert second.error_code == "cli_session_unsynchronized"
+    assert io.sent == [b"display current-configuration\r\n"]
 
 
 def test_driver_detection_and_semantic_catalog_are_vendor_aware():
@@ -113,6 +152,32 @@ def test_driver_detection_and_semantic_catalog_are_vendor_aware():
     assert next(item for item in semantic_catalog() if item["fact"] == "device_version")["drivers"] == [
         "h3c.comware", "huawei.vrp", "cisco.ios",
     ]
+    assert driver.commands_for(["bgp_peers"]) == [
+        ("bgp_peers", "display bgp peer ipv4"),
+        ("bgp_peers", "display bgp peer vpnv4"),
+    ]
+    assert driver.commands_for(["isis_neighbors", "ldp_neighbors", "mpls_lsp"]) == [
+        ("isis_neighbors", "display isis peer"),
+        ("ldp_neighbors", "display mpls ldp peer"),
+        ("mpls_lsp", "display mpls lsp"),
+    ]
+
+
+def test_failed_semantic_command_is_not_reported_as_collected():
+    driver, _source = resolve_driver("h3c")
+    facts = driver.parse_facts(
+        {"display bgp peer ipv4": "% Incomplete command"},
+        {"display bgp peer ipv4": "bgp_peers"},
+        [{
+            "command": "display bgp peer ipv4",
+            "complete": True,
+            "error_code": "device_command_rejected",
+            "device_error": "% Incomplete command",
+        }],
+    )
+
+    assert facts["bgp_peers"]["status"] == "unavailable"
+    assert facts["bgp_peers"]["failures"][0]["error_code"] == "device_command_rejected"
 
 
 def test_semantic_fact_keeps_all_command_evidence():
@@ -127,6 +192,84 @@ def test_semantic_fact_keeps_all_command_evidence():
         "display cpu-usage", "display memory",
     ]
     assert all(len(item["output_hash"]) == 64 for item in facts["resource_usage"]["sources"])
+    assert facts["resource_usage"]["observation_status"] == "observed"
+    assert facts["resource_usage"]["observations"][0]["literal_excerpt"] == "CPU 5%"
+
+
+def test_semantic_fact_distinguishes_prompt_only_output_from_healthy_state():
+    driver, _source = resolve_driver("h3c")
+    facts = driver.parse_facts(
+        {"display bgp peer vpnv4": "<ASBR-1>"},
+        {"display bgp peer vpnv4": "bgp_peers"},
+    )
+
+    assert facts["bgp_peers"]["status"] == "collected"
+    assert facts["bgp_peers"]["observation_status"] == "empty"
+    assert facts["bgp_peers"]["observations"][0]["literal_excerpt"] == ""
+
+
+def test_current_configuration_builds_vendor_neutral_analysis_snapshot():
+    driver, _source = resolve_driver("h3c")
+    config = """
+sysname ASBR1
+mpls lsr-id 10.0.0.1
+mpls
+ lsp-trigger all
+bgp 65000
+ peer 10.0.0.2 as-number 65001
+ ipv4-family labeled-unicast
+  peer 10.0.0.2 enable
+route-policy EXPORT permit node 10
+interface GigabitEthernet1/0/1
+ mpls enable
+"""
+
+    facts = driver.parse_facts(
+        {"display current-configuration": config},
+        {"display current-configuration": "current_config"},
+    )["current_config"]
+
+    assert facts["status"] == "collected"
+    assert facts["signal_counts"]["mpls"] >= 2
+    assert facts["signal_counts"]["routing_processes"] == 1
+    assert any("labeled-unicast" in line for line in facts["signals"]["address_families"])
+    assert any("peer 10.0.0.2" in line for line in facts["signals"]["neighbors"])
+    assert facts["sources"][0]["characters"] == len(config)
+
+
+def test_current_configuration_resets_section_context_and_keeps_h3c_vpn_targets():
+    driver, _source = resolve_driver("h3c")
+    config = """
+interface GigabitEthernet0/0
+ ip address 10.0.0.1 255.255.255.0
+#
+bgp 100
+ peer 3.3.3.9 as-number 100
+#
+ address-family vpnv4
+  peer 5.5.5.9 enable
+#
+ip vpn-instance vpn1
+ route-distinguisher 11:11
+vpn-target 1:1 export-extcommunity
+#
+route-policy LABEL permit node 10
+ if-match mpls-label
+ apply mpls-label
+"""
+
+    facts = driver.parse_facts(
+        {"display current-configuration": config},
+        {"display current-configuration": "current_config"},
+    )["current_config"]
+
+    assert "[bgp 100] peer 3.3.3.9 as-number 100" in facts["signals"]["neighbors"]
+    assert "[address-family vpnv4] peer 5.5.5.9 enable" in facts["signals"]["neighbors"]
+    assert all("interface GigabitEthernet0/0" not in item for item in facts["signals"]["neighbors"])
+    assert any("vpn-target 1:1 export-extcommunity" in item for item in facts["signals"]["vpn"])
+    assert "[interface GigabitEthernet0/0] ip address 10.0.0.1 255.255.255.0" in facts["signals"]["interfaces"]
+    assert "[route-policy LABEL permit node 10] if-match mpls-label" in facts["signals"]["policy"]
+    assert facts["projection_complete"] is True
 
 
 def test_semantic_collect_persists_detected_profile_and_returns_facts(monkeypatch, tmp_path):

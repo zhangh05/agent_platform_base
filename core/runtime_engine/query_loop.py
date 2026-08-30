@@ -23,10 +23,41 @@ import json
 import logging
 import re
 import time
-from dataclasses import asdict
-from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, List, Optional
+from collections.abc import Callable
+from dataclasses import asdict, dataclass, field
+from typing import Any
 
+from agent.llm.schemas import LLMMessage, LLMResponse, LLMToolCall
+from agent.llm.tool_adapter import tool_spec_to_openai_function
+from core.tools.redaction import redact_tool_output
+
+from .approval_evidence import (
+    project_approval_resume_evidence,
+    render_approval_resume_evidence,
+)
+from .cognitive_gate import decide_next_action
+from .cognitive_state import initialize_cognitive_state, restore_cognitive_state
+from .context_budget import (
+    RuntimeContextBudget,
+    estimate_json_tokens,
+)
+from .context_compaction import (
+    compact_messages as _compact_messages,
+)
+from .context_compaction import (
+    estimate_chars as _estimate_chars,
+)
+from .context_compaction import (
+    estimate_message_tokens as _estimate_message_tokens,
+)
+from .evidence import (
+    evidence_manifest,
+    evidence_summary,
+    initialize_evidence_ledger,
+    mark_evidence_delivered,
+    pending_llm_evidence,
+    register_tool_evidence,
+)
 from .models import (
     ApprovedToolContinuation,
     ExecutionNode,
@@ -35,7 +66,11 @@ from .models import (
     StatelessContext,
     ToolResult,
 )
-from .tracking import extract_tracking_payload, normalize_tracking_payload
+from .prompt_contract import (
+    RUNTIME_SYSTEM_PROMPT,
+    build_runtime_system_prompt,
+    build_turn_message,
+)
 from .stage_events import (
     EXECUTION_COMPLETED,
     EXECUTION_STARTED,
@@ -45,34 +80,7 @@ from .stage_events import (
     RESPONSE_COMPLETED,
     RESPONSE_STARTED,
 )
-from .context_budget import (
-    RuntimeContextBudget,
-    estimate_json_tokens,
-)
-from .context_compaction import (
-    compact_messages as _compact_messages,
-    estimate_chars as _estimate_chars,
-    estimate_message_tokens as _estimate_message_tokens,
-)
-from agent.llm.schemas import LLMMessage, LLMResponse, LLMToolCall
-from agent.llm.tool_adapter import tool_spec_to_openai_function
-from core.tools.redaction import redact_tool_output
-from .prompt_contract import (
-    RUNTIME_SYSTEM_PROMPT,
-    build_runtime_system_prompt,
-    build_turn_message,
-)
-from .approval_evidence import project_approval_resume_evidence, render_approval_resume_evidence
-from .evidence import (
-    evidence_summary,
-    initialize_evidence_ledger,
-    mark_evidence_delivered,
-    pending_llm_evidence,
-    register_tool_evidence,
-)
-from .cognitive_gate import decide_next_action
-from .cognitive_state import initialize_cognitive_state, restore_cognitive_state
-
+from .tracking import extract_tracking_payload, normalize_tracking_payload
 
 # ── Prompt Cache ────────────────────────────────────────────────────────────
 
@@ -81,6 +89,7 @@ from .cognitive_state import initialize_cognitive_state, restore_cognitive_state
 # function-calling tools field on every planner call.
 QUERY_LOOP_SYSTEM_PROMPT = RUNTIME_SYSTEM_PROMPT
 SYNTHESIS_CHECKPOINT_MARKER = "[SYNTHESIS_CHECKPOINT]"
+FINAL_SYNTHESIS_CHECKPOINT_MARKER = "[FINAL_SYNTHESIS_CHECKPOINT]"
 
 def _redact_tool_error(error: Any, *, limit: int = 200) -> str:
     """Return bounded, redacted tool or orchestration error text for model context."""
@@ -120,7 +129,7 @@ def _llm_failure_message(error_code: str) -> str:
     return messages.get(error_code, "模型服务暂时不可用，请稍后重试。")
 
 
-_TOOL_DEFINITION_CACHE: dict[str, List[dict]] = {}
+_TOOL_DEFINITION_CACHE: dict[str, list[dict]] = {}
 
 
 def _tool_meta_get(meta: Any, key: str, default: Any = None) -> Any:
@@ -159,7 +168,7 @@ def _tool_registry_signature(tool_registry: dict) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
-def _build_cached_tool_definitions(tool_registry: dict) -> List[dict]:
+def _build_cached_tool_definitions(tool_registry: dict) -> list[dict]:
     """Build tool definitions with stable ordering for prompt caching."""
     signature = _tool_registry_signature(tool_registry)
     cached = _TOOL_DEFINITION_CACHE.get(signature)
@@ -189,7 +198,8 @@ MAX_RESPONSE_QUALITY_CORRECTION_ROUNDS = 2
 MAX_BATCH_REPLAN_ROUNDS = 2
 
 _PRIORITY_OUTPUT_KEYS = (
-    "ok", "status", "task_id", "task", "tracking", "progress", "done",
+    "ok", "status", "task_id", "coverage_status", "analysis_projection",
+    "tracking", "progress", "done", "task",
     "report_url", "html_url", "artifact_url", "url",
     "count", "total", "success", "failed", "skipped",
     "summary", "message", "error", "reason", "title", "name", "format",
@@ -211,7 +221,7 @@ _BULK_LIST_KEYS = {
 def _compact_value_for_llm(value: Any, *, depth: int = 0, key_hint: str = "") -> Any:
     """Compact tool outputs while preserving enough evidence for follow-up."""
     key = str(key_hint or "").lower()
-    if depth >= 4:
+    if depth >= 16:
         text = str(value)
         if len(text) > 4000:
             return text[:3000] + f"\n...[truncated nested value, {len(text)} chars total]...\n" + text[-800:]
@@ -255,7 +265,14 @@ def _compact_value_for_llm(value: Any, *, depth: int = 0, key_hint: str = "") ->
 
 
 def _json_compact(value: Any, *, max_chars: int = TOOL_MESSAGE_MAX_CHARS) -> str:
-    """JSON serialize compacted output with a valid-JSON hard cap."""
+    """JSON serialize compacted output with a structure-preserving hard cap.
+
+    Serialized-prefix truncation is deliberately forbidden here.  A prefix can
+    retain the first inspected resource while silently removing later ones,
+    which makes a complete multi-device run look like partial evidence to the
+    model.  Token projection keeps dictionaries parseable and gives list
+    members a fair share of the available budget.
+    """
     compacted = _compact_value_for_llm(value)
     text = json.dumps(
         compacted,
@@ -269,54 +286,171 @@ def _json_compact(value: Any, *, max_chars: int = TOOL_MESSAGE_MAX_CHARS) -> str
     )
     if len(text) <= max_chars:
         return text
-
-    control: dict[str, Any] = {}
-    if isinstance(compacted, dict):
-        for key in _PRIORITY_OUTPUT_KEYS:
-            if key not in compacted:
-                continue
-            value = compacted[key]
-            if isinstance(value, str) and len(value) > 500:
-                value = value[:500] + "...[truncated]"
-            candidate_control = {**control, key: value}
-            candidate_envelope = {
-                **candidate_control,
-                "_truncated": True,
-                "_original_chars": len(text),
-                "_preview": "",
-            }
-            candidate_text = json.dumps(
-                candidate_envelope,
-                ensure_ascii=False,
-                separators=(",", ":"),
-                default=str,
-            )
-            if len(candidate_text) <= max_chars:
-                control = candidate_control
-    envelope = {
-        **control,
-        "_truncated": True,
-        "_original_chars": len(text),
-        "_preview": "",
-    }
-    # JSON escaping can expand the preview, so find the largest prefix that
-    # still keeps the entire envelope valid and within the exact character cap.
-    low, high = 0, min(len(text), max(0, max_chars))
-    best = json.dumps(envelope, ensure_ascii=False, separators=(",", ":"), default=str)
+    # Shrink long text leaves evenly before reducing structural fields. This
+    # retains all resource identities, configuration signals and table headers
+    # instead of repeatedly dividing one resource's budget at every nesting.
+    low, high = 128, 8000
+    fair_text = ""
     while low <= high:
-        mid = (low + high) // 2
-        envelope["_preview"] = text[:mid]
-        candidate = json.dumps(envelope, ensure_ascii=False, separators=(",", ":"), default=str)
+        leaf_cap = (low + high) // 2
+        candidate = json.dumps(
+            _clip_text_leaves(compacted, leaf_cap),
+            ensure_ascii=False, separators=(",", ":"), default=str,
+        )
+        if len(candidate) <= max_chars:
+            fair_text = candidate
+            low = leaf_cap + 1
+        else:
+            high = leaf_cap - 1
+    if fair_text:
+        return fair_text
+
+    # Mixed Chinese/JSON is commonly between one and three characters per
+    # token under the runtime estimator.  Start generously, then reduce until
+    # the exact character contract is met.  Every candidate remains structured.
+    token_budget = max(64, max_chars // 3)
+    best = ""
+    while token_budget >= 64:
+        projected = _project_tool_payload_for_synthesis(compacted, token_budget)
+        if isinstance(projected, dict):
+            projected.setdefault("_projection", {})
+            if isinstance(projected["_projection"], dict):
+                projected["_projection"].update({
+                    "truncated": True,
+                    "original_chars": len(text),
+                    "strategy": "structure_preserving_fair_share",
+                })
+        candidate = json.dumps(
+            projected,
+            ensure_ascii=False,
+            separators=(",", ":"),
+            default=str,
+        )
         if len(candidate) <= max_chars:
             best = candidate
-            low = mid + 1
-        else:
-            high = mid - 1
-    if len(best) <= max_chars:
+            break
+        token_budget = int(token_budget * 0.8)
+    if best:
         return best
     # Extremely small caller-provided caps still receive valid JSON.
     minimal = json.dumps({"_truncated": True}, separators=(",", ":"))
     return minimal if len(minimal) <= max_chars else "{}"
+
+
+def _clip_text_leaves(value: Any, limit: int) -> Any:
+    if isinstance(value, str) and len(value) > limit:
+        marker = f"...[truncated {len(value)} chars]..."
+        available = max(0, limit - len(marker))
+        head = available // 2
+        tail = available - head
+        return value[:head] + marker + (value[-tail:] if tail else "")
+    if isinstance(value, dict):
+        return {key: _clip_text_leaves(item, limit) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_clip_text_leaves(item, limit) for item in value]
+    return value
+
+
+def _model_tool_payload(result: Any) -> dict[str, Any]:
+    """One evidence projection for model calls and internal tracking alike."""
+    payload = redact_tool_output(dict(result.output or {}))
+    projection = payload.pop("_evidence_projection", None)
+    digest = str(payload.pop("_evidence_content_digest", "") or "")
+    analysis = payload.get("analysis_projection")
+    if not isinstance(analysis, dict) and isinstance(projection, dict):
+        analysis = projection.get("analysis_projection")
+    if isinstance(analysis, dict):
+        payload = {
+            "ok": bool(result.ok),
+            "status": payload.get("status") or ("succeeded" if result.ok else "failed"),
+            "analysis_projection": analysis,
+            "coverage_status": payload.get("coverage_status"),
+            "tracking": payload.get("tracking"),
+            "artifact_ref": payload.get("artifact_ref") or {},
+            "content_digest": digest,
+        }
+    elif projection is not None and payload.get("content_complete") is not True:
+        payload = {
+            "ok": bool(result.ok),
+            "status": payload.get("status") or ("succeeded" if result.ok else "failed"),
+            "summary": result.summary or payload.get("summary") or "",
+            "evidence_projection": projection,
+            "artifact_ref": payload.get("artifact_ref") or {},
+            "content_digest": digest,
+            "content_projected": True,
+        }
+    if result.error:
+        payload["ok"] = False
+        errors = list(payload.get("errors") or [])
+        error = _redact_tool_error(result.error)
+        if error not in errors:
+            errors.append(error)
+        payload["errors"] = errors
+    return payload
+
+
+def _project_tool_payload_for_synthesis(value: Any, token_budget: int) -> Any:
+    """Give producer-owned analysis and every target a fair evidence budget."""
+    from .context_budget import project_json_to_tokens
+
+    if not isinstance(value, dict) or not isinstance(value.get("analysis_projection"), dict):
+        return project_json_to_tokens(value, token_budget)[0]
+
+    analysis = dict(value["analysis_projection"])
+    collection_key = next(
+        (
+            key for key in ("devices", "resources", "targets", "items", "results")
+            if isinstance(analysis.get(key), list)
+        ),
+        "",
+    )
+    controls = {key: item for key, item in value.items() if key != "analysis_projection"}
+    projected_controls, _ = project_json_to_tokens(controls, max(96, token_budget // 10))
+    if not collection_key:
+        projected_analysis, _ = project_json_to_tokens(analysis, max(96, token_budget * 8 // 10))
+        return {**projected_controls, "analysis_projection": projected_analysis}
+
+    resources = list(analysis.pop(collection_key) or [])
+    projected_header, _ = project_json_to_tokens(analysis, max(96, token_budget // 10))
+    remaining = max(96, token_budget - estimate_json_tokens(projected_controls) - estimate_json_tokens(projected_header) - 64)
+    per_resource = max(64, remaining // max(1, len(resources)))
+    projected_resources = [
+        _project_synthesis_resource(item, per_resource)
+        for item in resources
+    ]
+    return {
+        **projected_controls,
+        "analysis_projection": {
+            **projected_header,
+            collection_key: projected_resources,
+        },
+    }
+
+
+def _project_synthesis_resource(value: Any, token_budget: int) -> Any:
+    """Preserve resource identity while prioritizing its actual evidence."""
+    from .context_budget import project_json_to_tokens
+
+    if not isinstance(value, dict):
+        return project_json_to_tokens(value, token_budget)[0]
+    identity_keys = {
+        "id", "name", "status", "device_id", "connection_id", "resource_id",
+        "target_id", "host", "failed_commands", "errors", "warnings",
+    }
+    evidence_keys = {
+        "current_config", "fact_evidence", "facts", "observations", "evidence",
+        "signals", "findings", "results",
+    }
+    identity = {key: item for key, item in value.items() if key in identity_keys}
+    evidence = {key: item for key, item in value.items() if key in evidence_keys}
+    remainder = {
+        key: item for key, item in value.items()
+        if key not in identity_keys and key not in evidence_keys
+    }
+    projected_identity, _ = project_json_to_tokens(identity, max(64, token_budget // 8))
+    projected_evidence, _ = project_json_to_tokens(evidence, max(96, token_budget * 3 // 4))
+    projected_remainder, _ = project_json_to_tokens(remainder, max(64, token_budget // 8))
+    return {**projected_identity, **projected_evidence, **projected_remainder}
 
 
 def _compact_tool_content(content: Any, *, max_chars: int = TOOL_MESSAGE_MAX_CHARS) -> str:
@@ -366,7 +500,7 @@ class StreamingToolResult:
     call_id: str
     output: dict
     ok: bool
-    error: Optional[str] = None
+    error: str | None = None
     latency_ms: float = 0.0
     error_code: str = ""
     execution_may_continue: bool = False
@@ -479,21 +613,21 @@ class StreamingToolExecutor:
 
     async def execute(
         self,
-        tool_calls: List[LLMToolCall],
+        tool_calls: list[LLMToolCall],
         *,
         ctx: StatelessContext | None = None,
         budget=None,
-    ) -> List[StreamingToolResult]:
+    ) -> list[StreamingToolResult]:
         """Execute one incremental dependency graph and preserve call order."""
+        from .context_budget import project_json_to_tokens
         from .orchestration import (
-            binding_source_allowed,
-            binding_target_allowed,
             OrchestrationError,
             StepEvidence,
+            binding_source_allowed,
+            binding_target_allowed,
             resolve_bindings,
             validate_incremental_graph,
         )
-        from .context_budget import project_json_to_tokens
 
         prior = dict((ctx.extras.get("orchestration_evidence") or {}) if ctx else {})
         try:
@@ -865,11 +999,11 @@ class StreamingToolExecutor:
 
     async def _execute_independent_calls(
         self,
-        tool_calls: List[LLMToolCall],
+        tool_calls: list[LLMToolCall],
         *,
         ctx: StatelessContext | None = None,
         budget=None,
-    ) -> List[StreamingToolResult]:
+    ) -> list[StreamingToolResult]:
         """Execute a dependency-free layer: reads parallel, writes barriers."""
         # Build result map keyed by call_id so we can return in original order.
         # Consecutive reads may run together, but every write is an ordering
@@ -1396,18 +1530,18 @@ class StreamingToolExecutor:
 @dataclass
 class QueryLoopResult:
     final_response: str
-    tool_results: List[StreamingToolResult] = field(default_factory=list)
+    tool_results: list[StreamingToolResult] = field(default_factory=list)
     iterations: int = 0
     total_tool_calls: int = 0
     llm_calls: int = 0
-    error: Optional[str] = None
+    error: str | None = None
     errors: list[str] = field(default_factory=list)
     risk_level: str = "low"
     approval_required: bool = False
     approval_nodes: list[str] = field(default_factory=list)
     approval_details: list[dict[str, Any]] = field(default_factory=list)
     hard_block: bool = False
-    metrics: Dict[str, Any] = field(default_factory=dict)
+    metrics: dict[str, Any] = field(default_factory=dict)
 
 
 class QueryLoop:
@@ -1479,11 +1613,11 @@ class QueryLoop:
     ) -> QueryLoopResult:
         """Run the full query loop."""
         t_start = time.monotonic()
-        all_results: List[StreamingToolResult] = []
+        all_results: list[StreamingToolResult] = []
         iterations = 0
         llm_calls = 0
         # Doom-loop detection: key=(tool, args_hash) → consecutive_failures
-        failure_counts: Dict[str, int] = {}
+        failure_counts: dict[str, int] = {}
         validation_correction_attempts = 0
         batch_replan_attempts = 0
         # In-memory loop deduplication retains the readable canonical key.
@@ -1574,6 +1708,10 @@ class QueryLoop:
         def finish(**values) -> QueryLoopResult:
             """Build every exit projection with the same runtime metrics."""
             nonlocal cognitive_events_emitted, cognitive_registered_results
+            if (ctx.extras.get("synthesis_recovery") or {}).get("error") == "cancelled_by_user":
+                values["error"] = "cancelled_by_user"
+                values["final_response"] = "任务已取消，已采集的证据保留在运行记录中。"
+                ctx.extras["response_outcome"] = "cancelled"
             projected_metrics = {
                 "elapsed_ms": (time.monotonic() - t_start) * 1000,
                 "iterations": iterations,
@@ -1594,6 +1732,8 @@ class QueryLoop:
                 "output_truncated": output_truncated,
                 "output_truncation_reason": output_truncation_reason,
                 "evidence": evidence_summary(ctx.extras),
+                "response_outcome": str(ctx.extras.get("response_outcome") or "complete"),
+                "synthesis_recovery": dict(ctx.extras.get("synthesis_recovery") or {}),
                 "prompt_policy_events": list(ctx.extras.get("prompt_policy_events") or []),
                 "llm_usage": self._aggregate_llm_usage(ctx.extras),
                 "active_capability_playbooks": list(
@@ -1610,7 +1750,10 @@ class QueryLoop:
             projected_metrics["goal_assertions"] = assertion_result
             if assertion_result["required"] and assertion_result["status"] != "passed":
                 values.setdefault("error", "goal_assertion_not_satisfied")
-            from .turn_outcome import derive_execution_outcome, derive_tool_execution_outcome
+            from .turn_outcome import (
+                derive_execution_outcome,
+                derive_tool_execution_outcome,
+            )
             projected_metrics["tool_execution_outcome"] = derive_tool_execution_outcome(all_results)
             projected_metrics["execution_outcome"] = (
                 "unknown"
@@ -1874,7 +2017,10 @@ class QueryLoop:
                     RESPONSE_STARTED, t_start, stage_started_at=response_stage_started_at,
                     iteration=iterations,
                 )
-            response = await self._call_llm(messages, ctx)
+            response = await self._call_llm(
+                messages,
+                ctx,
+            )
             self._emit_stage(
                 MODEL_COMPLETED, t_start, stage_started_at=model_started_at,
                 iteration=iterations, stream_scope=stream_scope,
@@ -1912,11 +2058,25 @@ class QueryLoop:
             if response is None or response.error:
                 final_resp: str
                 if all_results:
-                    final_resp = (
-                        self._build_tool_result_fallback(ctx, all_results)
-                        + "\n\n"
-                        + _llm_failure_message(response.error if response else "no_response")
-                        + "已保留以上已完成的工具结果。"
+                    provider_error = str(response.error if response else "no_response")
+                    recovered = await self._recover_final_synthesis(ctx, budget)
+                    if recovered:
+                        final_resp = recovered
+                        ctx.extras["response_outcome"] = "recovered"
+                    else:
+                        final_resp = self._build_tool_result_fallback(ctx, all_results)
+                        ctx.extras["response_outcome"] = "deterministic_fallback"
+                    ctx.extras["response_provider_error"] = provider_error
+                    return finish(
+                        final_response=final_resp,
+                        tool_results=all_results,
+                        iterations=iterations,
+                        total_tool_calls=len(all_results),
+                        llm_calls=budget.llm_calls,
+                        metrics={
+                            "response_provider_error": provider_error,
+                            "response_recovered": bool(recovered),
+                        },
                     )
                 elif response is not None and response.content and response.content.strip():
                     final_resp = response.content.strip()
@@ -2363,7 +2523,14 @@ class QueryLoop:
                     failed_tool_calls=sum(1 for result in results if not result.ok),
                 )
 
-                registered_evidence_ids = register_tool_evidence(ctx.extras, results)
+                registered_evidence_ids = register_tool_evidence(
+                    ctx.extras,
+                    results,
+                    workspace_id=ctx.workspace_id,
+                    session_id=ctx.session_id,
+                    request_id=ctx.request_id,
+                    user_input=ctx.user_input,
+                )
                 cognitive_state.register_tool_results(
                     results,
                     evidence=evidence_summary(ctx.extras),
@@ -2381,6 +2548,17 @@ class QueryLoop:
 
                 # Append assistant message (with tool_calls) + tool results
                 messages = self._append_tool_round(messages, tool_calls, results)
+                if self._producer_requests_final_synthesis(polled_results):
+                    messages = self._append_turn_nudge(
+                        messages,
+                        FINAL_SYNTHESIS_CHECKPOINT_MARKER
+                        + " The producer-declared long task is terminal and requested synthesis. "
+                        "Prioritize answering the original request from the terminal task evidence. "
+                        "Treat partial or failed targets as explicit coverage limits. Do not poll a terminal "
+                        "task or repeat already collected evidence. If a specific required fact is missing "
+                        "or truncated, tools remain available for a narrowly scoped follow-up; do not "
+                        "restart the full inspection or substitute assumptions for evidence.",
+                    )
                 unknown_outcome = ctx.extras.get("unknown_outcome")
                 if isinstance(unknown_outcome, dict) and unknown_outcome:
                     trigger_tool = str(unknown_outcome.get("tool_id") or "操作")
@@ -2555,21 +2733,18 @@ class QueryLoop:
                 )
             final_text = response.content or ""
             if not final_text.strip():
-                if all_results and iterations < max_iterations:
-                    reminder = (
-                        SYNTHESIS_CHECKPOINT_MARKER
-                        + " You just received tool results. "
-                        "Now answer the user's original question in natural language. "
-                        "If the evidence is still insufficient, you may choose another "
-                        "safe tool call instead of inventing an answer."
-                    )
-                    messages.append(LLMMessage(role="user", content=reminder))
-                    continue
-                elif all_results:
-                    # iterations >= max_iterations or nudge already tried enough
-                    final_text = self._build_tool_result_fallback(ctx, all_results)
+                if all_results:
+                    recovered = await self._recover_final_synthesis(ctx, budget)
+                    llm_calls = budget.llm_calls
+                    if recovered:
+                        final_text = recovered
+                        ctx.extras["response_outcome"] = "recovered"
+                    else:
+                        final_text = self._build_tool_result_fallback(ctx, all_results)
+                        ctx.extras["response_outcome"] = "deterministic_fallback"
                 else:
                     final_text = "抱歉，我无法生成回复。请重新描述您的问题后再试。"
+                    ctx.extras["response_outcome"] = "failed"
             else:
                 final_text = final_text.strip()
 
@@ -2664,7 +2839,7 @@ class QueryLoop:
             return False
         return str(tracking.get("kind") or "") == "long_task"
 
-    def _build_initial(self, ctx: StatelessContext) -> List[LLMMessage]:
+    def _build_initial(self, ctx: StatelessContext) -> list[LLMMessage]:
         """Build initial messages with cacheable prefix."""
         from .prompt_contract import (
             TrustedPromptItem,
@@ -2711,11 +2886,14 @@ class QueryLoop:
 
     @staticmethod
     def _refresh_cognitive_prompt_state(
-        messages: List[LLMMessage],
+        messages: list[LLMMessage],
         ctx: StatelessContext,
     ) -> None:
         """Keep one server-owned CognitiveState projection per LLM round."""
-        from .prompt_contract import cognitive_state_prompt_item, render_trusted_prompt_item
+        from .prompt_contract import (
+            cognitive_state_prompt_item,
+            render_trusted_prompt_item,
+        )
 
         item = cognitive_state_prompt_item(ctx.extras.get("cognitive_state"))
         marker = '<runtime_guidance trusted="true" source_kind="cognitive_state">'
@@ -2734,10 +2912,10 @@ class QueryLoop:
 
     @staticmethod
     def _unique_call_ids(
-        tool_calls: List[LLMToolCall],
+        tool_calls: list[LLMToolCall],
         iteration: int,
         used: set[str],
-    ) -> List[LLMToolCall]:
+    ) -> list[LLMToolCall]:
         """Keep provider call ids unique across iterative LLM rounds."""
         result: list[LLMToolCall] = []
         for index, tc in enumerate(tool_calls):
@@ -2761,9 +2939,11 @@ class QueryLoop:
 
     async def _call_llm(
         self,
-        messages: List[LLMMessage],
+        messages: list[LLMMessage],
         ctx: StatelessContext,
-    ) -> Optional[LLMResponse]:
+        *,
+        tools_override: list[dict[str, Any]] | None = None,
+    ) -> LLMResponse | None:
         """Call LLM with tools and streaming support.
 
         Wraps the synchronous LLM call with asyncio.wait_for + asyncio.to_thread
@@ -2776,7 +2956,7 @@ class QueryLoop:
             # second fast-path or capability downgrade. Every LLM turn keeps
             # the same visible tool surface; the model may still choose a
             # necessary safe verification action.
-            tools_for_call = self._cached_tools
+            tools_for_call = self._cached_tools if tools_override is None else tools_override
             evidence_for_call = pending_llm_evidence(ctx.extras)
             if self._llm_invoke is not None:
                 raw = await asyncio.wait_for(
@@ -2851,14 +3031,116 @@ class QueryLoop:
             _LOG.warning("LLM invocation raised %s", type(e).__name__)
             return LLMResponse(error=_normalize_llm_error(type(e).__name__))
 
+    async def _recover_final_synthesis(
+        self,
+        ctx: StatelessContext,
+        budget,
+    ) -> str:
+        """Run one bounded, tool-free synthesis recovery from typed evidence.
+
+        The recovery request is intentionally rebuilt from the original user
+        request and the evidence manifest.  It never replays the bloated tool
+        transcript and cannot issue duplicate external operations.
+        """
+        recovery = {
+            "attempted": True,
+            "tool_access": False,
+            "evidence_items": 0,
+            "ok": False,
+            "error": "",
+        }
+        ctx.extras["synthesis_recovery"] = recovery
+        if self._is_cancelled(ctx):
+            recovery["error"] = "cancelled_by_user"
+            return ""
+        status = budget.check_llm_call()
+        if not status.ok:
+            recovery["error"] = status.exceeded or "llm_budget_exhausted"
+            return ""
+
+        manifest = evidence_manifest(ctx.extras) if ctx is not None else []
+        recovery["evidence_items"] = len(manifest)
+        projected, truncated = self._project_synthesis_manifest(manifest)
+        recovery["manifest_truncated"] = truncated
+        payload = json.dumps(projected, ensure_ascii=False, separators=(",", ":"), default=str)
+        messages = [
+            LLMMessage(
+                role="system",
+                content=(
+                    build_runtime_system_prompt(ctx.extras)
+                    + "\n\nYou are in the final synthesis phase. Tool use is disabled. "
+                    "Use only the supplied typed evidence. Answer the original request completely; "
+                    "separate verified conclusions, failed or incomplete observations, and unknowns. "
+                    "Cite evidence_id values for important technical claims."
+                ),
+            ),
+            LLMMessage(
+                role="user",
+                content=(
+                    f"{SYNTHESIS_CHECKPOINT_MARKER}\n"
+                    f"Original request:\n{ctx.user_input}\n\n"
+                    '<evidence_manifest data_only="true" trust="untrusted_data">\n'
+                    + payload
+                    + "\n</evidence_manifest>"
+                ),
+            ),
+        ]
+        response = await self._call_llm(messages, ctx, tools_override=[])
+        if self._is_cancelled(ctx):
+            recovery["error"] = "cancelled_by_user"
+            return ""
+        if response is None:
+            recovery["error"] = "no_response"
+            return ""
+        if response.error:
+            recovery["error"] = str(response.error)
+            return ""
+        text = str(response.content or "").strip()
+        if not text:
+            recovery["error"] = "empty_synthesis_response"
+            return ""
+        recovery["ok"] = True
+        recovery["finish_reason"] = str(response.finish_reason or "")
+        return text
+
+    def _project_synthesis_manifest(
+        self,
+        manifest: list[dict[str, Any]],
+    ) -> tuple[Any, bool]:
+        """Fit all evidence fairly instead of allowing one result to crowd out peers."""
+        from .context_budget import project_json_to_tokens
+
+        if not manifest:
+            return [], False
+        total_budget = max(
+            2_000,
+            min(
+                self._context_budget.message_tokens // 2,
+                self._context_budget.max_input_tokens
+                - self._context_budget.reserved_output_tokens
+                - self._context_budget.safety_tokens,
+            ),
+        )
+        per_item = max(500, total_budget // len(manifest))
+        projected: list[Any] = []
+        truncated = False
+        for item in manifest:
+            value, item_truncated = project_json_to_tokens(item, per_item)
+            projected.append(value)
+            truncated = truncated or item_truncated
+        return projected, truncated
+
     @staticmethod
     def _llm_call_mode(
-        messages: List[LLMMessage],
+        messages: list[LLMMessage],
         ctx: StatelessContext,
     ) -> tuple[str, str, bool]:
         synthesis_checkpoint = any(
             message.role == "user"
-            and SYNTHESIS_CHECKPOINT_MARKER in str(message.content or "")
+            and (
+                SYNTHESIS_CHECKPOINT_MARKER in str(message.content or "")
+                or FINAL_SYNTHESIS_CHECKPOINT_MARKER in str(message.content or "")
+            )
             for message in messages[-2:]
         )
         if synthesis_checkpoint:
@@ -2882,12 +3164,33 @@ class QueryLoop:
         return build_runtime_system_prompt(ctx.extras), "planner", True
 
     @staticmethod
-    def _has_synthesis_checkpoint(messages: List[LLMMessage]) -> bool:
+    def _has_synthesis_checkpoint(messages: list[LLMMessage]) -> bool:
         return any(
             message.role == "user"
             and SYNTHESIS_CHECKPOINT_MARKER in str(message.content or "")
             for message in messages[-2:]
         )
+
+    @staticmethod
+    def _has_final_synthesis_checkpoint(messages: list[LLMMessage]) -> bool:
+        return any(
+            message.role == "user"
+            and FINAL_SYNTHESIS_CHECKPOINT_MARKER in str(message.content or "")
+            for message in messages[-2:]
+        )
+
+    @staticmethod
+    def _producer_requests_final_synthesis(results: list[StreamingToolResult]) -> bool:
+        for result in results:
+            tracking = extract_tracking_payload(result.output)
+            if not tracking:
+                continue
+            normalized = normalize_tracking_payload(tracking)
+            if normalized.get("done") and str(
+                normalized.get("suggested_next_action") or ""
+            ).lower() == "synthesize_results":
+                return True
+        return False
 
     def _artifact_analysis_char_limit(self) -> int:
         """Return the exact complete-artifact cap available to this turn."""
@@ -2898,7 +3201,7 @@ class QueryLoop:
 
     def _has_complete_analysis_artifact(
         self,
-        results: List[StreamingToolResult],
+        results: list[StreamingToolResult],
     ) -> bool:
         """True only when the complete artifact can actually reach the model.
 
@@ -2925,7 +3228,7 @@ class QueryLoop:
             for result in results
         )
 
-    def _messages_to_user_text(self, messages: List[LLMMessage]) -> str:
+    def _messages_to_user_text(self, messages: list[LLMMessage]) -> str:
         """Serialize loop messages for injected LLM adapters.
 
         The production adapter accepts ``system`` + ``user`` strings, while
@@ -3041,7 +3344,7 @@ class QueryLoop:
         return re.sub(r'<think>.*?</think>\s*', '', text, flags=re.DOTALL).strip()
 
 
-    def _parse_tool_calls(self, raw: List[LLMToolCall]) -> List[LLMToolCall]:
+    def _parse_tool_calls(self, raw: list[LLMToolCall]) -> list[LLMToolCall]:
         """Normalise raw tool calls from LLM response (may be dict or LLMToolCall)."""
         result = []
         for tc in raw:
@@ -3125,8 +3428,8 @@ class QueryLoop:
     def _record_task_state_execution_manifest(
         self,
         ctx: StatelessContext,
-        tool_calls: List[LLMToolCall],
-        results: List[StreamingToolResult],
+        tool_calls: list[LLMToolCall],
+        results: list[StreamingToolResult],
     ) -> None:
         """Record execution facts for durable TaskState; never schedule work."""
         manifest = ctx.extras.setdefault("task_state_execution_manifest", [])
@@ -3158,7 +3461,7 @@ class QueryLoop:
     def _prepare_tool_calls(
         self,
         ctx: StatelessContext,
-        tool_calls: List[LLMToolCall],
+        tool_calls: list[LLMToolCall],
     ) -> dict[str, Any]:
         """Run QueryLoop's pre-execution hard boundaries.
 
@@ -3166,19 +3469,19 @@ class QueryLoop:
         and approval boundaries directly on the current call batch.
         """
         nodes = self._tool_calls_to_nodes(tool_calls)
-        from .semantic_validator import SemanticValidator
         from .pre_execution_repair import (
-            PreExecutionRepairEngine,
             REPAIRABLE_ERROR_CODES,
+            PreExecutionRepairEngine,
         )
         from .risk_policy import RiskPolicyEngine
+        from .semantic_validator import SemanticValidator
 
         self._fill_delete_paths_from_verified_history(ctx, nodes)
 
         from .orchestration import (
+            OrchestrationError,
             binding_source_allowed,
             binding_target_allowed,
-            OrchestrationError,
             validate_incremental_graph,
         )
         try:
@@ -3403,7 +3706,7 @@ class QueryLoop:
                     "source": "verified_prior_workspace_write_named_by_user",
                 })
     @staticmethod
-    def _tool_calls_to_nodes(tool_calls: List[LLMToolCall]) -> list[ExecutionNode]:
+    def _tool_calls_to_nodes(tool_calls: list[LLMToolCall]) -> list[ExecutionNode]:
         from .action_alias import resolve_action_alias
 
         nodes: list[ExecutionNode] = []
@@ -3464,9 +3767,9 @@ class QueryLoop:
 
     def _append_turn_nudge(
         self,
-        messages: List[LLMMessage],
+        messages: list[LLMMessage],
         nudge_text: str,
-    ) -> List[LLMMessage]:
+    ) -> list[LLMMessage]:
         """Append a user nudge to guide the LLM toward a final answer.
 
         Used when the LLM returns empty text after tools have produced
@@ -3479,7 +3782,7 @@ class QueryLoop:
 
     @staticmethod
     def _build_tool_failure_recovery_nudge(
-        failed_results: List[StreamingToolResult],
+        failed_results: list[StreamingToolResult],
     ) -> str:
         """Tell the model to recover by replanning, never blind replay.
 
@@ -3534,10 +3837,10 @@ class QueryLoop:
 
     def _append_tool_round(
         self,
-        messages: List[LLMMessage],
-        tool_calls: List[LLMToolCall],
-        results: List[StreamingToolResult],
-    ) -> List[LLMMessage]:
+        messages: list[LLMMessage],
+        tool_calls: list[LLMToolCall],
+        results: list[StreamingToolResult],
+    ) -> list[LLMMessage]:
         """Append assistant tool_calls + tool results to messages.
         
         IMPORTANT: assistant message uses __ names (LLM format), tool results
@@ -3572,13 +3875,7 @@ class QueryLoop:
             if r.call_id not in original_call_ids:
                 extra_results.append(r)
                 continue
-            # v3.11: ensure errors are visible to the LLM even when r.output is empty
-            tool_payload = redact_tool_output(dict(r.output) if r.output else {})
-            if not tool_payload.get("ok", True) and r.error and not tool_payload.get("errors"):
-                tool_payload["errors"] = [_redact_tool_error(r.error)]
-            if tool_payload.get("ok", True) and r.error:
-                tool_payload["ok"] = False
-                tool_payload["errors"] = [_redact_tool_error(r.error)]
+            tool_payload = _model_tool_payload(r)
             canonical_tool_name = r.tool_name.replace("__", ".")
             is_complete_text_artifact = (
                 tool_payload.get("content_complete") is True
@@ -3603,7 +3900,7 @@ class QueryLoop:
                     tool_payload,
                     max_chars=min(
                         TOOL_MESSAGE_MAX_CHARS,
-                        self._context_budget.per_tool_result_tokens * 2,
+                        self._context_budget.per_tool_result_tokens * 3,
                     ),
                 )
             )
@@ -3621,7 +3918,7 @@ class QueryLoop:
                     "call_id": r.call_id,
                     "ok": r.ok,
                     "error": r.error,
-                    "output": r.output,
+                    "output": _model_tool_payload(r),
                 }
                 for r in extra_results
             ]
@@ -3630,7 +3927,7 @@ class QueryLoop:
                 payload,
                 max_chars=min(
                     TOOL_MESSAGE_MAX_CHARS,
-                    self._context_budget.per_tool_result_tokens * 2,
+                    self._context_budget.per_tool_result_tokens * 3,
                 ),
             )
             from .prompt_contract import _escape_data
@@ -3651,9 +3948,9 @@ class QueryLoop:
     async def _settle_tracking(
         self,
         ctx: StatelessContext,
-        results: List[StreamingToolResult],
+        results: list[StreamingToolResult],
         budget=None,
-    ) -> List[StreamingToolResult]:
+    ) -> list[StreamingToolResult]:
         """After tool execution, auto-poll long tasks.
 
         Polling is generic and bounded. It runs only when the tool producer
@@ -3851,7 +4148,7 @@ class QueryLoop:
     def _build_tool_result_fallback(
         self,
         ctx: StatelessContext,
-        results: List[StreamingToolResult],
+        results: list[StreamingToolResult],
     ) -> str:
         """Build a useful final answer when the LLM returns empty text.
         Produces a human-readable report, not raw JSON dumps.
@@ -3873,17 +4170,41 @@ class QueryLoop:
             else:
                 ok_count += 1
 
-        # A generic execution transcript is not an answer.  Keep the one
-        # deliberately user-facing web-source fallback below, but never turn
-        # filesystem paths, commands, or tool names into a chat reply when the
-        # model failed to synthesize the evidence.
+        # Prefer the canonical evidence ledger over a generic retry message.
+        # This path is deterministic and intentionally avoids inventing a
+        # semantic conclusion, but still returns every verified observation
+        # and durable reference when both synthesis attempts fail.
+        manifest = evidence_manifest(ctx.extras) if ctx is not None else []
+        if manifest and not all(
+            r.tool_name.replace("__", ".") == "web.manage" for r in results
+        ):
+            lines = [
+                "本次证据采集已完成，但模型未能生成综合分析。以下为系统保留的可核验结果：",
+                "",
+            ]
+            for index, item in enumerate(manifest, 1):
+                coverage = item.get("coverage") if isinstance(item.get("coverage"), dict) else {}
+                status = str(coverage.get("status") or "succeeded")
+                summary = str(item.get("summary") or item.get("source_tool") or "工具结果")
+                reference = item.get("reference") if isinstance(item.get("reference"), dict) else {}
+                ref = str(
+                    reference.get("artifact_id")
+                    or reference.get("call_id")
+                    or item.get("evidence_id")
+                    or ""
+                )
+                lines.append(f"{index}. [{status}] {summary}" + (f"（证据：{ref}）" if ref else ""))
+            if fail_count:
+                lines.extend(["", f"另有 {fail_count} 项工具观察失败，未据此推断设备状态。"])
+            lines.extend(["", "原始大型结果已保存为证据制品，可在后续请求中继续分析，无需重复执行已成功的操作。"])
+            return "\n".join(lines)
+
+        # No typed evidence exists (for example an old producer contract).
+        # Keep this bounded rather than exposing raw commands or paths.
         if not (results and all(r.tool_name.replace("__", ".") == "web.manage" for r in results)):
             if fail_count:
-                return (
-                    "本次处理未能形成可靠答复，已停止继续尝试以避免重复或错误操作。"
-                    "请重新发送该请求；如果涉及附件，请保留在同一会话中。"
-                )
-            return "必要信息已获取，但模型未能生成完整答复。请重试此请求。"
+                return "本次处理未能形成可靠答复，系统已停止重复尝试。"
+            return "工具已执行，但未形成可供综合分析的证据记录。"
 
         if results and all(r.tool_name.replace("__", ".") == "web.manage" for r in results):
             lines.append("联网处理结果：")

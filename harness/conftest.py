@@ -33,6 +33,16 @@ _temp_mem.mkdir(parents=True, exist_ok=True)
 _temp_ws.mkdir(parents=True, exist_ok=True)
 _temp_rpts.mkdir(parents=True, exist_ok=True)
 
+# Keep a process-wide safe baseline, including between monkeypatch teardowns.
+# App factory tests spawn daemon reconcilers; restoring an unset workspace env
+# briefly exposed the real checkout to those threads while a live run existed.
+# Individual tests may override these paths, but undo must return to test data.
+os.environ["LZCORE_WORKSPACE_ROOT"] = str(_temp_ws)
+os.environ["LZCORE_WORKSPACE_DIR"] = str(_temp_ws)
+os.environ["LZCORE_MEMORY_DIR"] = str(_temp_mem)
+os.environ["LZCORE_REPORTS_DIR"] = str(_temp_rpts)
+os.environ["LZCORE_EMBEDDED_WORKER"] = "false"
+
 
 @pytest.fixture(autouse=True)
 def temp_dirs(monkeypatch):

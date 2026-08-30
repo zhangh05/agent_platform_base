@@ -21,6 +21,7 @@ READ_ONLY_DENY = re.compile(
     re.IGNORECASE,
 )
 MAX_READ_ONLY_COMMANDS = 20
+_NONEMPTY_SEMANTIC_FACTS = frozenset({"device_version", "current_config"})
 
 _NETWORK_READ_COMMAND = re.compile(
     r"^(display|show)\s+[A-Za-z0-9_./:() -]+"
@@ -35,6 +36,18 @@ _GENERIC_READ_COMMANDS = (
     re.compile(r"^hostname$", re.IGNORECASE),
     re.compile(r"^date$", re.IGNORECASE),
 )
+
+
+def _semantic_result_payload(result, fact: str) -> dict[str, Any]:
+    payload = {**result.as_dict(), "fact": fact}
+    if (
+        fact in _NONEMPTY_SEMANTIC_FACTS
+        and payload.get("complete")
+        and not payload.get("error_code")
+        and not str(payload.get("output") or "").strip()
+    ):
+        payload["error_code"] = "empty_command_output"
+    return payload
 
 @dataclass
 class DeviceCredential:
@@ -222,9 +235,9 @@ def _run_shell_commands(
         for command in selected_commands:
             result = session.run_command(command)
             output[command] = result.output
-            command_results.append({**result.as_dict(), "fact": command_facts.get(command, "")})
+            command_results.append(_semantic_result_payload(result, command_facts.get(command, "")))
         complete = all(item.get("complete") and not item.get("error_code") for item in command_results)
-        parsed_facts = session.driver.parse_facts(output, command_facts)
+        parsed_facts = session.driver.parse_facts(output, command_facts, command_results)
         return {
             "ok": True,
             "read_ok": complete,
@@ -403,7 +416,7 @@ def _telnet_read(sock: socket.socket, *, timeout: float, stop_on_prompt: bool = 
     while time.monotonic() < deadline:
         try:
             data = sock.recv(65535)
-        except socket.timeout:
+        except TimeoutError:
             break
         if not data:
             break
@@ -455,7 +468,7 @@ def _probe_telnet(
         def receive() -> bytes | None:
             try:
                 data = sock.recv(65535)
-            except socket.timeout:
+            except TimeoutError:
                 return None
             return _telnet_negotiate(sock, data) if data else b""
 
@@ -496,7 +509,7 @@ def _probe_telnet(
         for command in safe_commands:
             command_result = session.run_command(command)
             output[command] = command_result.output
-            command_results.append({**command_result.as_dict(), "fact": command_facts.get(command, "")})
+            command_results.append(_semantic_result_payload(command_result, command_facts.get(command, "")))
         read_ok = all(item.get("complete") and not item.get("error_code") for item in command_results)
         stages.extend((
             _stage("prompt", "ok"),
@@ -506,7 +519,7 @@ def _probe_telnet(
             True, stages, started,
             status="succeeded" if read_ok else "partial",
             output=output,
-            facts=session.driver.parse_facts(output, command_facts),
+            facts=session.driver.parse_facts(output, command_facts, command_results),
             command_results=command_results,
             device_profile=profile,
             session={

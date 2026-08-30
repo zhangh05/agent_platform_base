@@ -17,6 +17,7 @@ FRONTEND_PORT="${FRONTEND_PORT:-5273}"
 BACKEND_HOST="${BACKEND_HOST:-127.0.0.1}"
 FRONTEND_HOST="${FRONTEND_HOST:-127.0.0.1}"
 FRONTEND_MODE="${FRONTEND_MODE:-preview}"
+LZCORE_EMBEDDED_WORKER="${LZCORE_EMBEDDED_WORKER:-true}"
 INSTALL_DEPS="${INSTALL_DEPS:-auto}"
 LOG_DIR="${LOG_DIR:-$ROOT/logs}"
 BACKEND_PID_FILE="$ROOT/.backend.pid"
@@ -255,9 +256,9 @@ start_backend() {
     stop_screen "$BACKEND_SCREEN"
     if command -v screen >/dev/null 2>&1; then
         screen -dmS "$BACKEND_SCREEN" /bin/bash -lc \
-            "cd '$ROOT' && export LZCORE_ALLOWED_ORIGINS='$allowed_origins' && exec '$PYTHON_BIN' backend/main.py --host '$BACKEND_HOST' --port '$BACKEND_PORT' >> '$LOG_DIR/backend-$BACKEND_PORT.log' 2>&1"
+            "cd '$ROOT' && export LZCORE_ALLOWED_ORIGINS='$allowed_origins' LZCORE_EMBEDDED_WORKER='$LZCORE_EMBEDDED_WORKER' && exec '$PYTHON_BIN' backend/main.py --host '$BACKEND_HOST' --port '$BACKEND_PORT' >> '$LOG_DIR/backend-$BACKEND_PORT.log' 2>&1"
     else
-        (cd "$ROOT" && export LZCORE_ALLOWED_ORIGINS="$allowed_origins" && nohup "$PYTHON_BIN" backend/main.py --host "$BACKEND_HOST" --port "$BACKEND_PORT" >> "$LOG_DIR/backend-$BACKEND_PORT.log" 2>&1 </dev/null &)
+        (cd "$ROOT" && export LZCORE_ALLOWED_ORIGINS="$allowed_origins" LZCORE_EMBEDDED_WORKER="$LZCORE_EMBEDDED_WORKER" && nohup "$PYTHON_BIN" backend/main.py --host "$BACKEND_HOST" --port "$BACKEND_PORT" >> "$LOG_DIR/backend-$BACKEND_PORT.log" 2>&1 </dev/null &)
     fi
     wait_for_url backend "http://127.0.0.1:$BACKEND_PORT/api/health" || { stop_started_services; fail "Backend failed to start. See $LOG_DIR/backend-$BACKEND_PORT.log"; }
     write_port_pid "$BACKEND_PORT" "$BACKEND_PID_FILE"

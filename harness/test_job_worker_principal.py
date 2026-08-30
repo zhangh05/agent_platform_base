@@ -1,6 +1,27 @@
 from __future__ import annotations
 
 
+def test_file_worker_claims_default_principal_job(monkeypatch, tmp_path):
+    monkeypatch.setenv("LZCORE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setattr("storage.principal.known_storage_principals", list)
+    from jobs.manager import create_job
+    from jobs.queue import FileJobQueue
+
+    job = create_job(
+        workspace_id="default",
+        job_type="agent_run",
+        title="default principal queued job",
+        payload={"message": "run from bootstrap storage"},
+        enqueue=True,
+    )
+
+    receipt = FileJobQueue().claim("worker-a")
+
+    assert receipt is not None
+    assert receipt.job_id == job.job_id
+    assert receipt.principal == ""
+
+
 def test_file_worker_claims_user_scoped_job_with_owner_principal(monkeypatch, tmp_path):
     monkeypatch.setenv("LZCORE_WORKSPACE_ROOT", str(tmp_path))
     from jobs.manager import create_job
@@ -27,9 +48,8 @@ def test_file_worker_claims_user_scoped_job_with_owner_principal(monkeypatch, tm
 def test_worker_runs_user_scoped_job_under_creator_principal(monkeypatch, tmp_path):
     monkeypatch.setenv("LZCORE_WORKSPACE_ROOT", str(tmp_path))
     monkeypatch.setattr("storage.principal.known_storage_principals", lambda: ["alice"])
+    from jobs import runner, worker
     from jobs.manager import create_job
-    import jobs.worker as worker
-    import jobs.runner as runner
     from storage.principal import current_storage_principal, storage_principal
 
     with storage_principal("alice"):
@@ -54,7 +74,7 @@ def test_worker_fences_reclaimed_user_job_under_creator_principal(monkeypatch, t
     monkeypatch.setenv("LZCORE_WORKSPACE_ROOT", str(tmp_path))
     monkeypatch.setattr("storage.principal.known_storage_principals", lambda: ["alice"])
 
-    import jobs.worker as worker
+    from jobs import worker
     from jobs.queue import QueueReceipt
     from jobs.schemas import JobRecord
     from jobs.store import create_job, get_job
@@ -105,7 +125,7 @@ def test_worker_fences_reclaimed_user_job_under_creator_principal(monkeypatch, t
 
 
 def test_redis_worker_does_not_take_global_filesystem_lock(monkeypatch):
-    import jobs.worker as worker
+    from jobs import worker
 
     class _IdleQueue:
         def reclaim_stale(self, _seconds): return 0

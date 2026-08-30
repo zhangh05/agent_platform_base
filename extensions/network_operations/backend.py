@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from flask import jsonify, request
 
 from extensions.network_operations import service
@@ -316,23 +318,150 @@ def inspection(invocation):
         }
         if args.get("facts") is not None:
             enqueue_options["facts"] = args.get("facts")
-        return {"ok": True, "task": service.enqueue_connection_inspection(
+        return _inspection_result(service.enqueue_connection_inspection(
             invocation.workspace_id,
             connection_ids,
             args.get("commands"),
             **enqueue_options,
-        )}
+        ))
     if action == "get":
         task_id = str(args.get("task_id") or "")
         task = service.get_inspection(invocation.workspace_id, task_id)
         if not task:
             return {"ok": False, "error": "inspection_not_found", "task_id": task_id}
-        return {"ok": True, "task": task}
+        return _inspection_result(task)
     if action == "cancel":
         return {"ok": service.cancel_inspection(invocation.workspace_id, str(args.get("task_id") or ""))}
     if action == "retry":
-        return {"ok": True, "task": service.retry_inspection(invocation.workspace_id, str(args.get("task_id") or ""))}
+        return _inspection_result(service.retry_inspection(
+            invocation.workspace_id, str(args.get("task_id") or "")
+        ))
     return {"ok": True, "inspections": service.list_inspections(invocation.workspace_id)}
+
+
+def _inspection_result(task: dict[str, Any]) -> dict[str, Any]:
+    """Expose inspection progress through the generic runtime tracker."""
+    status = str((task or {}).get("status") or "queued").strip().lower()
+    terminal = status in {"succeeded", "failed", "partial", "cancelled", "canceled"}
+    total = max(0, int((task or {}).get("total") or 0))
+    completed = max(0, int((task or {}).get("completed") or 0))
+    failed = max(0, int((task or {}).get("failed") or 0))
+    partial = max(0, int((task or {}).get("partial") or 0))
+    succeeded = max(0, int((task or {}).get("succeeded") or 0))
+    coverage_status = (
+        "complete" if terminal and total > 0 and succeeded == total
+        else "partial" if terminal and (succeeded > 0 or partial > 0)
+        else "failed" if terminal and (failed > 0 or total > 0)
+        else "pending"
+    )
+    task_id = str((task or {}).get("task_id") or "")
+    return {
+        "ok": True,
+        "task": task,
+        "analysis_projection": _inspection_analysis_projection(task),
+        "coverage_status": coverage_status,
+        "tracking": {
+            "kind": "long_task",
+            "domain": "network.operations.inspection",
+            "task_id": task_id,
+            "status": status,
+            "done": terminal,
+            "next_poll_seconds": 1,
+            "suggested_next_action": "synthesize_results" if terminal else "poll_get",
+            "poll_action": "get",
+            "poll_arguments": {"action": "get", "task_id": task_id},
+            "progress": {
+                "completed": completed,
+                "total": total,
+                "succeeded": succeeded,
+                "partial": partial,
+                "failed": failed,
+            },
+        },
+    }
+
+
+def _inspection_analysis_projection(task: dict[str, Any]) -> dict[str, Any]:
+    """Return a fair, synthesis-ready view of every inspection target."""
+    devices: list[dict[str, Any]] = []
+    for connection_id, result in sorted(
+        ((task or {}).get("results") or {}).items(),
+        key=lambda item: str((item[1] or {}).get("name") or item[0]),
+    ):
+        facts = result.get("facts") if isinstance(result.get("facts"), dict) else {}
+        config = facts.get("current_config") if isinstance(facts.get("current_config"), dict) else {}
+        failed_commands = [
+            {
+                "command": str(item.get("command") or ""),
+                "fact": str(item.get("fact") or ""),
+                "error_code": str(item.get("error_code") or ""),
+                "device_error": str(item.get("device_error") or "")[:160],
+            }
+            for item in (result.get("command_results") or [])
+            if item.get("error_code") or item.get("truncated") or not item.get("complete")
+        ]
+        devices.append({
+            "connection_id": str(connection_id),
+            "name": str(result.get("name") or connection_id),
+            "status": str(result.get("status") or "unknown"),
+            "fact_status": {
+                str(name): str(value.get("status") or "unknown")
+                for name, value in facts.items()
+                if isinstance(value, dict)
+            },
+            "fact_evidence": {
+                str(name): _inspection_fact_evidence(fact_value)
+                for name, fact_value in facts.items()
+                if isinstance(fact_value, dict) and name != "current_config"
+            },
+            "current_config": {
+                "characters": int(config.get("characters") or 0),
+                "content_hash": str(config.get("content_hash") or ""),
+                "signals": dict(config.get("signals") or {}),
+                "projection_complete": bool(config.get("projection_complete", False)),
+                "omitted_signal_counts": dict(config.get("omitted_signal_counts") or {}),
+            } if config else {},
+            "failed_commands": failed_commands,
+        })
+    return {
+        "task_id": str((task or {}).get("task_id") or ""),
+        "status": str((task or {}).get("status") or "unknown"),
+        "coverage": {
+            key: int((task or {}).get(key) or 0)
+            for key in ("total", "completed", "succeeded", "partial", "failed")
+        },
+        "devices": devices,
+        "artifact_id": str((task or {}).get("artifact_id") or ""),
+        "evidence_contract": {
+            "collected_means": "command_completed_without_transport_or_cli_error",
+            "collected_does_not_mean": "protocol_healthy_or_expected_state_present",
+            "assertion_rule": "assert_only_literal_observations_or_normalized_signals; otherwise report unknown",
+        },
+    }
+
+
+def _inspection_fact_evidence(fact: dict[str, Any]) -> dict[str, Any]:
+    """Project literal semantic evidence without transport bookkeeping."""
+    view = {
+        str(key): value
+        for key, value in fact.items()
+        if key not in {
+            "sources", "content_hash", "sections", "signals", "characters",
+            "line_count", "driver_id",
+        }
+    }
+    observations = []
+    for item in fact.get("observations") or []:
+        if not isinstance(item, dict):
+            continue
+        observations.append({
+            "command": str(item.get("command") or ""),
+            "observation_status": str(item.get("observation_status") or "unknown"),
+            "literal_excerpt": str(item.get("literal_excerpt") or ""),
+        })
+    if observations:
+        view["observations"] = observations
+    return view
 
 
 def _skill_allows(invocation, tool_id: str) -> bool:

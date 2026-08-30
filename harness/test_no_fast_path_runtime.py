@@ -194,7 +194,7 @@ def test_adapter_tool_fallback_surfaces_actual_tool_output():
     class RuntimeResult:
         final_response = "工具执行成功"
 
-    assert _final_response(RuntimeResult()) == ""
+    assert _final_response(RuntimeResult()) == "工具执行成功"
 
     text = _tool_result_fallback_from_projected_calls([
         {

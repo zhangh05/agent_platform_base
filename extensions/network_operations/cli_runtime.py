@@ -2,14 +2,13 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 import hashlib
 import re
 import time
-from typing import Callable
+from collections.abc import Callable
+from dataclasses import dataclass
 
 from extensions.network_operations.device_drivers import DeviceDriver, resolve_driver
-
 
 ANSI_ESCAPE = re.compile(r"\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1b\\))")
 CONTROL_EXCEPT_LAYOUT = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
@@ -133,6 +132,7 @@ class InteractiveCLISession:
         self.prompt = driver.extract_prompt(initial_text)
         self.banner = normalize_terminal_text(initial_text)
         self.encoding = "utf-8"
+        self._synchronized = True
 
     def bootstrap(self) -> CLIReadResult:
         if self.prompt:
@@ -155,11 +155,34 @@ class InteractiveCLISession:
 
     def run_command(self, command: str, *, internal: bool = False) -> CLICommandResult:
         started = time.monotonic()
+        if not self._synchronized:
+            return CLICommandResult(
+                command=command, output="", prompt=self.prompt, complete=False,
+                pages=0, encoding=self.encoding, duration_ms=0,
+                error_code="cli_session_unsynchronized",
+            )
         self._send((str(command).strip() + "\r\n").encode("ascii", errors="strict"))
         read = self.read_until_prompt(timeout=self.timeout)
         if read.prompt:
             self.prompt = read.prompt
         output = strip_command_envelope(read.text, command, self.prompt)
+        # A duplicate prompt from the previous command can remain buffered and
+        # falsely complete this read before the new response arrives. Keep the
+        # same command boundary open briefly; never resend the command.
+        prompt_only = bool(output and self.driver.extract_prompt(output) == output.strip())
+        if not internal and read.complete and (not output or prompt_only):
+            follow_up = self.read_until_prompt(timeout=min(self.timeout, 1.0))
+            if follow_up.text:
+                if follow_up.prompt:
+                    self.prompt = follow_up.prompt
+                candidate = strip_command_envelope(follow_up.text, command, self.prompt)
+                if candidate and self.driver.extract_prompt(candidate) != candidate.strip():
+                    read = follow_up
+                    output = candidate
+        if not read.complete:
+            # Never attribute the unfinished command's late bytes to the next
+            # command. A new tool operation establishes a fresh connection.
+            self._synchronized = False
         device_error = self.driver.command_error(output)
         error_code = read.error_code
         if device_error and not error_code:

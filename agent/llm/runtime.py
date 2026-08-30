@@ -231,6 +231,30 @@ def _generate_with_retry(req: LLMRequest, cfg: dict, max_retries: int = 3) -> LL
                 continue
             return LLMResponse(error=error_msg, metadata={"error_type": ERROR_TYPE_PROVIDER_TIMEOUT, "error_detail": error_msg[:200], "http_status": None, "retryable": True, "retries_exhausted": True})
         if not resp.error:
+            # A transport-level 200 with neither text nor tool calls is not a
+            # successful agent response.  Classify it here so the configured
+            # provider fallback chain can run instead of leaking an empty turn
+            # into QueryLoop.  Retry the same provider once; repeated empty
+            # responses are usually deterministic and must not stall the UI.
+            if not str(resp.content or "").strip() and not list(resp.tool_calls or []):
+                if attempt < min(1, max_retries):
+                    time.sleep(0.2)
+                    continue
+                return LLMResponse(
+                    error="provider_empty_response",
+                    provider=resp.provider,
+                    model=resp.model,
+                    finish_reason=resp.finish_reason,
+                    usage=resp.usage,
+                    metadata={
+                        **(resp.metadata or {}),
+                        "error_type": "provider_empty_response",
+                        "error_detail": "provider returned no text and no tool calls",
+                        "finish_reason": str(resp.finish_reason or ""),
+                        "retryable": True,
+                        "retries_exhausted": True,
+                    },
+                )
             return resp
         error_lower = resp.error.lower()
         retryable = any(key in error_lower for key in ("rate_limit", "rate limit", "overload", "429", "503", "timeout", "timed out"))

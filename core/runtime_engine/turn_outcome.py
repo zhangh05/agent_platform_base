@@ -12,6 +12,13 @@ def derive_tool_execution_outcome(tool_results: list[Any]) -> str:
         for result in tool_results
     ):
         return "unknown"
+    coverage_states = [
+        str((getattr(result, "output", None) or {}).get("coverage_status") or "").lower()
+        for result in tool_results
+        if isinstance(getattr(result, "output", None), dict)
+    ]
+    if "failed" in coverage_states and not ({"complete", "partial"} & set(coverage_states)):
+        return "failed"
     partial_success = any(
         bool((getattr(result, "output", None) or {}).get("partial"))
         or str((getattr(result, "output", None) or {}).get("coverage_status") or "").lower() == "partial"
@@ -43,7 +50,6 @@ def derive_execution_outcome(
     tool_outcome = derive_tool_execution_outcome(tool_results)
     if tool_outcome == "unknown":
         return "unknown"
-
     assertions = goal_assertions if isinstance(goal_assertions, dict) else {}
     if assertions.get("required") and assertions.get("status") != "passed":
         return "unknown" if assertions.get("status") == "unknown" else "partial"

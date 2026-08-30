@@ -573,6 +573,13 @@ def run_ssot_turn(
                 (runtime_result.metadata or {}).get("tool_execution_outcome")
                 or ("complete" if runtime_result.success and not runtime_errors else "failed")
             ),
+            "response_outcome": str(
+                (runtime_result.metadata or {}).get("response_outcome")
+                or ("complete" if runtime_result.success else "failed")
+            ),
+            "synthesis_recovery": dict(
+                (runtime_result.metadata or {}).get("synthesis_recovery") or {}
+            ),
             # Read-only terminal facts for API/UI consumers. QueryLoop remains
             # the only owner of execution, recovery and write fencing.
             "unknown_outcome": (
@@ -1345,25 +1352,6 @@ def _run_async(awaitable):
     return box.get("result")
 
 
-_BOGUS_FINAL_PATTERNS = (
-    "已完成。",
-    "工具执行成功",
-    "工具执行完成",
-    "No tools were executed",
-    "readartifact completed",
-    "readartifact succeeded",
-)
-
-
-def _is_bogus_final(text: str) -> bool:
-    """Return True when *text* is a placeholder stub rather than
-    a real answer produced by the QueryLoop response state."""
-    t = text.strip()
-    if len(t) <= 1:
-        return True
-    return any(p in t for p in _BOGUS_FINAL_PATTERNS)
-
-
 def _final_response(runtime_result) -> str:
     text = str(getattr(runtime_result, "final_response", "") or "").strip()
 
@@ -1372,11 +1360,8 @@ def _final_response(runtime_result) -> str:
         text, _ = sanitize_provider_output(text)
         text = text.strip()
 
-    # If the final response is a known placeholder, return empty so the caller
-    # can surface a tool-result-based fallback instead of a useless stub.
-    if text and _is_bogus_final(text):
-        text = ""
-
+    # QueryLoop owns finalization. The transport adapter must not discard a
+    # valid answer based on phrases such as "已完成。" inside a full report.
     if text:
         return text
     # No tool results and no text — return empty so caller can fall back.
