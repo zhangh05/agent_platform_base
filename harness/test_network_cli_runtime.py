@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections import deque
 from threading import Event
 from types import SimpleNamespace
+import pytest
 
 from extensions.network_operations import service
 from extensions.network_operations.backend import device_manage
@@ -15,6 +16,48 @@ from extensions.network_operations.device_drivers import (
     semantic_catalog,
 )
 from extensions.network_operations.skill_prompt import render_network_skill_prompt
+
+
+@pytest.mark.parametrize("prompt", [b"\r\r\n<ASBR-PE 2>", b"\r\r\n<CE 2>", b"\r\nrouter#"])
+def test_telnet_receive_idle_does_not_discard_remaining_handshake_budget(monkeypatch, prompt):
+    from extensions.network_operations import device_tools
+    clock = [0.0]
+    class Socket:
+        timeout = 2.0
+        calls = 0
+        def gettimeout(self): return self.timeout
+        def settimeout(self, value): self.timeout = value
+        def recv(self, _size):
+            self.calls += 1
+            if self.calls == 1:
+                clock[0] += self.timeout
+                raise TimeoutError()
+            clock[0] += 0.2
+            return prompt
+    sock = Socket()
+    monkeypatch.setattr(device_tools.time, "monotonic", lambda: clock[0])
+    assert device_tools._telnet_read(sock, timeout=5).endswith(prompt.decode())
+    assert sock.calls == 2
+    assert sock.timeout == 2.0
+
+
+def test_telnet_receive_bounds_socket_wait_to_remaining_deadline(monkeypatch):
+    from extensions.network_operations import device_tools
+    clock = [0.0]
+    waits = []
+    class Socket:
+        timeout = 10.0
+        def gettimeout(self): return self.timeout
+        def settimeout(self, value): self.timeout = value
+        def recv(self, _size):
+            waits.append(self.timeout)
+            clock[0] += self.timeout
+            raise TimeoutError()
+    sock = Socket()
+    monkeypatch.setattr(device_tools.time, "monotonic", lambda: clock[0])
+    assert device_tools._telnet_read(sock, timeout=0.25) == ""
+    assert waits == [0.25]
+    assert sock.timeout == 10.0
 
 
 class ScriptedIO:

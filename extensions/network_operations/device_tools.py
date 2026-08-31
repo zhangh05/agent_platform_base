@@ -413,17 +413,23 @@ def _telnet_negotiate(sock: socket.socket, data: bytes) -> bytes:
 def _telnet_read(sock: socket.socket, *, timeout: float, stop_on_prompt: bool = True) -> str:
     deadline = time.monotonic() + timeout
     chunks: list[bytes] = []
-    while time.monotonic() < deadline:
-        try:
-            data = sock.recv(65535)
-        except TimeoutError:
-            break
-        if not data:
-            break
-        chunks.append(_telnet_negotiate(sock, data))
-        text = b"".join(chunks).decode("utf-8", errors="replace")[-200_000:]
-        if stop_on_prompt and (_LOGIN_PROMPT.search(text) or _PASSWORD_PROMPT.search(text) or _DEVICE_PROMPT.search(text)):
-            break
+    socket_timeout = sock.gettimeout()
+    try:
+        while (remaining := deadline - time.monotonic()) > 0:
+            sock.settimeout(min(socket_timeout or remaining, remaining))
+            try:
+                data = sock.recv(65535)
+            except TimeoutError:
+                # An idle receive is not the end of the handshake budget.
+                continue
+            if not data:
+                break
+            chunks.append(_telnet_negotiate(sock, data))
+            text = b"".join(chunks).decode("utf-8", errors="replace")[-200_000:]
+            if stop_on_prompt and (_LOGIN_PROMPT.search(text) or _PASSWORD_PROMPT.search(text) or _DEVICE_PROMPT.search(text)):
+                break
+    finally:
+        sock.settimeout(socket_timeout)
     return b"".join(chunks).decode("utf-8", errors="replace")[-200_000:]
 
 
@@ -445,21 +451,24 @@ def _probe_telnet(
         sock.settimeout(min(float(timeout), 2.0))
         stages.append(_stage("tcp", "ok"))
         credential = target.credential or DeviceCredential(auth_method="none")
-        banner = _telnet_read(sock, timeout=min(timeout, 4))
+        handshake_deadline = time.monotonic() + timeout
+        # Passive consoles need Enter before producing a prompt. Give banners
+        # a short grace period, then share the remaining authentication budget.
+        banner = _telnet_read(sock, timeout=min(timeout, 1.0))
         if _LOGIN_PROMPT.search(banner):
             if not credential.username:
                 return _result(False, stages + [_stage("auth", "failed")], started, error="username_required_by_device")
             sock.sendall((credential.username + "\r\n").encode())
-            banner += _telnet_read(sock, timeout=min(timeout, 4))
+            banner += _telnet_read(sock, timeout=max(0.0, handshake_deadline - time.monotonic()))
         if _PASSWORD_PROMPT.search(banner):
             if not credential.password:
                 return _result(False, stages + [_stage("auth", "failed")], started, error="password_required_by_device")
             sock.sendall((credential.password + "\r\n").encode())
-            banner += _telnet_read(sock, timeout=min(timeout, 4))
+            banner += _telnet_read(sock, timeout=max(0.0, handshake_deadline - time.monotonic()))
         # Telnet devices may expose a prompt immediately and require no login.
         if not _DEVICE_PROMPT.search(banner):
             sock.sendall(b"\r\n")
-            banner += _telnet_read(sock, timeout=min(timeout, 3))
+            banner += _telnet_read(sock, timeout=max(0.0, handshake_deadline - time.monotonic()))
         if not _DEVICE_PROMPT.search(banner):
             return _result(False, stages + [_stage("prompt", "failed")], started, error="device_prompt_not_detected")
         stages.append(_stage("auth", "ok", method="none" if not credential.username and not credential.password else "password"))
