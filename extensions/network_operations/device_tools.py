@@ -1,4 +1,4 @@
-"""Governed read-only device connectivity helpers."""
+"""Governed device connectivity with separate read and approved write paths."""
 
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ import time
 from dataclasses import dataclass
 from typing import Any
 
-from extensions.network_operations.cli_runtime import InteractiveCLISession
+from extensions.network_operations.cli_runtime import CLICommandResult, InteractiveCLISession
 from extensions.network_operations.device_drivers import resolve_driver
 
 READ_ONLY_DENY = re.compile(
@@ -409,7 +409,24 @@ class _ConnectError(RuntimeError):
         self.stages, self.details = stages, details
 
 
-def _execute_commands(connection: _Connection, commands, facts, *, read: bool) -> dict:
+def normalize_configuration_commands(commands, vendor: str) -> list[str]:
+    """Validate framing, not business intent: the approved model supplies every line.
+
+    Only known network CLIs are supported; never reinterpret a network grant as
+    shell access. Repeated lines are meaningful in different configuration views.
+    """
+    if vendor not in {"h3c", "huawei", "cisco"}:
+        raise ValueError("configuration_requires_supported_network_driver")
+    if not isinstance(commands, list) or not 1 <= len(commands) <= 20:
+        raise ValueError("configuration_requires_1_to_20_commands")
+    if any(not isinstance(command, str) or not command.strip() or len(command) > 1000
+           or any(ord(char) < 32 or ord(char) > 126 for char in command)
+           for command in commands):
+        raise ValueError("configuration_requires_single_line_ascii_commands")
+    return [command.strip() for command in commands]
+
+
+def _execute_commands(connection: _Connection, commands, facts, *, read: bool, configure: bool = False) -> dict:
     session = connection.session
     if facts:
         plan = session.driver.commands_for(facts)
@@ -417,20 +434,44 @@ def _execute_commands(connection: _Connection, commands, facts, *, read: bool) -
         command_facts = {command: fact for fact, command in plan}
     else:
         selected, command_facts = commands, {}
-    selected = normalize_read_only_commands(selected, session.driver.vendor) if read else []
+    selected = (normalize_configuration_commands(selected, session.driver.vendor) if configure
+                else normalize_read_only_commands(selected, session.driver.vendor) if read else [])
+    # Some Telnet console servers retain the remote view after disconnect.
+    # Normalize only a positively identified config view; this is terminal
+    # housekeeping, never a save/commit or an implicit business command.
+    prompt = session.prompt.strip()
+    exit_command = (
+        "return" if session.driver.vendor in {"h3c", "huawei"} and prompt.startswith("[")
+        else "end" if session.driver.vendor == "cisco" and re.search(r"\(config[^)]*\)#$", prompt)
+        else ""
+    )
+    mode_reset = None
+    if selected and exit_command:
+        mode_reset = session.run_command(exit_command, internal=True)
+        if not mode_reset.complete or mode_reset.error_code:
+            raise ValueError("operational_mode_reset_failed")
     if selected and not connection.paging_initialized:
         connection.paging = session.disable_paging()
         connection.paging_initialized = True
     results = []
     for command in selected:
-        result = session.run_command(command)
+        try:
+            result = session.run_command(command)
+        except Exception:
+            if not configure:
+                raise
+            session.invalidate()
+            result = CLICommandResult(command, "", session.prompt, False, 0, session.encoding, 0,
+                                      error_code="command_dispatch_uncertain", dispatch_status="uncertain")
         results.append(_semantic_result_payload(result, command_facts.get(command, "")))
+        if configure and (not result.complete or result.error_code):
+            break
     output = {item["command"]: item["output"] for item in results}
     complete = all(item["complete"] and not item["error_code"] for item in results)
-    return {
+    payload = {
         "read_ok": complete,
         "status": "succeeded" if complete else "partial",
-        "command_source": "explicit_semantic_template" if facts else "explicit_commands" if read else "probe",
+        "command_source": "explicit_semantic_template" if facts else "explicit_commands" if read or configure else "probe",
         "output": output, "command_results": results,
         "facts": session.driver.parse_facts(output, command_facts, results) if facts else {},
         "device_profile": session.driver.public_profile(detected_from="live_session"),
@@ -438,18 +479,36 @@ def _execute_commands(connection: _Connection, commands, facts, *, read: bool) -
             "prompt": session.prompt, "encoding": session.encoding,
             "synchronized": session.synchronized,
             "pagination": connection.paging.as_dict() if connection.paging else None,
+            "mode_reset": mode_reset.as_dict() if mode_reset else None,
         },
     }
+    if configure:
+        # A prompt acknowledges CLI processing, not the desired network outcome.
+        # Interrupted writes may already have taken effect; never claim rollback.
+        uncertain = any(item.get("dispatch_status") == "uncertain" or
+                        (item.get("dispatch_status") == "sent" and not item["complete"])
+                        for item in results)
+        payload.pop("read_ok")
+        payload.update(ok=complete, configuration_ok=complete,
+                       status="unknown" if uncertain else "succeeded" if complete else "partial",
+                       error="configuration_outcome_unknown" if uncertain else "configuration_batch_incomplete" if not complete else "",
+                       execution_may_continue=uncertain, automatic_retry_allowed=False,
+                       unexecuted_commands=selected[len(results):],
+                       requires_readback=True, rollback_performed=False)
+    return payload
 
 
 def probe_target(
     target: DeviceTarget, *, commands: list[str] | None = None,
     facts: list[str] | None = None, accept_host_key: bool = False,
-    read: bool = False, timeout: int = 15, session_key: str = "",
+    read: bool = False, timeout: int = 15, session_key: str = "", configure: bool = False,
 ) -> dict[str, Any]:
     started = time.monotonic()
     # A one-shot probe must never share the empty key with another caller.
-    key = session_key or "oneshot:" + uuid.uuid4().hex
+    # Writes use an isolated shell: a configuration view must never leak into a
+    # later read or another approved batch. Business mode transitions are explicit;
+    # terminal housekeeping may first leave a retained console configuration view.
+    key = session_key if session_key and not configure else "oneshot:" + uuid.uuid4().hex
     try:
         if target.protocol not in {"ssh", "telnet"}:
             raise ValueError("unsupported_protocol")
@@ -457,6 +516,10 @@ def probe_target(
             raise ValueError("commands_and_facts_are_mutually_exclusive")
         if read and not facts:
             normalize_read_only_commands(commands, target.vendor)
+        if configure:
+            if read or facts:
+                raise ValueError("configuration_cannot_use_read_or_templates")
+            normalize_configuration_commands(commands, target.vendor)
         with _SESSIONS.lease(key) as entry:
             reused = entry["connection"] is not None
             if reused:
@@ -478,21 +541,26 @@ def probe_target(
             connection = entry["connection"]
             connection.session.deadline = started + timeout
             try:
-                execution = _execute_commands(connection, commands, facts, read=read)
-                execution["session"].update({"reused": reused, "scope": "task" if session_key else "operation"})
-                return _result(True, connection.stages, started, fingerprint=connection.fingerprint, **execution)
+                execution = _execute_commands(connection, commands, facts, read=read, configure=configure)
+                execution["session"].update({"reused": reused, "scope": "task" if session_key and not configure else "operation"})
+                return _result(execution.pop("ok", True), connection.stages, started, fingerprint=connection.fingerprint, **execution)
             except ValueError as exc:
                 # An unsupported optional template is not a connection outage.
-                return _result(True, connection.stages, started, read_ok=False,
+                return _result(not configure, connection.stages, started, read_ok=False,
                                status="partial", error=str(exc)[:300],
                                failure_stage="command_validation", command_results=[],
                                device_profile=connection.session.driver.public_profile(detected_from="live_session"),
                                session={"reused": reused, "prompt": connection.session.prompt})
-            except Exception:
+            except Exception as exc:
                 connection.session.invalidate()
+                if configure:
+                    return _result(False, connection.stages, started,
+                                   error="configuration_outcome_unknown", detail=str(exc)[:300],
+                                   status="unknown", execution_may_continue=True,
+                                   automatic_retry_allowed=False, requires_readback=True)
                 raise
             finally:
-                if not session_key:
+                if not session_key or configure:
                     connection.session.invalidate()
     except _ConnectError as exc:
         return _result(False, exc.stages, started, error=str(exc), **exc.details)

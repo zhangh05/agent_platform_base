@@ -169,6 +169,20 @@ def test_network_read_tool_runs_through_default_tool_runtime():
     assert missing_scope.errors == ["workspace_id is required"]
 
 
+def test_network_configuration_waits_for_approval_before_opening_socket(monkeypatch):
+    from extensions.network_operations import service
+    monkeypatch.setattr(service, "probe_target", lambda *_a, **_kw: pytest.fail("unapproved write reached transport"))
+    reset_extension_cache_for_tests()
+    reset_default_client_for_tests()
+    result = get_default_tool_runtime_client().invoke(
+        "network.operations.device.manage",
+        {"action": "configure", "connection_id": "test", "commands": ["system-view", "return"]},
+        context=ToolRuntimeContext(workspace_id="default", skill="test", requested_by="turn_runner"),
+    )
+    assert result.status == "blocked"
+    assert result.output.get("requires_approval") is True
+
+
 def test_extension_routes_and_catalog_are_registered():
     from backend.main import create_app
 

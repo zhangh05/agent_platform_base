@@ -238,7 +238,7 @@ def skills_read(invocation):
 
 
 def device_manage(invocation):
-    """Probe or read a network device.
+    """Probe, read, or execute an approved configuration batch on a network device.
 
     Only a server-registered, Skill-authorized connection is accepted. Each
     call connects on demand; raw hosts and credentials are never accepted
@@ -248,10 +248,10 @@ def device_manage(invocation):
         return {"ok": False, "error": "tool_not_allowed_by_skill"}
     args = invocation.arguments or {}
     action = str(args.get("action") or "probe").lower()
-    if action not in {"probe", "read", "collect"}:
+    if action not in {"probe", "read", "collect", "configure"}:
         return {
             "ok": False,
-            "error": f"unsupported action for network.operations.device.manage; expected probe|read|collect, got {action}",
+            "error": f"unsupported action for network.operations.device.manage; expected probe|read|collect|configure, got {action}",
         }
     connection_id = str(args.get("connection_id") or "").strip()
     if not connection_id:
@@ -259,6 +259,10 @@ def device_manage(invocation):
     connection = service.get_connection(invocation.workspace_id, connection_id)
     if not connection:
         return {"ok": False, "error": "connection_not_found", "connection_id": connection_id}
+    if action == "configure" and not service.configuration_allowed(
+        service.get_skill(invocation.workspace_id, str(getattr(invocation, "skill", "") or "")), connection_id
+    ):
+        return {"ok": False, "executed": False, "error": "configuration_not_allowed_by_skill"}
     if getattr(invocation, "skill", None):
         skill = service.get_skill(invocation.workspace_id, str(invocation.skill))
         if not skill or connection_id not in set(skill.get("connection_ids") or []):
@@ -267,9 +271,9 @@ def device_manage(invocation):
         if selected_connections and connection_id not in selected_connections:
             return {"ok": False, "error": "connection_not_selected_in_workbench"}
     raw_commands = args.get("commands")
-    if action == "read" and (not isinstance(raw_commands, list) or not raw_commands):
+    if action in {"read", "configure"} and (not isinstance(raw_commands, list) or not raw_commands):
         return {"ok": False, "error": "commands are required for read; no commands are selected implicitly"}
-    if (action != "read" and raw_commands is not None) or (action != "collect" and args.get("facts") is not None):
+    if (action not in {"read", "configure"} and raw_commands is not None) or (action != "collect" and args.get("facts") is not None):
         return {"ok": False, "error": "commands_only_for_read_and_facts_only_for_collect"}
     requested_facts = [str(item) for item in (args.get("facts") or [])]
     if action == "collect" and not requested_facts:
@@ -277,12 +281,15 @@ def device_manage(invocation):
     result = service.test_connection(
         invocation.workspace_id,
         connection_id,
-        commands=raw_commands if action == "read" else None,
+        commands=raw_commands if action in {"read", "configure"} else None,
         facts=requested_facts if action == "collect" else None,
         read=action in {"read", "collect"},
         timeout=int(args.get("timeout") or 15),
         session_scope=str(getattr(invocation, "run_id", None) or getattr(invocation, "task_id", None) or ""),
+        **({"configuration_skill_id": str(invocation.skill)} if action == "configure" else {}),
     )
+    if action == "configure":
+        return {**result, "automatic_retry_allowed": False, "requires_readback": True}
     if result.get("ok"):
         return {**result, "connection_ok": True}
     current = result.get("connection") if isinstance(result.get("connection"), dict) else service.get_connection(invocation.workspace_id, connection_id)
@@ -478,7 +485,7 @@ def _skill_allows(invocation, tool_id: str) -> bool:
     if not skill_id:
         return True
     skill = service.get_skill(invocation.workspace_id, skill_id)
-    return bool(skill and tool_id in set(skill.get("allowed_tool_ids") or []))
+    return bool(skill and skill.get("enabled", True) and tool_id in set(skill.get("allowed_tool_ids") or []))
 
 
 def register():
@@ -518,7 +525,7 @@ def register():
             {
                 "tool_id": "network.operations.device.manage",
                 "name": "网络设备命令执行",
-                "description": "自主选择当前步骤需要的已授权 connection_id 和明确只读命令，用 read + commands 执行；必须提供命令，不补默认命令。根据实际回显决定下一步、换命令或并行读取其他设备。同一任务复用有效 SSH/Telnet 会话，过期按需重连；同一连接串行，不同连接可并行。运行时处理分页、提示符和编码，返回逐命令完整性、错误和会话状态。probe 仅测试连通性；collect + facts 是显式可选的预制采集模板，不是必经路径。单台失败返回模型决策，不阻断其他设备。",
+                "description": "自主选择已授权 connection_id 和明确 commands，用 read 读取，不补默认命令。probe 仅测试连通性；collect + facts 是可选预制采集。仅 Skill 启用 configuration_write 时可用 configure 写入：模型提供全部命令和模式切换，每批需审批，独立会话，遇错停止，禁止自动重试，写后需读取验证。不自动保存或确认交互。只读会话按任务复用，过期按需重连，同连接串行、不同连接并行。运行时处理分页、提示符和编码，返回逐命令回显、完整性和错误，单台失败不阻断其他设备。",
                 "category": "ops",
                 "risk_level": "medium",
                 "permission_action": "network",
@@ -526,15 +533,18 @@ def register():
                     "probe": {"action_class": "network", "risk_level": "medium", "side_effects": "external_read", "idempotency": "safe_to_retry", "read_only": True},
                     "read": {"action_class": "network", "risk_level": "medium", "side_effects": "external_read", "idempotency": "safe_to_retry", "read_only": True},
                     "collect": {"action_class": "network", "risk_level": "medium", "side_effects": "external_read", "idempotency": "safe_to_retry", "read_only": True},
+                    "configure": {"action_class": "write", "risk_level": "high", "requires_approval": True, "side_effects": "external_write", "idempotency": "unsafe_to_retry", "read_only": False},
                 },
-                "bindable_inputs": {"probe": ["connection_id"], "read": ["connection_id"], "collect": ["connection_id"]},
+                "approval_actions": ["configure"],
+                "bindable_inputs": {"probe": ["connection_id"], "read": ["connection_id"], "collect": ["connection_id"], "configure": ["connection_id"]},
                 "referenceable_outputs": {
                     "probe": ["connection_ok", "connection", "status", "error", "stages", "fingerprint"],
                     "read": ["connection_ok", "connection", "status", "error", "stages", "fingerprint", "output", "command_results", "device_profile", "session", "command_source"],
                     "collect": ["connection_ok", "connection", "status", "error", "stages", "fingerprint", "facts", "output", "command_results", "device_profile", "session", "command_source"],
+                    "configure": ["configuration_ok", "status", "error", "command_results", "unexecuted_commands", "requires_readback"],
                 },
                 "action_requirements": {
-                    "all": {"probe": ["connection_id"], "read": ["connection_id", "commands"], "collect": ["connection_id", "facts"]},
+                    "all": {"probe": ["connection_id"], "read": ["connection_id", "commands"], "collect": ["connection_id", "facts"], "configure": ["connection_id", "commands"]},
                 },
                 "handler": device_manage,
                 "timeout_seconds": 90,
@@ -542,7 +552,7 @@ def register():
                     "type": "object",
                     "properties": {
                         **common,
-                        "action": {"type": "string", "enum": ["probe", "read", "collect"]},
+                        "action": {"type": "string", "enum": ["probe", "read", "collect", "configure"]},
                         "connection_id": {"type": "string", "minLength": 1},
                         "commands": {"type": "array", "items": {"type": "string", "minLength": 1}, "minItems": 1, "maxItems": 20},
                         "facts": {"type": "array", "items": {"type": "string", "enum": list(service.SEMANTIC_FACTS)}, "minItems": 1, "maxItems": 10},

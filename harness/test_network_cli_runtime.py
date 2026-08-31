@@ -19,6 +19,97 @@ from extensions.network_operations.device_drivers import (
 from extensions.network_operations.skill_prompt import render_network_skill_prompt
 
 
+def test_config_prompt_is_conditional_and_read_contract_is_unchanged():
+    readonly = render_network_skill_prompt({"skill_id": "test"})
+    writer = render_network_skill_prompt({"skill_id": "test", "capabilities": ["configuration_write"]})
+    assert "Configuration write capability is enabled" not in readonly
+    assert "configuration writes and destructive confirmation are not supported" in readonly
+    assert "Configuration write capability is enabled" in writer
+    assert "configuration writes and destructive confirmation are not supported" not in writer
+    assert "approval" in writer and "fresh shell" in writer
+
+
+@pytest.mark.parametrize("commands,vendor", [([], "h3c"), (["system-view\nreboot"], "h3c"), (["x\x03"], "cisco"), (["system-view"], "generic"), ([42], "h3c"), (["x"] * 21, "huawei")])
+def test_configuration_rejects_invalid_framing(commands, vendor):
+    from extensions.network_operations.device_tools import normalize_configuration_commands
+    with pytest.raises(ValueError):
+        normalize_configuration_commands(commands, vendor)
+
+
+@pytest.mark.parametrize("failure", ["device_command_rejected", "command_dispatch_uncertain", "interaction_required", "execution_timeout"])
+def test_configuration_stops_batch_and_preserves_effect_uncertainty(failure):
+    from extensions.network_operations.device_tools import _execute_commands, _Connection
+    from extensions.network_operations.cli_runtime import CLICommandResult
+    driver, _ = resolve_driver("h3c", "<CE>")
+    calls = []
+    class Session:
+        prompt, encoding, synchronized = "<CE>", "utf-8", True
+        def run_command(self, command):
+            calls.append(command)
+            rejected = failure == "device_command_rejected"
+            return CLICommandResult(command, "error", self.prompt, rejected, 0, self.encoding, 0,
+                                    error_code=failure, dispatch_status="uncertain" if failure == "command_dispatch_uncertain" else "sent")
+    session = Session()
+    session.driver = driver
+    conn = _Connection(session, lambda: None, [], paging_initialized=True)
+    result = _execute_commands(conn, ["system-view", "interface LoopBack 100", "return"], None, read=False, configure=True)
+    assert calls == ["system-view"]
+    assert result["unexecuted_commands"] == ["interface LoopBack 100", "return"]
+    assert result["execution_may_continue"] is (failure != "device_command_rejected")
+    assert not result["ok"] and not result["automatic_retry_allowed"]
+    assert result["requires_readback"] and not result["rollback_performed"]
+
+
+def test_configuration_preserves_repeated_lines_and_exact_model_commands():
+    from extensions.network_operations.device_tools import normalize_configuration_commands, normalize_read_only_commands
+    commands = ["system-view", "interface LoopBack 1", "description test", "quit", "interface LoopBack 2", "description test", "return"]
+    assert normalize_configuration_commands(commands, "h3c") == commands
+    with pytest.raises(ValueError):
+        normalize_read_only_commands(commands, "h3c")
+
+
+def test_retained_telnet_configuration_view_is_reset_before_reading():
+    from extensions.network_operations.device_tools import _execute_commands, _Connection
+    from extensions.network_operations.cli_runtime import CLICommandResult
+    driver, _ = resolve_driver("h3c", "[CE-interface]")
+    calls = []
+    class Session:
+        prompt, encoding, synchronized = "[CE-interface]", "utf-8", True
+        def run_command(self, command, *, internal=False):
+            calls.append((command, internal))
+            self.prompt = "<CE>"
+            return CLICommandResult(command, "ok", self.prompt, True, 0, self.encoding, 0, dispatch_status="sent")
+    session = Session()
+    session.driver = driver
+    result = _execute_commands(_Connection(session, lambda: None, [], paging_initialized=True), ["display version"], None, read=True)
+    assert calls == [("return", True), ("display version", False)]
+    assert result["read_ok"] and result["session"]["mode_reset"]["command"] == "return"
+
+
+def test_configuration_uses_exact_commands_and_disposes_each_cli_session(monkeypatch):
+    from extensions.network_operations import device_tools as tools
+    driver, _ = resolve_driver("h3c", "<CE>")
+    sent, closed = [], []
+    def connect(*_args):
+        queue = deque([b"<CE>"])
+        def send(data):
+            sent.append(data)
+            queue.append(b"Done\r\n<CE>" if data == b"return\r\n" else b"Done\r\n[CE]")
+        session = InteractiveCLISession(send=send, receive=lambda: queue.popleft() if queue else None, driver=driver, timeout=1)
+        assert session.bootstrap().complete
+        return tools._Connection(session, lambda: closed.append(True), [], paging_initialized=True)
+    monkeypatch.setattr(tools, "_open_connection", connect)
+    target = tools.DeviceTarget("127.0.0.1", 23, "telnet", "h3c")
+    commands = ["system-view", "sysname CE", "return"]
+    for _ in range(2):
+        result = tools.probe_target(target, commands=commands, configure=True, session_key="same-task", timeout=2)
+        assert result["configuration_ok"] and result["ok"]
+        assert result["session"]["scope"] == "operation" and not result["session"]["reused"]
+        assert result["unexecuted_commands"] == []
+    assert sent == ([b"\r\n"] + [(line + "\r\n").encode() for line in commands]) * 2
+    assert len(closed) == 2
+
+
 @pytest.mark.parametrize("prompt", [b"\r\r\n<ASBR-PE 2>", b"\r\r\n<CE 2>", b"\r\nrouter#"])
 def test_telnet_receive_idle_does_not_discard_remaining_handshake_budget(monkeypatch, prompt):
     from extensions.network_operations import device_tools

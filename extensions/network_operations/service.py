@@ -1,4 +1,4 @@
-"""Workspace-scoped read-only network inspection service."""
+"""Workspace-scoped device, Skill authorization and network execution service."""
 
 from __future__ import annotations
 
@@ -16,6 +16,7 @@ from extensions.network_operations.device_tools import (
     DeviceCredential,
     DeviceTarget,
     normalize_read_only_commands,
+    normalize_configuration_commands,
     probe_target,
     resolve_source_address,
 )
@@ -436,6 +437,7 @@ def test_connection(
     facts: list[str] | None = None,
     timeout: int = 15,
     session_scope: str = "",
+    configuration_skill_id: str = "",
 ) -> dict[str, Any]:
     execution_started = time.monotonic()
     with _connection_lock(workspace_id):
@@ -451,8 +453,12 @@ def test_connection(
         if commands is not None and facts:
             raise ValueError("commands_and_facts_are_mutually_exclusive")
         normalized_facts = _normalize_semantic_facts(facts) if facts else []
-        selected = commands if read and not normalized_facts else []
-        if read and not normalized_facts:
+        selected = commands if (read or configuration_skill_id) and not normalized_facts else []
+        if configuration_skill_id:
+            if read or normalized_facts:
+                raise ValueError("configuration_cannot_use_read_or_templates")
+            selected = normalize_configuration_commands(selected, target.vendor)
+        elif read and not normalized_facts:
             selected = normalize_read_only_commands(selected, target.vendor)
         root = _store(workspace_id).root().resolve()
         endpoint = hashlib.sha256(f"{target.host}:{target.port}".encode()).hexdigest()
@@ -467,6 +473,12 @@ def test_connection(
             latest = get_connection(workspace_id, connection_id, include_secret=True)
             if not latest or latest.get("revision") != record.get("revision"):
                 raise ValueError("connection_changed_before_execution")
+            if configuration_skill_id:
+                # Re-read authority after queueing and before opening a socket.
+                skill = get_skill(workspace_id, configuration_skill_id)
+                if not configuration_allowed(skill, connection_id):
+                    raise ValueError("configuration_not_allowed_by_skill")
+                session_options = {"configure": True}
             remaining = timeout - (time.monotonic() - execution_started)
             if remaining <= 0:
                 raise TimeoutError("device_execution_budget_exhausted")
@@ -480,7 +492,8 @@ def test_connection(
     if fingerprint and accept_host_key and result.get("ok"):
         record["host_key_fingerprint"] = fingerprint
     profile = result.get("device_profile") if isinstance(result.get("device_profile"), dict) else {}
-    if profile and result.get("ok"):
+    connection_observed = bool(result.get("ok") or result.get("command_results"))
+    if profile and connection_observed:
         record.update({
             "driver_id": str(profile.get("driver_id") or ""),
             "detected_vendor": str(profile.get("vendor") or ""),
@@ -490,7 +503,7 @@ def test_connection(
             "profile_updated_at": now_iso(),
         })
     record.update({
-        "status": "connected" if result.get("ok") else ("trust_required" if result.get("requires_host_key_acceptance") else "failed"),
+        "status": "connected" if connection_observed else ("trust_required" if result.get("requires_host_key_acceptance") else "failed"),
         "last_tested_at": now_iso(),
         "last_error": "" if result.get("ok") else str(result.get("error") or "connection_test_failed")[:300],
         "latency_ms": int(result.get("duration_ms") or 0),
@@ -500,8 +513,12 @@ def test_connection(
     with _connection_lock(workspace_id):
         current = get_connection(workspace_id, connection_id, include_secret=True)
         if not current:
+            if configuration_skill_id:
+                return {**result, "connection": None, "observation_superseded": True}
             return {"ok": False, "status": "failed", "error": "connection_deleted_during_test", "connection": None}
         if current.get("revision") != record.get("revision"):
+            if configuration_skill_id:
+                return {**result, "connection": _public_connection(current), "observation_superseded": True}
             return {"ok": False, "status": "failed", "error": "connection_changed_during_test", "connection": _public_connection(current)}
         if current.get("probe_id") != probe_id:
             # A newer probe owns the displayed status, but evidence from this
@@ -693,6 +710,15 @@ def get_skill(workspace_id: str, skill_id: str) -> dict[str, Any] | None:
     return _store(workspace_id).get("skills", skill_id)
 
 
+def configuration_allowed(skill: dict[str, Any] | None, connection_id: str) -> bool:
+    return bool(
+        skill and skill.get("enabled", True)
+        and "configuration_write" in (skill.get("capabilities") or [])
+        and "network.operations.device.manage" in (skill.get("allowed_tool_ids") or [])
+        and connection_id in (skill.get("connection_ids") or [])
+    )
+
+
 @_connection_transaction
 def save_skill(workspace_id: str, payload: dict[str, Any]) -> dict[str, Any]:
     name = str(payload.get("name") or "").strip()
@@ -711,13 +737,21 @@ def save_skill(workspace_id: str, payload: dict[str, Any]) -> dict[str, Any]:
         raise ValueError("skill contains unknown connection")
     if any(str(item.get("device_id") or "") not in set(device_ids) for item in connections if item):
         raise ValueError("skill connection is not owned by a selected device")
+    raw_tool_ids = payload.get("allowed_tool_ids", sorted(SKILL_TOOL_IDS))
+    if not isinstance(raw_tool_ids, list):
+        raise ValueError("skill tools must be an array")
     allowed_tool_ids = list(dict.fromkeys(
         str(item).strip()
-        for item in (payload.get("allowed_tool_ids") or sorted(SKILL_TOOL_IDS))
+        for item in raw_tool_ids
         if str(item).strip()
     ))
     if not allowed_tool_ids or any(item not in SKILL_TOOL_IDS for item in allowed_tool_ids):
         raise ValueError("skill contains unsupported tool")
+    capabilities = payload.get("capabilities", existing.get("capabilities", []))
+    if not isinstance(capabilities, list) or any(item != "configuration_write" for item in capabilities):
+        raise ValueError("skill contains unsupported capability")
+    if capabilities and "network.operations.device.manage" not in allowed_tool_ids:
+        raise ValueError("configuration_write requires device command capability")
     default_script_id = str(payload.get("default_script_id") or "").strip()
     if default_script_id:
         _resolve_script(workspace_id, default_script_id)
@@ -729,6 +763,7 @@ def save_skill(workspace_id: str, payload: dict[str, Any]) -> dict[str, Any]:
         "device_ids": device_ids,
         "connection_ids": connection_ids,
         "allowed_tool_ids": allowed_tool_ids,
+        "capabilities": list(dict.fromkeys(capabilities)),
         "default_script_id": default_script_id,
         "instructions": str(payload.get("instructions") or "").strip()[:2000],
         "created_at": str(existing.get("created_at") or now_iso()),
@@ -784,6 +819,7 @@ def resolve_workbench_selection(workspace_id: str, selection: dict[str, Any]) ->
     return {
         "skill_id": skill_id,
         "skill_name": str(skill.get("name") or ""),
+        "capabilities": list(skill.get("capabilities") or []),
         "instructions": str(skill.get("instructions") or ""),
         "allowed_tool_ids": list(skill.get("allowed_tool_ids") or []),
         "device_ids": selected,

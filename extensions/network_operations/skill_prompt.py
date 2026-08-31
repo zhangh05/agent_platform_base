@@ -57,8 +57,22 @@ def render_network_skill_prompt(context: dict[str, Any]) -> str:
         "source": str(context.get("source") or ""),
     }
     owner_instructions = str(context.get("instructions") or "").strip()[:4000]
+    write_enabled = "configuration_write" in (context.get("capabilities") or [])
+    snapshot["capabilities"] = list(context.get("capabilities") or [])
+    contract = NETWORK_SKILL_OPERATING_CONTRACT.strip()
+    if write_enabled:
+        contract = contract.replace("Read-only authorization remains enforced; configuration writes and destructive confirmation are not supported.",
+                                    "Read actions remain strictly read-only. Configuration has separate opt-in authority and approval.")
+        contract += """
+
+Configuration write capability is enabled for this selected Skill only:
+- Use network.operations.device.manage action=configure with one authorized connection_id and your explicit commands (1-20 single ASCII lines). No default configuration or business commands are inserted. Every batch uses a fresh shell; include vendor mode transitions explicitly (for example system-view/return or configure terminal/end). A new batch never inherits the previous configuration view.
+- The Skill checkbox grants capability, not blanket permission for changes. Act only on the user's requested configuration goal; first read current state, explain the exact device, commands, impact and recovery plan. The platform requires approval of the actual batch before dispatch; do not substitute read, inspection, shell tools or alternate connections to bypass it.
+- Command rejection stops the batch. Review command_results and unexecuted_commands. An interrupted command may already have changed configuration: status=unknown requires read-only reconciliation, never blind replay. No automatic rollback, save, commit, confirmation or reboot occurs. Interactive prompts are returned as interaction_required, not automatically answered.
+- After accepted commands, use explicit read commands to verify the requested state. configuration_ok only means CLI processing completed, not business success or persistence across reboot. Report partial changes, unexecuted commands and unverified persistence accurately.
+"""
     parts = [
-        NETWORK_SKILL_OPERATING_CONTRACT.strip(),
+        contract,
         "<selected_skill_context>\n"
         + json.dumps(snapshot, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
         + "\n</selected_skill_context>",

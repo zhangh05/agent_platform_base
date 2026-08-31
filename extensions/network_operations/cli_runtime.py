@@ -231,7 +231,7 @@ class InteractiveCLISession:
         error_code = read.error_code
         if device_error and not error_code:
             error_code = "device_command_rejected"
-        if internal and device_error:
+        if internal and command == self.driver.disable_paging_command and device_error:
             # Disabling pagination is an optimization. Interactive pager
             # handling remains active when the device rejects the command.
             error_code = "paging_disable_rejected"
