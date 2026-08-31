@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from concurrent.futures import ThreadPoolExecutor
+from storage.principal import ContextThreadPoolExecutor
 from pathlib import Path
 import re
 from typing import Any
@@ -482,7 +482,7 @@ def execute_workflow(workspace_id: str, workflow_id: str, inputs: dict[str, Any]
                 _save_run(record)
                 break
             if parallel and len(node_ids) > 1:
-                with ThreadPoolExecutor(max_workers=min(5, len(node_ids)), thread_name_prefix="workflow-read") as pool:
+                with ContextThreadPoolExecutor(max_workers=min(5, len(node_ids)), thread_name_prefix="workflow-read") as pool:
                     futures = {node_id: pool.submit(execute_node, node_id) for node_id in node_ids}
                     completed = [(node_id, futures[node_id].result()) for node_id in node_ids]
             else:

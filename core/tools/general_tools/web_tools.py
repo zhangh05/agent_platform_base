@@ -3,7 +3,7 @@ from __future__ import annotations
 from core.tools.schemas import ToolInvocation
 """Web tool handlers — search, weather, news, fetch."""
 import re
-from concurrent.futures import ThreadPoolExecutor
+from storage.principal import ContextThreadPoolExecutor
 
 from core.tools.general_tools.shared import _error_inv, _ok, _result
 from core.tools.general_tools.shared_web import *  # has __all__ — 21 functions, all needed
@@ -235,8 +235,6 @@ def _curated_degraded_result(
     })
     degraded["status"] = "partial"
     return degraded
-
-
 
 
 def _ddgs_to_results(raw: list, domains: list, limit: int) -> list:
@@ -763,7 +761,7 @@ def handle_weather_batch(inv: ToolInvocation) -> dict:
                 "error": f"weather_lookup_exception:{type(exc).__name__}",
             }
 
-    with ThreadPoolExecutor(max_workers=min(5, len(location_specs))) as pool:
+    with ContextThreadPoolExecutor(max_workers=min(5, len(location_specs))) as pool:
         outcomes = list(pool.map(lookup, location_specs))
 
     forecasts: list[dict] = []

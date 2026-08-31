@@ -22,7 +22,6 @@ from storage.session_store import (
     list_sessions,
     update_session,
     archive_session,
-    soft_delete_session,
     delete_session_permanently,
     add_run_to_session,
     get_session_messages,
@@ -116,12 +115,12 @@ class TestSessionLifecycle:
         fetched = get_session(s["session_id"], TEST_WS)
         assert fetched["status"] == "archived"
 
-    def test_soft_delete_session(self):
-        s = create_session(TEST_WS, "To Soft Delete")
-        deleted = soft_delete_session(s["session_id"], TEST_WS)
-        assert deleted["status"] == "deleted"
+    def test_delete_removes_session_record(self):
+        s = create_session(TEST_WS, "To Delete")
+        deleted = delete_session_permanently(s["session_id"], TEST_WS, confirm=True)
+        assert deleted is True
         fetched = get_session(s["session_id"], TEST_WS)
-        assert fetched["status"] == "deleted"
+        assert fetched is None
 
     def test_permanent_delete_requires_confirm(self):
         s = create_session(TEST_WS, "To Perm Delete")
@@ -356,9 +355,9 @@ class TestSessionCounts:
     def test_get_session_count(self):
         # Clean workspace first
         for s in list_sessions(TEST_WS, status="active"):
-            soft_delete_session(s["session_id"], TEST_WS)
+            delete_session_permanently(s["session_id"], TEST_WS, confirm=True)
         for s in list_sessions(TEST_WS, status="archived"):
-            soft_delete_session(s["session_id"], TEST_WS)
+            delete_session_permanently(s["session_id"], TEST_WS, confirm=True)
         for s in list_sessions(TEST_WS, status="deleted"):
             delete_session_permanently(s["session_id"], TEST_WS, confirm=True)
 
@@ -366,13 +365,13 @@ class TestSessionCounts:
         s2 = create_session(TEST_WS, "Count Archived")
         archive_session(s2["session_id"], TEST_WS)
         s3 = create_session(TEST_WS, "Count Deleted")
-        soft_delete_session(s3["session_id"], TEST_WS)
+        delete_session_permanently(s3["session_id"], TEST_WS, confirm=True)
 
         counts = get_session_count(TEST_WS)
         assert counts["active"] >= 1
         assert counts["archived"] >= 1
-        assert counts["deleted"] >= 1
-        assert counts["total"] >= 3
+        assert counts["deleted"] == 0
+        assert counts["total"] >= 2
 
 
 class TestSessionDefault:

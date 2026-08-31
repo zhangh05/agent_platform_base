@@ -6,7 +6,7 @@ import math
 import re
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor
+from storage.principal import ContextThreadPoolExecutor
 
 from .location_models import LocationCandidate, LocationResolution
 from .location_providers import (
@@ -329,7 +329,7 @@ class LocationResolver:
         cleaned = list(dict.fromkeys(
             str(item or "").strip() for item in queries if str(item or "").strip()
         ))
-        with ThreadPoolExecutor(max_workers=min(5, max(1, len(cleaned)))) as pool:
+        with ContextThreadPoolExecutor(max_workers=min(5, max(1, len(cleaned)))) as pool:
             return list(pool.map(
                 lambda item: self.resolve(
                     item, language=language, country_code=country_code,

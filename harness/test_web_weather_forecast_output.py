@@ -21,7 +21,7 @@ def test_web_manage_weather_preserves_multi_day_forecast(monkeypatch):
 
     monkeypatch.setattr(cr, "handle_weather_forecast", fake_forecast)
 
-    result = cr._weather_merged(ToolInvocation(
+    result = cr.CANONICAL_REGISTRY["web.manage"].handler(ToolInvocation(
         tool_id="web.manage",
         arguments={"action": "weather", "location": "杭州", "days": 10},
         workspace_id="default",
@@ -29,9 +29,9 @@ def test_web_manage_weather_preserves_multi_day_forecast(monkeypatch):
     ))
 
     assert result["ok"] is True
-    assert result["output"]["count"] == 10
-    assert len(result["output"]["forecast_daily"]) == 10
-    assert result["output"]["answer_hint"] == "Use all forecast_daily rows."
+    assert result["count"] == 10
+    assert len(result["forecast_daily"]) == 10
+    assert result["answer_hint"] == "Use all forecast_daily rows."
 
 
 def test_weather_result_uses_natural_chinese_labels_and_coverage():

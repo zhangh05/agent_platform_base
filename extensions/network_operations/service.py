@@ -6,16 +6,15 @@ import hashlib
 import ipaddress
 import json
 import re
-import threading
 import time
 import uuid
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import as_completed
+from functools import wraps
 from typing import Any, Callable
 
 from extensions.network_operations.device_tools import (
     DeviceCredential,
     DeviceTarget,
-    is_read_only_command,
     normalize_read_only_commands,
     probe_target,
     resolve_source_address,
@@ -23,6 +22,7 @@ from extensions.network_operations.device_tools import (
 from extensions.network_operations.device_drivers import SEMANTIC_FACTS, semantic_catalog
 from extensions.sdk import ExtensionDataStore, ExtensionSecretStore
 from storage.locking import FileLock
+from storage.principal import ContextThreadPoolExecutor
 from storage.time_utils import now_iso
 
 
@@ -33,7 +33,6 @@ SKILL_TOOL_IDS = frozenset({
     "network.operations.device.manage",
     "network.operations.inspection",
 })
-MAX_INSPECTION_SCHEDULES = 200
 INTERNAL_SCAN_LIMIT = 5000
 DEFAULT_COMMANDS = {
     "h3c": ["display version", "display device", "display interface brief", "display ip routing-table summary"],
@@ -41,8 +40,6 @@ DEFAULT_COMMANDS = {
     "cisco": ["show version", "show inventory", "show interfaces status", "show ip route summary"],
     "generic": ["uname -a", "uptime", "df -h", "ip address"],
 }
-_TASK_CANCEL: dict[str, threading.Event] = {}
-_TASK_LOCK = threading.Lock()
 
 
 STARTER_SCRIPTS: tuple[dict[str, Any], ...] = (
@@ -173,12 +170,21 @@ def _connection_lock(workspace_id: str) -> FileLock:
     return FileLock(_store(workspace_id).root() / ".connections.lock", timeout=10.0)
 
 
+def _connection_transaction(func):
+    """Serialize related device, connection and Skill mutations, never network IO."""
+    @wraps(func)
+    def mutate(workspace_id, *args, **kwargs):
+        with _connection_lock(workspace_id):
+            return func(workspace_id, *args, **kwargs)
+    return mutate
+
+
 def _id(prefix: str) -> str:
     return f"{prefix}_{uuid.uuid4().hex[:12]}"
 
 
 def _public_connection(record: dict[str, Any]) -> dict[str, Any]:
-    item = {key: value for key, value in record.items() if not key.endswith("_ref")}
+    item = {key: value for key, value in record.items() if not key.endswith("_ref") and key not in {"revision", "probe_id"}}
     item["credential_configured"] = bool(
         record.get("password_ref") or record.get("private_key_ref") or record.get("auth_method") == "none"
     )
@@ -190,6 +196,7 @@ def list_regions(workspace_id: str) -> list[dict[str, Any]]:
     return _store(workspace_id).list("regions", limit=500)
 
 
+@_connection_transaction
 def save_region(workspace_id: str, payload: dict[str, Any]) -> dict[str, Any]:
     name = str(payload.get("name") or "").strip()
     if not name or len(name) > 80:
@@ -211,6 +218,7 @@ def save_region(workspace_id: str, payload: dict[str, Any]) -> dict[str, Any]:
     return record
 
 
+@_connection_transaction
 def delete_region(workspace_id: str, region_id: str) -> bool:
     if any(str(item.get("region_id") or "") == region_id for item in list_devices(workspace_id)):
         raise ValueError("region_has_devices")
@@ -232,6 +240,7 @@ def _device_identity(name: str, host: str) -> tuple[str, str]:
     return (name.strip().casefold(), host.strip().casefold())
 
 
+@_connection_transaction
 def save_device(workspace_id: str, payload: dict[str, Any]) -> dict[str, Any]:
     name = str(payload.get("name") or "").strip()
     host = str(payload.get("host") or "").strip()
@@ -275,6 +284,8 @@ def save_device(workspace_id: str, payload: dict[str, Any]) -> dict[str, Any]:
             if not connection:
                 continue
             connection.update({
+                "revision": uuid.uuid4().hex,
+                "host_key_fingerprint": "",
                 "status": "untested",
                 "last_error": "device_identity_changed_retest_required",
                 "updated_at": now_iso(),
@@ -283,6 +294,7 @@ def save_device(workspace_id: str, payload: dict[str, Any]) -> dict[str, Any]:
     return record
 
 
+@_connection_transaction
 def delete_device(workspace_id: str, device_id: str) -> bool:
     if not get_device(workspace_id, device_id):
         return False
@@ -381,7 +393,6 @@ def reconcile_duplicate_connections(workspace_id: str) -> int:
 
 
 def list_connections(workspace_id: str, *, device_id: str = "") -> list[dict[str, Any]]:
-    reconcile_duplicate_connections(workspace_id)
     records = _raw_connections(workspace_id)
     if device_id:
         records = [item for item in records if str(item.get("device_id") or "") == device_id]
@@ -431,9 +442,13 @@ def test_connection(
     facts: list[str] | None = None,
     timeout: int = 15,
 ) -> dict[str, Any]:
-    record = get_connection(workspace_id, connection_id, include_secret=True)
-    if not record:
-        return {"ok": False, "error": "connection_not_found"}
+    with _connection_lock(workspace_id):
+        record = get_connection(workspace_id, connection_id, include_secret=True)
+        if not record:
+            return {"ok": False, "error": "connection_not_found"}
+        probe_id = uuid.uuid4().hex
+        record["probe_id"] = probe_id
+        _store(workspace_id).save("connections", connection_id, record)
     target: DeviceTarget | None = None
     try:
         target = _connection_target(workspace_id, record)
@@ -476,8 +491,24 @@ def test_connection(
         "effective_source_address": target.source_address if target else str(record.get("effective_source_address") or ""),
         "updated_at": now_iso(),
     })
-    _store(workspace_id).save("connections", connection_id, record)
-    result["connection"] = _public_connection(record)
+    with _connection_lock(workspace_id):
+        current = get_connection(workspace_id, connection_id, include_secret=True)
+        if not current:
+            return {"ok": False, "status": "failed", "error": "connection_deleted_during_test", "connection": None}
+        if current.get("revision") != record.get("revision"):
+            return {"ok": False, "status": "failed", "error": "connection_changed_during_test", "connection": _public_connection(current)}
+        if current.get("probe_id") != probe_id:
+            # A newer probe owns the displayed status, but evidence from this
+            # unchanged endpoint remains valid for its requesting tool call.
+            return {**result, "connection": _public_connection(current), "observation_superseded": True}
+        observation_keys = (
+            "status", "last_tested_at", "last_error", "latency_ms", "effective_source_address",
+            "updated_at", "host_key_fingerprint", "driver_id", "detected_vendor", "os_family",
+            "semantic_facts", "profile_detected_from", "profile_updated_at",
+        )
+        current.update({key: record[key] for key in observation_keys if key in record})
+        _store(workspace_id).save("connections", connection_id, current)
+        result["connection"] = _public_connection(current)
     return result
 
 
@@ -519,8 +550,16 @@ def _save_connection_unlocked(workspace_id: str, payload: dict[str, Any]) -> dic
             if matches else _id("connection")
         )
     existing = get_connection(workspace_id, connection_id, include_secret=True) or {}
+    if requested_id and not existing:
+        raise ValueError("connection_not_found")
     if existing and str(existing.get("device_id") or "") != device_id:
         raise ValueError("connection_device_is_immutable")
+    if any(
+        item.get("connection_id") != connection_id
+        and _connection_identity(item) == (device_id, protocol, port)
+        for item in _raw_connections(workspace_id)
+    ):
+        raise ValueError("connection_endpoint_already_exists")
     auth_method = str(payload.get("auth_method") or existing.get("auth_method") or ("none" if protocol == "telnet" else "password")).lower()
     if auth_method not in ({"none", "password"} if protocol == "telnet" else {"password", "private_key"}):
         raise ValueError("invalid auth method for protocol")
@@ -537,16 +576,17 @@ def _save_connection_unlocked(workspace_id: str, payload: dict[str, Any]) -> dic
     password_ref = str(existing.get("password_ref") or "")
     private_key_ref = str(existing.get("private_key_ref") or "")
     passphrase_ref = str(existing.get("passphrase_ref") or "")
+    # Reject incomplete auth changes before touching any stored secret.
+    if auth_method == "password" and not (password_ref or payload.get("password")):
+        raise ValueError("password is required for password authentication")
+    if auth_method == "private_key" and not (private_key_ref or payload.get("private_key")):
+        raise ValueError("private key is required for private-key authentication")
     if payload.get("password"):
         password_ref = secrets.set(f"connection_{connection_id}_password", str(payload["password"]))
     if payload.get("private_key"):
         private_key_ref = secrets.set(f"connection_{connection_id}_key", str(payload["private_key"]))
     if payload.get("passphrase"):
         passphrase_ref = secrets.set(f"connection_{connection_id}_passphrase", str(payload["passphrase"]))
-    if auth_method == "password" and not password_ref:
-        raise ValueError("password is required for password authentication")
-    if auth_method == "private_key" and not private_key_ref:
-        raise ValueError("private key is required for private-key authentication")
     if auth_method == "none":
         for reference in (password_ref, private_key_ref, passphrase_ref):
             if reference:
@@ -563,6 +603,7 @@ def _save_connection_unlocked(workspace_id: str, payload: dict[str, Any]) -> dic
         password_ref = ""
     record = {
         "connection_id": connection_id,
+        "revision": uuid.uuid4().hex,
         "device_id": device_id,
         "name": str(payload.get("name") or existing.get("name") or protocol.upper()).strip()[:80],
         "protocol": protocol,
@@ -573,7 +614,9 @@ def _save_connection_unlocked(workspace_id: str, payload: dict[str, Any]) -> dic
         "password_ref": password_ref,
         "private_key_ref": private_key_ref,
         "passphrase_ref": passphrase_ref,
-        "host_key_fingerprint": str(payload.get("host_key_fingerprint") or existing.get("host_key_fingerprint") or ""),
+        "host_key_fingerprint": str(payload.get("host_key_fingerprint") or (
+            existing.get("host_key_fingerprint") if existing and _connection_identity(existing) == (device_id, protocol, port) else ""
+        ) or ""),
         "status": "untested",
         "last_tested_at": str(existing.get("last_tested_at") or ""),
         "last_error": "",
@@ -592,10 +635,12 @@ def save_connection(workspace_id: str, payload: dict[str, Any], *, auto_test: bo
     logical connection instead of creating ambiguous duplicate credentials.
     """
     with _connection_lock(workspace_id):
-        _reconcile_duplicate_connections_unlocked(workspace_id)
         record = _save_connection_unlocked(workspace_id, payload)
     if auto_test:
-        return test_connection(workspace_id, str(record.get("connection_id") or "")).get("connection") or record
+        result = test_connection(workspace_id, str(record.get("connection_id") or ""))
+        if result.get("error") in {"connection_not_found", "connection_deleted_during_test", "connection_changed_during_test"}:
+            raise ValueError(str(result["error"]))
+        return result["connection"]
     return record
 
 
@@ -603,8 +648,14 @@ def _delete_connection_record(workspace_id: str, connection_id: str) -> bool:
     record = get_connection(workspace_id, connection_id, include_secret=True)
     if not record:
         return False
-    for key in ("password_ref", "private_key_ref", "passphrase_ref"):
-        if record.get(key):
+    secret_keys = ("password_ref", "private_key_ref", "passphrase_ref")
+    retained_refs = {
+        str(item[key]) for item in _raw_connections(workspace_id)
+        if item.get("connection_id") != connection_id
+        for key in secret_keys if item.get(key)
+    }
+    for key in secret_keys:
+        if record.get(key) and str(record[key]) not in retained_refs:
             ExtensionSecretStore.delete(str(record[key]))
     return _store(workspace_id).delete("connections", connection_id)
 
@@ -616,6 +667,7 @@ def _save_or_delete_depleted_skill(workspace_id: str, skill: dict[str, Any]) -> 
     save_skill(workspace_id, skill)
 
 
+@_connection_transaction
 def delete_connection(workspace_id: str, connection_id: str) -> bool:
     if not _delete_connection_record(workspace_id, connection_id):
         return False
@@ -635,6 +687,7 @@ def get_skill(workspace_id: str, skill_id: str) -> dict[str, Any] | None:
     return _store(workspace_id).get("skills", skill_id)
 
 
+@_connection_transaction
 def save_skill(workspace_id: str, payload: dict[str, Any]) -> dict[str, Any]:
     name = str(payload.get("name") or "").strip()
     if not name or len(name) > 80:
@@ -679,6 +732,7 @@ def save_skill(workspace_id: str, payload: dict[str, Any]) -> dict[str, Any]:
     return record
 
 
+@_connection_transaction
 def delete_skill(workspace_id: str, skill_id: str) -> bool:
     return _store(workspace_id).delete("skills", skill_id)
 
@@ -710,7 +764,7 @@ def _activate_skill_connections(workspace_id: str, connections: list[dict[str, A
 
     workers = min(8, max(1, len(connections)))
     activated: dict[str, dict[str, Any]] = {}
-    with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="skill-connect") as pool:
+    with ContextThreadPoolExecutor(max_workers=workers, thread_name_prefix="skill-connect") as pool:
         futures = {pool.submit(activate, connection): str(connection.get("connection_id") or "") for connection in connections}
         for future in as_completed(futures):
             connection_id = futures[future]
@@ -736,39 +790,40 @@ def resolve_workbench_selection(workspace_id: str, selection: dict[str, Any]) ->
     """Validate a Skill selection, actively connect its targets, and return LLM context."""
     if not isinstance(selection, dict):
         raise ValueError("invalid_workbench_skill_selection")
-    skill_id = str(selection.get("skill_id") or "").strip()
-    skill = get_skill(workspace_id, skill_id)
-    if not skill or not skill.get("enabled", True):
-        raise ValueError("workbench_skill_not_available")
-    allowed_devices = set(skill.get("device_ids") or [])
-    raw_resources = selection.get("resource_ids") if "resource_ids" in selection else selection.get("device_ids")
-    if raw_resources is not None and not isinstance(raw_resources, list):
-        raise ValueError("workbench_skill_resources_must_be_an_array")
-    if isinstance(raw_resources, list) and len(raw_resources) > 100:
-        raise ValueError("workbench_skill_resource_limit_exceeded")
-    selected = list(dict.fromkeys(
-        str(item).strip()
-        for item in (raw_resources or [])
-        if str(item).strip()
-    ))
-    if not selected:
-        selected = list(skill.get("device_ids") or [])
-    if not selected or not set(selected).issubset(allowed_devices):
-        raise ValueError("workbench_skill_device_forbidden")
-    devices = [get_device(workspace_id, item) for item in selected]
-    connection_allowlist = set(skill.get("connection_ids") or [])
-    visible_connections = {
-        str(item.get("connection_id") or ""): item
-        for item in list_connections(workspace_id)
-        if item.get("connection_id") in connection_allowlist and item.get("device_id") in selected
-    }
-    connections = [
-        visible_connections[connection_id]
-        for connection_id in skill.get("connection_ids") or []
-        if connection_id in visible_connections
-    ]
-    if not connections:
-        raise ValueError("workbench_skill_has_no_configured_connection")
+    with _connection_lock(workspace_id):
+        skill_id = str(selection.get("skill_id") or "").strip()
+        skill = get_skill(workspace_id, skill_id)
+        if not skill or not skill.get("enabled", True):
+            raise ValueError("workbench_skill_not_available")
+        allowed_devices = set(skill.get("device_ids") or [])
+        raw_resources = selection.get("resource_ids") if "resource_ids" in selection else selection.get("device_ids")
+        if raw_resources is not None and not isinstance(raw_resources, list):
+            raise ValueError("workbench_skill_resources_must_be_an_array")
+        if isinstance(raw_resources, list) and len(raw_resources) > 100:
+            raise ValueError("workbench_skill_resource_limit_exceeded")
+        selected = list(dict.fromkeys(
+            str(item).strip()
+            for item in (raw_resources or [])
+            if str(item).strip()
+        ))
+        if not selected:
+            selected = list(skill.get("device_ids") or [])
+        if not selected or not set(selected).issubset(allowed_devices):
+            raise ValueError("workbench_skill_device_forbidden")
+        devices = [get_device(workspace_id, item) for item in selected]
+        connection_allowlist = set(skill.get("connection_ids") or [])
+        visible_connections = {
+            str(item.get("connection_id") or ""): item
+            for item in list_connections(workspace_id)
+            if item.get("connection_id") in connection_allowlist and item.get("device_id") in selected
+        }
+        connections = [
+            visible_connections[connection_id]
+            for connection_id in skill.get("connection_ids") or []
+            if connection_id in visible_connections
+        ]
+        if not connections:
+            raise ValueError("workbench_skill_has_no_configured_connection")
     activation = _activate_skill_connections(workspace_id, connections)
     activation_by_id = {item["connection_id"]: item for item in activation}
     ready_ids = [item["connection_id"] for item in activation if item.get("ready")]
@@ -858,82 +913,6 @@ def get_asset(workspace_id: str, asset_id: str, *, include_secret: bool = False)
     return item if include_secret else _safe_asset(item)
 
 
-def save_asset(workspace_id: str, payload: dict[str, Any]) -> dict[str, Any]:
-    name = str(payload.get("name") or "").strip()
-    host = str(payload.get("host") or "").strip()
-    username = str(payload.get("username") or "").strip()
-    if not name or not host or not username:
-        raise ValueError("name, host and username are required")
-    if not _valid_host(host):
-        raise ValueError("invalid host")
-    try:
-        port = int(payload.get("port") or 22)
-    except (TypeError, ValueError) as exc:
-        raise ValueError("invalid port") from exc
-    if port < 1 or port > 65535:
-        raise ValueError("invalid port")
-    asset_id = str(payload.get("asset_id") or _id("asset"))
-    existing = _store(workspace_id).get("assets", asset_id) or {}
-    existing_assets = _store(workspace_id).list("assets", limit=1001)
-    if not existing and len(existing_assets) >= 1000:
-        raise ValueError("extension_asset_quota_exceeded")
-    for item in existing_assets:
-        if item.get("asset_id") != asset_id and item.get("host") == host and int(item.get("port") or 22) == port:
-            raise ValueError("host and port already exist")
-    credential_ref = str(existing.get("credential_ref") or payload.get("credential_ref") or "")
-    key_ref = str(existing.get("key_ref") or payload.get("key_ref") or "")
-    key_passphrase_ref = str(existing.get("key_passphrase_ref") or payload.get("key_passphrase_ref") or "")
-    auth_method = str(payload.get("auth_method") or existing.get("auth_method") or "password").strip().lower()
-    password = str(payload.get("password") or "")
-    private_key = str(payload.get("private_key") or "")
-    key_passphrase = str(payload.get("key_passphrase") or payload.get("passphrase") or "")
-    if password:
-        credential_ref = ExtensionSecretStore(EXTENSION_ID, workspace_id).set(f"asset_{asset_id}", password)
-    if private_key:
-        key_ref = ExtensionSecretStore(EXTENSION_ID, workspace_id).set(f"asset_{asset_id}_key", private_key)
-        auth_method = "private_key"
-    if key_passphrase:
-        key_passphrase_ref = ExtensionSecretStore(EXTENSION_ID, workspace_id).set(f"asset_{asset_id}_key_passphrase", key_passphrase)
-    if auth_method not in {"password", "private_key"}:
-        raise ValueError("invalid auth_method")
-    record = {
-        "asset_id": asset_id,
-        "name": name,
-        "host": host,
-        "port": port,
-        "username": username,
-        "auth_method": auth_method,
-        "vendor": str(payload.get("vendor") or "generic").strip().lower(),
-        "device_type": str(payload.get("device_type") or "switch").strip().lower(),
-        "region": str(payload.get("region") or "").strip(),
-        "tags": [str(item).strip() for item in (payload.get("tags") or []) if str(item).strip()],
-        "credential_ref": credential_ref,
-        "key_ref": key_ref,
-        "key_passphrase_ref": key_passphrase_ref,
-        "host_key_fingerprint": str(payload.get("host_key_fingerprint") or existing.get("host_key_fingerprint") or "").strip(),
-        "created_at": str(existing.get("created_at") or now_iso()),
-        "updated_at": now_iso(),
-    }
-    _store(workspace_id).save("assets", asset_id, record)
-    return _safe_asset(record)
-
-
-def delete_asset(workspace_id: str, asset_id: str) -> bool:
-    existing = get_asset(workspace_id, asset_id, include_secret=True)
-    if not existing:
-        return False
-    reference = str(existing.get("credential_ref") or "")
-    if reference:
-        ExtensionSecretStore.delete(reference)
-    key_reference = str(existing.get("key_ref") or "")
-    if key_reference:
-        ExtensionSecretStore.delete(key_reference)
-    passphrase_reference = str(existing.get("key_passphrase_ref") or "")
-    if passphrase_reference:
-        ExtensionSecretStore.delete(passphrase_reference)
-    return _store(workspace_id).delete("assets", asset_id)
-
-
 def _valid_host(host: str) -> bool:
     try:
         ipaddress.ip_address(host)
@@ -974,30 +953,6 @@ def _target_for(asset: dict[str, Any]) -> DeviceTarget:
         expected_fingerprint=str(asset.get("host_key_fingerprint") or ""),
         credential=credential,
     )
-
-
-def probe_asset(
-    workspace_id: str,
-    asset_id: str,
-    *,
-    commands: list[str] | None = None,
-    accept_host_key: bool = False,
-    read: bool = False,
-    timeout: int = 15,
-) -> dict[str, Any]:
-    asset = get_asset(workspace_id, asset_id, include_secret=True)
-    if not asset:
-        return {"ok": False, "status": "failed", "error": "asset_not_found"}
-    selected = commands_for(asset, commands) if read else []
-    result = probe_target(_target_for(asset), commands=selected, accept_host_key=accept_host_key, read=read, timeout=timeout)
-    fingerprint = str(result.get("fingerprint") or "")
-    if fingerprint and accept_host_key and result.get("status") == "succeeded" and not asset.get("host_key_fingerprint"):
-        asset["host_key_fingerprint"] = fingerprint
-        asset["updated_at"] = now_iso()
-        _store(workspace_id).save("assets", asset_id, asset)
-        result["host_key_saved"] = True
-    result["asset"] = _safe_asset(asset)
-    return result
 
 
 def collect_connection(asset: dict[str, Any], commands: list[str], *, timeout: int = 15) -> dict[str, str]:
@@ -1203,33 +1158,6 @@ class _DurableCancellation:
         return bool(job and job.cancel_requested)
 
 
-def start_inspection(
-    workspace_id: str,
-    asset_ids: list[str] | None = None,
-    commands: list[str] | None = None,
-    script_id: str = "",
-    *,
-    collector: Callable[[dict[str, Any], list[str]], dict[str, str]] | None = None,
-    background: bool = True,
-) -> dict[str, Any]:
-    """Synchronous-capable entrypoint for deterministic internal tests.
-
-    Production HTTP and LLM entrypoints use ``enqueue_inspection`` so execution
-    always runs through the durable jobs Worker.
-    """
-    task, assets, script = _new_inspection_task(workspace_id, asset_ids, commands, script_id)
-    _store(workspace_id).save("inspections", task["task_id"], task)
-    cancel = threading.Event()
-    with _TASK_LOCK:
-        _TASK_CANCEL[task["task_id"]] = cancel
-    args = (workspace_id, task["task_id"], assets, commands, collector or collect_connection, cancel, script)
-    if background:
-        threading.Thread(target=_execute_inspection, args=args, name=f"inspection-{task['task_id']}", daemon=True).start()
-    else:
-        _execute_inspection(*args)
-    return get_inspection(workspace_id, task["task_id"]) or task
-
-
 def _enqueue_prepared_inspection(workspace_id: str, task: dict[str, Any], *, created_by: str) -> dict[str, Any]:
     from jobs.manager import create_job
     job = create_job(
@@ -1358,7 +1286,7 @@ def _execute_inspection(
             }
     workers = min(5, max(1, len(targets)))
     raw_outputs: dict[str, dict[str, str]] = {}
-    with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="network-inspection") as pool:
+    with ContextThreadPoolExecutor(max_workers=workers, thread_name_prefix="network-inspection") as pool:
         futures = [pool.submit(run_one, target) for target in targets]
         for future in as_completed(futures):
             target_id, result = future.result()
@@ -1388,9 +1316,6 @@ def _execute_inspection(
         task.update({"status": "failed", "error": "inspection_evidence_persist_failed", "finished_at": now_iso(), "updated_at": now_iso()})
         store.save("inspections", task_id, task)
         raise
-    finally:
-        with _TASK_LOCK:
-            _TASK_CANCEL.pop(task_id, None)
 
 
 def _save_evidence_artifact(workspace_id: str, task: dict[str, Any], raw_outputs: dict[str, dict[str, str]]) -> str:
@@ -1558,25 +1483,6 @@ def list_findings(
     return [_finding_view(record) for record in filtered]
 
 
-def update_finding_state(workspace_id: str, finding_id: str, action: str, *, comment: str = "", actor: str = "user") -> dict[str, Any]:
-    transitions = {"acknowledge": "acknowledged", "resolve": "resolved", "suppress": "suppressed", "reopen": "open"}
-    target = transitions.get(str(action or "").strip().lower())
-    if not target:
-        raise ValueError("unsupported finding action")
-    store = _store(workspace_id)
-    finding = store.get("findings", finding_id)
-    if not finding:
-        raise ValueError("finding_not_found")
-    note = str(comment or "").strip()
-    if len(note) > 500:
-        raise ValueError("finding comment must be at most 500 characters")
-    history = list(finding.get("state_history") or [])
-    history.append({"from": str(finding.get("status") or "open"), "to": target, "action": action, "comment": note, "actor": actor, "at": now_iso()})
-    finding.update({"status": target, "state_history": history[-50:], "updated_at": now_iso()})
-    store.save("findings", finding_id, finding)
-    return _finding_view(finding)
-
-
 def list_inspections(workspace_id: str) -> list[dict[str, Any]]:
     return _store(workspace_id).list("inspections", limit=200)
 
@@ -1607,8 +1513,12 @@ def retry_inspection(workspace_id: str, task_id: str) -> dict[str, Any]:
     return retried
 
 
-def reconcile_interrupted_inspections() -> int:
-    """Mirror canonical reconciled job state back to inspection task state."""
+def reconcile_network_state() -> int:
+    """Explicit startup maintenance: migrate endpoints and reconcile durable jobs.
+
+    Reads never trigger migrations. Each principal/workspace is migrated under
+    the same transaction lock used by connection and Skill mutations.
+    """
     from backend.core.identity import get_user
     from jobs.store import get_job
     from storage.principal import known_storage_principals, storage_principal
@@ -1620,6 +1530,7 @@ def reconcile_interrupted_inspections() -> int:
         scoped_workspaces = list(identity.get("workspace_ids") or []) if isinstance(identity, dict) else workspace_ids
         with storage_principal(principal):
             for workspace_id in sorted(set(scoped_workspaces)):
+                reconcile_duplicate_connections(workspace_id)
                 store = _store(workspace_id)
                 for task in store.list("inspections", limit=INTERNAL_SCAN_LIMIT):
                     if task.get("status") not in {"queued", "running"}:
@@ -1641,92 +1552,6 @@ def reconcile_interrupted_inspections() -> int:
     return reconciled
 
 
-def list_inspection_schedules(workspace_id: str) -> list[dict[str, Any]]:
-    return _store(workspace_id).list("schedules", limit=200)
-
-
-def save_inspection_schedule(workspace_id: str, payload: dict[str, Any]) -> dict[str, Any]:
-    raw_interval = payload.get("interval_minutes", 60)
-    try:
-        interval_minutes = int(raw_interval)
-    except (TypeError, ValueError):
-        raise ValueError("interval_minutes must be an integer")
-    if not 5 <= interval_minutes <= 10080:
-        raise ValueError("interval_minutes must be between 5 and 10080")
-    asset_ids = payload.get("asset_ids") or []
-    if not isinstance(asset_ids, list) or not all(isinstance(item, str) for item in asset_ids):
-        raise ValueError("asset_ids must be an array")
-    # Validate selection and script before a schedule can be persisted.
-    assets = _inspection_assets(workspace_id, asset_ids)
-    script = _resolve_script(workspace_id, str(payload.get("script_id") or ""))
-    if not script:
-        raise ValueError("inspection_script_required")
-    for asset in assets: commands_for(asset, None, script)
-    schedule_id = str(payload.get("schedule_id") or _id("schedule"))
-    store = _store(workspace_id)
-    existing = store.get("schedules", schedule_id) or {}
-    if not existing and len(store.list("schedules", limit=MAX_INSPECTION_SCHEDULES + 1)) >= MAX_INSPECTION_SCHEDULES:
-        raise ValueError("inspection_schedule_limit_reached")
-    now = time.time()
-    record = {
-        "schedule_id": schedule_id,
-        "name": str(payload.get("name") or script.get("name") or "计划巡检").strip()[:120] or "计划巡检",
-        "asset_ids": [item["asset_id"] for item in assets],
-        "script_id": script["script_id"],
-        "script_name": script.get("name", ""),
-        "interval_minutes": interval_minutes,
-        "enabled": bool(payload.get("enabled", True)),
-        "next_run_at_epoch": float(existing.get("next_run_at_epoch") or (now + interval_minutes * 60)),
-        "last_task_id": str(existing.get("last_task_id") or ""),
-        "last_error": str(existing.get("last_error") or ""),
-        "created_at": existing.get("created_at") or now_iso(),
-        "updated_at": now_iso(),
-    }
-    store.save("schedules", schedule_id, record)
-    return record
-
-
-def delete_inspection_schedule(workspace_id: str, schedule_id: str) -> bool:
-    return _store(workspace_id).delete("schedules", schedule_id)
-
-
-def run_due_inspection_schedules(now_epoch: float | None = None) -> dict[str, int]:
-    """Tick schedules from the existing durable Worker; never execute SSH inline."""
-    from backend.core.identity import get_user
-    from storage.locking import FileLock
-    from storage.principal import known_storage_principals, storage_principal
-    from storage.workspace_store import list_workspace_ids
-    now_epoch = float(now_epoch if now_epoch is not None else time.time())
-    queued = failed = 0
-    all_workspace_ids = list_workspace_ids(include_system=False) or ["default"]
-    for principal in known_storage_principals() or [""]:
-        identity = get_user(principal)
-        workspace_ids = list(identity.get("workspace_ids") or []) if isinstance(identity, dict) else all_workspace_ids
-        with storage_principal(principal):
-            for workspace_id in sorted(set(workspace_ids)):
-                store = _store(workspace_id)
-                for listed in store.list("schedules", limit=INTERNAL_SCAN_LIMIT):
-                    schedule_id = str(listed.get("schedule_id") or "")
-                    if not schedule_id:
-                        continue
-                    try:
-                        with FileLock(store.root() / "schedules" / f"{schedule_id}.tick.lock", timeout=0):
-                            schedule = store.get("schedules", schedule_id) or {}
-                            if not schedule.get("enabled") or float(schedule.get("next_run_at_epoch") or 0) > now_epoch:
-                                continue
-                            try:
-                                task = enqueue_inspection(workspace_id, list(schedule.get("asset_ids") or []), script_id=str(schedule.get("script_id") or ""), created_by="schedule")
-                                schedule.update({"last_task_id": task["task_id"], "last_error": "", "next_run_at_epoch": now_epoch + int(schedule["interval_minutes"]) * 60, "updated_at": now_iso()})
-                                queued += 1
-                            except Exception as exc:
-                                schedule.update({"last_error": str(exc)[:240], "next_run_at_epoch": now_epoch + min(300, int(schedule.get("interval_minutes") or 5) * 60), "updated_at": now_iso()})
-                                failed += 1
-                            store.save("schedules", schedule_id, schedule)
-                    except TimeoutError:
-                        continue
-    return {"queued": queued, "failed": failed}
-
-
 def cancel_inspection(workspace_id: str, task_id: str) -> bool:
     task = get_inspection(workspace_id, task_id)
     if not task or task.get("status") not in {"queued", "running"}:
@@ -1744,46 +1569,12 @@ def cancel_inspection(workspace_id: str, task_id: str) -> bool:
             task.update({"status": "cancelled", "finished_at": now_iso()})
         _store(workspace_id).save("inspections", task_id, task)
         return True
-    with _TASK_LOCK:
-        event = _TASK_CANCEL.get(task_id)
-    if event:
-        event.set()
+    # Historical tasks without a durable job have no live worker to cancel.
+    task.update({"status": "cancelled", "finished_at": now_iso()})
     task["cancel_requested"] = True
     task["updated_at"] = now_iso()
     _store(workspace_id).save("inspections", task_id, task)
     return True
-
-
-def create_baseline(workspace_id: str, task_id: str, *, confirm: bool = False) -> dict[str, Any]:
-    task = get_inspection(workspace_id, task_id)
-    if not task or task.get("status") not in {"succeeded", "partial"}:
-        raise ValueError("completed inspection task is required")
-    baseline_id = _id("baseline")
-    baseline = {
-        "baseline_id": baseline_id, "task_id": task_id, "confirmed": bool(confirm),
-        "current": False, "artifact_id": task.get("artifact_id", ""),
-        "devices": {asset_id: {"status": result.get("status"), "output_hash": result.get("output_hash", "")} for asset_id, result in task.get("results", {}).items()},
-        "created_at": now_iso(), "updated_at": now_iso(),
-    }
-    _store(workspace_id).save("baselines", baseline_id, baseline)
-    if confirm:
-        return confirm_baseline(workspace_id, baseline_id)
-    return baseline
-
-
-def confirm_baseline(workspace_id: str, baseline_id: str) -> dict[str, Any]:
-    store = _store(workspace_id)
-    target = store.get("baselines", baseline_id)
-    if not target:
-        raise ValueError("baseline not found")
-    for item in store.list("baselines", limit=1000):
-        if item.get("current"):
-            item["current"] = False
-            item["updated_at"] = now_iso()
-            store.save("baselines", item["baseline_id"], item)
-    target.update({"confirmed": True, "current": True, "confirmed_at": now_iso(), "updated_at": now_iso()})
-    store.save("baselines", baseline_id, target)
-    return target
 
 
 def list_baselines(workspace_id: str) -> list[dict[str, Any]]:
@@ -1822,43 +1613,4 @@ def inspection_evidence_summary(workspace_id: str, task_id: str) -> dict[str, An
         "artifact_id": task.get("artifact_id", ""),
         "artifact_sensitivity": "secret",
         "devices": devices,
-    }
-
-
-def diff_against_current(workspace_id: str, task_id: str) -> dict[str, Any]:
-    current = next((item for item in list_baselines(workspace_id) if item.get("current") and item.get("confirmed")), None)
-    task = get_inspection(workspace_id, task_id)
-    if not current or not task:
-        raise ValueError("current baseline and inspection task are required")
-    changes = []
-    all_ids = sorted(set(current.get("devices", {})) | set(task.get("results", {})))
-    for asset_id in all_ids:
-        before = current.get("devices", {}).get(asset_id)
-        result = task.get("results", {}).get(asset_id)
-        after = {"status": result.get("status"), "output_hash": result.get("output_hash", "")} if result else None
-        if before != after:
-            changes.append({"asset_id": asset_id, "before": before, "after": after})
-    return {"ok": True, "baseline_id": current["baseline_id"], "task_id": task_id, "changed": bool(changes), "changes": changes}
-
-
-def overview(workspace_id: str) -> dict[str, Any]:
-    assets = list_assets(workspace_id)
-    inspections = list_inspections(workspace_id)
-    baselines = list_baselines(workspace_id)
-    findings = list_findings(workspace_id)
-    active_findings = [item for item in findings if item.get("status") in {"open", "acknowledged"}]
-    by_severity = {severity: sum(1 for item in active_findings if item.get("severity") == severity) for severity in ("critical", "high", "medium", "low")}
-    latest = inspections[0] if inspections else None
-    return {
-        "ok": True, "assets": len(assets), "inspections": len(inspections),
-        "current_baseline": next((item for item in baselines if item.get("current")), None),
-        "latest_inspection": latest,
-        "health": {
-            "registered_assets": len(assets),
-            "assets_with_credentials": sum(1 for item in assets if item.get("credential_configured")),
-            "active_findings": len(active_findings),
-            "findings_by_severity": by_severity,
-            "latest_inspection_status": str((latest or {}).get("status") or "not_started"),
-            "latest_inspection_at": str((latest or {}).get("finished_at") or (latest or {}).get("created_at") or ""),
-        },
     }

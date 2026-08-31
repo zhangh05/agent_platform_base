@@ -5,7 +5,7 @@ import sys
 
 import pytest
 
-from agent.llm.router import resolve_model_route, resolve_model_candidates
+from agent.llm.router import resolve_model_candidates
 from backend.core.identity import list_users, upsert_user, verify_user
 from core.tools.mcp_client import McpProtocolError, McpServerConfig, StdioMcpClient
 from evaluation.runner import GoldenCase, evaluate_case
@@ -78,7 +78,7 @@ def test_identity_uses_hashed_password_and_role(monkeypatch, tmp_path):
 def test_model_route_preserves_active_provider_without_policy(monkeypatch):
     monkeypatch.delenv("LZCORE_MODEL_ROUTE_ASSISTANT_CHAT", raising=False)
     active = {"provider": "mock", "model": "mock-safe"}
-    routed = resolve_model_route("assistant_chat", active)
+    routed = resolve_model_candidates("assistant_chat", active)[0]
     assert routed["provider"] == "mock"
     assert routed["routing"]["selected_by"] == "active_provider"
 

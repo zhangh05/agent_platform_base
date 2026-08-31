@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import concurrent.futures
+from storage.principal import ContextThreadPoolExecutor
 import json
 import logging
 import time
@@ -23,10 +24,9 @@ from agent.runtime.turn_persistence import persist_run_record
 from agent.runtime.stream_emitter import build_trace_id
 from agent.runtime.utils import now_iso
 from agent.approval import get_approval_store
-from core.runtime_engine.runtime_contracts import ExecutionContract
 
 _LOG = logging.getLogger(__name__)
-_MEMORY_WRITE_EXECUTOR = concurrent.futures.ThreadPoolExecutor(
+_MEMORY_WRITE_EXECUTOR = ContextThreadPoolExecutor(
     max_workers=1,
     thread_name_prefix="ssot-memory-write",
 )
@@ -170,7 +170,6 @@ def _mark_task_state_persistence_failure(result: AgentResult, code: str) -> None
         "本轮执行结果未能写入可信任务状态，系统已将其标记为未完成。"
         "为避免重复或遗漏操作，请先恢复任务状态；不要据此回复继续执行副作用操作。"
     )
-
 
 
 def _mark_run_record_persistence_failure(result: AgentResult, code: str) -> None:
@@ -1168,8 +1167,6 @@ def _build_runtime_context_budget(registry: dict[str, dict[str, Any]]):
 def _tool_runtime_client():
     from core.tools.integration import get_default_tool_runtime_client
     return get_default_tool_runtime_client()
-
-
 
 
 def _invoke_llm_for_ssot_runtime(**kwargs):

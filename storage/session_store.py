@@ -8,8 +8,6 @@ for audit purposes.
 
 import json
 import logging
-import re
-import time
 import uuid
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -38,7 +36,6 @@ def _session_path(session_id: str, ws_id: str) -> Path:
     # matches SessionMessageStore (rejects reserved names, >64 chars, etc.).
     safe_id = validate_session_id(session_id)
     return _session_dir(ws_id) / f"{safe_id}.json"
-
 
 
 def _session_lock_path(session_id: str, ws_id: str) -> Path:
@@ -345,11 +342,6 @@ def update_session(
 def archive_session(session_id: str, ws_id: str = "default") -> Optional[Dict[str, Any]]:
     """Soft-archive a session (status → 'archived')."""
     return update_session(session_id, ws_id, status="archived")
-
-
-def soft_delete_session(session_id: str, ws_id: str = "default") -> Optional[Dict[str, Any]]:
-    """Soft-delete a session (status → 'deleted'). Run records are preserved."""
-    return update_session(session_id, ws_id, status="deleted")
 
 
 def delete_session_permanently(

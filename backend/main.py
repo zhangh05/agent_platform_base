@@ -340,8 +340,8 @@ def create_app():
                 "[job startup] reconcile failed: %s", exc, exc_info=True,
             )
         try:
-            from extensions.network_operations.service import reconcile_interrupted_inspections
-            reconciled_inspections = reconcile_interrupted_inspections()
+            from extensions.network_operations.service import reconcile_network_state
+            reconciled_inspections = reconcile_network_state()
             if reconciled_inspections:
                 import logging as _inspection_log
                 _inspection_log.getLogger(__name__).warning(

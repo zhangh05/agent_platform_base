@@ -10,12 +10,25 @@ from __future__ import annotations
 import contextvars
 import os
 from contextlib import contextmanager
+from concurrent.futures import ThreadPoolExecutor
 from functools import wraps
 from typing import Iterator
 
 _principal: contextvars.ContextVar[str] = contextvars.ContextVar(
     "lzcore_storage_principal", default=""
 )
+
+
+class ContextThreadPoolExecutor(ThreadPoolExecutor):
+    """Propagate invocation context on every submit, including map's tasks.
+
+    Each submission owns a fresh Context: concurrent calls cannot enter the
+    same Context or leak identity/cancellation state into a reused worker.
+    """
+
+    def submit(self, fn, /, *args, **kwargs):
+        context = contextvars.copy_context()
+        return super().submit(context.run, fn, *args, **kwargs)
 
 
 def current_storage_principal() -> str:

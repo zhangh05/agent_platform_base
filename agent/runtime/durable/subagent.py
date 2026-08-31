@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 from dataclasses import dataclass, field
-from typing import Optional, Literal
+from typing import Optional
 import re
 import threading
 import uuid, time as _time
@@ -782,7 +782,6 @@ def _get_manifest(tool_id: str):
     except Exception: return None
 
 
-
 def _run_ssot_runtime_with_timeout(
     run_fn, session, turn, allowed_tool_ids, *, timeout_seconds: int,
     cancel_event: threading.Event | None = None,
@@ -794,7 +793,8 @@ def _run_ssot_runtime_with_timeout(
     thread is abandoned best-effort.
     """
     import concurrent.futures
-    executor = concurrent.futures.ThreadPoolExecutor(max_workers=1, thread_name_prefix="subagent")
+    from storage.principal import ContextThreadPoolExecutor
+    executor = ContextThreadPoolExecutor(max_workers=1, thread_name_prefix="subagent")
     from storage.principal import bind_storage_principal
     future = executor.submit(
         bind_storage_principal(run_fn),

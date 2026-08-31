@@ -6,13 +6,13 @@ submissions are harmless because only one worker can win the durable claim.
 """
 from __future__ import annotations
 
-import concurrent.futures
+from storage.principal import ContextThreadPoolExecutor
 import logging
 import threading
 from core.runtime_engine.models import ApprovedContinuationRuntimeControl
 
 _LOG = logging.getLogger(__name__)
-_EXECUTOR = concurrent.futures.ThreadPoolExecutor(
+_EXECUTOR = ContextThreadPoolExecutor(
     max_workers=4,
     thread_name_prefix="approval-continuation",
 )

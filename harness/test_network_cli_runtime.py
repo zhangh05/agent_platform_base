@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import deque
+from threading import Event
 from types import SimpleNamespace
 
 from extensions.network_operations import service
@@ -407,7 +408,7 @@ def test_semantic_inspection_uses_live_runtime_and_preserves_partial_evidence(mo
     service._execute_inspection(
         "default", task["task_id"], targets, None,
         lambda *_args: (_ for _ in ()).throw(AssertionError("raw collector must not run")),
-        service.threading.Event(), script, ["resource_usage"],
+        Event(), script, ["resource_usage"],
     )
     finished = service.get_inspection("default", task["task_id"])
 

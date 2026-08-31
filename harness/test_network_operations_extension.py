@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import threading
 from types import SimpleNamespace
 
 import pytest
@@ -20,21 +21,41 @@ def _setup(monkeypatch, tmp_path):
     monkeypatch.setenv("LZCORE_MASTER_KEY", "test-extension-master-key")
 
 
-def test_assets_store_only_an_encrypted_credential_reference(monkeypatch, tmp_path):
+def _register_connection(workspace_id, payload):
+    device = service.save_device(workspace_id, payload)
+    return service.save_connection(workspace_id, {
+        **payload, "device_id": device["device_id"],
+        "passphrase": payload.get("key_passphrase", ""),
+    }, auto_test=False)
+
+
+def _run_inspection(monkeypatch, workspace_id, connection_ids=None, commands=None, script_id="", *, collector=None, background=False):
+    """Exercise the production durable queue; never start a test-only worker."""
+    assert not background
+    from jobs.runner import run_job
+    with monkeypatch.context() as scoped:
+        if collector is not None:
+            scoped.setattr(service, "collect_connection", collector)
+        task = service.enqueue_connection_inspection(workspace_id, connection_ids, commands, script_id)
+        run_job(workspace_id, task["job_id"])
+        return service.get_inspection(workspace_id, task["task_id"])
+
+
+def test_connections_store_only_an_encrypted_credential_reference(monkeypatch, tmp_path):
     _setup(monkeypatch, tmp_path)
-    asset = service.save_asset("default", {
+    asset = _register_connection("default", {
         "name": "核心交换机", "host": "10.0.0.1", "port": 22,
         "username": "netops", "password": "sensitive-password", "vendor": "h3c",
     })
     assert asset["credential_configured"] is True
-    assert "sensitive-password" not in json.dumps(service.list_assets("default"))
+    assert "sensitive-password" not in json.dumps(service.list_connections("default"))
     persisted = (tmp_path / "workspaces" / "_runtime" / "secrets" / "encrypted.json").read_text()
     assert "sensitive-password" not in persisted
 
 
-def test_private_key_assets_do_not_expose_plaintext(monkeypatch, tmp_path):
+def test_private_key_connections_do_not_expose_plaintext(monkeypatch, tmp_path):
     _setup(monkeypatch, tmp_path)
-    asset = service.save_asset("default", {
+    asset = _register_connection("default", {
         "name": "汇聚交换机", "host": "10.0.0.9", "port": 22,
         "username": "netops", "auth_method": "private_key",
         "private_key": "-----BEGIN OPENSSH PRIVATE KEY-----\nsecret-key\n-----END OPENSSH PRIVATE KEY-----",
@@ -42,7 +63,7 @@ def test_private_key_assets_do_not_expose_plaintext(monkeypatch, tmp_path):
     })
     assert asset["credential_configured"] is True
     assert asset["auth_method"] == "private_key"
-    visible = json.dumps(service.list_assets("default"), ensure_ascii=False)
+    visible = json.dumps(service.list_connections("default"), ensure_ascii=False)
     assert "secret-key" not in visible
     assert "secret-passphrase" not in visible
     persisted = (tmp_path / "workspaces" / "_runtime" / "secrets" / "encrypted.json").read_text()
@@ -148,6 +169,12 @@ def test_legacy_duplicate_connections_are_merged_without_dangling_skill_refs(mon
     }
     service._store("default").save("connections", duplicate["connection_id"], duplicate)
 
+    visible = service.list_connections("default")
+
+    assert len(visible) == 2  # GET must not rewrite records or Skill bindings.
+    assert service.get_connection("default", duplicate["connection_id"]) is not None
+    assert service.reconcile_duplicate_connections("default") == 1
+    assert service.reconcile_duplicate_connections("default") == 0
     visible = service.list_connections("default")
 
     assert [item["connection_id"] for item in visible] == [canonical["connection_id"]]
@@ -289,7 +316,7 @@ def test_workbench_selected_connection_boundary_is_enforced(monkeypatch, tmp_pat
 
 def test_probe_requires_and_then_saves_host_key(monkeypatch, tmp_path):
     _setup(monkeypatch, tmp_path)
-    asset = service.save_asset("default", {
+    asset = _register_connection("default", {
         "name": "核心交换机", "host": "10.0.0.1", "username": "netops",
         "password": "sensitive-password", "vendor": "h3c",
     })
@@ -300,42 +327,17 @@ def test_probe_requires_and_then_saves_host_key(monkeypatch, tmp_path):
         return {"ok": True, "status": "succeeded", "fingerprint": "SHA256:test", "stages": [{"name": "auth", "status": "ok"}]}
 
     monkeypatch.setattr(service, "probe_target", fake_probe)
-    blocked = service.probe_asset("default", asset["asset_id"])
+    blocked = service.test_connection("default", asset["connection_id"])
     assert blocked["requires_host_key_acceptance"] is True
-    accepted = service.probe_asset("default", asset["asset_id"], accept_host_key=True)
+    accepted = service.test_connection("default", asset["connection_id"], accept_host_key=True)
     assert accepted["ok"] is True
-    assert accepted["host_key_saved"] is True
-    assert service.get_asset("default", asset["asset_id"])["host_key_trusted"] is True
-
-
-def test_inspection_baseline_and_diff_close_the_read_only_loop(monkeypatch, tmp_path):
-    _setup(monkeypatch, tmp_path)
-    asset = service.save_asset("default", {
-        "name": "核心交换机", "host": "10.0.0.1", "username": "netops",
-        "password": "sensitive-password", "vendor": "h3c",
-    })
-    first = service.start_inspection(
-        "default", [asset["asset_id"]],
-        collector=lambda _asset, commands: {command: "healthy" for command in commands},
-        background=False,
-    )
-    assert first["status"] == "succeeded"
-    assert first["artifact_id"]
-    baseline = service.create_baseline("default", first["task_id"], confirm=True)
-    assert baseline["current"] is True
-    second = service.start_inspection(
-        "default", [asset["asset_id"]],
-        collector=lambda _asset, commands: {command: "changed" for command in commands},
-        background=False,
-    )
-    diff = service.diff_against_current("default", second["task_id"])
-    assert diff["changed"] is True
-    assert diff["changes"][0]["asset_id"] == asset["asset_id"]
+    assert accepted["connection"]["host_key_fingerprint"] == "SHA256:test"
+    assert service.get_connection("default", asset["connection_id"])["host_key_fingerprint"] == "SHA256:test"
 
 
 def test_health_findings_are_evidence_backed_and_keep_human_state(monkeypatch, tmp_path):
     _setup(monkeypatch, tmp_path)
-    asset = service.save_asset("default", {
+    asset = _register_connection("default", {
         "name": "核心交换机", "host": "10.0.0.1", "username": "netops",
         "password": "sensitive-password", "vendor": "h3c",
     })
@@ -347,8 +349,8 @@ def test_health_findings_are_evidence_backed_and_keep_human_state(monkeypatch, t
             "severity": "high", "kind": "output_matches", "pattern": "ALARM",
         }],
     })
-    task = service.start_inspection(
-        "default", [asset["asset_id"]], script_id=script["script_id"],
+    task = _run_inspection(monkeypatch,
+        "default", [asset["connection_id"]], script_id=script["script_id"],
         collector=lambda _asset, commands: {command: "ALARM: link down" for command in commands},
         background=False,
     )
@@ -360,10 +362,11 @@ def test_health_findings_are_evidence_backed_and_keep_human_state(monkeypatch, t
     assert finding["last_seen_task_id"] == task["task_id"]
     assert "ALARM" not in json.dumps(finding)
 
-    acknowledged = service.update_finding_state("default", finding["finding_id"], "acknowledge")
-    assert acknowledged["status"] == "acknowledged"
-    repeat = service.start_inspection(
-        "default", [asset["asset_id"]], script_id=script["script_id"],
+    # Retain human state from historical records without a retired write API.
+    finding["status"] = "acknowledged"
+    service._store("default").save("findings", finding["finding_id"], finding)
+    repeat = _run_inspection(monkeypatch,
+        "default", [asset["connection_id"]], script_id=script["script_id"],
         collector=lambda _asset, commands: {command: "ALARM: link down" for command in commands},
         background=False,
     )
@@ -371,25 +374,26 @@ def test_health_findings_are_evidence_backed_and_keep_human_state(monkeypatch, t
     persisted = service.list_findings("default")[0]
     assert persisted["status"] == "acknowledged"
     assert persisted["occurrences"] == 2
-    assert service.overview("default")["health"]["active_findings"] == 1
+    assert len(service.list_findings("default")) == 1
 
     filtered = service.list_findings("default", severity="high")
     assert filtered[0]["finding_id"] == finding["finding_id"]
 
 
 def test_write_commands_are_rejected():
-    assert service.is_read_only_command("display version") is True
-    assert service.is_read_only_command("show interfaces status") is True
-    assert service.is_read_only_command("system-view") is False
-    assert service.is_read_only_command("reload") is False
-    assert service.is_read_only_command("display version; reboot") is False
-    assert service.is_read_only_command("display version && reboot", "h3c") is False
-    assert service.is_read_only_command("display $(reboot)", "h3c") is False
-    assert service.is_read_only_command("rm -rf /", "generic") is False
-    assert service.is_read_only_command("show version", "h3c") is False
-    assert service.is_read_only_command("display version", "cisco") is False
-    assert service.is_read_only_command("ip address", "generic") is True
-    assert service.is_read_only_command is device_is_read_only_command
+    assert device_is_read_only_command("display version") is True
+    assert device_is_read_only_command("show interfaces status") is True
+    assert device_is_read_only_command("system-view") is False
+    assert device_is_read_only_command("reload") is False
+    assert device_is_read_only_command("display version; reboot") is False
+    assert device_is_read_only_command("display version && reboot", "h3c") is False
+    assert device_is_read_only_command("display $(reboot)", "h3c") is False
+    assert device_is_read_only_command("rm -rf /", "generic") is False
+    assert device_is_read_only_command("show version", "h3c") is False
+    assert device_is_read_only_command("display version", "cisco") is False
+    assert device_is_read_only_command("ip address", "generic") is True
+    with pytest.raises(ValueError, match="commands_must_be_read_only"):
+        service.commands_for({"vendor": "h3c"}, ["reboot"])
 
 
 def test_read_only_command_boundary_requires_an_array_and_matches_vendor():
@@ -512,7 +516,6 @@ def test_network_extension_llm_descriptions_expose_actions_and_arguments():
     assert "task_id" in inspection
 
 
-
 def test_workbench_catalog_exposes_configured_resources_regardless_of_last_probe(monkeypatch, tmp_path):
     _setup(monkeypatch, tmp_path)
     device = service.save_device("default", {"name": "R1", "host": "10.0.0.1"})
@@ -551,7 +554,7 @@ def test_connection_inspection_keeps_connection_identity_end_to_end(monkeypatch,
     service._execute_inspection(
         "default", task["task_id"], targets, ["display version"],
         lambda _target, commands: {command: "ok" for command in commands},
-        service.threading.Event(), script,
+        threading.Event(), script,
     )
     evidence = service.inspection_evidence_summary("default", task["task_id"])
     assert evidence["devices"][0]["connection_id"] == connection["connection_id"]
@@ -582,7 +585,7 @@ def test_connection_inspection_isolates_expired_target_failure(monkeypatch, tmp_
 
     service._execute_inspection(
         "default", task["task_id"], targets, ["display version"],
-        collector, service.threading.Event(), script,
+        collector, threading.Event(), script,
     )
     completed = service.get_inspection("default", task["task_id"])
 
@@ -703,14 +706,14 @@ def test_inspection_scripts_are_validated_and_snapshotted(monkeypatch, tmp_path)
             raise AssertionError("invalid vendor declarations must fail closed")
     script = service.save_inspection_script("default", {"name": "核心检查", "description": "读取版本和接口", "vendors": ["h3c"], "commands": ["display version", "display interface brief"]})
     assert script["readonly"] is True
-    asset = service.save_asset("default", {"name": "Core-1", "host": "10.0.0.1", "username": "ops", "password": "secret", "vendor": "h3c"})
-    task = service.start_inspection("default", [asset["asset_id"]], script_id=script["script_id"], collector=lambda _asset, commands: {command: "ok" for command in commands}, background=False)
+    asset = _register_connection("default", {"name": "Core-1", "host": "10.0.0.1", "username": "ops", "password": "secret", "vendor": "h3c"})
+    task = _run_inspection(monkeypatch, "default", [asset["connection_id"]], script_id=script["script_id"], collector=lambda _asset, commands: {command: "ok" for command in commands}, background=False)
     assert task["status"] == "succeeded"
     assert task["script"]["script_id"] == script["script_id"]
-    assert task["results"][asset["asset_id"]]["commands"] == ["display version", "display interface brief"]
-    huawei = service.save_asset("default", {"name": "Agg-1", "host": "10.0.0.2", "username": "ops", "password": "secret", "vendor": "huawei"})
+    assert task["results"][asset["connection_id"]]["commands"] == ["display version", "display interface brief"]
+    huawei = _register_connection("default", {"name": "Agg-1", "host": "10.0.0.2", "username": "ops", "password": "secret", "vendor": "huawei"})
     try:
-        service.start_inspection("default", [huawei["asset_id"]], script_id=script["script_id"], background=False)
+        _run_inspection(monkeypatch, "default", [huawei["connection_id"]], script_id=script["script_id"], background=False)
     except ValueError as exc:
         assert str(exc) == "script_not_supported_for_vendor:huawei"
     else:
@@ -734,31 +737,23 @@ def test_inspection_script_http_routes(monkeypatch, tmp_path):
     assert created.get_json()["script"]["name"] == "接口核查"
 
 
-def test_inspection_evidence_summary_and_baseline_diff(monkeypatch, tmp_path):
+def test_connection_inspection_evidence_summary(monkeypatch, tmp_path):
     _setup(monkeypatch, tmp_path)
     script = service.save_inspection_script("default", {
         "name": "结果闭环检查", "vendors": ["h3c"], "commands": ["display version"],
     })
-    asset = service.save_asset("default", {
+    asset = _register_connection("default", {
         "name": "Core-1", "host": "10.0.0.9", "username": "ops", "password": "secret", "vendor": "h3c",
     })
-    first = service.start_inspection(
-        "default", [asset["asset_id"]], script_id=script["script_id"],
+    first = _run_inspection(monkeypatch,
+        "default", [asset["connection_id"]], script_id=script["script_id"],
         collector=lambda _asset, commands: {command: "first" for command in commands}, background=False,
     )
     evidence = service.inspection_evidence_summary("default", first["task_id"])
     assert evidence["artifact_sensitivity"] == "secret"
-    assert evidence["devices"][0]["asset_id"] == asset["asset_id"]
+    assert evidence["devices"][0]["connection_id"] == asset["connection_id"]
     assert evidence["devices"][0]["output_hash"]
     assert "raw_output" not in evidence["devices"][0]
-    service.create_baseline("default", first["task_id"], confirm=True)
-    second = service.start_inspection(
-        "default", [asset["asset_id"]], script_id=script["script_id"],
-        collector=lambda _asset, commands: {command: "changed" for command in commands}, background=False,
-    )
-    diff = service.diff_against_current("default", second["task_id"])
-    assert diff["changed"] is True
-    assert diff["changes"][0]["asset_id"] == asset["asset_id"]
 
 
 def test_user_inspection_uses_durable_job_worker_and_cancel(monkeypatch, tmp_path):
@@ -767,10 +762,10 @@ def test_user_inspection_uses_durable_job_worker_and_cancel(monkeypatch, tmp_pat
     script = service.save_inspection_script("default", {
         "name": "持久 Worker 巡检", "vendors": ["h3c"], "commands": ["display version"],
     })
-    asset = service.save_asset("default", {
+    asset = _register_connection("default", {
         "name": "Core-Worker", "host": "10.0.0.10", "username": "ops", "password": "secret", "vendor": "h3c",
     })
-    task = service.enqueue_inspection("default", [asset["asset_id"]], script_id=script["script_id"])
+    task = service.enqueue_connection_inspection("default", [asset["connection_id"]], script_id=script["script_id"])
     assert task["status"] == "queued"
     assert task["job_id"]
     from jobs.runner import run_job
@@ -779,41 +774,21 @@ def test_user_inspection_uses_durable_job_worker_and_cancel(monkeypatch, tmp_pat
     finished = service.get_inspection("default", task["task_id"])
     assert finished["status"] == "succeeded"
     assert get_job("default", task["job_id"]).status == "succeeded"
-    queued = service.enqueue_inspection("default", [asset["asset_id"]], script_id=script["script_id"])
+    queued = service.enqueue_connection_inspection("default", [asset["connection_id"]], script_id=script["script_id"])
     assert service.cancel_inspection("default", queued["task_id"]) is True
     assert service.get_inspection("default", queued["task_id"])["status"] == "cancelled"
     assert get_job("default", queued["job_id"]).status == "cancelled"
 
 
-def test_schedule_tick_creates_durable_inspection_job(monkeypatch, tmp_path):
-    _setup(monkeypatch, tmp_path)
-    script = service.save_inspection_script("default", {
-        "name": "计划巡检脚本", "vendors": ["h3c"], "commands": ["display version"],
-    })
-    asset = service.save_asset("default", {
-        "name": "Core-Schedule", "host": "10.0.0.11", "username": "ops", "password": "secret", "vendor": "h3c",
-    })
-    schedule = service.save_inspection_schedule("default", {
-        "name": "每五分钟巡检", "interval_minutes": 5, "asset_ids": [asset["asset_id"]], "script_id": script["script_id"],
-    })
-    result = service.run_due_inspection_schedules(float(schedule["next_run_at_epoch"]) + 1)
-    assert result["queued"] == 1
-    stored = next(item for item in service.list_inspection_schedules("default") if item["schedule_id"] == schedule["schedule_id"])
-    assert stored["last_task_id"]
-    scheduled_task = service.get_inspection("default", stored["last_task_id"])
-    assert scheduled_task["status"] == "queued"
-    assert scheduled_task["job_id"]
-
-
 def test_inspection_selection_fails_closed(monkeypatch, tmp_path):
     _setup(monkeypatch, tmp_path)
-    asset = service.save_asset("default", {
+    asset = _register_connection("default", {
         "name": "Core-Selection", "host": "10.0.0.20", "username": "ops", "password": "secret", "vendor": "h3c",
     })
-    invalid = (None, [], [""], [asset["asset_id"], asset["asset_id"]], [asset["asset_id"], "asset_missing"])
+    invalid = (None, [], [""], [asset["connection_id"], asset["connection_id"]], [asset["connection_id"], "asset_missing"])
     for asset_ids in invalid:
         try:
-            service.enqueue_inspection("default", asset_ids)  # type: ignore[arg-type]
+            service.enqueue_connection_inspection("default", asset_ids)  # type: ignore[arg-type]
         except ValueError:
             pass
         else:
@@ -822,33 +797,33 @@ def test_inspection_selection_fails_closed(monkeypatch, tmp_path):
 
 def test_durable_default_and_inline_command_plans_are_replayable(monkeypatch, tmp_path):
     _setup(monkeypatch, tmp_path)
-    asset = service.save_asset("default", {
+    asset = _register_connection("default", {
         "name": "Core-Plan", "host": "10.0.0.21", "username": "ops", "password": "secret", "vendor": "h3c",
     })
     monkeypatch.setattr(service, "collect_connection", lambda _asset, commands: {command: "ok" for command in commands})
     from jobs.runner import run_job
 
-    default_task = service.enqueue_inspection("default", [asset["asset_id"]])
+    default_task = service.enqueue_connection_inspection("default", [asset["connection_id"]])
     assert default_task["command_plan"] == {"mode": "vendor_defaults"}
     run_job("default", default_task["job_id"])
     finished_default = service.get_inspection("default", default_task["task_id"])
     assert finished_default["status"] == "succeeded"
-    assert finished_default["results"][asset["asset_id"]]["commands"] == service.DEFAULT_COMMANDS["h3c"]
+    assert finished_default["results"][asset["connection_id"]]["commands"] == service.DEFAULT_COMMANDS["h3c"]
 
-    inline_task = service.enqueue_inspection("default", [asset["asset_id"]], commands=["display version"])
+    inline_task = service.enqueue_connection_inspection("default", [asset["connection_id"]], commands=["display version"])
     assert inline_task["command_plan"] == {"mode": "inline_commands", "commands": ["display version"]}
     run_job("default", inline_task["job_id"])
     finished_inline = service.get_inspection("default", inline_task["task_id"])
-    assert finished_inline["results"][asset["asset_id"]]["commands"] == ["display version"]
+    assert finished_inline["results"][asset["connection_id"]]["commands"] == ["display version"]
 
 
 def test_all_device_failures_fail_both_inspection_and_job(monkeypatch, tmp_path):
     _setup(monkeypatch, tmp_path)
-    asset = service.save_asset("default", {
+    asset = _register_connection("default", {
         "name": "Core-Fail", "host": "10.0.0.22", "username": "ops", "password": "secret", "vendor": "h3c",
     })
     monkeypatch.setattr(service, "collect_connection", lambda _asset, _commands: (_ for _ in ()).throw(RuntimeError("auth failed")))
-    task = service.enqueue_inspection("default", [asset["asset_id"]])
+    task = service.enqueue_connection_inspection("default", [asset["connection_id"]])
     from jobs.runner import run_job
     from jobs.store import get_job
     run_job("default", task["job_id"])
@@ -858,11 +833,11 @@ def test_all_device_failures_fail_both_inspection_and_job(monkeypatch, tmp_path)
 
 def test_inline_inspection_retry_preserves_immutable_command_plan(monkeypatch, tmp_path):
     _setup(monkeypatch, tmp_path)
-    asset = service.save_asset("default", {
+    asset = _register_connection("default", {
         "name": "Core-Retry", "host": "10.0.0.23", "username": "ops", "password": "secret", "vendor": "h3c",
     })
-    failed = service.start_inspection(
-        "default", [asset["asset_id"]], commands=["display version"],
+    failed = _run_inspection(monkeypatch,
+        "default", [asset["connection_id"]], commands=["display version"],
         collector=lambda _asset, _commands: (_ for _ in ()).throw(RuntimeError("temporary failure")),
         background=False,
     )
@@ -874,14 +849,14 @@ def test_inline_inspection_retry_preserves_immutable_command_plan(monkeypatch, t
 
 def test_script_inspection_retry_uses_original_snapshot_after_script_edit(monkeypatch, tmp_path):
     _setup(monkeypatch, tmp_path)
-    asset = service.save_asset("default", {
+    asset = _register_connection("default", {
         "name": "Core-Snapshot", "host": "10.0.0.25", "username": "ops", "password": "secret", "vendor": "h3c",
     })
     script = service.save_inspection_script("default", {
         "name": "快照脚本", "vendors": ["h3c"], "commands": ["display version"],
     })
-    failed = service.start_inspection(
-        "default", [asset["asset_id"]], script_id=script["script_id"],
+    failed = _run_inspection(monkeypatch,
+        "default", [asset["connection_id"]], script_id=script["script_id"],
         collector=lambda _asset, _commands: (_ for _ in ()).throw(RuntimeError("temporary failure")),
         background=False,
     )
@@ -979,18 +954,14 @@ def test_inspection_analysis_projection_preserves_every_device(monkeypatch):
 
 def test_evidence_failure_transitions_task_to_terminal_failure(monkeypatch, tmp_path):
     _setup(monkeypatch, tmp_path)
-    asset = service.save_asset("default", {
+    asset = _register_connection("default", {
         "name": "Core-Evidence", "host": "10.0.0.24", "username": "ops", "password": "secret", "vendor": "h3c",
     })
     monkeypatch.setattr(service, "_save_evidence_artifact", lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("disk full")))
-    try:
-        service.start_inspection(
-            "default", [asset["asset_id"]], collector=lambda _asset, commands: {command: "ok" for command in commands}, background=False,
-        )
-    except RuntimeError as exc:
-        assert str(exc) == "disk full"
-    else:
-        raise AssertionError("evidence persistence errors must reach the job runner")
-    failed = service.list_inspections("default")[0]
+    failed = _run_inspection(monkeypatch,
+        "default", [asset["connection_id"]], collector=lambda _asset, commands: {command: "ok" for command in commands}, background=False,
+    )
+    from jobs.store import get_job
+    assert get_job("default", failed["job_id"]).status == "failed"
     assert failed["status"] == "failed"
     assert failed["error"] == "inspection_evidence_persist_failed"

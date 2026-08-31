@@ -580,15 +580,6 @@ def _handle_pdf_extract(inv: ToolInvocation) -> dict:
     return handle_pdf_extract_text(inv)
 
 
-def _weather_merged(inv: ToolInvocation) -> dict:
-    result = _handle_web(inv)
-    return {
-        "ok": bool(result.get("ok", True)),
-        "status": result.get("status", "ok" if result.get("ok", True) else "failed"),
-        "output": result,
-    }
-
-
 def _entry(
     tool_id: str,
     handler: Callable[[ToolInvocation], dict],
