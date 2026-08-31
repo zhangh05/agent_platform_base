@@ -54,7 +54,6 @@ const GROUP_META: Omit<NavGroup, "items">[] = [
 const GROUP_BY_PATH: Record<string, NavGroup["id"]> = {
   "/workbench": "workbench",
   "/runs": "tasks",
-  "/audit": "tasks",
   "/data": "materials",
   "/knowledge": "materials",
   "/memory": "materials",

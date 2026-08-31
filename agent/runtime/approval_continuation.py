@@ -257,7 +257,11 @@ def finish_continuation(
             record["updated_at"] = _now_iso()
             atomic_write_json(path, record)
             delete_secret(str(record.get("payload_ref") or ""))
-        return dict(record)
+        result = dict(record)
+    if result.get("status") == "failed":
+        from agent.runtime.turn_persistence import project_approval_continuation_state
+        project_approval_continuation_state(workspace_id, result)
+    return result
 
 
 def mark_continuation_dispatching(workspace_id: str, continuation_id: str) -> dict[str, Any]:
@@ -403,7 +407,10 @@ def close_stalled_continuation(
         record["updated_at"] = _now_iso()
         atomic_write_json(path, record)
         delete_secret(str(record.get("payload_ref") or ""))
-        return dict(record)
+        result = dict(record)
+    from agent.runtime.turn_persistence import project_approval_continuation_state
+    project_approval_continuation_state(workspace_id, result)
+    return result
 
 
 def _age_seconds(raw: Any, now_epoch: float) -> float:

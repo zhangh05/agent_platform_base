@@ -203,7 +203,6 @@ function AppRoutes({ canManageUsers }: { canManageUsers: boolean }) {
     "/diagnostics": <ErrorBoundary><Diagnostics /></ErrorBoundary>,
     "/settings": <ErrorBoundary><Settings /></ErrorBoundary>,
     "/runs": <ErrorBoundary><OperationsPage /></ErrorBoundary>,
-    "/audit": <Navigate to="/runs?view=audit" replace />,
     "/users": canManageUsers ? <ErrorBoundary><UserManagement /></ErrorBoundary> : <Navigate to="/workbench" replace />,
     "/organizations": <Navigate to={canManageUsers ? "/users" : "/workbench"} replace />,
   };

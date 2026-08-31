@@ -162,6 +162,14 @@ def register_approval_routes(app) -> None:
                     approval_id=approval_id,
                     allowed=allowed,
                 )
+                if record.get("status") in {"rejected", "expired"}:
+                    store.reject_pending_for_continuation(
+                        continuation_id,
+                        workspace_id=ws_id,
+                        exclude_approval_id=approval_id,
+                        resolver="continuation_closed",
+                        reason="approval_aggregate_rejected",
+                    )
                 dispatch_queued = (
                     record.get("status") == "ready"
                     and dispatch_ready_continuation(ws_id, continuation_id)

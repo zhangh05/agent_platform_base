@@ -44,7 +44,7 @@ function approvalError(error: unknown): string {
 /**
  * ApprovalBubble — small popup above the input bar for high-risk tool approval.
  *
- * A bounded poll discovers pending approvals without reserving a page-lifetime
+ * A continuous, non-overlapping poll discovers pending approvals without reserving a page-lifetime
  * SSE worker. The backend-provided expires_at value is authoritative; the
  * browser never turns a display timer into an approval decision.
  */
@@ -68,6 +68,8 @@ export const ApprovalBubble = memo(function ApprovalBubble({ onResolved, onSessi
   const mountedRef = useRef(true);
   const resolvingRef = useRef(false);
   const resolvedIdsRef = useRef<Map<string, number>>(new Map());
+  const pollFailureCountRef = useRef(0);
+  const pollErrorVisibleRef = useRef(false);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -85,6 +87,8 @@ export const ApprovalBubble = memo(function ApprovalBubble({ onResolved, onSessi
     setPending(null);
     setSecondsLeft(0);
     setErrorMessage("");
+    pollFailureCountRef.current = 0;
+    pollErrorVisibleRef.current = false;
   }, [currentSessionId, currentWorkspaceId]);
 
   // Approval discovery is intentionally HTTP polling. A persistent stream per
@@ -114,6 +118,11 @@ export const ApprovalBubble = memo(function ApprovalBubble({ onResolved, onSessi
         }
         const data = await approvalApi.pending(currentSessionId, currentWorkspaceId);
         if (cancelled) return;
+        pollFailureCountRef.current = 0;
+        if (pollErrorVisibleRef.current) {
+          pollErrorVisibleRef.current = false;
+          setErrorMessage("");
+        }
         if (data.ok) onSessionUpdateRef.current?.({
           workspaceId: currentWorkspaceId, sessionId: currentSessionId,
           pendingCount: data.pending?.length || 0, continuations: data.continuations || [],
@@ -142,7 +151,15 @@ export const ApprovalBubble = memo(function ApprovalBubble({ onResolved, onSessi
         const status = typeof error === "object" && error !== null && "status" in error
           ? Number((error as { status?: number }).status || 0)
           : 0;
-        if (status === 401) stopPoll();
+        pollFailureCountRef.current += 1;
+        if (status === 401) {
+          stopPoll();
+          pollErrorVisibleRef.current = true;
+          setErrorMessage("登录已失效，审批状态监听已停止。请重新登录。");
+        } else if (pollFailureCountRef.current >= 2) {
+          pollErrorVisibleRef.current = true;
+          setErrorMessage("审批状态同步失败，正在自动重连；请勿重复提交或批准操作。");
+        }
       }
       finally { pollInFlight = false; }
     };
@@ -181,6 +198,7 @@ export const ApprovalBubble = memo(function ApprovalBubble({ onResolved, onSessi
     if (!p || p.session_id !== currentSessionId || resolvingRef.current) return;
     resolvingRef.current = true;
     setResolving(true);
+    pollErrorVisibleRef.current = false;
     setErrorMessage("");
     try {
       const res = await approvalApi.resolve(p.approval_id, {
@@ -275,7 +293,6 @@ export const ApprovalBubble = memo(function ApprovalBubble({ onResolved, onSessi
             onClick={() => resolveApproval("approve")}
             disabled={resolving}
             type="button"
-            autoFocus
           >
             <IconCheck size={11} /> {resolving ? "提交中…" : "允许"}
           </button>

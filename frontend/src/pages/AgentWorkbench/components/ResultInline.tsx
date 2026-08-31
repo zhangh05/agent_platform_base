@@ -200,7 +200,7 @@ export const ResultInline = memo(function ResultInline({
             {unknownOutcome?.call_id && <span>调用：{unknownOutcome.call_id}</span>}
             {unknownOutcome?.error_code && <span>代码：{unknownOutcome.error_code}</span>}
           </div>
-          <a className="unknown-outcome-link" href="/runs?view=audit">查看任务审计</a>
+          <a className="unknown-outcome-link" href="/runs">查看任务记录</a>
         </section>
       )}
       <details

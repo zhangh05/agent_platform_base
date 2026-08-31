@@ -1010,3 +1010,40 @@ def test_pending_runtime_result_binds_continuation_to_persisted_parent(monkeypat
     parent = get_run(turn.turn_id, "default")
     assert parent["status"] == "pending"
     assert parent["metadata"]["approval_continuation"]["continuation_id"] == continuation_id
+
+
+def test_failed_continuation_projects_failure_to_parent_session(monkeypatch, tmp_path):
+    _storage(monkeypatch, tmp_path)
+    from agent.runtime.approval_continuation import claim_ready_continuation, create_continuation, finish_continuation, record_decision
+    from agent.runtime.turn_persistence import project_approval_pending_parent
+    from storage.message_store import SessionMessageStore
+    from storage.records import atomic_save_json
+    from storage.run_record_store import get_run
+
+    parent_run_id = "parent-resume-failure"
+    atomic_save_json("default", ("runs", f"{parent_run_id}.json"), {
+        "run_id": parent_run_id, "session_id": "session-1", "status": "pending", "ok": True,
+    })
+    continuation_id = create_continuation(
+        workspace_id="default", session_id="session-1", parent_run_id=parent_run_id,
+        user_input="configure", tool_calls=[{"id": "call-1", "name": "test.tool", "arguments": {}}],
+        approval_ids=["apr-1"],
+    )
+    project_approval_pending_parent(
+        workspace_id="default", parent_run_id=parent_run_id, continuation_id=continuation_id,
+    )
+    record_decision(
+        workspace_id="default", continuation_id=continuation_id,
+        approval_id="apr-1", allowed=True,
+    )
+    claim_ready_continuation(workspace_id="default", continuation_id=continuation_id)
+    finish_continuation("default", continuation_id, error="worker_crashed")
+
+    parent = get_run(parent_run_id, "default")
+    assert parent["status"] == "error"
+    assert parent["metadata"]["approval_continuation"]["status"] == "failed"
+    assert parent["error"] == "approval_failed"
+    assert any(
+        message["run_id"] == parent_run_id and "避免重复执行配置" in message["content"]
+        for message in SessionMessageStore(session_id="session-1", ws_id="default").get_messages()
+    )

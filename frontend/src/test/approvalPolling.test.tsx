@@ -34,6 +34,18 @@ describe("approval transport lifecycle", () => {
     expect(screen.getByText("查看完整操作参数")).toBeInTheDocument();
   });
 
+  it("shows repeated polling failures and clears the warning after recovery", async () => {
+    const pending = vi.spyOn(approvalApi, "pending").mockRejectedValue({ status: 503, message: "unavailable" });
+    render(<ApprovalBubble />);
+    await act(async () => { await Promise.resolve(); });
+    await act(async () => { vi.advanceTimersByTime(5_000); await Promise.resolve(); });
+    expect(screen.getByRole("alert")).toHaveTextContent("审批状态同步失败");
+
+    pending.mockResolvedValue({ ok: true, count: 0, pending: [], continuations: [] });
+    await act(async () => { vi.advanceTimersByTime(5_000); await Promise.resolve(); });
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
   it("observes remote decisions and continuation snapshots after a refresh", async () => {
     const pending = vi.spyOn(approvalApi, "pending").mockResolvedValue(pendingApproval());
     const onSessionUpdate = vi.fn();
@@ -111,6 +123,7 @@ describe("approval transport lifecycle", () => {
     await act(async () => { await Promise.resolve(); });
     const allow = screen.getByRole("button", { name: /允许/ });
     const reject = screen.getByRole("button", { name: /拒绝/ });
+    expect(allow).not.toHaveFocus();
     fireEvent.click(allow);
 
     expect(allow).toBeDisabled();

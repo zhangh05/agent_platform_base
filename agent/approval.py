@@ -52,6 +52,13 @@ def _expire_bound_continuation(req: "ApprovalRequest") -> None:
             allowed=False,
             expired=True,
         )
+        get_approval_store(req.workspace_id).reject_pending_for_continuation(
+            continuation_id,
+            workspace_id=req.workspace_id,
+            exclude_approval_id=req.approval_id,
+            resolver="continuation_closed",
+            reason="approval_aggregate_expired",
+        )
     except (FileNotFoundError, RuntimeError, TypeError, ValueError):
         logger.warning(
             "approval: unable to expire continuation approval=%s continuation=%s",
@@ -546,6 +553,38 @@ class ApprovalStore:
             _expire_bound_continuation(req)
         _record_approval_metric(metric_status, pending_count)
         return req
+
+    def reject_pending_for_continuation(
+        self,
+        continuation_id: str,
+        *,
+        workspace_id: str,
+        exclude_approval_id: str = "",
+        resolver: str = "continuation_closed",
+        reason: str = "approval_aggregate_closed",
+    ) -> int:
+        """Close unresolved siblings after their aggregate can no longer run."""
+        if not continuation_id or not workspace_id:
+            return 0
+        with self._lock:
+            approval_ids = [
+                approval_id
+                for approval_id, request in self._pending.items()
+                if approval_id != exclude_approval_id
+                and request.workspace_id == workspace_id
+                and str((request.metadata or {}).get("continuation_id") or "") == continuation_id
+            ]
+        closed = 0
+        for approval_id in approval_ids:
+            if self.resolve(
+                approval_id,
+                False,
+                workspace_id,
+                resolver=resolver,
+                reason=reason,
+            ) is not None:
+                closed += 1
+        return closed
 
     def check(self, approval_id: str) -> Optional[bool]:
         """Non-blocking check: True=allowed, False=denied, None=pending."""

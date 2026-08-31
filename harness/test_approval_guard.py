@@ -123,6 +123,41 @@ class TestApprovalIdentityAuthorization:
         assert queued == ([cid] if decision == "approve" else [])
         assert client.get("/api/agent/approvals/pending?workspace_id=default&session_id=session-b").get_json()["continuations"] == []
 
+    def test_rejecting_one_batch_item_closes_all_pending_siblings(self, client, reset_approvals, monkeypatch):
+        from agent.approval import get_approval_store
+        from agent.runtime.approval_continuation import create_continuation, new_continuation_id
+
+        self._actor(monkeypatch, role="admin")
+        store = get_approval_store("default")
+        continuation_id = new_continuation_id()
+        requests = store.create_batch([
+            {
+                "session_id": "session-batch", "tool_id": f"test.tool.{index}",
+                "arguments": {}, "description": "test", "risk_level": "high",
+                "workspace_id": "default", "metadata": {"continuation_id": continuation_id},
+            }
+            for index in range(2)
+        ])
+        create_continuation(
+            workspace_id="default", session_id="session-batch", parent_run_id="run-batch",
+            user_input="test", tool_calls=[
+                {"id": f"call-{index}", "name": f"test.tool.{index}", "arguments": {}}
+                for index in range(2)
+            ], approval_ids=[request.approval_id for request in requests],
+            continuation_id=continuation_id,
+        )
+
+        response = client.post(
+            f"/api/agent/approvals/{requests[0].approval_id}/resolve",
+            json={"decision": "reject", "workspace_id": "default", "session_id": "session-batch"},
+        )
+        assert response.status_code == 200
+        assert store.get_pending("session-batch", "default") == []
+        history = store.get_history(session_id="session-batch", workspace_id="default")
+        assert len(history) == 2
+        assert {record["resolver"] for record in history} == {"alice", "continuation_closed"}
+        assert all(record["allowed"] is False for record in history)
+
     def test_resolve_requires_workspace_id(self, client, reset_approvals, monkeypatch):
         self._actor(monkeypatch, role="admin")
         from agent.approval import get_approval_store
