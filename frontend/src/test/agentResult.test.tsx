@@ -49,6 +49,17 @@ it("does not label an approval pause as task completion", () => {
   expect(screen.queryByText("本轮完成")).not.toBeInTheDocument();
 });
 
+it("does not present expired approval as a successful execution", () => {
+  render(<ResultInline result={{
+    ...sampleResult,
+    ok: false,
+    metadata: { approval_continuation: { status: "expired" } },
+  }} fallbackText="审批已过期" />);
+  expect(screen.getByText("审批已过期")).toBeInTheDocument();
+  expect(screen.getByText("待审批操作未执行")).toBeInTheDocument();
+  expect(screen.queryByText("1 项执行成功")).not.toBeInTheDocument();
+});
+
 function messagesFor(result: AgentResult): ChatMsg[] {
   const runId = result.turn_id || "run-test";
   return [
