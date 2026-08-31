@@ -28,6 +28,7 @@ from storage.time_utils import now_iso
 
 
 EXTENSION_ID = "network.operations"
+SKILL_BASE_TOOL_ID = "network.operations.device.manage"
 SKILL_TOOL_IDS = frozenset({
     "network.operations.devices_read",
     "network.operations.skills_read",
@@ -701,13 +702,21 @@ def delete_connection(workspace_id: str, connection_id: str) -> bool:
     return True
 
 
+def _with_skill_base_capability(record: dict[str, Any]) -> dict[str, Any]:
+    """Device reads are intrinsic to a Skill; never imply configuration authority."""
+    return {**record, "allowed_tool_ids": list(dict.fromkeys([
+        *(record.get("allowed_tool_ids") or []), SKILL_BASE_TOOL_ID,
+    ]))}
+
+
 def list_skills(workspace_id: str, *, enabled_only: bool = False) -> list[dict[str, Any]]:
     records = _store(workspace_id).list("skills", limit=500)
-    return [item for item in records if not enabled_only or bool(item.get("enabled", True))]
+    return [_with_skill_base_capability(item) for item in records if not enabled_only or bool(item.get("enabled", True))]
 
 
 def get_skill(workspace_id: str, skill_id: str) -> dict[str, Any] | None:
-    return _store(workspace_id).get("skills", skill_id)
+    record = _store(workspace_id).get("skills", skill_id)
+    return _with_skill_base_capability(record) if record else None
 
 
 def configuration_allowed(skill: dict[str, Any] | None, connection_id: str) -> bool:
@@ -745,13 +754,12 @@ def save_skill(workspace_id: str, payload: dict[str, Any]) -> dict[str, Any]:
         for item in raw_tool_ids
         if str(item).strip()
     ))
-    if not allowed_tool_ids or any(item not in SKILL_TOOL_IDS for item in allowed_tool_ids):
+    if any(item not in SKILL_TOOL_IDS for item in allowed_tool_ids):
         raise ValueError("skill contains unsupported tool")
+    allowed_tool_ids = _with_skill_base_capability({"allowed_tool_ids": allowed_tool_ids})["allowed_tool_ids"]
     capabilities = payload.get("capabilities", existing.get("capabilities", []))
     if not isinstance(capabilities, list) or any(item != "configuration_write" for item in capabilities):
         raise ValueError("skill contains unsupported capability")
-    if capabilities and "network.operations.device.manage" not in allowed_tool_ids:
-        raise ValueError("configuration_write requires device command capability")
     default_script_id = str(payload.get("default_script_id") or "").strip()
     if default_script_id:
         _resolve_script(workspace_id, default_script_id)

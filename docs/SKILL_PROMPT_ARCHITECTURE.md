@@ -40,7 +40,9 @@ SSH/Telnet 认证后共用 `InteractiveCLISession` 与执行结果契约。连�
 
 ### 可选配置写入能力
 
-Skill 的 `capabilities` 默认为空；只有显式勾选 `configuration_write` 且授权 `network.operations.device.manage` 才允许配置。旧 Skill 保持只读，未选择 Skill 不注入配置指引。创建、编辑、启停和复制配置均保留服务端校验，未知能力拒绝保存。
+实时设备只读操作是 Skill 的基础能力，不再单独勾选。服务端在保存、读取和列举 Skill 时统一补入 `network.operations.device.manage`，旧 Skill 无需重新保存即可使用；设备范围、连接范围和启用状态仍严格校验，可选工具不自动扩权。
+
+Skill 的 `capabilities` 默认为空；只有显式勾选 `configuration_write` 才允许配置。基础能力不会授予写入，旧 Skill 未授权配置的仍保持只读，未选择 Skill 不注入配置指引。创建、编辑、启停和复制配置均保留服务端校验，未知能力拒绝保存。
 
 配置使用同一工具的 `configure + connection_id + commands` 动作，不走只读巡检或预制业务脚本。该动作声明 `external_write`、高风险审批、不可自动重试；审批绑定实际参数。模型自主提供每条配置命令和视图切换。SSH/Telnet 的认证、端点锁、分页和输出完整性共用既有驱动；每批配置使用独立会话，结束即关闭，避免配置视图进入只读连接池。
 

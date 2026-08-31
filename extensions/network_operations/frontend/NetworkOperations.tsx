@@ -18,10 +18,10 @@ const base = "/extensions/network.operations";
 const toolOptions = [
   { id: "network.operations.devices_read", label: "设备与连接目录", description: "允许模型读取已登记设备、区域和连接状态" },
   { id: "network.operations.skills_read", label: "Skill 配置读取", description: "允许模型核对当前 Skill 的配置边界" },
-  { id: "network.operations.device.manage", label: "实时设备只读操作", description: "允许模型自主选择设备与只读命令；运行时按需连接、复用会话并处理分页" },
   { id: "network.operations.inspection", label: "多设备巡检", description: "允许模型发起、跟踪和重试持久巡检任务" },
 ] as const;
-const allowedToolIds = toolOptions.map((item) => item.id);
+const baseToolId = "network.operations.device.manage";
+const allowedToolIds = [baseToolId, ...toolOptions.map((item) => item.id)];
 const emptyDevice: DeviceForm = { name: "", host: "", vendor: "h3c", device_type: "switch", region_id: "" };
 const emptyConnection: ConnectionForm = { device_id: "", name: "", protocol: "ssh", port: "22", username: "", source_address: "", password: "", private_key: "", passphrase: "", auth_method: "password" };
 const emptySkill: SkillForm = { capabilities: [], name: "", description: "", instructions: "", enabled: true, device_ids: [], connection_ids: [], allowed_tool_ids: allowedToolIds };
@@ -185,7 +185,7 @@ export default function NetworkOperations() {
       ...skill,
       capabilities: skill.capabilities || [],
       instructions: skill.instructions || "",
-      allowed_tool_ids: skill.allowed_tool_ids?.length ? skill.allowed_tool_ids : allowedToolIds,
+      allowed_tool_ids: [...new Set([baseToolId, ...(skill.allowed_tool_ids || [])])],
     });
     setEditor("skill");
   };
@@ -248,9 +248,9 @@ export default function NetworkOperations() {
         <label className="full-field">说明<textarea value={skillForm.description} onChange={(event) => setSkillForm({ ...skillForm, description: event.target.value })} /></label>
         <fieldset><legend>多选设备</legend>{devices.map((device) => <label className="check" key={device.device_id}><input type="checkbox" checked={skillForm.device_ids.includes(device.device_id)} onChange={(event) => setSkillForm({ ...skillForm, device_ids: event.target.checked ? [...skillForm.device_ids, device.device_id] : skillForm.device_ids.filter((id) => id !== device.device_id), connection_ids: event.target.checked ? skillForm.connection_ids : skillForm.connection_ids.filter((id) => connections.find((connection) => connection.connection_id === id)?.device_id !== device.device_id) })} />{device.name} · {device.host}</label>)}</fieldset>
         <fieldset><legend>设备连接</legend>{connections.filter((connection) => connection.credential_configured && skillForm.device_ids.includes(connection.device_id)).map((connection) => <label className="check" key={connection.connection_id}><input type="checkbox" checked={skillForm.connection_ids.includes(connection.connection_id)} onChange={(event) => setSkillForm({ ...skillForm, connection_ids: event.target.checked ? [...skillForm.connection_ids, connection.connection_id] : skillForm.connection_ids.filter((id) => id !== connection.connection_id) })} />{byDevice.get(connection.device_id)?.name} · {connection.protocol.toUpperCase()}:{connection.port} · {connection.verified ? "最近连接成功" : "调用时主动连接"}</label>)}</fieldset>
-        <fieldset className="full-field"><legend>允许的能力</legend>{toolOptions.map((tool) => <label className="check capability-check" key={tool.id}><input type="checkbox" checked={skillForm.allowed_tool_ids.includes(tool.id)} onChange={(event) => setSkillForm({ ...skillForm, capabilities: !event.target.checked && tool.id === "network.operations.device.manage" ? [] : skillForm.capabilities, allowed_tool_ids: event.target.checked ? [...skillForm.allowed_tool_ids, tool.id] : skillForm.allowed_tool_ids.filter((id) => id !== tool.id) })} /><span><b>{tool.label}</b><small>{tool.description}</small></span></label>)}</fieldset>
+        <fieldset className="full-field"><legend>允许的能力</legend>{toolOptions.map((tool) => <label className="check capability-check" key={tool.id}><input type="checkbox" checked={skillForm.allowed_tool_ids.includes(tool.id)} onChange={(event) => setSkillForm({ ...skillForm, allowed_tool_ids: event.target.checked ? [...skillForm.allowed_tool_ids, tool.id] : skillForm.allowed_tool_ids.filter((id) => id !== tool.id) })} /><span><b>{tool.label}</b><small>{tool.description}</small></span></label>)}</fieldset>
         <fieldset className="full-field write-capability"><legend>配置权限</legend>
-          <label className="check capability-check"><input type="checkbox" checked={skillForm.capabilities.includes("configuration_write")} disabled={!skillForm.allowed_tool_ids.includes("network.operations.device.manage")} onChange={(event) => setSkillForm({ ...skillForm, capabilities: event.target.checked ? ["configuration_write"] : [] })} /><span><b>允许配置写入</b><small>允许 LLM 自主生成配置命令。仅限所选设备和连接，每批配置执行前需审批；失败不自动重试。</small></span></label>
+          <label className="check capability-check"><input type="checkbox" checked={skillForm.capabilities.includes("configuration_write")} onChange={(event) => setSkillForm({ ...skillForm, capabilities: event.target.checked ? ["configuration_write"] : [] })} /><span><b>允许配置写入</b><small>允许 LLM 自主生成配置命令。仅限所选设备和连接，每批配置执行前需审批；失败不自动重试。</small></span></label>
           <p>默认只读。开启不会立即连接或修改设备，也不会自动保存配置、确认交互或重启。</p>
         </fieldset>
         <label className="full-field">使用说明<textarea value={skillForm.instructions} onChange={(event) => setSkillForm({ ...skillForm, instructions: event.target.value })} placeholder="描述目标、证据要求和操作边界；模型自行决定工具顺序与并行关系。" /></label>

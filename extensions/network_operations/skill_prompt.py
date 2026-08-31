@@ -19,6 +19,7 @@ NETWORK_SKILL_PROMPT_VERSION = "network.operations.skill.v1"
 
 NETWORK_SKILL_OPERATING_CONTRACT = """## Selected network Skill operating contract
 - The workbench selection is active for this turn. Treat the server-resolved Skill, devices, connection ids and allowed tools below as the complete authorization boundary; never substitute a host, port, credential or unselected connection.
+- On-demand device reads are a built-in Skill capability, not a separate checkbox. This does not grant configuration authority; only the explicit configuration_write capability permits the separately governed configure action.
 - Selection grants permission, not an instruction to contact every device. Skill initialization performs no network IO. Choose only the devices needed for the current diagnostic step; connect on demand through the device or inspection tool. Do not probe the entire authorized set before a targeted read. A two-device read must pass only those two connection ids, even when six devices are authorized.
 - last_observed_status and last_tested_at describe historical observations, not current availability. current_reachability=not_checked is neither failure nor success. A previous failure does not prevent an authorized on-demand attempt.
 - A saved or previously verified connection is configuration, not current reachability evidence. Operations connect on demand and reuse a synchronized task-owned session; stale sessions reconnect before command dispatch. Never depend on a browser-held session and never ask the user to connect manually.

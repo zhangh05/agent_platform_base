@@ -31,7 +31,7 @@ test("device inventory is first; editors are on demand and search works", async 
   expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
 });
 
-test("old Skill is read only; opt-in persists and removing command capability revokes writes", async () => {
+test("device read checkbox and description are removed; independent write opt-in persists", async () => {
   render(<NetworkOperations />);
   await screen.findByTestId("device-card-d1");
   fireEvent.click(screen.getByRole("button", { name: /Skill 配置/ }));
@@ -39,17 +39,20 @@ test("old Skill is read only; opt-in persists and removing command capability re
   fireEvent.click(screen.getByRole("button", { name: "编辑 Skill" }));
   const dialog = screen.getByRole("dialog", { name: "Skill 编辑面板" });
   const write = within(dialog).getByRole("checkbox", { name: /允许配置写入/ });
+  expect(within(dialog).queryByText(/实时设备只读操作/)).not.toBeInTheDocument();
+  expect(within(dialog).queryByText(/允许模型自主选择设备与只读命令/)).not.toBeInTheDocument();
+  expect(write).toBeEnabled();
   expect(write).not.toBeChecked();
   fireEvent.click(write);
   expect(write).toBeChecked();
   fireEvent.click(within(dialog).getByRole("button", { name: "保存 Skill" }));
   await waitFor(() => expect(apiRequest).toHaveBeenCalledWith(expect.objectContaining({
-    method: "PUT", data: expect.objectContaining({ capabilities: ["configuration_write"] }),
+    method: "PUT", data: expect.objectContaining({ capabilities: ["configuration_write"], allowed_tool_ids: tools }),
   })));
   await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
   fireEvent.click(screen.getByRole("button", { name: "编辑 Skill" }));
   fireEvent.click(screen.getByRole("checkbox", { name: /允许配置写入/ }));
-  fireEvent.click(screen.getByRole("checkbox", { name: /实时设备只读操作/ }));
+  fireEvent.click(screen.getByRole("checkbox", { name: /允许配置写入/ }));
   expect(screen.getByRole("checkbox", { name: /允许配置写入/ })).not.toBeChecked();
-  expect(screen.getByRole("checkbox", { name: /允许配置写入/ })).toBeDisabled();
+  expect(screen.getByRole("checkbox", { name: /允许配置写入/ })).toBeEnabled();
 });

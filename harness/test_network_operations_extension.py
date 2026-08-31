@@ -667,8 +667,26 @@ def test_skill_tool_allowlist_is_validated_and_enforced(monkeypatch, tmp_path):
         "connection_ids": [connection["connection_id"]],
         "allowed_tool_ids": ["network.operations.inspection"],
     })
-    blocked = device_manage(SimpleNamespace(workspace_id="default", skill=skill["skill_id"], arguments={"action": "probe", "connection_id": connection["connection_id"]}))
+    inv = SimpleNamespace(workspace_id="default", skill=skill["skill_id"], arguments={"action": "probe", "connection_id": connection["connection_id"]})
+    assert device_manage(inv)["ok"]
+    blocked = devices_read(inv)
     assert blocked == {"ok": False, "error": "tool_not_allowed_by_skill"}
+
+
+def test_legacy_skill_read_capability_is_intrinsic_without_granting_writes(monkeypatch, tmp_path):
+    _setup(monkeypatch, tmp_path)
+    conn = _register_connection("default", {"name": "CE", "host": "127.0.0.1", "protocol": "telnet", "vendor": "h3c"})
+    skill = service.save_skill("default", {"name": "test", "device_ids": [conn["device_id"]], "connection_ids": [conn["connection_id"]], "allowed_tool_ids": []})
+    assert skill["allowed_tool_ids"] == [service.SKILL_BASE_TOOL_ID]
+    service._store("default").save("skills", skill["skill_id"], {**skill, "allowed_tool_ids": []})
+    for resolved in [service.get_skill("default", skill["skill_id"]), service.list_skills("default")[0], service.resolve_workbench_selection("default", {"skill_id": skill["skill_id"]})]:
+        assert resolved["allowed_tool_ids"] == [service.SKILL_BASE_TOOL_ID]
+        assert resolved["capabilities"] == []
+    inv = SimpleNamespace(workspace_id="default", skill=skill["skill_id"], arguments={"action": "configure", "connection_id": conn["connection_id"], "commands": ["system-view"]})
+    assert device_manage(inv)["error"] == "configuration_not_allowed_by_skill"
+    service.save_skill("default", {**skill, "enabled": False})
+    inv.arguments["action"] = "probe"
+    assert device_manage(inv)["error"] == "tool_not_allowed_by_skill"
 
 
 def test_switching_connection_auth_removes_obsolete_secret_refs(monkeypatch, tmp_path):
