@@ -23,6 +23,46 @@ def register(name="CE1", port=30001):
     return device, connection
 
 
+@pytest.mark.parametrize("mode", ["parallel_read", "inspection"])
+@pytest.mark.parametrize("one_offline", [False, True])
+def test_six_authorized_devices_only_two_explicit_targets_are_contacted(monkeypatch, mode, one_offline):
+    from types import SimpleNamespace
+    from extensions.network_operations.backend import device_manage, inspection
+    pairs = [register(f"CE{i}", 30001+i) for i in range(6)]
+    ids = [c["connection_id"] for _, c in pairs]
+    skill = service.save_skill("default", {"name": "six", "device_ids": [d["device_id"] for d, _ in pairs], "connection_ids": ids})
+    seen = []
+    def probe(target, **kwargs):
+        seen.append((target.port, kwargs.get("commands")))
+        if one_offline and target.port == 30002:
+            return {"ok": False, "error": "offline"}
+        return {"ok": True, "read_ok": True, "output": {"display cur": "sysname CE"},
+                "command_results": [{"command": "display cur", "complete": True}]}
+    monkeypatch.setattr(service, "probe_target", probe)
+    resolved = service.resolve_workbench_selection("default", {"skill_id": skill["skill_id"]})
+    assert seen == []
+    def invocation(arguments):
+        return SimpleNamespace(workspace_id="default", skill=skill["skill_id"],
+                               skill_connection_ids=tuple(resolved["connection_ids"]), arguments=arguments)
+    if mode == "parallel_read":
+        with ContextThreadPoolExecutor(max_workers=2) as pool:
+            results = list(pool.map(lambda cid: device_manage(invocation({"action": "read", "connection_id": cid, "commands": ["display cur"]})), ids[:2]))
+        assert results[0]["connection_ok"] is True
+        assert results[1]["connection_ok"] is (not one_offline)
+        if one_offline:
+            assert results[1]["decision_required"] is True
+    else:
+        task = inspection(invocation({"action": "run", "connection_ids": ids[:2], "commands": ["display cur"]}))["task"]
+        from jobs.runner import run_job
+        stored = service.get_inspection("default", task["task_id"])
+        run_job("default", stored["job_id"])
+        finished = service.get_inspection("default", task["task_id"])
+        assert set(finished["results"]) == set(ids[:2])
+        assert finished["status"] == ("partial" if one_offline else "succeeded")
+    assert sorted(seen) == [(30001, ["display cur"]), (30002, ["display cur"])]
+    assert all(service.get_connection("default", cid)["status"] == "untested" for cid in ids[2:])
+
+
 def test_pool_captures_each_submission_and_never_leaks_reused_worker_context():
     marker = ContextVar("invocation_marker", default="unset")
     def observe(_=None):
@@ -102,7 +142,7 @@ def test_probe_never_resurrects_or_overwrites_newer_state(monkeypatch, mutation)
                 assert current["last_error"] == "newest_failure"
 
 
-def test_parallel_activation_and_semantic_inspection_use_authenticated_storage(monkeypatch):
+def test_on_demand_semantic_inspection_uses_authenticated_storage(monkeypatch):
     seen = []
     def probe(target, **_kwargs):
         seen.append(current_storage_principal())
@@ -114,14 +154,15 @@ def test_parallel_activation_and_semantic_inspection_use_authenticated_storage(m
         ids = [connection["connection_id"] for _, connection in pairs]
         skill = service.save_skill("default", {"name": "pair", "device_ids": [d["device_id"] for d, _ in pairs], "connection_ids": ids})
         result = service.resolve_workbench_selection("default", {"skill_id": skill["skill_id"]})
-        assert set(result["ready_connection_ids"]) == set(ids)
+        assert set(result["connection_ids"]) == set(ids)
+        assert seen == []
         task = service.enqueue_connection_inspection("default", ids, facts=["device_version"])
         from jobs.runner import run_job
         run_job("default", task["job_id"])
         finished = service.get_inspection("default", task["task_id"])
         assert finished["status"] == "succeeded"
         assert finished["completed"] == 2
-    assert seen == ["alice"] * 4
+    assert seen == ["alice"] * 2
     with storage_principal("bob"):
         assert service.list_connections("default") == []
         assert service.list_inspections("default") == []
@@ -175,8 +216,8 @@ def test_explicit_migration_preserves_shared_credentials_and_updates_skill_refs(
         assert service.ExtensionSecretStore.get(original["password_ref"]) == "shared-secret"
         monkeypatch.setattr(service, "probe_target", lambda *_a, **_k: {"ok": True})
         result = service.resolve_workbench_selection("default", {"skill_id": skill["skill_id"]})
-        assert len(result["ready_connection_ids"]) == 1
-        assert service.delete_connection("default", result["ready_connection_ids"][0])
+        assert len(result["connection_ids"]) == 1
+        assert service.delete_connection("default", result["connection_ids"][0])
         assert not service.ExtensionSecretStore.get(original["password_ref"])
 
 

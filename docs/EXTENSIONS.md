@@ -35,8 +35,11 @@ extension must also own stable business objects and a closure path. For example,
 the bundled `network.operations` extension owns regions, devices, encrypted
 SSH/Telnet connection profiles and reusable Skills. The workbench receives only
 an extension-projected Skill catalog; every selection is resolved again on the
-server into authorized connection IDs plus a fresh, per-connection activation
-result before it reaches the model or a tool. Liveness is runtime evidence, not
+server into authorized connection IDs and explicitly historical observations,
+without opening any network connection. Selection defines the allowed scope,
+not a broadcast target. Device operations connect only their explicit connection
+ID; batch inspections connect only their explicit nonempty list. Empty explicit
+selections are rejected, never expanded to all devices. Liveness is runtime evidence, not
 a persistent authorization gate: one unavailable target must not invalidate the
 Skill or prevent the model from using the remaining targets.
 The selected Skill also narrows only the tools owned by that extension; other

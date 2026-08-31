@@ -36,8 +36,7 @@ def test_selected_network_skill_owns_a_domain_prompt_contract():
         "allowed_tool_ids": ["network.operations.device.manage"],
         "device_ids": ["device-1"],
         "connection_ids": ["connection-1"],
-        "ready_connection_ids": [],
-        "connection_activation": [{"connection_id": "connection-1", "ready": False}],
+        "connection_policy": "on_demand",
         "devices": [{"device_id": "device-1", "vendor": "H3C"}],
         "connections": [{"connection_id": "connection-1", "protocol": "telnet"}],
         "source": "server_validated_extension_context",
@@ -48,6 +47,9 @@ def test_selected_network_skill_owns_a_domain_prompt_contract():
     assert "network__operations__device__manage" in rendered
     assert "one device CLI command" in rendered
     assert "Pagination control" in rendered
+    assert "Selection grants permission" in rendered
+    assert "Skill initialization performs no network IO" in rendered
+    assert "connection_activation" not in rendered
     assert "connection-1" in rendered
     assert "采集版本与接口状态" in rendered
 
@@ -63,8 +65,7 @@ def test_selected_skill_prompt_does_not_silently_drop_large_resource_scope():
         "allowed_tool_ids": ["network.operations.inspection"],
         "device_ids": [f"device-{index:03d}" for index in range(100)],
         "connection_ids": connection_ids,
-        "ready_connection_ids": connection_ids,
-        "connection_activation": [],
+        "connection_policy": "on_demand",
         "devices": [],
         "connections": [],
         "source": "server_validated_extension_context",

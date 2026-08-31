@@ -125,8 +125,8 @@ export function TaskWorkbench() {
       return;
     }
     const available = new Set(selectedSkill.resources.map((item) => item.resource_id));
-    const valid = selectedResourceIds.filter((item) => available.has(item));
-    const normalized = valid.length ? valid : selectedSkill.default_resource_ids;
+    // Never expand an empty/stale selection back to every authorized device.
+    const normalized = selectedResourceIds.filter((item) => available.has(item));
     if (normalized.length !== selectedResourceIds.length || normalized.some((item, index) => item !== selectedResourceIds[index])) {
       setSelectedResourceIds(normalized);
     }

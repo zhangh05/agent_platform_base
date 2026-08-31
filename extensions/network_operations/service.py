@@ -737,57 +737,8 @@ def delete_skill(workspace_id: str, skill_id: str) -> bool:
     return _store(workspace_id).delete("skills", skill_id)
 
 
-def _activate_skill_connections(workspace_id: str, connections: list[dict[str, Any]], *, timeout: int = 12) -> list[dict[str, Any]]:
-    """Actively probe Skill connections without allowing one target to abort the set."""
-    if not connections:
-        return []
-
-    def activate(connection: dict[str, Any]) -> dict[str, Any]:
-        connection_id = str(connection.get("connection_id") or "")
-        try:
-            result = test_connection(workspace_id, connection_id, timeout=timeout)
-        except (ValueError, RuntimeError, OSError) as exc:
-            result = {"ok": False, "status": "failed", "error": str(exc)[:300] or "connection_activation_failed"}
-        current = result.get("connection") if isinstance(result.get("connection"), dict) else get_connection(workspace_id, connection_id)
-        current = current or connection
-        return {
-            "connection_id": connection_id,
-            "device_id": str(current.get("device_id") or connection.get("device_id") or ""),
-            "protocol": str(current.get("protocol") or connection.get("protocol") or ""),
-            "port": int(current.get("port") or connection.get("port") or 0),
-            "ready": bool(result.get("ok")),
-            "status": str(current.get("status") or result.get("status") or "failed"),
-            "error": "" if result.get("ok") else str(result.get("error") or current.get("last_error") or "connection_activation_failed")[:300],
-            "latency_ms": int(current.get("latency_ms") or result.get("duration_ms") or 0),
-            "last_tested_at": str(current.get("last_tested_at") or ""),
-        }
-
-    workers = min(8, max(1, len(connections)))
-    activated: dict[str, dict[str, Any]] = {}
-    with ContextThreadPoolExecutor(max_workers=workers, thread_name_prefix="skill-connect") as pool:
-        futures = {pool.submit(activate, connection): str(connection.get("connection_id") or "") for connection in connections}
-        for future in as_completed(futures):
-            connection_id = futures[future]
-            try:
-                activated[connection_id] = future.result()
-            except (ValueError, RuntimeError, OSError) as exc:
-                connection = next((item for item in connections if str(item.get("connection_id") or "") == connection_id), {})
-                activated[connection_id] = {
-                    "connection_id": connection_id,
-                    "device_id": str(connection.get("device_id") or ""),
-                    "protocol": str(connection.get("protocol") or ""),
-                    "port": int(connection.get("port") or 0),
-                    "ready": False,
-                    "status": "failed",
-                    "error": str(exc)[:300] or "connection_activation_failed",
-                    "latency_ms": 0,
-                    "last_tested_at": "",
-                }
-    return [activated[str(item.get("connection_id") or "")] for item in connections]
-
-
 def resolve_workbench_selection(workspace_id: str, selection: dict[str, Any]) -> dict[str, Any]:
-    """Validate a Skill selection, actively connect its targets, and return LLM context."""
+    """Resolve authorization and saved metadata only; never contact selected devices."""
     if not isinstance(selection, dict):
         raise ValueError("invalid_workbench_skill_selection")
     with _connection_lock(workspace_id):
@@ -806,7 +757,7 @@ def resolve_workbench_selection(workspace_id: str, selection: dict[str, Any]) ->
             for item in (raw_resources or [])
             if str(item).strip()
         ))
-        if not selected:
+        if raw_resources is None:
             selected = list(skill.get("device_ids") or [])
         if not selected or not set(selected).issubset(allowed_devices):
             raise ValueError("workbench_skill_device_forbidden")
@@ -824,10 +775,6 @@ def resolve_workbench_selection(workspace_id: str, selection: dict[str, Any]) ->
         ]
         if not connections:
             raise ValueError("workbench_skill_has_no_configured_connection")
-    activation = _activate_skill_connections(workspace_id, connections)
-    activation_by_id = {item["connection_id"]: item for item in activation}
-    ready_ids = [item["connection_id"] for item in activation if item.get("ready")]
-    unavailable = [item for item in activation if not item.get("ready")]
     return {
         "skill_id": skill_id,
         "skill_name": str(skill.get("name") or ""),
@@ -835,17 +782,16 @@ def resolve_workbench_selection(workspace_id: str, selection: dict[str, Any]) ->
         "allowed_tool_ids": list(skill.get("allowed_tool_ids") or []),
         "device_ids": selected,
         "connection_ids": [str(item.get("connection_id") or "") for item in connections],
-        "ready_connection_ids": ready_ids,
-        "connection_activation": activation,
-        "degraded": bool(unavailable),
+        "connection_policy": "on_demand",
         "devices": [{"device_id": item.get("device_id"), "name": item.get("name"), "host": item.get("host"), "vendor": item.get("vendor")} for item in devices if item],
         "connections": [{
             "connection_id": item.get("connection_id"),
             "device_id": item.get("device_id"),
             "protocol": item.get("protocol"),
             "port": item.get("port"),
-            "status": activation_by_id[str(item.get("connection_id") or "")]["status"],
-            "ready": activation_by_id[str(item.get("connection_id") or "")]["ready"],
+            "last_observed_status": str(item.get("status") or "untested"),
+            "last_tested_at": str(item.get("last_tested_at") or ""),
+            "current_reachability": "not_checked",
             "driver_id": item.get("driver_id"),
             "detected_vendor": item.get("detected_vendor"),
             "os_family": item.get("os_family"),

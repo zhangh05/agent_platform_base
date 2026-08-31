@@ -19,6 +19,8 @@ NETWORK_SKILL_PROMPT_VERSION = "network.operations.skill.v1"
 
 NETWORK_SKILL_OPERATING_CONTRACT = """## Selected network Skill operating contract
 - The workbench selection is active for this turn. Treat the server-resolved Skill, devices, connection ids and allowed tools below as the complete authorization boundary; never substitute a host, port, credential or unselected connection.
+- Selection grants permission, not an instruction to contact every device. Skill initialization performs no network IO. Choose only the devices needed for the current diagnostic step; connect on demand through the device or inspection tool. Do not probe the entire authorized set before a targeted read. A two-device read must pass only those two connection ids, even when six devices are authorized.
+- last_observed_status and last_tested_at describe historical observations, not current availability. current_reachability=not_checked is neither failure nor success. A previous failure does not prevent an authorized on-demand attempt.
 - A saved or previously verified connection is configuration, not current reachability evidence. Every device operation actively reconnects. Never depend on a browser-held session and never ask the user to connect manually.
 - Call `network__operations__device__manage` (`network.operations.device.manage`) with action=\"probe\" only when reachability itself must be checked. For live evidence prefer action=\"collect\" with `connection_id` and supported semantic `facts`; the server-selected driver chooses exact H3C/Huawei/Cisco commands. Use action=\"read\" with raw `commands` only when the semantic catalog cannot express the requirement. Never send a bare host, username, password or secret.
 - For raw read, put exactly one device CLI command in each `commands` item. Do not embed newlines, semicolons, shell operators, paging keystrokes or interactive answers. Use the returned device_profile before choosing syntax; do not invent a command when the profile reports the fact unsupported.
@@ -45,9 +47,7 @@ def render_network_skill_prompt(context: dict[str, Any]) -> str:
         "allowed_tool_ids": list(context.get("allowed_tool_ids") or []),
         "device_ids": list(context.get("device_ids") or []),
         "connection_ids": list(context.get("connection_ids") or []),
-        "ready_connection_ids": list(context.get("ready_connection_ids") or []),
-        "connection_activation": list(context.get("connection_activation") or []),
-        "degraded": bool(context.get("degraded")),
+        "connection_policy": "on_demand",
         "devices": list(context.get("devices") or []),
         "connections": list(context.get("connections") or []),
         "semantic_catalog": list(context.get("semantic_catalog") or []),

@@ -18,7 +18,8 @@ LZCore 将长期稳定的通用 Agent 契约与业务 Skill 契约分开。基�
 
 `extensions/network_operations/skill_prompt.py` 是网络设备 Skill 的唯一提示词来源，负责说明：
 
-- 每次设备操作主动重连，不依赖浏览器中的临时连接；
+- 选择 Skill 只校验授权和读取历史连接元数据，不探测、不预连接设备；
+- 每次设备操作按需主动连接指定目标，不依赖浏览器中的临时连接；授权六台不代表每次都操作六台，诊断两台只传两台的连接 ID；
 - `probe`、单设备 `read` 和多设备 `inspection` 的选择；
 - 一个数组元素对应一条设备 CLI 命令；
 - H3C/Huawei 与 Cisco 的只读命令习惯；

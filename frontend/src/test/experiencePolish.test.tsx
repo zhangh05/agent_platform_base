@@ -158,6 +158,31 @@ describe("Experience polish", () => {
     });
   });
 
+  it("keeps an explicitly empty Skill device selection instead of restoring all devices", async () => {
+    useSessionStore.setState({ currentWorkspaceId: "default", currentSessionId: "sess-skill-scope" });
+    enqueue("/workbench/skills", { status: 200, data: { skills: [{
+      extension_id: "network.operations", skill_id: "scope-test", name: "范围测试", selection_mode: "multiple",
+      default_resource_ids: ["d1", "d2"], resources: [
+        { resource_id: "d1", name: "范围设备一" }, { resource_id: "d2", name: "范围设备二" },
+      ],
+    }] } });
+    render(<TaskWorkbench />);
+    const select = await screen.findByRole("combobox", { name: "Skill" });
+    await screen.findByRole("option", { name: "范围测试" });
+    fireEvent.change(select, { target: { value: "network.operations:scope-test" } });
+    const first = await screen.findByRole("button", { name: "范围设备一" });
+    const second = screen.getByRole("button", { name: "范围设备二" });
+    expect(first).toHaveClass("active");
+    fireEvent.click(first);
+    expect(first).not.toHaveClass("active");
+    expect(second).toHaveClass("active");
+    fireEvent.click(second);
+    await waitFor(() => {
+      expect(first).not.toHaveClass("active");
+      expect(second).not.toHaveClass("active");
+    });
+  });
+
   it("does not duplicate a leading version prefix from the backend", async () => {
     enqueue("/workspaces", { status: 200, data: { workspaces: [] } });
     enqueue("/version", { status: 200, data: { version: "v0.4" } });

@@ -203,56 +203,41 @@ def test_skill_keeps_configured_connection_when_last_probe_failed(monkeypatch, t
     assert service.workbench_skill_catalog("default")[0]["resources"][0]["resource_id"] == device["device_id"]
 
 
-def test_workbench_activation_returns_per_connection_results_without_aborting(monkeypatch, tmp_path):
+def test_workbench_selection_is_pure_and_never_expands_explicit_empty_scope(monkeypatch, tmp_path):
     _setup(monkeypatch, tmp_path)
-    first = service.save_device("default", {"name": "R1", "host": "10.0.0.1"})
-    second = service.save_device("default", {"name": "R2", "host": "10.0.0.2"})
-    monkeypatch.setattr(service, "probe_target", lambda *_args, **_kwargs: {"ok": True, "duration_ms": 1})
-    first_connection = service.save_connection("default", {"device_id": first["device_id"], "protocol": "telnet", "auth_method": "none"})
-    second_connection = service.save_connection("default", {"device_id": second["device_id"], "protocol": "telnet", "auth_method": "none"})
-    skill = service.save_skill("default", {
-        "name": "双设备巡检",
-        "device_ids": [first["device_id"], second["device_id"]],
-        "connection_ids": [first_connection["connection_id"], second_connection["connection_id"]],
-    })
-
-    def partial_probe(target, **_kwargs):
-        if target.host == "10.0.0.2":
-            return {"ok": False, "status": "failed", "error": "timed out", "duration_ms": 7}
-        return {"ok": True, "status": "succeeded", "duration_ms": 3}
-
-    monkeypatch.setattr(service, "probe_target", partial_probe)
-    resolved = service.resolve_workbench_selection("default", {
-        "skill_id": skill["skill_id"],
-        "device_ids": [first["device_id"], second["device_id"]],
-    })
-
-    assert resolved["connection_ids"] == [first_connection["connection_id"], second_connection["connection_id"]]
-    assert resolved["ready_connection_ids"] == [first_connection["connection_id"]]
-    assert resolved["degraded"] is True
-    assert [(item["device_id"], item["ready"], item["status"]) for item in resolved["connections"]] == [
-        (first["device_id"], True, "connected"),
-        (second["device_id"], False, "failed"),
-    ]
-    assert [(item["device_id"], item["ready"], item["error"]) for item in resolved["connection_activation"]] == [
-        (first["device_id"], True, ""),
-        (second["device_id"], False, "timed out"),
-    ]
+    devices = [service.save_device("default", {"name": f"R{i}", "host": f"10.0.0.{i}"}) for i in range(1, 7)]
+    connections = [service.save_connection("default", {"device_id": d["device_id"], "protocol": "telnet", "auth_method": "none"}, auto_test=False) for d in devices]
+    skill = service.save_skill("default", {"name": "six", "device_ids": [d["device_id"] for d in devices],
+                                         "connection_ids": [c["connection_id"] for c in connections]})
+    def forbidden_probe(*args, **kwargs):
+        raise AssertionError("Skill selection must not open any connection")
+    monkeypatch.setattr(service, "probe_target", forbidden_probe)
+    before = service._raw_connections("default")
+    for _ in range(3):
+        resolved = service.resolve_workbench_selection("default", {"skill_id": skill["skill_id"]})
+        assert len(resolved["connection_ids"]) == 6
+        assert resolved["connection_policy"] == "on_demand"
+        assert all(c["current_reachability"] == "not_checked" for c in resolved["connections"])
+        assert "ready_connection_ids" not in resolved
+        assert "connection_activation" not in resolved
+    assert service._raw_connections("default") == before
+    subset = service.resolve_workbench_selection("default", {"skill_id": skill["skill_id"], "resource_ids": [d["device_id"] for d in devices[:2]]})
+    assert subset["connection_ids"] == [c["connection_id"] for c in connections[:2]]
+    for field in ("resource_ids", "device_ids"):
+        with pytest.raises(ValueError, match="workbench_skill_device_forbidden"):
+            service.resolve_workbench_selection("default", {"skill_id": skill["skill_id"], field: []})
 
 
-def test_workbench_activation_all_failed_still_returns_llm_context(monkeypatch, tmp_path):
+def test_workbench_selection_keeps_failed_history_without_claiming_current_failure(monkeypatch, tmp_path):
     _setup(monkeypatch, tmp_path)
     device = service.save_device("default", {"name": "R1", "host": "10.0.0.1"})
-    monkeypatch.setattr(service, "probe_target", lambda *_args, **_kwargs: {"ok": True, "duration_ms": 1})
+    monkeypatch.setattr(service, "probe_target", lambda *_a, **_k: {"ok": False, "error": "offline"})
     connection = service.save_connection("default", {"device_id": device["device_id"], "protocol": "telnet", "auth_method": "none"})
-    skill = service.save_skill("default", {"name": "离线设备", "device_ids": [device["device_id"]], "connection_ids": [connection["connection_id"]]})
-    monkeypatch.setattr(service, "probe_target", lambda *_args, **_kwargs: {"ok": False, "status": "failed", "error": "offline"})
-
+    skill = service.save_skill("default", {"name": "offline", "device_ids": [device["device_id"]], "connection_ids": [connection["connection_id"]]})
     resolved = service.resolve_workbench_selection("default", {"skill_id": skill["skill_id"]})
-
-    assert resolved["ready_connection_ids"] == []
-    assert resolved["degraded"] is True
-    assert resolved["connection_activation"][0]["error"] == "offline"
+    assert resolved["connections"][0]["last_observed_status"] == "failed"
+    assert resolved["connections"][0]["current_reachability"] == "not_checked"
+    assert "degraded" not in resolved
 
 
 def test_device_manage_reconnects_expired_authorized_connection(monkeypatch, tmp_path):
