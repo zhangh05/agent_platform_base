@@ -29,13 +29,23 @@ def _register_connection(workspace_id, payload):
     }, auto_test=False)
 
 
+def _execution_collector(collector):
+    """Adapt a deterministic test transcript to the production evidence contract."""
+    def execute(target, commands, **_kwargs):
+        output = collector(target, commands)
+        return {"ok": True, "read_ok": True, "output": output,
+                "command_results": [{"command": c, "output": v, "complete": True, "error_code": ""}
+                                    for c, v in output.items()]}
+    return execute
+
+
 def _run_inspection(monkeypatch, workspace_id, connection_ids=None, commands=None, script_id="", *, collector=None, background=False):
     """Exercise the production durable queue; never start a test-only worker."""
     assert not background
     from jobs.runner import run_job
     with monkeypatch.context() as scoped:
         if collector is not None:
-            scoped.setattr(service, "collect_connection", collector)
+            scoped.setattr(service, "collect_connection", _execution_collector(collector))
         task = service.enqueue_connection_inspection(workspace_id, connection_ids, commands, script_id)
         run_job(workspace_id, task["job_id"])
         return service.get_inspection(workspace_id, task["task_id"])
@@ -570,7 +580,7 @@ def test_connection_inspection_isolates_expired_target_failure(monkeypatch, tmp_
 
     service._execute_inspection(
         "default", task["task_id"], targets, ["display version"],
-        collector, threading.Event(), script,
+        _execution_collector(collector), threading.Event(), script,
     )
     completed = service.get_inspection("default", task["task_id"])
 
@@ -743,7 +753,7 @@ def test_connection_inspection_evidence_summary(monkeypatch, tmp_path):
 
 def test_user_inspection_uses_durable_job_worker_and_cancel(monkeypatch, tmp_path):
     _setup(monkeypatch, tmp_path)
-    monkeypatch.setattr(service, "collect_connection", lambda _asset, commands: {command: "ok" for command in commands})
+    monkeypatch.setattr(service, "collect_connection", _execution_collector(lambda _asset, commands: {command: "ok" for command in commands}))
     script = service.save_inspection_script("default", {
         "name": "持久 Worker 巡检", "vendors": ["h3c"], "commands": ["display version"],
     })
@@ -780,20 +790,19 @@ def test_inspection_selection_fails_closed(monkeypatch, tmp_path):
             raise AssertionError(f"invalid asset selection must fail closed: {asset_ids!r}")
 
 
-def test_durable_default_and_inline_command_plans_are_replayable(monkeypatch, tmp_path):
+def test_durable_plans_require_explicit_commands_and_are_replayable(monkeypatch, tmp_path):
     _setup(monkeypatch, tmp_path)
     asset = _register_connection("default", {
         "name": "Core-Plan", "host": "10.0.0.21", "username": "ops", "password": "secret", "vendor": "h3c",
     })
-    monkeypatch.setattr(service, "collect_connection", lambda _asset, commands: {command: "ok" for command in commands})
+    monkeypatch.setattr(service, "collect_connection", _execution_collector(lambda _asset, commands: {command: "ok" for command in commands}))
     from jobs.runner import run_job
 
-    default_task = service.enqueue_connection_inspection("default", [asset["connection_id"]])
-    assert default_task["command_plan"] == {"mode": "vendor_defaults"}
-    run_job("default", default_task["job_id"])
-    finished_default = service.get_inspection("default", default_task["task_id"])
-    assert finished_default["status"] == "succeeded"
-    assert finished_default["results"][asset["connection_id"]]["commands"] == service.DEFAULT_COMMANDS["h3c"]
+    import pytest
+    with pytest.raises(ValueError, match="exactly_one"):
+        service.enqueue_connection_inspection("default", [asset["connection_id"]])
+    with pytest.raises(ValueError, match="inspection_command_plan_invalid"):
+        service._restore_command_plan({"command_plan": {"mode": "vendor_defaults"}})
 
     inline_task = service.enqueue_connection_inspection("default", [asset["connection_id"]], commands=["display version"])
     assert inline_task["command_plan"] == {"mode": "inline_commands", "commands": ["display version"]}
@@ -807,8 +816,8 @@ def test_all_device_failures_fail_both_inspection_and_job(monkeypatch, tmp_path)
     asset = _register_connection("default", {
         "name": "Core-Fail", "host": "10.0.0.22", "username": "ops", "password": "secret", "vendor": "h3c",
     })
-    monkeypatch.setattr(service, "collect_connection", lambda _asset, _commands: (_ for _ in ()).throw(RuntimeError("auth failed")))
-    task = service.enqueue_connection_inspection("default", [asset["connection_id"]])
+    monkeypatch.setattr(service, "collect_connection", lambda _asset, _commands, **_kwargs: (_ for _ in ()).throw(RuntimeError("auth failed")))
+    task = service.enqueue_connection_inspection("default", [asset["connection_id"]], commands=["display version"])
     from jobs.runner import run_job
     from jobs.store import get_job
     run_job("default", task["job_id"])
@@ -944,7 +953,7 @@ def test_evidence_failure_transitions_task_to_terminal_failure(monkeypatch, tmp_
     })
     monkeypatch.setattr(service, "_save_evidence_artifact", lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("disk full")))
     failed = _run_inspection(monkeypatch,
-        "default", [asset["connection_id"]], collector=lambda _asset, commands: {command: "ok" for command in commands}, background=False,
+        "default", [asset["connection_id"]], commands=["display version"], collector=lambda _asset, commands: {command: "ok" for command in commands}, background=False,
     )
     from jobs.store import get_job
     assert get_job("default", failed["job_id"]).status == "failed"

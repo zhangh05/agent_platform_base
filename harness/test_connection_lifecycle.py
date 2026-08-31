@@ -101,7 +101,7 @@ def test_probe_never_resurrects_or_overwrites_newer_state(monkeypatch, mutation)
             assert release.wait(5), "management operation blocked on network IO"
             return {"ok": True, "duration_ms": 99}
         monkeypatch.setattr(service, "probe_target", slow_probe)
-        with ContextThreadPoolExecutor(max_workers=1) as pool:
+        with ContextThreadPoolExecutor(max_workers=2) as pool:
             pending = pool.submit(service.test_connection, "default", cid)
             try:
                 assert entered.wait(5)
@@ -113,13 +113,24 @@ def test_probe_never_resurrects_or_overwrites_newer_state(monkeypatch, mutation)
                     service.save_device("default", {**device, "host": "10.0.0.2"})
                 elif mutation == "newer_probe":
                     monkeypatch.setattr(service, "probe_target", lambda *_a, **_k: {"ok": False, "error": "newest_failure"})
-                    assert not service.test_connection("default", cid)["ok"]
+                    # The next invocation can own the observation while its
+                    # network IO waits for this endpoint's execution lock.
+                    first_probe = service.get_connection("default", cid, include_secret=True)["probe_id"]
+                    newer = pool.submit(service.test_connection, "default", cid)
+                    import time
+                    deadline = time.monotonic() + 2
+                    while time.monotonic() < deadline:
+                        if service.get_connection("default", cid, include_secret=True)["probe_id"] != first_probe:
+                            break
+                        time.sleep(0.01)
                 else:
                     changes = {"port": 30002} if mutation == "edit_port" else {"source_address": "100.64.0.1"}
                     service.save_connection("default", {**connection, **changes}, auto_test=False)
             finally:
                 release.set()
             stale = pending.result(timeout=5)
+            if mutation == "newer_probe":
+                assert not newer.result(timeout=5)["ok"]
         assert stale["ok"] is (mutation == "newer_probe")
         current = service.get_connection("default", cid)
         if mutation.startswith("delete"):
@@ -258,9 +269,11 @@ def test_historical_asset_task_can_still_retry_through_durable_worker(monkeypatc
         task = service._build_inspection_task([asset], ["display version"], None)
         task["status"] = "failed"
         service._store("default").save("inspections", task["task_id"], task)
-        def collect(_target, commands):
+        def collect(_target, commands, **_kwargs):
             assert current_storage_principal() == "alice"
-            return {command: "historical-evidence" for command in commands}
+            return {"ok": True, "read_ok": True,
+                    "output": {command: "historical-evidence" for command in commands},
+                    "command_results": [{"command": command, "complete": True} for command in commands]}
         monkeypatch.setattr(service, "collect_connection", collect)
         retried = service.retry_inspection("default", task["task_id"])
         run_job("default", retried["job_id"])

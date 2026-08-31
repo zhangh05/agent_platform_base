@@ -175,7 +175,7 @@ def test_extension_action_requirements_remain_with_the_extension():
     requirements = device.metadata["action_requirements"]
 
     assert requirements["all"]["probe"] == ("connection_id",)
-    assert requirements["all"]["read"] == ("connection_id",)
+    assert requirements["all"]["read"] == ("connection_id", "commands")
     assert device.metadata["bindable_inputs"]["probe"] == ("connection_id",)
 
 

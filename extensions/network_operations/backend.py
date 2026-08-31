@@ -241,7 +241,7 @@ def device_manage(invocation):
     """Probe or read a network device.
 
     Only a server-registered, Skill-authorized connection is accepted. Each
-    call actively reconnects; raw hosts and credentials are never accepted
+    call connects on demand; raw hosts and credentials are never accepted
     from model arguments.
     """
     if not _skill_allows(invocation, "network.operations.device.manage"):
@@ -267,16 +267,21 @@ def device_manage(invocation):
         if selected_connections and connection_id not in selected_connections:
             return {"ok": False, "error": "connection_not_selected_in_workbench"}
     raw_commands = args.get("commands")
+    if action == "read" and (not isinstance(raw_commands, list) or not raw_commands):
+        return {"ok": False, "error": "commands are required for read; no commands are selected implicitly"}
+    if (action != "read" and raw_commands is not None) or (action != "collect" and args.get("facts") is not None):
+        return {"ok": False, "error": "commands_only_for_read_and_facts_only_for_collect"}
     requested_facts = [str(item) for item in (args.get("facts") or [])]
     if action == "collect" and not requested_facts:
         return {"ok": False, "error": "facts are required for collect"}
     result = service.test_connection(
         invocation.workspace_id,
         connection_id,
-        commands=[str(item) for item in raw_commands] if action == "read" and raw_commands else None,
+        commands=raw_commands if action == "read" else None,
         facts=requested_facts if action == "collect" else None,
         read=action in {"read", "collect"},
         timeout=int(args.get("timeout") or 15),
+        session_scope=str(getattr(invocation, "run_id", None) or getattr(invocation, "task_id", None) or ""),
     )
     if result.get("ok"):
         return {**result, "connection_ok": True}
@@ -483,7 +488,7 @@ def register():
             {
                 "tool_id": "network.operations.devices_read",
                 "name": "读取设备与连接",
-                "description": "需要了解工作台可用设备、区域和连接状态时使用。传 device_id 返回该设备及其连接；不传则列出。connection_ids 是已配置且可主动重连的连接，ready_connection_ids 仅表示最近一次连接成功；实时操作仍会重新连接，记录本身不替代当前设备证据。",
+                "description": "需要了解工作台可用设备、区域和连接状态时使用。传 device_id 返回该设备及其连接；不传则列出。connection_ids 是已配置且可按需连接的连接，ready_connection_ids 仅表示最近一次连接成功；执行时复用有效任务会话或按需重连，记录本身不替代当前设备证据。",
                 "category": "ops",
                 "permission_action": "read",
                 "bindable_inputs": {"*": ["device_id"]},
@@ -512,8 +517,8 @@ def register():
             },
             {
                 "tool_id": "network.operations.device.manage",
-                "name": "网络设备只读探测",
-                "description": "需要设备当前证据时主动调用。只接受后台登记且由当前 Skill 授权的 connection_id；每次操作都主动建立 SSH/Telnet CLI 会话。优先用 collect + facts 请求版本、接口、路由、邻居、ARP、MAC、配置、日志或资源使用等语义事实，由厂商驱动选择命令并处理分页、提示符和编码；只有语义目录无法表达时才用 read + commands 发送明确只读原生命令。probe 只验证连接。单台失败作为结构化证据返回，不阻断其他设备。",
+                "name": "网络设备命令执行",
+                "description": "自主选择当前步骤需要的已授权 connection_id 和明确只读命令，用 read + commands 执行；必须提供命令，不补默认命令。根据实际回显决定下一步、换命令或并行读取其他设备。同一任务复用有效 SSH/Telnet 会话，过期按需重连；同一连接串行，不同连接可并行。运行时处理分页、提示符和编码，返回逐命令完整性、错误和会话状态。probe 仅测试连通性；collect + facts 是显式可选的预制采集模板，不是必经路径。单台失败返回模型决策，不阻断其他设备。",
                 "category": "ops",
                 "risk_level": "medium",
                 "permission_action": "network",
@@ -525,11 +530,11 @@ def register():
                 "bindable_inputs": {"probe": ["connection_id"], "read": ["connection_id"], "collect": ["connection_id"]},
                 "referenceable_outputs": {
                     "probe": ["connection_ok", "connection", "status", "error", "stages", "fingerprint"],
-                    "read": ["connection_ok", "connection", "status", "error", "stages", "fingerprint", "output", "command_results", "device_profile"],
-                    "collect": ["connection_ok", "connection", "status", "error", "stages", "fingerprint", "facts", "output", "command_results", "device_profile"],
+                    "read": ["connection_ok", "connection", "status", "error", "stages", "fingerprint", "output", "command_results", "device_profile", "session", "command_source"],
+                    "collect": ["connection_ok", "connection", "status", "error", "stages", "fingerprint", "facts", "output", "command_results", "device_profile", "session", "command_source"],
                 },
                 "action_requirements": {
-                    "all": {"probe": ["connection_id"], "read": ["connection_id"], "collect": ["connection_id", "facts"]},
+                    "all": {"probe": ["connection_id"], "read": ["connection_id", "commands"], "collect": ["connection_id", "facts"]},
                 },
                 "handler": device_manage,
                 "timeout_seconds": 90,
@@ -539,7 +544,7 @@ def register():
                         **common,
                         "action": {"type": "string", "enum": ["probe", "read", "collect"]},
                         "connection_id": {"type": "string", "minLength": 1},
-                        "commands": {"type": "array", "items": {"type": "string"}, "maxItems": 20},
+                        "commands": {"type": "array", "items": {"type": "string", "minLength": 1}, "minItems": 1, "maxItems": 20},
                         "facts": {"type": "array", "items": {"type": "string", "enum": list(service.SEMANTIC_FACTS)}, "minItems": 1, "maxItems": 10},
                         "timeout": {"type": "integer", "minimum": 1, "maximum": 90},
                     },
@@ -549,7 +554,7 @@ def register():
             {
                 "tool_id": "network.operations.inspection",
                 "name": "执行只读巡检",
-                "description": "对当前 Skill 授权的多个 connection_id 执行持久、可追踪的只读巡检。run 必须传非空 connection_ids，并优先传 facts 让各设备的厂商驱动分别选择命令；只有语义目录无法表达时才传 commands，facts/commands/script_id 三者互斥。每台设备独立连接、处理分页并记录成功或失败，单台失败不会取消其他设备。返回 task_id 后用 get 跟踪同一任务到终态。",
+                "description": "对明确选择的 connection_ids 执行持久只读任务。run 使用你自主编写的 commands；facts 或 script_id 仅为显式可选模板，三者必须且只能选一项。不同设备需要不同命令或后续步骤依赖回显时，用 device.manage 分别读取。每台设备独立执行，保留逐命令错误和完整性，单台失败不取消其他设备。任务由运行时跟踪到终态。",
                 "category": "ops",
                 "risk_level": "medium",
                 "permission_action": "network",
@@ -579,7 +584,7 @@ def register():
                         **common,
                         "action": {"type": "string", "enum": ["run", "list", "get", "cancel", "retry"]},
                         "connection_ids": {"type": "array", "items": {"type": "string"}, "minItems": 1, "maxItems": 100},
-                        "commands": {"type": "array", "items": {"type": "string"}, "maxItems": 20},
+                        "commands": {"type": "array", "items": {"type": "string", "minLength": 1}, "minItems": 1, "maxItems": 20},
                         "facts": {"type": "array", "items": {"type": "string", "enum": list(service.SEMANTIC_FACTS)}, "minItems": 1, "maxItems": 10},
                         "script_id": {"type": "string"},
                         "task_id": {"type": "string"},

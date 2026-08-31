@@ -18,7 +18,7 @@ const base = "/extensions/network.operations";
 const toolOptions = [
   { id: "network.operations.devices_read", label: "设备与连接目录", description: "允许模型读取已登记设备、区域和连接状态" },
   { id: "network.operations.skills_read", label: "Skill 配置读取", description: "允许模型核对当前 Skill 的配置边界" },
-  { id: "network.operations.device.manage", label: "实时设备只读操作", description: "允许模型按语义采集设备事实；运行时负责厂商命令、分页和终端交互" },
+  { id: "network.operations.device.manage", label: "实时设备只读操作", description: "允许模型自主选择设备与只读命令；运行时按需连接、复用会话并处理分页" },
   { id: "network.operations.inspection", label: "多设备巡检", description: "允许模型发起、跟踪和重试持久巡检任务" },
 ] as const;
 const allowedToolIds = toolOptions.map((item) => item.id);

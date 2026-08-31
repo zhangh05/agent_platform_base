@@ -1,7 +1,7 @@
 """Vendor-aware network CLI drivers and semantic read operations.
 
-Drivers own device syntax and terminal behavior.  The LLM asks for facts; it
-does not need to memorize pager commands, prompts, or vendor-specific CLI.
+Drivers own terminal behavior and optional explicit fact templates. The LLM
+chooses diagnostic commands; templates never replace or constrain that choice.
 """
 
 from __future__ import annotations

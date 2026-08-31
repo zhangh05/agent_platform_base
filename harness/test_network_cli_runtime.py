@@ -11,6 +11,7 @@ from extensions.network_operations.cli_runtime import (
     InteractiveCLISession,
     normalize_terminal_text,
 )
+from extensions.network_operations.device_tools import is_read_only_command
 from extensions.network_operations.device_drivers import (
     resolve_driver,
     semantic_catalog,
@@ -450,7 +451,7 @@ def test_semantic_inspection_uses_live_runtime_and_preserves_partial_evidence(mo
     monkeypatch.setattr(service, "test_connection", fake_live)
     service._execute_inspection(
         "default", task["task_id"], targets, None,
-        lambda *_args: (_ for _ in ()).throw(AssertionError("raw collector must not run")),
+        service.collect_connection,
         Event(), script, ["resource_usage"],
     )
     finished = service.get_inspection("default", task["task_id"])
@@ -473,3 +474,202 @@ def test_selected_skill_prompt_explains_semantic_collect_without_raw_pager_comma
     assert 'action="collect"' in prompt
     assert "Never send paging-disable commands yourself" in prompt
     assert '"network_runtime_version":"network.cli.v2"' in prompt
+
+
+def test_prompt_makes_autonomous_commands_the_default_not_templates():
+    prompt = render_network_skill_prompt({})
+    assert 'use action="read"' in prompt
+    assert "There are no implicit default commands" in prompt
+    assert "No framework script decides your diagnostic sequence" in prompt
+    assert "only when the semantic catalog cannot" not in prompt
+
+
+@pytest.mark.parametrize("command", [
+    "ping -vpn-instance vpn1 10.0.0.1", "tracert 10.0.0.1",
+    "ping vrf blue 10.0.0.1 repeat 5",
+])
+def test_bounded_network_diagnostics_are_read_only(command):
+    assert is_read_only_command(command, "h3c" if "vrf " not in command else "cisco")
+
+
+@pytest.mark.parametrize("command", [
+    "ping 10.0.0.1 repeat 999", "ping -c 999 10.0.0.1",
+    "ping -unknown value 10.0.0.1", "ping 10.0.0.1 && reboot",
+])
+def test_unbounded_or_unsafe_network_diagnostics_are_rejected(command):
+    assert not is_read_only_command(command, "h3c")
+
+
+def test_raw_read_without_commands_never_contacts_device(monkeypatch, tmp_path):
+    _setup(monkeypatch, tmp_path)
+    device = service.save_device("default", {"name": "R1", "host": "10.0.0.1", "vendor": "h3c"})
+    connection = service.save_connection("default", {
+        "device_id": device["device_id"], "protocol": "telnet", "auth_method": "none",
+    }, auto_test=False)
+    monkeypatch.setattr(service, "probe_target", lambda *_a, **_k: pytest.fail("implicit device IO"))
+    for commands in (None, [], "display version"):
+        result = device_manage(SimpleNamespace(workspace_id="default", arguments={
+            "action": "read", "connection_id": connection["connection_id"], "commands": commands,
+        }))
+        assert result["ok"] is False
+    result = service.test_connection("default", connection["connection_id"], read=True)
+    assert result["ok"] is False
+
+
+def test_telnet_negotiation_is_incremental_and_negative_replies_do_not_loop():
+    from extensions.network_operations.device_tools import _TelnetDecoder
+    sent = []
+    decoder = _TelnetDecoder(SimpleNamespace(sendall=sent.append))
+    assert decoder.feed(b"a\xff") == b"a"
+    assert decoder.feed(b"\xfb") == b""
+    assert decoder.feed(b"\x01b\xff\xfa\x18") == b"b"
+    assert decoder.feed(b"hidden-option\xff") == b""
+    assert decoder.feed(b"\xf0c\xff\xfc\x01\xff\xfe\x03") == b"c"
+    assert sent == [b"\xff\xfe\x01"]
+    assert decoder.feed(b"\xff\xff") == b"\xff"
+
+
+def test_nonpaging_confirmation_never_receives_an_automatic_answer():
+    driver, _ = resolve_driver("h3c")
+    io = ScriptedIO([b"display something\r\nContinue? [Y/N]"])
+    session = InteractiveCLISession(send=io.send, receive=io.receive, driver=driver, initial_text="<CE1>")
+    first = session.run_command("display something")
+    second = session.run_command("display version")
+    assert first.error_code == "interaction_required"
+    assert not first.complete
+    assert second.error_code == "cli_session_unsynchronized"
+    assert io.sent == [b"display something\r\n"]
+
+
+@pytest.mark.parametrize("failure", ["disconnect", "timeout", "limit", "cancel"])
+def test_incomplete_command_does_not_send_the_next_command(monkeypatch, failure):
+    from extensions.network_operations import cli_runtime
+    from core.tools.context import bind_runtime_cancel_check, reset_runtime_cancel_check
+    driver, _ = resolve_driver("h3c")
+    chunks = [b"display version\r\npartial\r\n"]
+    if failure == "disconnect":
+        chunks.append(b"")
+    if failure == "limit":
+        monkeypatch.setattr(cli_runtime, "MAX_OUTPUT_BYTES", 4)
+    io = ScriptedIO(chunks)
+    session = InteractiveCLISession(send=io.send, receive=io.receive, driver=driver, initial_text="<CE1>")
+    import time
+    session.deadline = time.monotonic() + 0.1
+    token = bind_runtime_cancel_check(lambda: failure == "cancel" and bool(io.sent))
+    try:
+        first = session.run_command("display version")
+        second = session.run_command("display interface brief")
+    finally:
+        reset_runtime_cancel_check(token)
+    assert not first.complete
+    assert second.error_code == {"timeout": "execution_timeout", "cancel": "cancelled"}.get(failure, "cli_session_unsynchronized")
+    assert io.sent == [b"display version\r\n"]
+
+
+@pytest.mark.parametrize("protocol", ["ssh", "telnet"])
+def test_shared_executor_reuses_task_session_and_sends_exact_model_commands(monkeypatch, protocol):
+    from extensions.network_operations import device_tools
+    pool = device_tools._SessionPool(ttl=60)
+    monkeypatch.setattr(device_tools, "_SESSIONS", pool)
+    opens, sent, closes = [], [], []
+    def open_connection(target, timeout, accept_host_key):
+        opens.append(target.protocol)
+        chunks = deque()
+        def send(data):
+            sent.append(data)
+            command = data.decode().strip()
+            chunks.append(data + (b"literal-evidence\r\n" if command.startswith("display ") else b"") + b"<CE1>")
+        driver, _ = resolve_driver("h3c")
+        cli = InteractiveCLISession(send=send, receive=lambda: chunks.popleft() if chunks else None,
+                                    driver=driver, initial_text="<CE1>")
+        return device_tools._Connection(cli, lambda: closes.append(True), [])
+    monkeypatch.setattr(device_tools, "_open_connection", open_connection)
+    target = device_tools.DeviceTarget("10.0.0.1", protocol=protocol, vendor="h3c")
+    try:
+        first = device_tools.probe_target(target, commands=["display interface GigabitEthernet1/0/1"],
+                                         read=True, session_key="trusted-task")
+        second = device_tools.probe_target(target, commands=["display ip routing-table 10.1.1.1"],
+                                          read=True, session_key="trusted-task")
+        assert first["read_ok"] and second["read_ok"]
+        assert not first["session"]["reused"] and second["session"]["reused"]
+        assert opens == [protocol]
+        assert [d.decode().strip() for d in sent if d.startswith(b"display ")] == [
+            "display interface GigabitEthernet1/0/1", "display ip routing-table 10.1.1.1",
+        ]
+        assert second["command_source"] == "explicit_commands"
+        assert sent.count(b"screen-length disable\r\n") <= 1
+        # Expiration/disconnect is checked before dispatch, not by replaying
+        # an already-sent diagnostic command.
+        pool.entries["trusted-task"]["connection"].session.invalidate()
+        third = device_tools.probe_target(target, commands=["display device"], read=True, session_key="trusted-task")
+        assert third["read_ok"] and not third["session"]["reused"]
+        assert sent.count(b"display device\r\n") == 1
+        assert len(opens) == 2
+        # A new task cannot inherit another task's CLI stream.
+        device_tools.probe_target(target, commands=["display version"], read=True, session_key="another-task")
+        assert len(opens) == 3
+    finally:
+        pool.close_all()
+    assert len(closes) == 3
+
+
+def test_session_pool_expires_idle_and_does_not_expire_active_handles(monkeypatch):
+    from extensions.network_operations.device_tools import _SessionPool
+    pool = _SessionPool(ttl=60, limit=1)
+    closed = []
+    handle = SimpleNamespace(close=lambda: closed.append(True), session=SimpleNamespace(synchronized=True))
+    with pool.lease("a") as entry:
+        entry["connection"] = handle
+        pool._expire("a", entry)
+        assert not closed
+        with pytest.raises(RuntimeError, match="busy"):
+            with pool.lease("a"):
+                pass
+        with pytest.raises(RuntimeError, match="capacity"):
+            with pool.lease("b"):
+                pass
+    pool._expire("a", entry)
+    assert closed == [True] and not pool.entries
+
+
+def test_receive_failure_preserves_partial_evidence_and_send_failure_is_uncertain():
+    driver, _ = resolve_driver("h3c")
+    io = ScriptedIO([b"display version\r\nretained evidence\r\n"])
+    def receive():
+        if io.chunks:
+            return io.receive()
+        raise ConnectionResetError()
+    session = InteractiveCLISession(send=io.send, receive=receive, driver=driver, initial_text="<CE1>")
+    result = session.run_command("display version")
+    assert result.output == "retained evidence"
+    assert result.error_code == "connection_closed"
+    assert result.dispatch_status == "sent"
+    def failed_send(_data):
+        raise BrokenPipeError()
+    session = InteractiveCLISession(send=failed_send, receive=io.receive, driver=driver, initial_text="<CE1>")
+    result = session.run_command("display version")
+    assert result.error_code == "command_dispatch_uncertain"
+    assert result.dispatch_status == "uncertain"
+    assert session.run_command("display interface brief").dispatch_status == "not_sent"
+
+
+def test_raw_inspection_preserves_incomplete_command_diagnostics(monkeypatch, tmp_path):
+    _setup(monkeypatch, tmp_path)
+    device = service.save_device("default", {"name": "CE1", "host": "10.0.0.1", "vendor": "h3c"})
+    connection = service.save_connection("default", {
+        "device_id": device["device_id"], "protocol": "telnet", "auth_method": "none",
+    }, auto_test=False)
+    task, targets, script = service._new_connection_inspection_task(
+        "default", [connection["connection_id"]], ["display current-configuration"], "",
+    )
+    service._store("default").save("inspections", task["task_id"], task)
+    monkeypatch.setattr(service, "probe_target", lambda *_a, **_k: {
+        "ok": True, "read_ok": False, "output": {"display current-configuration": "partial config"},
+        "command_results": [{"command": "display current-configuration", "complete": False,
+                             "error_code": "connection_closed", "truncated": False}],
+    })
+    service._execute_inspection("default", task["task_id"], targets, ["display current-configuration"],
+                                service.collect_connection, Event(), script)
+    result = service.get_inspection("default", task["task_id"])
+    assert result["status"] == "partial"
+    assert result["results"][connection["connection_id"]]["command_results"][0]["error_code"] == "connection_closed"

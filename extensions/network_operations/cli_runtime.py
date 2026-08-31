@@ -14,6 +14,10 @@ ANSI_ESCAPE = re.compile(r"\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1b\\))
 CONTROL_EXCEPT_LAYOUT = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
 MAX_OUTPUT_BYTES = 200_000
 MAX_PAGER_ADVANCES = 500
+INTERACTION_PROMPT = re.compile(
+    r"(?:\[\s*(?:y/n|yes/no|confirm)\s*\]|\(\s*(?:y/n|yes/no)\s*\)|"
+    r"(?:password|continue|confirm|filename)\s*[:?])\s*[:：]?\s*$", re.IGNORECASE,
+)
 
 
 @dataclass
@@ -53,6 +57,7 @@ class CLICommandResult:
     error_code: str = ""
     device_error: str = ""
     truncated: bool = False
+    dispatch_status: str = "not_sent"
 
     def as_dict(self) -> dict:
         return {
@@ -66,6 +71,7 @@ class CLICommandResult:
             "error_code": self.error_code,
             "device_error": self.device_error,
             "truncated": self.truncated,
+            "dispatch_status": self.dispatch_status,
             "output_hash": hashlib.sha256(self.output.encode("utf-8")).hexdigest(),
         }
 
@@ -133,6 +139,25 @@ class InteractiveCLISession:
         self.banner = normalize_terminal_text(initial_text)
         self.encoding = "utf-8"
         self._synchronized = True
+        self.deadline: float | None = None
+
+    @property
+    def synchronized(self) -> bool:
+        return self._synchronized
+
+    def invalidate(self) -> None:
+        self._synchronized = False
+
+    def check_ready(self) -> bool:
+        """A harmless prompt handshake, never a replay of a business command."""
+        if not self._synchronized:
+            return False
+        self._send(b"\r\n")
+        result = self.read_until_prompt(timeout=min(self.timeout, 2.0))
+        self._synchronized = result.complete
+        if result.prompt:
+            self.prompt = result.prompt
+        return result.complete
 
     def bootstrap(self) -> CLIReadResult:
         if self.prompt:
@@ -155,13 +180,32 @@ class InteractiveCLISession:
 
     def run_command(self, command: str, *, internal: bool = False) -> CLICommandResult:
         started = time.monotonic()
+        from core.tools.context import get_runtime_cancel_check
+        cancel = get_runtime_cancel_check()
+        cancelled = bool(cancel and cancel())
+        expired = self.deadline is not None and started >= self.deadline
+        if cancelled or expired:
+            self._synchronized = False
+            return CLICommandResult(
+                command=command, output="", prompt=self.prompt, complete=False,
+                pages=0, encoding=self.encoding, duration_ms=0,
+                error_code="cancelled" if cancelled else "execution_timeout",
+            )
         if not self._synchronized:
             return CLICommandResult(
                 command=command, output="", prompt=self.prompt, complete=False,
                 pages=0, encoding=self.encoding, duration_ms=0,
                 error_code="cli_session_unsynchronized",
             )
-        self._send((str(command).strip() + "\r\n").encode("ascii", errors="strict"))
+        try:
+            self._send((str(command).strip() + "\r\n").encode("ascii", errors="strict"))
+        except (OSError, EOFError):
+            self._synchronized = False
+            return CLICommandResult(
+                command=command, output="", prompt=self.prompt, complete=False,
+                pages=0, encoding=self.encoding, duration_ms=0,
+                error_code="command_dispatch_uncertain", dispatch_status="uncertain",
+            )
         read = self.read_until_prompt(timeout=self.timeout)
         if read.prompt:
             self.prompt = read.prompt
@@ -202,11 +246,16 @@ class InteractiveCLISession:
             error_code=error_code,
             device_error=device_error,
             truncated=read.truncated,
+            dispatch_status="sent",
         )
 
     def read_until_prompt(self, *, timeout: float | None = None) -> CLIReadResult:
         started = time.monotonic()
         deadline = started + max(0.5, float(timeout or self.timeout))
+        if self.deadline is not None:
+            deadline = min(deadline, self.deadline)
+        from core.tools.context import get_runtime_cancel_check
+        cancel = get_runtime_cancel_check()
         raw = bytearray()
         pages = 0
         peer_closed = False
@@ -215,7 +264,14 @@ class InteractiveCLISession:
         encoding = self.encoding
 
         while time.monotonic() < deadline:
-            chunk = self._receive()
+            if cancel and cancel():
+                decoded, encoding = decode_terminal_bytes(bytes(raw), self.driver.encodings)
+                return CLIReadResult(normalize_terminal_text(decoded), error_code="cancelled", encoding=encoding)
+            try:
+                chunk = self._receive()
+            except (OSError, EOFError):
+                peer_closed = True
+                break
             if chunk == b"":
                 peer_closed = True
                 break
@@ -244,6 +300,9 @@ class InteractiveCLISession:
                             )
                         self._send(rule.response)
                 prompt = self.driver.extract_prompt(_remove_pagers(normalized, self.driver))
+                if not prompt and INTERACTION_PROMPT.search(normalized):
+                    return CLIReadResult(normalized, pages=pages, encoding=encoding,
+                                         error_code="interaction_required")
                 if prompt:
                     text = _remove_pagers(normalized, self.driver)
                     self.encoding = encoding

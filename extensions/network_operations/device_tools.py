@@ -2,6 +2,11 @@
 
 from __future__ import annotations
 
+import atexit
+import threading
+import uuid
+from contextlib import contextmanager
+
 import base64
 import io
 import ipaddress
@@ -35,6 +40,10 @@ _GENERIC_READ_COMMANDS = (
     re.compile(r"^ip\s+(?:address|addr|link|route)(?:\s+(?:show|list))?$", re.IGNORECASE),
     re.compile(r"^hostname$", re.IGNORECASE),
     re.compile(r"^date$", re.IGNORECASE),
+)
+_NETWORK_DIAGNOSTIC_COMMAND = re.compile(
+    r"^(?:ping|tracert|traceroute)\s+[A-Za-z0-9_.:/-]+(?:\s+[A-Za-z0-9_.:/-]+){0,15}$",
+    re.IGNORECASE,
 )
 
 
@@ -147,6 +156,33 @@ def is_read_only_command(command: str, vendor: str = "") -> bool:
         return False
     normalized_vendor = str(vendor or "").strip().lower()
     network_match = _NETWORK_READ_COMMAND.fullmatch(value)
+    diagnostic_match = _NETWORK_DIAGNOSTIC_COMMAND.fullmatch(value)
+    if diagnostic_match:
+        tokens = value.split()
+        # Bound common packet-count/size/TTL controls. Unknown switches are
+        # rejected instead of turning the CLI into an open-ended traffic tool.
+        options = {"-vpn-instance": None, "-a": None, "vrf": None,
+                   "-c": 10, "repeat": 10, "-s": 2000, "size": 2000,
+                   "-t": 30, "-m": 30, "timeout": 30, "ttl": 30}
+        index, destinations = 1, 0
+        seen = set()
+        while index < len(tokens):
+            token = tokens[index].lower()
+            if token in options:
+                if token in seen or index + 1 >= len(tokens):
+                    return False
+                seen.add(token)
+                value_token = tokens[index + 1]
+                limit = options[token]
+                if value_token.startswith("-") or (limit is not None and (not value_token.isdigit() or not 1 <= int(value_token) <= limit)):
+                    return False
+                index += 2
+            else:
+                if token.startswith("-") or "/" in token:
+                    return False
+                destinations += 1
+                index += 1
+        return destinations == 1 and normalized_vendor in {"h3c", "huawei", "cisco"}
     if normalized_vendor in {"h3c", "huawei"}:
         return bool(network_match and value.lower().startswith("display "))
     if normalized_vendor == "cisco":
@@ -178,7 +214,10 @@ def _load_private_key(private_key: str, passphrase: str = ""):
     import paramiko
 
     last_error: Exception | None = None
-    for key_cls in (paramiko.Ed25519Key, paramiko.RSAKey, paramiko.ECDSAKey, paramiko.DSSKey):
+    for name in ("Ed25519Key", "RSAKey", "ECDSAKey", "DSSKey"):
+        key_cls = getattr(paramiko, name, None)
+        if key_cls is None:
+            continue
         try:
             return key_cls.from_private_key(io.StringIO(private_key), password=passphrase or None)
         except Exception as exc:
@@ -186,233 +225,343 @@ def _load_private_key(private_key: str, passphrase: str = ""):
     raise RuntimeError(f"private key could not be loaded: {last_error}")
 
 
-def _run_shell_commands(
-    transport: Any,
-    vendor: str,
-    commands: list[str] | None,
-    timeout: int,
-    *,
-    facts: list[str] | None = None,
-) -> dict[str, Any]:
-    channel = transport.open_session(timeout=timeout)
-    channel.get_pty(width=200, height=80)
-    channel.invoke_shell()
-    channel.settimeout(timeout)
+@dataclass
+class _Connection:
+    session: InteractiveCLISession
+    close: Any
+    stages: list[dict[str, Any]]
+    fingerprint: str = ""
+    paging: Any = None
+    paging_initialized: bool = False
 
-    def receive() -> bytes | None:
-        return channel.recv(65535) if channel.recv_ready() else None
 
-    driver, source = resolve_driver(vendor)
-    session = InteractiveCLISession(
-        send=lambda data: channel.send(data),
-        receive=receive,
-        driver=driver,
-        timeout=timeout,
-    )
+class _SessionPool:
+    """Bounded, process-local leases; idle handles never outlive their TTL.
+
+    The service also locks the endpoint across processes. A pool key contains
+    server-owned task identity and configuration revision, never model input.
+    """
+    def __init__(self, *, ttl: float = 60, limit: int = 32):
+        self.ttl, self.limit = ttl, limit
+        self.guard = threading.RLock()
+        self.entries: dict[str, dict] = {}
+
+    def _remove(self, key, entry):
+        if self.entries.get(key) is entry:
+            self.entries.pop(key)
+            if entry.get("timer"):
+                entry["timer"].cancel()
+            if entry.get("connection"):
+                entry["connection"].close()
+
+    def _expire(self, key, entry):
+        with self.guard:
+            if not entry["busy"]:
+                self._remove(key, entry)
+
+    @contextmanager
+    def lease(self, key):
+        with self.guard:
+            entry = self.entries.get(key)
+            if entry and entry["busy"]:
+                raise RuntimeError("device_session_busy")
+            if not entry:
+                if len(self.entries) >= self.limit:
+                    idle = next(((k, e) for k, e in self.entries.items() if not e["busy"]), None)
+                    if idle:
+                        self._remove(*idle)
+                    else:
+                        raise RuntimeError("device_session_capacity_exceeded")
+                entry = {"busy": False, "connection": None, "timer": None}
+                self.entries[key] = entry
+            entry["busy"] = True
+            if entry["timer"]:
+                entry["timer"].cancel()
+        try:
+            yield entry
+        finally:
+            with self.guard:
+                entry["busy"] = False
+                if not key or not entry["connection"] or not entry["connection"].session.synchronized:
+                    self._remove(key, entry)
+                else:
+                    timer = threading.Timer(self.ttl, self._expire, (key, entry))
+                    timer.daemon = True
+                    entry["timer"] = timer
+                    timer.start()
+
+    def close_all(self):
+        with self.guard:
+            for key, entry in list(self.entries.items()):
+                if not entry["busy"]:
+                    self._remove(key, entry)
+
+
+_SESSIONS = _SessionPool()
+atexit.register(_SESSIONS.close_all)
+
+
+def _open_connection(target: DeviceTarget, timeout: int, accept_host_key: bool) -> _Connection:
+    """Authenticate a transport; all command execution is protocol-neutral."""
+    deadline = time.monotonic() + timeout
+    def remaining():
+        budget = deadline - time.monotonic()
+        if budget <= 0:
+            raise TimeoutError("connection_setup_timeout")
+        return budget
+    stages = [_stage("target", "ok", host=target.host, port=target.port,
+                     protocol=target.protocol, vendor=target.vendor, source_address=target.source_address)]
+    source = (target.source_address, 0) if target.source_address else None
+    sock = socket.create_connection((target.host, target.port), timeout=remaining(), source_address=source)
+    transport = channel = None
+    def close():
+        try:
+            if channel is not None:
+                channel.close()
+            if transport is not None:
+                transport.close()
+        finally:
+            sock.close()
     try:
+        stages.append(_stage("tcp", "ok"))
+        fingerprint = ""
+        banner = ""
+        credential = target.credential or DeviceCredential(auth_method="none")
+        if target.protocol == "ssh":
+            import paramiko
+            transport = paramiko.Transport(sock)
+            transport.banner_timeout = remaining()
+            transport.start_client(timeout=remaining())
+            fingerprint = fingerprint_for_key(transport.get_remote_server_key())
+            expected = (target.expected_fingerprint or "").strip()
+            if expected and expected != fingerprint:
+                raise _ConnectError("host_key_mismatch", stages, fingerprint=fingerprint)
+            if not expected and not accept_host_key:
+                raise _ConnectError("host_key_not_trusted", stages + [_stage("host_key", "blocked")],
+                                    fingerprint=fingerprint, requires_host_key_acceptance=True)
+            stages.append(_stage("host_key", "ok", fingerprint=fingerprint))
+            if not credential.username:
+                raise _ConnectError("username_required", stages)
+            transport.auth_timeout = remaining()
+            if credential.auth_method == "private_key":
+                transport.auth_publickey(credential.username, _load_private_key(credential.private_key, credential.passphrase))
+            else:
+                transport.auth_password(credential.username, credential.password)
+            if not transport.is_authenticated():
+                raise _ConnectError("authentication_failed", stages)
+            channel = transport.open_session(timeout=remaining())
+            channel.get_pty(width=200, height=80)
+            channel.invoke_shell()
+            channel.settimeout(remaining())
+            def receive():
+                if channel.recv_ready():
+                    return channel.recv(65535)
+                return b"" if channel.closed or channel.exit_status_ready() else None
+            send = channel.sendall
+        elif target.protocol == "telnet":
+            sock.settimeout(min(float(timeout), 0.2))
+            decoder = _TelnetDecoder(sock)
+            handshake_deadline = deadline
+            banner = _telnet_read(sock, timeout=min(timeout, 1.0), decoder=decoder)
+            if _LOGIN_PROMPT.search(banner):
+                if not credential.username:
+                    raise _ConnectError("username_required_by_device", stages)
+                sock.sendall((credential.username + "\r\n").encode())
+                banner += _telnet_read(sock, timeout=max(0.0, handshake_deadline-time.monotonic()), decoder=decoder)
+            if _PASSWORD_PROMPT.search(banner):
+                if not credential.password:
+                    raise _ConnectError("password_required_by_device", stages)
+                sock.sendall((credential.password + "\r\n").encode())
+                banner += _telnet_read(sock, timeout=max(0.0, handshake_deadline-time.monotonic()), decoder=decoder)
+            if not _DEVICE_PROMPT.search(banner):
+                sock.sendall(b"\r\n")
+                banner += _telnet_read(sock, timeout=max(0.0, handshake_deadline-time.monotonic()), decoder=decoder)
+            if not _DEVICE_PROMPT.search(banner):
+                raise _ConnectError("device_prompt_not_detected", stages)
+            def receive():
+                try:
+                    data = sock.recv(65535)
+                except TimeoutError:
+                    return None
+                # Negotiation-only data is not EOF.
+                return (decoder.feed(data) or None) if data else b""
+            send = sock.sendall
+        else:
+            raise _ConnectError("unsupported_protocol", stages)
+        stages.append(_stage("auth", "ok"))
+        driver, _ = resolve_driver(target.vendor, banner)
+        session = InteractiveCLISession(send=send, receive=receive, driver=driver, timeout=timeout, initial_text=banner)
+        session.deadline = deadline
         bootstrap = session.bootstrap()
         if not bootstrap.complete:
-            return {
-                "ok": False,
-                "error": bootstrap.error_code or "device_prompt_not_detected",
-                "session": bootstrap.as_dict(),
-                "device_profile": driver.public_profile(detected_from=source),
-                "output": {},
-                "command_results": [],
-            }
-        profile = session.refine_driver(bootstrap.text)
-        if facts:
-            command_plan = session.driver.commands_for(facts)
-            selected_commands = [command for _fact, command in command_plan]
-            command_facts = {command: fact for fact, command in command_plan}
-        else:
-            selected_commands = list(commands or [])
-            command_facts = {}
-        selected_commands = normalize_read_only_commands(selected_commands, session.driver.vendor) if selected_commands else []
-        paging = session.disable_paging() if selected_commands else None
-        output: dict[str, str] = {}
-        command_results: list[dict[str, Any]] = []
-        for command in selected_commands:
-            result = session.run_command(command)
-            output[command] = result.output
-            command_results.append(_semantic_result_payload(result, command_facts.get(command, "")))
-        complete = all(item.get("complete") and not item.get("error_code") for item in command_results)
-        parsed_facts = session.driver.parse_facts(output, command_facts, command_results)
-        return {
-            "ok": True,
-            "read_ok": complete,
-            "status": "succeeded" if complete else "partial",
-            "output": output,
-            "facts": parsed_facts,
-            "command_results": command_results,
-            "device_profile": profile,
-            "session": {
-                "prompt": session.prompt,
-                "encoding": session.encoding,
-                "pagination": paging.as_dict() if paging else None,
-            },
-        }
-    finally:
-        channel.close()
+            raise _ConnectError(bootstrap.error_code or "device_prompt_not_detected", stages)
+        session.refine_driver(banner + "\n" + bootstrap.text)
+        stages.append(_stage("prompt", "ok"))
+        return _Connection(session, close, stages, fingerprint)
+    except Exception:
+        close()
+        raise
+
+
+class _ConnectError(RuntimeError):
+    def __init__(self, message, stages, **details):
+        super().__init__(message)
+        self.stages, self.details = stages, details
+
+
+def _execute_commands(connection: _Connection, commands, facts, *, read: bool) -> dict:
+    session = connection.session
+    if facts:
+        plan = session.driver.commands_for(facts)
+        selected = [command for _, command in plan]
+        command_facts = {command: fact for fact, command in plan}
+    else:
+        selected, command_facts = commands, {}
+    selected = normalize_read_only_commands(selected, session.driver.vendor) if read else []
+    if selected and not connection.paging_initialized:
+        connection.paging = session.disable_paging()
+        connection.paging_initialized = True
+    results = []
+    for command in selected:
+        result = session.run_command(command)
+        results.append(_semantic_result_payload(result, command_facts.get(command, "")))
+    output = {item["command"]: item["output"] for item in results}
+    complete = all(item["complete"] and not item["error_code"] for item in results)
+    return {
+        "read_ok": complete,
+        "status": "succeeded" if complete else "partial",
+        "command_source": "explicit_semantic_template" if facts else "explicit_commands" if read else "probe",
+        "output": output, "command_results": results,
+        "facts": session.driver.parse_facts(output, command_facts, results) if facts else {},
+        "device_profile": session.driver.public_profile(detected_from="live_session"),
+        "session": {
+            "prompt": session.prompt, "encoding": session.encoding,
+            "synchronized": session.synchronized,
+            "pagination": connection.paging.as_dict() if connection.paging else None,
+        },
+    }
 
 
 def probe_target(
-    target: DeviceTarget,
-    *,
-    commands: list[str] | None = None,
-    facts: list[str] | None = None,
-    accept_host_key: bool = False,
-    read: bool = False,
-    timeout: int = 15,
+    target: DeviceTarget, *, commands: list[str] | None = None,
+    facts: list[str] | None = None, accept_host_key: bool = False,
+    read: bool = False, timeout: int = 15, session_key: str = "",
 ) -> dict[str, Any]:
-    protocol = str(target.protocol or "ssh").strip().lower()
-    if protocol == "telnet":
-        return _probe_telnet(target, commands=commands, facts=facts, read=read, timeout=timeout)
-    if protocol != "ssh":
-        return _result(False, [_stage("target", "failed")], time.monotonic(), error="unsupported_protocol")
-    import paramiko
-
-    stages: list[dict[str, Any]] = []
     started = time.monotonic()
-    sock: socket.socket | None = None
-    transport: Any = None
+    # A one-shot probe must never share the empty key with another caller.
+    key = session_key or "oneshot:" + uuid.uuid4().hex
     try:
-        stages.append(_stage("target", "ok", host=target.host, port=target.port, protocol="ssh", vendor=target.vendor, source_address=target.source_address))
-        source = (target.source_address, 0) if target.source_address else None
-        sock = socket.create_connection((target.host, target.port), timeout=timeout, source_address=source)
-        stages.append(_stage("tcp", "ok"))
-
-        transport = paramiko.Transport(sock)
-        transport.start_client(timeout=timeout)
-        remote_key = transport.get_remote_server_key()
-        fingerprint = fingerprint_for_key(remote_key)
-        expected = (target.expected_fingerprint or "").strip()
-        if expected and expected != fingerprint:
-            stages.append(_stage("host_key", "failed", fingerprint=fingerprint, expected_fingerprint=expected))
-            return _result(False, stages, started, error="host_key_mismatch", fingerprint=fingerprint)
-        if not expected and not accept_host_key:
-            stages.append(_stage("host_key", "blocked", fingerprint=fingerprint))
-            return _result(False, stages, started, error="host_key_not_trusted", fingerprint=fingerprint, requires_host_key_acceptance=True)
-        stages.append(_stage("host_key", "ok", fingerprint=fingerprint, accepted=bool(accept_host_key and not expected)))
-
-        credential = target.credential or DeviceCredential()
-        if not credential.username:
-            stages.append(_stage("auth", "failed"))
-            return _result(False, stages, started, error="username_required", fingerprint=fingerprint)
-        if credential.auth_method == "private_key":
-            pkey = _load_private_key(credential.private_key, credential.passphrase)
-            transport.auth_publickey(credential.username, pkey)
-        else:
-            transport.auth_password(credential.username, credential.password)
-        if not transport.is_authenticated():
-            stages.append(_stage("auth", "failed"))
-            return _result(False, stages, started, error="authentication_failed", fingerprint=fingerprint)
-        stages.append(_stage("auth", "ok", username=credential.username, method=credential.auth_method))
-
-        if not read:
-            shell_result = _run_shell_commands(transport, target.vendor, [], timeout)
-            if not shell_result.get("ok"):
-                stages.append(_stage("prompt", "failed"))
-                return _result(
-                    False, stages, started,
-                    error=str(shell_result.get("error") or "device_prompt_not_detected"),
-                    fingerprint=fingerprint,
-                    device_profile=shell_result.get("device_profile"),
-                    session=shell_result.get("session"),
-                )
-            stages.append(_stage("prompt", "ok"))
-            return _result(
-                True, stages, started, fingerprint=fingerprint,
-                device_profile=shell_result.get("device_profile"),
-                session=shell_result.get("session"),
-            )
-
-        execution = _run_shell_commands(transport, target.vendor, commands, timeout, facts=facts)
-        if not execution.get("ok"):
-            stages.append(_stage("prompt", "failed"))
-            return _result(
-                False, stages, started,
-                error=str(execution.get("error") or "device_cli_session_failed"),
-                fingerprint=fingerprint,
-                device_profile=execution.get("device_profile"),
-                session=execution.get("session"),
-            )
-        stages.append(_stage("prompt", "ok"))
-        stages.append(_stage("read", "ok" if execution.get("read_ok") else "partial", command_count=len(execution.get("command_results") or [])))
-        return _result(
-            True, stages, started,
-            status=str(execution.get("status") or "succeeded"),
-            fingerprint=fingerprint,
-            output=execution.get("output") or {},
-            facts=execution.get("facts") or {},
-            command_results=execution.get("command_results") or [],
-            device_profile=execution.get("device_profile") or {},
-            session=execution.get("session") or {},
-            read_ok=bool(execution.get("read_ok")),
-        )
+        if target.protocol not in {"ssh", "telnet"}:
+            raise ValueError("unsupported_protocol")
+        if commands is not None and facts and commands:
+            raise ValueError("commands_and_facts_are_mutually_exclusive")
+        if read and not facts:
+            normalize_read_only_commands(commands, target.vendor)
+        with _SESSIONS.lease(key) as entry:
+            reused = entry["connection"] is not None
+            if reused:
+                connection = entry["connection"]
+                connection.session.timeout = max(1.0, float(timeout))
+                connection.session.deadline = started + timeout
+                try:
+                    # Synchronize before sending any requested command. A stale
+                    # channel can be reopened here, never after command dispatch.
+                    healthy = connection.session.check_ready()
+                except (OSError, EOFError):
+                    healthy = False
+                if not healthy:
+                    connection.close()
+                    entry["connection"] = None
+                    reused = False
+            if entry["connection"] is None:
+                entry["connection"] = _open_connection(target, timeout, accept_host_key)
+            connection = entry["connection"]
+            connection.session.deadline = started + timeout
+            try:
+                execution = _execute_commands(connection, commands, facts, read=read)
+                execution["session"].update({"reused": reused, "scope": "task" if session_key else "operation"})
+                return _result(True, connection.stages, started, fingerprint=connection.fingerprint, **execution)
+            except ValueError as exc:
+                # An unsupported optional template is not a connection outage.
+                return _result(True, connection.stages, started, read_ok=False,
+                               status="partial", error=str(exc)[:300],
+                               failure_stage="command_validation", command_results=[],
+                               device_profile=connection.session.driver.public_profile(detected_from="live_session"),
+                               session={"reused": reused, "prompt": connection.session.prompt})
+            except Exception:
+                connection.session.invalidate()
+                raise
+            finally:
+                if not session_key:
+                    connection.session.invalidate()
+    except _ConnectError as exc:
+        return _result(False, exc.stages, started, error=str(exc), **exc.details)
     except Exception as exc:
-        failed_stage = "ssh" if any(item["name"] == "tcp" and item["status"] == "ok" for item in stages) else "tcp"
-        stages.append(_stage(failed_stage, "failed"))
-        return _result(False, stages, started, error=str(exc)[:300])
-    finally:
-        try:
-            if transport:
-                transport.close()
-        finally:
-            if sock:
-                sock.close()
+        return _result(False, [_stage("connection", "failed")], started, error=str(exc)[:300])
 
 
 def _result(ok: bool, stages: list[dict[str, Any]], started: float, **extra: Any) -> dict[str, Any]:
     status = "succeeded" if ok else ("blocked" if any(s.get("status") == "blocked" for s in stages) else "failed")
     return {
-        "ok": ok,
-        "status": status,
-        "stages": stages,
+        "ok": ok, "status": status, "stages": stages,
         "duration_ms": int((time.monotonic() - started) * 1000),
         **{k: v for k, v in extra.items() if v not in ("", None)},
     }
 
 
-_TELNET_IAC = 255
-_TELNET_DO = 253
-_TELNET_DONT = 254
-_TELNET_WILL = 251
-_TELNET_WONT = 252
 _LOGIN_PROMPT = re.compile(r"(?:login|username|user\s*name)\s*[:：]\s*$", re.IGNORECASE)
 _PASSWORD_PROMPT = re.compile(r"password\s*[:：]\s*$", re.IGNORECASE)
 _DEVICE_PROMPT = re.compile(r"(?:^|\r?\n)[^\r\n]{0,120}[>#\]]\s*$")
 
 
-def _telnet_negotiate(sock: socket.socket, data: bytes) -> bytes:
-    """Strip Telnet negotiation and reject optional features safely."""
-    clean = bytearray()
-    index = 0
-    while index < len(data):
-        if data[index] != _TELNET_IAC:
-            clean.append(data[index])
-            index += 1
-            continue
-        if index + 1 >= len(data):
-            break
-        command = data[index + 1]
-        if command == _TELNET_IAC:
-            clean.append(_TELNET_IAC)
-            index += 2
-            continue
-        if command in {_TELNET_DO, _TELNET_DONT, _TELNET_WILL, _TELNET_WONT} and index + 2 < len(data):
-            option = data[index + 2]
-            reply = _TELNET_WONT if command in {_TELNET_DO, _TELNET_DONT} else _TELNET_DONT
-            sock.sendall(bytes((_TELNET_IAC, reply, option)))
-            index += 3
-            continue
-        index += 2
-    return bytes(clean)
+class _TelnetDecoder:
+    """Incremental IAC parser including fragmented option/subnegotiation bytes."""
+    def __init__(self, sock):
+        self.sock = sock
+        self.pending = bytearray()
+
+    def feed(self, data):
+        self.pending.extend(data)
+        clean = bytearray()
+        index = 0
+        while index < len(self.pending):
+            if self.pending[index] != 255:
+                end = self.pending.find(b"\xff", index)
+                end = len(self.pending) if end < 0 else end
+                clean.extend(self.pending[index:end])
+                index = end
+                continue
+            if len(self.pending) - index < 2:
+                break
+            command = self.pending[index + 1]
+            if command == 255:
+                clean.append(255)
+                index += 2
+            elif command in {251, 252, 253, 254}:
+                if len(self.pending) - index < 3:
+                    break
+                # Do not answer negative acknowledgements (negotiation loops).
+                if command in {251, 253}:
+                    self.sock.sendall(bytes((255, 254 if command == 251 else 252, self.pending[index + 2])))
+                index += 3
+            elif command == 250:
+                end = self.pending.find(b"\xff\xf0", index + 2)
+                if end < 0:
+                    if len(self.pending) - index > 65536:
+                        raise ValueError("telnet_subnegotiation_limit")
+                    break
+                index = end + 2
+            else:
+                index += 2
+        del self.pending[:index]
+        return bytes(clean)
 
 
-def _telnet_read(sock: socket.socket, *, timeout: float, stop_on_prompt: bool = True) -> str:
+def _telnet_read(sock: socket.socket, *, timeout: float, stop_on_prompt: bool = True, decoder=None) -> str:
+    from extensions.network_operations.cli_runtime import decode_terminal_bytes
+    decoder = decoder or _TelnetDecoder(sock)
     deadline = time.monotonic() + timeout
-    chunks: list[bytes] = []
+    raw = bytearray()
     socket_timeout = sock.gettimeout()
     try:
         while (remaining := deadline - time.monotonic()) > 0:
@@ -420,127 +569,15 @@ def _telnet_read(sock: socket.socket, *, timeout: float, stop_on_prompt: bool = 
             try:
                 data = sock.recv(65535)
             except TimeoutError:
-                # An idle receive is not the end of the handshake budget.
                 continue
             if not data:
                 break
-            chunks.append(_telnet_negotiate(sock, data))
-            text = b"".join(chunks).decode("utf-8", errors="replace")[-200_000:]
+            raw.extend(decoder.feed(data))
+            if len(raw) > 200_000:
+                raise ValueError("telnet_banner_limit")
+            text, _ = decode_terminal_bytes(bytes(raw))
             if stop_on_prompt and (_LOGIN_PROMPT.search(text) or _PASSWORD_PROMPT.search(text) or _DEVICE_PROMPT.search(text)):
                 break
     finally:
         sock.settimeout(socket_timeout)
-    return b"".join(chunks).decode("utf-8", errors="replace")[-200_000:]
-
-
-def _probe_telnet(
-    target: DeviceTarget,
-    *,
-    commands: list[str] | None,
-    facts: list[str] | None,
-    read: bool,
-    timeout: int,
-) -> dict[str, Any]:
-    stages: list[dict[str, Any]] = []
-    started = time.monotonic()
-    sock: socket.socket | None = None
-    try:
-        stages.append(_stage("target", "ok", host=target.host, port=target.port, protocol="telnet", vendor=target.vendor, source_address=target.source_address))
-        source = (target.source_address, 0) if target.source_address else None
-        sock = socket.create_connection((target.host, target.port), timeout=timeout, source_address=source)
-        sock.settimeout(min(float(timeout), 2.0))
-        stages.append(_stage("tcp", "ok"))
-        credential = target.credential or DeviceCredential(auth_method="none")
-        handshake_deadline = time.monotonic() + timeout
-        # Passive consoles need Enter before producing a prompt. Give banners
-        # a short grace period, then share the remaining authentication budget.
-        banner = _telnet_read(sock, timeout=min(timeout, 1.0))
-        if _LOGIN_PROMPT.search(banner):
-            if not credential.username:
-                return _result(False, stages + [_stage("auth", "failed")], started, error="username_required_by_device")
-            sock.sendall((credential.username + "\r\n").encode())
-            banner += _telnet_read(sock, timeout=max(0.0, handshake_deadline - time.monotonic()))
-        if _PASSWORD_PROMPT.search(banner):
-            if not credential.password:
-                return _result(False, stages + [_stage("auth", "failed")], started, error="password_required_by_device")
-            sock.sendall((credential.password + "\r\n").encode())
-            banner += _telnet_read(sock, timeout=max(0.0, handshake_deadline - time.monotonic()))
-        # Telnet devices may expose a prompt immediately and require no login.
-        if not _DEVICE_PROMPT.search(banner):
-            sock.sendall(b"\r\n")
-            banner += _telnet_read(sock, timeout=max(0.0, handshake_deadline - time.monotonic()))
-        if not _DEVICE_PROMPT.search(banner):
-            return _result(False, stages + [_stage("prompt", "failed")], started, error="device_prompt_not_detected")
-        stages.append(_stage("auth", "ok", method="none" if not credential.username and not credential.password else "password"))
-        driver, source = resolve_driver(target.vendor, banner)
-
-        def receive() -> bytes | None:
-            try:
-                data = sock.recv(65535)
-            except TimeoutError:
-                return None
-            return _telnet_negotiate(sock, data) if data else b""
-
-        session = InteractiveCLISession(
-            send=sock.sendall,
-            receive=receive,
-            driver=driver,
-            timeout=timeout,
-            initial_text=banner,
-        )
-        bootstrap = session.bootstrap()
-        if not bootstrap.complete:
-            return _result(
-                False, stages + [_stage("prompt", "failed")], started,
-                error=bootstrap.error_code or "device_prompt_not_detected",
-                session=bootstrap.as_dict(),
-                device_profile=driver.public_profile(detected_from=source),
-            )
-        profile = session.refine_driver(banner + "\n" + bootstrap.text)
-        if not read:
-            stages.append(_stage("prompt", "ok"))
-            return _result(
-                True, stages, started,
-                banner=banner[-2000:],
-                device_profile=profile,
-                session={"prompt": session.prompt, "encoding": session.encoding},
-            )
-        if facts:
-            command_plan = session.driver.commands_for(facts)
-            commands = [command for _fact, command in command_plan]
-            command_facts = {command: fact for fact, command in command_plan}
-        else:
-            command_facts = {}
-        safe_commands = normalize_read_only_commands(commands, session.driver.vendor)
-        paging = session.disable_paging()
-        output: dict[str, str] = {}
-        command_results: list[dict[str, Any]] = []
-        for command in safe_commands:
-            command_result = session.run_command(command)
-            output[command] = command_result.output
-            command_results.append(_semantic_result_payload(command_result, command_facts.get(command, "")))
-        read_ok = all(item.get("complete") and not item.get("error_code") for item in command_results)
-        stages.extend((
-            _stage("prompt", "ok"),
-            _stage("read", "ok" if read_ok else "partial", command_count=len(output)),
-        ))
-        return _result(
-            True, stages, started,
-            status="succeeded" if read_ok else "partial",
-            output=output,
-            facts=session.driver.parse_facts(output, command_facts, command_results),
-            command_results=command_results,
-            device_profile=profile,
-            session={
-                "prompt": session.prompt,
-                "encoding": session.encoding,
-                "pagination": paging.as_dict() if paging else None,
-            },
-            read_ok=read_ok,
-        )
-    except Exception as exc:
-        stages.append(_stage("telnet", "failed"))
-        return _result(False, stages, started, error=str(exc)[:300])
-    finally:
-        if sock:
-            sock.close()
+    return decode_terminal_bytes(bytes(raw))[0]

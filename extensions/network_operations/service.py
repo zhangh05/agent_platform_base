@@ -34,12 +34,6 @@ SKILL_TOOL_IDS = frozenset({
     "network.operations.inspection",
 })
 INTERNAL_SCAN_LIMIT = 5000
-DEFAULT_COMMANDS = {
-    "h3c": ["display version", "display device", "display interface brief", "display ip routing-table summary"],
-    "huawei": ["display version", "display device", "display interface brief", "display ip routing-table statistics"],
-    "cisco": ["show version", "show inventory", "show interfaces status", "show ip route summary"],
-    "generic": ["uname -a", "uptime", "df -h", "ip address"],
-}
 
 
 STARTER_SCRIPTS: tuple[dict[str, Any], ...] = (
@@ -441,7 +435,9 @@ def test_connection(
     commands: list[str] | None = None,
     facts: list[str] | None = None,
     timeout: int = 15,
+    session_scope: str = "",
 ) -> dict[str, Any]:
+    execution_started = time.monotonic()
     with _connection_lock(workspace_id):
         record = get_connection(workspace_id, connection_id, include_secret=True)
         if not record:
@@ -455,19 +451,29 @@ def test_connection(
         if commands is not None and facts:
             raise ValueError("commands_and_facts_are_mutually_exclusive")
         normalized_facts = _normalize_semantic_facts(facts) if facts else []
-        selected = (
-            commands if commands is not None else
-            [] if not read or normalized_facts else
-            DEFAULT_COMMANDS.get(target.vendor, DEFAULT_COMMANDS["generic"])
-        )
-        result = probe_target(
-            target,
-            commands=selected,
-            facts=normalized_facts,
-            accept_host_key=accept_host_key,
-            read=read,
-            timeout=timeout,
-        )
+        selected = commands if read and not normalized_facts else []
+        if read and not normalized_facts:
+            selected = normalize_read_only_commands(selected, target.vendor)
+        root = _store(workspace_id).root().resolve()
+        endpoint = hashlib.sha256(f"{target.host}:{target.port}".encode()).hexdigest()
+        session_options = {}
+        if session_scope:
+            # root includes principal identity. Revision and target prevent
+            # credential/config edits or changed routing from reusing a socket.
+            identity = [str(root), session_scope, connection_id, record.get("revision"),
+                        target.host, target.port, target.source_address, target.expected_fingerprint]
+            session_options["session_key"] = hashlib.sha256(json.dumps(identity).encode()).hexdigest()
+        with FileLock(root / ".cli-locks" / (endpoint + ".lock"), timeout=timeout):
+            latest = get_connection(workspace_id, connection_id, include_secret=True)
+            if not latest or latest.get("revision") != record.get("revision"):
+                raise ValueError("connection_changed_before_execution")
+            remaining = timeout - (time.monotonic() - execution_started)
+            if remaining <= 0:
+                raise TimeoutError("device_execution_budget_exhausted")
+            result = probe_target(
+                target, commands=selected, facts=normalized_facts,
+                accept_host_key=accept_host_key, read=read, timeout=remaining, **session_options,
+            )
     except (ValueError, RuntimeError, OSError) as exc:
         result = {"ok": False, "status": "failed", "error": str(exc)[:300] or "connection_setup_failed"}
     fingerprint = str(result.get("fingerprint") or "")
@@ -799,7 +805,7 @@ def resolve_workbench_selection(workspace_id: str, selection: dict[str, Any]) ->
             "profile_detected_from": item.get("profile_detected_from"),
         } for item in connections],
         "semantic_catalog": semantic_catalog(),
-        "network_runtime_version": "network.cli.v2",
+        "network_runtime_version": "network.cli.v3",
         "source": "server_validated_extension_context",
     }
 
@@ -875,7 +881,7 @@ def commands_for(asset: dict[str, Any], commands: list[str] | None = None, scrip
             raise ValueError(f"script_not_supported_for_vendor:{vendor}")
         selected = script.get("commands") or []
     else:
-        selected = commands or DEFAULT_COMMANDS.get(vendor, DEFAULT_COMMANDS["generic"])
+        selected = commands
     return normalize_read_only_commands(selected, vendor)
 
 
@@ -901,7 +907,9 @@ def _target_for(asset: dict[str, Any]) -> DeviceTarget:
     )
 
 
-def collect_connection(asset: dict[str, Any], commands: list[str], *, timeout: int = 15) -> dict[str, str]:
+def collect_connection(asset: dict[str, Any], commands: list[str] | None, *, timeout: int = 15,
+                       facts: list[str] | None = None, session_scope: str = "") -> dict[str, Any]:
+    """Return the complete execution envelope, not just a lossy text mapping."""
     if asset.get("connection_id"):
         result = test_connection(
             str(asset.get("workspace_id") or ""),
@@ -909,15 +917,11 @@ def collect_connection(asset: dict[str, Any], commands: list[str], *, timeout: i
             commands=commands,
             read=True,
             timeout=timeout,
+            facts=facts,
+            session_scope=session_scope,
         )
-        if not result.get("ok"):
-            raise RuntimeError(str(result.get("error") or "device connection failed"))
-        return {str(key): str(value) for key, value in (result.get("output") or {}).items()}
-    result = probe_target(_target_for(asset), commands=commands, read=True, timeout=timeout)
-    if not result.get("ok"):
-        raise RuntimeError(str(result.get("error") or "device connection failed"))
-    output = result.get("output") or {}
-    return {str(key): str(value) for key, value in output.items()}
+        return result
+    return probe_target(_target_for(asset), commands=commands, facts=facts, read=True, timeout=timeout)
 
 
 def _inspection_assets(workspace_id: str, asset_ids: list[str] | None) -> list[dict[str, Any]]:
@@ -990,7 +994,7 @@ def _command_plan(
         return {"mode": "semantic_facts", "facts": _normalize_semantic_facts(facts)}
     if commands is not None:
         return {"mode": "inline_commands", "commands": list(commands)}
-    return {"mode": "vendor_defaults"}
+    raise ValueError("explicit_commands_facts_or_script_required")
 
 
 def _restore_command_plan(task: dict[str, Any]) -> tuple[list[str] | None, dict[str, Any] | None, list[str] | None]:
@@ -1013,8 +1017,6 @@ def _restore_command_plan(task: dict[str, Any]) -> tuple[list[str] | None, dict[
         if not isinstance(commands, list):
             raise ValueError("inspection_inline_commands_invalid")
         return list(commands), None, None
-    if mode == "vendor_defaults":
-        return None, None, None
     raise ValueError("inspection_command_plan_invalid")
 
 
@@ -1026,6 +1028,8 @@ def _build_inspection_task(
     facts: list[str] | None = None,
     job_id: str = "",
 ) -> dict[str, Any]:
+    if sum((commands is not None, script is not None, bool(facts))) != 1:
+        raise ValueError("exactly_one_of_commands_facts_or_script_required")
     for target in targets:
         if facts:
             # Validate vocabulary now, but defer vendor command selection to
@@ -1049,8 +1053,8 @@ def _build_inspection_task(
         "results": {}, "artifact_id": "",
         "command_plan": _command_plan(commands, script, facts),
         "script": _script_safe(script) if script else {
-            "script_id": "semantic-facts" if facts else "inline-commands" if commands is not None else "vendor-defaults",
-            "name": "语义事实采集" if facts else "临时只读命令" if commands is not None else "厂商默认命令",
+            "script_id": "semantic-facts" if facts else "inline-commands",
+            "name": "语义事实采集" if facts else "临时只读命令",
             "commands": list(commands or []),
             "facts": list(facts or []),
         },
@@ -1182,46 +1186,33 @@ def _execute_inspection(
     task.update({"status": "running", "started_at": now_iso(), "updated_at": now_iso()})
     store.save("inspections", task_id, task)
     def run_one(target: dict[str, Any]) -> tuple[str, dict[str, Any]]:
+        from core.tools.context import bind_runtime_cancel_check, reset_runtime_cancel_check
         target_id = _inspection_target_id(target)
         if cancel.is_set():
             return target_id, {"status": "cancelled", "name": target["name"]}
         started = time.monotonic()
+        cancel_token = bind_runtime_cancel_check(cancel.is_set)
         try:
-            if facts:
-                if not target.get("connection_id"):
-                    raise ValueError("semantic_facts_require_registered_connection")
-                live = test_connection(
-                    workspace_id,
-                    str(target.get("connection_id") or ""),
-                    facts=facts,
-                    read=True,
-                )
-                if not live.get("ok"):
-                    raise RuntimeError(str(live.get("error") or "device connection failed"))
-                raw = {str(key): str(value) for key, value in (live.get("output") or {}).items()}
-                selected = [
-                    str(item.get("command") or "")
-                    for item in (live.get("command_results") or [])
-                    if item.get("command")
-                ]
-                target_status = "succeeded" if live.get("read_ok") else "partial"
-                diagnostics = [
-                    {
-                        key: item.get(key)
-                        for key in ("command", "fact", "complete", "pages", "encoding", "error_code", "device_error", "truncated", "duration_ms")
-                    }
-                    for item in (live.get("command_results") or [])
-                ]
-            else:
-                selected = commands_for(target, commands, script)
-                raw = collector(target, selected)
-                target_status = "succeeded"
-                diagnostics = []
+            selected = None if facts else commands_for(target, commands, script)
+            live = collector(target, selected, facts=facts, session_scope=task_id)
+            if not live.get("ok"):
+                raise RuntimeError(str(live.get("error") or "device connection failed"))
+            raw = {str(key): str(value) for key, value in (live.get("output") or {}).items()}
+            selected = [str(item.get("command") or "") for item in (live.get("command_results") or []) if item.get("command")]
+            target_status = "succeeded" if live.get("read_ok") else "partial"
+            diagnostics = [
+                {key: item.get(key) for key in (
+                    "command", "fact", "complete", "pages", "encoding",
+                    "error_code", "device_error", "truncated", "duration_ms",
+                    "dispatch_status",
+                )}
+                for item in (live.get("command_results") or [])
+            ]
             normalized = json.dumps(raw, ensure_ascii=False, sort_keys=True)
             return target_id, {
                 "status": target_status, "name": target["name"], "host": target["host"],
                 "commands": selected, "output_hash": hashlib.sha256(normalized.encode()).hexdigest(),
-                "facts": live.get("facts") if facts else None,
+                "facts": live.get("facts"),
                 "command_results": diagnostics,
                 "_raw_output": raw, "duration_ms": int((time.monotonic() - started) * 1000),
             }
@@ -1230,6 +1221,8 @@ def _execute_inspection(
                 "status": "failed", "name": target["name"], "host": target["host"],
                 "error": str(exc)[:300], "duration_ms": int((time.monotonic() - started) * 1000),
             }
+        finally:
+            reset_runtime_cancel_check(cancel_token)
     workers = min(5, max(1, len(targets)))
     raw_outputs: dict[str, dict[str, str]] = {}
     with ContextThreadPoolExecutor(max_workers=workers, thread_name_prefix="network-inspection") as pool:
