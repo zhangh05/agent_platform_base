@@ -403,6 +403,7 @@ def test_pending_approval_stops_before_tool_execution():
     result = asyncio.run(engine.run("删除 old.txt", workspace_id="default", session_id="session-1"))
     assert result.metadata["approval_required"] is True
     assert result.metadata["approval_pending"] is True
+    assert result.metadata["approval_continuation_id"] == "cont_" + "c" * 32
     assert captured["tool_calls"][0]["name"] == "workspace.file"
     assert calls == []
 
@@ -938,3 +939,74 @@ def test_continuation_projection_rejects_parent_run_from_other_session(monkeypat
     parent = get_run(parent_run_id, "default")
     assert parent["status"] == "pending"
     assert parent["final_response"] == "等待审批"
+
+
+def test_terminal_continuation_repairs_legacy_parent_by_exact_approval_ids(monkeypatch, tmp_path):
+    _storage(monkeypatch, tmp_path)
+    from agent.runtime.turn_persistence import project_approval_continuation_state
+    from storage.records import atomic_save_json
+    from storage.run_record_store import get_run
+
+    parent_run_id = "legacy-parent"
+    atomic_save_json("default", ("runs", f"{parent_run_id}.json"), {
+        "run_id": parent_run_id,
+        "session_id": "session-1",
+        "status": "partial",
+        "metadata": {"ssot_runtime": {"approval_required": True, "approval_ids": ["apr-1"]}},
+    })
+    continuation = {
+        "continuation_id": "cont_" + "e" * 32,
+        "parent_run_id": parent_run_id,
+        "session_id": "session-1",
+        "approval_ids": ["apr-1"],
+        "status": "expired",
+    }
+    project_approval_continuation_state("default", continuation)
+    parent = get_run(parent_run_id, "default")
+    assert parent["status"] == "error"
+    assert parent["metadata"]["approval_continuation"] == {
+        "continuation_id": continuation["continuation_id"],
+        "status": "expired",
+        "updated_at": parent["metadata"]["approval_continuation"]["updated_at"],
+    }
+
+    atomic_save_json("default", ("runs", "legacy-mismatch.json"), {
+        "run_id": "legacy-mismatch", "session_id": "session-1", "status": "partial",
+        "metadata": {"ssot_runtime": {"approval_ids": ["apr-other"]}},
+    })
+    project_approval_continuation_state("default", {**continuation, "parent_run_id": "legacy-mismatch"})
+    assert get_run("legacy-mismatch", "default")["status"] == "partial"
+
+
+def test_pending_runtime_result_binds_continuation_to_persisted_parent(monkeypatch, tmp_path):
+    _storage(monkeypatch, tmp_path)
+    from agent.core.session import AgentSession
+    from agent.core.turn import AgentTurn
+    from agent.protocol.op import AgentOp
+    from agent.runtime.result import AgentResult
+    from agent.runtime.turn_persistence import persist_run_record
+    from storage.run_record_store import get_run
+
+    continuation_id = "cont_" + "f" * 32
+    session = AgentSession(session_id="session-1", workspace_id="default")
+    turn = AgentTurn(
+        turn_id="parent-from-runtime",
+        op=AgentOp.user_message("执行配置", session_id="session-1", workspace_id="default"),
+    )
+    result = AgentResult(
+        ok=False,
+        turn_id=turn.turn_id,
+        session_id=session.session_id,
+        final_response="该操作正在等待审批，批准后将从当前步骤继续。",
+        errors=["approval_required"],
+        metadata={"ssot_runtime": {
+            "approval_required": True,
+            "approval_pending": True,
+            "approval_ids": ["apr-1"],
+            "approval_continuation_id": continuation_id,
+        }},
+    )
+    assert persist_run_record(session, turn, result, SimpleNamespace(metadata={})) is True
+    parent = get_run(turn.turn_id, "default")
+    assert parent["status"] == "pending"
+    assert parent["metadata"]["approval_continuation"]["continuation_id"] == continuation_id

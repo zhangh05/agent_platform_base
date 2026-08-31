@@ -116,8 +116,8 @@ def persist_run_record(session, turn, result, context) -> bool:
         )
         if is_approval_pending:
             continuation_id = str(
-                (result_metadata.get("ssot_runtime") or {}).get("continuation_id")
-                or result_metadata.get("continuation_id")
+                (result_metadata.get("ssot_runtime") or {}).get("approval_continuation_id")
+                or result_metadata.get("approval_continuation_id")
                 or ""
             )
             if continuation_id:
@@ -523,8 +523,21 @@ def project_approval_continuation_state(workspace_id: str, continuation: dict) -
         return
     metadata = dict(record.get("metadata") or {})
     approval = dict(metadata.get("approval_continuation") or {})
-    if approval.get("continuation_id") != continuation.get("continuation_id"):
-        return
+    continuation_id = str(continuation.get("continuation_id") or "")
+    bound_id = str(approval.get("continuation_id") or "")
+    if bound_id != continuation_id:
+        # Older pending runs were persisted before the continuation identifier
+        # was projected.  Repair only when the durable approval-id set proves
+        # this continuation belongs to this exact parent; never attach a merely
+        # nearby continuation by workspace/session alone.
+        if bound_id:
+            return
+        runtime = dict(metadata.get("ssot_runtime") or {})
+        expected_ids = {str(value) for value in list(runtime.get("approval_ids") or metadata.get("approval_ids") or []) if value}
+        actual_ids = {str(value) for value in list(continuation.get("approval_ids") or []) if value}
+        if not expected_ids or expected_ids != actual_ids:
+            return
+        approval["continuation_id"] = continuation_id
     if approval.get("status") == state:
         return
     approval.update({"status": state, "updated_at": now_iso()})
