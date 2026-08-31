@@ -181,7 +181,7 @@ function Ensure-PythonDependencies([string]$Python) {
     $stamp = Join-Path $StateDir "requirements.sha256"
     $hash = (Get-FileHash -Algorithm SHA256 $requirements).Hash
     $installedHash = if (Test-Path $stamp) { (Get-Content $stamp -Raw).Trim() } else { "" }
-    $probe = Invoke-Native $Python @("-c", "import flask, flask_sock, yaml, bs4, lxml, pdfplumber, scapy, paramiko") -Quiet
+    $probe = Invoke-Native $Python @("-c", "import flask, flask_sock, yaml, bs4, lxml, pdfplumber, paramiko") -Quiet
     if ([IO.Path]::GetFullPath($Python) -eq [IO.Path]::GetFullPath($BundledPython)) {
         if ($probe.ExitCode -ne 0) {
             Fail-Native "The bundled Python dependencies are damaged; re-download and fully extract the Windows release" $probe

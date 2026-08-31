@@ -1,6 +1,38 @@
 """SSOT Runtime main-entry contract tests."""
 
 
+def test_retired_parallel_runtime_surfaces_are_not_available():
+    from pathlib import Path
+    from core.runtime_engine import engine
+    from core.runtime_engine.tool_runtime import ToolRuntime
+
+    root = Path(__file__).resolve().parents[1]
+    for relative in (
+        "agent/llm/context_builder.py",
+        "agent/task.py",
+        "agent/modules/knowledge/tools.py",
+        "core/tools/action_class.py",
+        "core/tools/registry_helpers.py",
+        "observability/trace.py",
+        "storage/remote_store.py",
+    ):
+        assert not (root / relative).exists(), relative
+    assert not hasattr(engine, "validate_final_response")
+    assert not hasattr(ToolRuntime, "execute_layer")
+
+
+def test_python_ast_validator_has_one_effective_definition():
+    import ast
+    import inspect
+    from core.tools import python_exec
+
+    definitions = [
+        node for node in ast.parse(inspect.getsource(python_exec)).body
+        if isinstance(node, ast.FunctionDef) and node.name == "_validate_ast"
+    ]
+    assert len(definitions) == 1
+
+
 def test_default_output_budget_stays_bounded():
     from core.runtime_engine.models import SSOTRuntimeConfig
 

@@ -1,10 +1,4 @@
-/**
- * Domain types — strict 1:1 mapping from backend Python dataclasses `as_dict()`.
- * No fields are guessed. The frontend only renders what the backend actually
- * returns. See `agent/capabilities/catalog.py` and `agent/runtime/result.py`.
- */
 
-export type ToolStatus = "enabled" | "planned" | "disabled";
 export type RiskLevel = "low" | "medium" | "high" | "critical" | "forbidden";
 export type Sensitivity = "public" | "internal" | "sensitive" | "secret";
 export type ToolGovernanceStatus = "active" | "disabled" | "internal" | "forbidden";
@@ -531,22 +525,6 @@ export interface ArchivedDataItem {
 
 export type ReviewStatus = "pending" | "accepted" | "ignored" | "modified";
 
-export interface ReviewItem {
-  item_id: string;
-  workspace_id: string;
-  artifact_id: string;
-  title?: string;
-  severity: "info" | "warning" | "error";
-  category: string;
-  line_no: number | null;
-  reason: string;
-  requires_human_review: boolean;
-  status: ReviewStatus;
-  user_note: string;
-  created_at: string;
-  updated_at: string;
-}
-
 /* ──────────────────────────── Sessions / Workspaces ──────────────────────────── */
 
 export interface Session {
@@ -822,13 +800,6 @@ export type AsyncState<T> =
   | { kind: "success"; data: T }
   | { kind: "empty"; reason?: string }
   | { kind: "error"; error: ApiError };
-
-export function isSuccess<T>(s: AsyncState<T>): s is { kind: "success"; data: T } {
-  return s.kind === "success";
-}
-export function isEmpty<T>(s: AsyncState<T>): s is { kind: "empty"; reason?: string } {
-  return s.kind === "empty";
-}
 export function isError<T>(s: AsyncState<T>): s is { kind: "error"; error: ApiError } {
   return s.kind === "error";
 }

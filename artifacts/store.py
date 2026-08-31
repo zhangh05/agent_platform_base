@@ -701,15 +701,3 @@ def _update_run_index(ws_id, run_id, art_id, artifact_type, title):
         else:
             idx.setdefault("temp_artifacts", []).append(info)
     mutate_run_artifacts(ws_id, run_id, _append)
-
-
-def _type_dir(artifact_type: str) -> str:
-    m = {"input_data": "inputs", "output_data": "outputs", "report": "reports",
-         "knowledge_doc": "knowledge", "knowledge_index": "knowledge",
-         "template": "inputs", "sample": "inputs", "trace_export": "reports",
-         "temp": "temp", "unknown": "quarantine"}
-    return m.get(artifact_type, "quarantine")
-
-
-def _all_type_dirs() -> list:
-    return ["inputs", "outputs", "reports", "topology", "knowledge", "temp", "quarantine"]

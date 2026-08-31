@@ -104,36 +104,12 @@ export function EmptyState({
 
 type CssVars = CSSProperties & Record<`--${string}`, string>;
 
-function skeletonSizeStyle(w: string, h: number): CssVars {
-  return {
-    "--skeleton-width": w,
-    "--skeleton-height": `${h}px`,
-  };
-}
-
 function skeletonListStyle(gap: number): CssVars {
   return { "--skeleton-gap": `${gap}px` };
 }
 
 function skeletonDelayStyle(index: number, step: number): CssVars {
   return { "--skeleton-delay": `${index * step}s` };
-}
-
-function sk(w: string, h: number) {
-  return (
-    <span
-      className="skeleton"
-      style={skeletonSizeStyle(w, h)}
-    />
-  );
-}
-
-export function SkeletonLine({ w = "60%", h = 14 }: { w?: string; h?: number }) {
-  return sk(w, h);
-}
-
-export function SkeletonBlock({ h = 120, w = "100%" }: { h?: number; w?: string }) {
-  return sk(w, h);
 }
 
 export function SkeletonList({ rows = 5, gap = 10 }: { rows?: number; gap?: number }) {
@@ -246,74 +222,6 @@ export function CodeBlock({
 
 export function InlineCode({ children }: { children: ReactNode }) {
   return <code>{children}</code>;
-}
-
-/* ── Field (form row) ── */
-
-export function Field({
-  label,
-  hint,
-  children,
-  htmlFor,
-}: {
-  label: string;
-  hint?: string;
-  children: ReactNode;
-  htmlFor?: string;
-}) {
-  return (
-    <div className="col-flex field-col">
-      <label
-        htmlFor={htmlFor}
-        className="field-label"
-      >
-        {label}
-      </label>
-      {children}
-      {hint && (
-        <span className="field-hint">{hint}</span>
-      )}
-    </div>
-  );
-}
-
-/* ── Collapsible section (used by Inspector) ── */
-
-export function Collapsible({
-  title,
-  defaultOpen = true,
-  count,
-  children,
-  testid,
-}: {
-  title: ReactNode;
-  defaultOpen?: boolean;
-  count?: number;
-  children: ReactNode;
-  testid?: string;
-}) {
-  const [open, setOpen] = useState(defaultOpen);
-  return (
-    <div className="inspector-section" data-testid={testid}>
-      <button
-        className={"inspector-section-title collapsible-toggle" + (open ? "" : " collapsed")}
-        onClick={() => setOpen((o) => !o)}
-        data-testid="collapsible-toggle"
-        type="button"
-      >
-        <span className="collapsible-title">
-          <span className="chev">▾</span>
-          {title}
-          {typeof count === "number" && count > 0 && (
-            <span className="collapsible-count">
-              {count}
-            </span>
-          )}
-        </span>
-      </button>
-      {open && <div className="collapsible-body">{children}</div>}
-    </div>
-  );
 }
 
 /* ── Hook: useAsync ── */

@@ -1,16 +1,11 @@
 # core/tools/general_tools/shared.py
 """Shared helpers for split general tools."""
 
-import json
-import os
-import re
 import time
-from functools import wraps
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
-from core.tools.schemas import ToolSpec, ToolInvocation, ToolResult
-from core.tools.redaction import redact_tool_output
+from core.tools.schemas import ToolInvocation
 from core.tools.path_security import PathSecurityError, safe_workspace_path
 from storage.ids import validate_workspace_id
 
@@ -203,52 +198,11 @@ def _generate_diff_preview(old: str, new: str, max_lines: int = 6) -> str:
     return "\n".join(preview)
 
 
-# ═══════════════ A. Artifact Tools ═══════════════
-
-
-
-
-
-
-
-
-
-def _persist_artifact_tags(ws: str, art_id: str, tags: list) -> None:
-    """Best-effort: persist artifact tags through the artifact store."""
-    try:
-        from artifacts.store import update_artifact_tags
-        update_artifact_tags(ws, art_id, tags)
-    except Exception:
-        pass
-
-
-
-
-# ═══════════════ B. Knowledge Tools ═══════════════
-
-
-
-
-
-
-
-
-
-
-
-
-
-# ═══════════════ C. Web Tools ═══════════════
-
 _PRIVATE_IP_PREFIXES = ("10.", "172.16.", "172.17.", "172.18.", "172.19.",
                          "172.20.", "172.21.", "172.22.", "172.23.", "172.24.",
                          "172.25.", "172.26.", "172.27.", "172.28.", "172.29.",
                          "172.30.", "172.31.", "192.168.", "127.", "0.", "169.254.")
 
-
-
-# Re-export shared web handlers from the split implementation module.
-from core.tools.general_tools.shared_web import *
 
 def _shell_argv(command, shell: str = "/bin/bash", os_name: str | None = None):
     """Build the native shell argv without invoking a process."""
@@ -394,28 +348,3 @@ def _run_shell(command: str, cwd: str = None, shell: str = "/bin/bash",
             except Exception:
                 pass
         return {"ok": False, "error": str(e)[:200]}
-
-
-
-
-
-
-# ═══════════════ J. Python Exec Tool (high risk, AST-sandboxed) ═══════════════
-
-
-
-# ═══════════════ K. Session Snapshot / Rewind Tools ═══════════════
-
-
-
-
-
-
-
-
-
-
-
-# ═══════════════ L. Agent Spawn (Sub-Agent) Tool ═══════════════
-
-__all__ = [name for name in globals() if not name.startswith("__")]

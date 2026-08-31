@@ -192,9 +192,7 @@ def _build_cached_tool_definitions(tool_registry: dict) -> list[dict]:
 
 TOOL_MESSAGE_MAX_CHARS = 50_000    # Per-tool output cap fed to LLM; balances article coverage vs context pressure
 ARTIFACT_ANALYSIS_MAX_CHARS = 100_000
-FALLBACK_TOOL_MAX_CHARS = 2000
 MAX_VALIDATION_CORRECTION_ROUNDS = 3
-MAX_RESPONSE_QUALITY_CORRECTION_ROUNDS = 2
 MAX_BATCH_REPLAN_ROUNDS = 2
 
 _PRIORITY_OUTPUT_KEYS = (
@@ -451,17 +449,6 @@ def _project_synthesis_resource(value: Any, token_budget: int) -> Any:
     projected_evidence, _ = project_json_to_tokens(evidence, max(96, token_budget * 3 // 4))
     projected_remainder, _ = project_json_to_tokens(remainder, max(64, token_budget // 8))
     return {**projected_identity, **projected_evidence, **projected_remainder}
-
-
-def _compact_tool_content(content: Any, *, max_chars: int = TOOL_MESSAGE_MAX_CHARS) -> str:
-    """Compact existing tool-message content without double-encoding JSON."""
-    if isinstance(content, str):
-        try:
-            parsed = json.loads(content)
-        except Exception:
-            parsed = content
-        return _json_compact(parsed, max_chars=max_chars)
-    return _json_compact(content, max_chars=max_chars)
 
 
 def _artifact_analysis_content(
@@ -3162,14 +3149,6 @@ class QueryLoop:
         # visible content; provider reasoning channels are never mapped to content
         # tokens and the UI additionally filters tagged reasoning.
         return build_runtime_system_prompt(ctx.extras), "planner", True
-
-    @staticmethod
-    def _has_synthesis_checkpoint(messages: list[LLMMessage]) -> bool:
-        return any(
-            message.role == "user"
-            and SYNTHESIS_CHECKPOINT_MARKER in str(message.content or "")
-            for message in messages[-2:]
-        )
 
     @staticmethod
     def _has_final_synthesis_checkpoint(messages: list[LLMMessage]) -> bool:

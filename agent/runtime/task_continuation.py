@@ -22,11 +22,6 @@ from core.runtime_engine.enumerated_items import extract_enumerated_items
 
 _SCHEMA = "runtime.task_continuation.v1"
 _SESSION_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,160}$")
-_ADDITIONAL_RE = re.compile(
-    r"^(?:再来|再给|再生成|再写|再列|再补)\s*(?:(?P<count>\d+)\s*)?(?P<unit>条|个|项|份|段|组)?[。.!！?？\s]*$"
-)
-_DETAIL_RE = re.compile(r"^(?:继续|接着|展开|详细点|再详细|再说说)[。.!！?？\s]*$")
-_REFINE_RE = re.compile(r"^(?:改成|改为|不要|只要|换成|调整为).{1,240}$")
 _COUNT_RE = re.compile(r"(?<!\d)(?P<count>\d{1,3})\s*(?P<unit>条|个|项|份|段|组)")
 _PREFIX_RE = re.compile(r"(?:以|用|使用)\s*[“\"']?(?P<prefix>[A-Za-z][A-Za-z0-9_-]{0,15}-)[”\"']?\s*开头")
 

@@ -26,11 +26,6 @@ FORBIDDEN_ARGS: list[str] = [
     "force_delete", "recursive_delete", "rm_rf",
 ]
 
-DANGEROUS_IP_PATTERNS: list[str] = [
-    r"^0\.0\.0\.0$",
-    r"^255\.255\.255\.255$",
-    r"^127\.0\.0\.1$",
-]
 
 
 def _has_argument_value(arguments: dict[str, Any], field_name: str) -> bool:
@@ -67,26 +62,6 @@ class SemanticValidator:
     def __init__(self, tool_registry: dict[str, dict[str, Any]] | None = None):
         self._registry = tool_registry or {}
         self._contracts = BUILTIN_CONTRACTS
-
-    @staticmethod
-    def _canonical_action_set(tool_id: str) -> frozenset[str] | None:
-        """Return the canonical action enum for ``tool_id`` (None if unknown).
-
-        v3.10: pulls directly from the registered ToolContract so the
-        validator stays aligned with what the model is allowed to emit.
-        QueryLoop has already normalized aliases before this point, so the
-        set is intentional and the check is exact.
-        """
-        contract = get_contract(tool_id)
-        if contract is None:
-            return None
-        schema = contract.input_schema or {}
-        properties = schema.get("properties") or {}
-        action = properties.get("action") or {}
-        enum = action.get("enum")
-        if not isinstance(enum, list) or not enum:
-            return None
-        return frozenset(str(x) for x in enum)
 
     def validate(self, nodes: list[ExecutionNode]) -> SemanticValidationResult:
         result = SemanticValidationResult(valid=True)

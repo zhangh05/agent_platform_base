@@ -382,42 +382,6 @@ class ToolRuntime:
             # process interruption or transient ledger write failure.
             return
 
-    async def execute_layer(
-        self,
-        nodes: list[ExecutionNode],
-        ctx: StatelessContext,
-        dep_results: dict[str, ToolResult],
-    ) -> dict[str, ToolResult]:
-        """Execute all nodes in a layer concurrently.
-
-        All nodes at the same depth run fully parallel via asyncio.gather.
-        """
-        if not nodes:
-            return {}
-
-        tasks = {
-            node.id: asyncio.create_task(
-                self.execute_node(node, ctx, dep_results)
-            )
-            for node in nodes
-        }
-
-        results = await asyncio.gather(*tasks.values(), return_exceptions=True)
-
-        layer_results: dict[str, ToolResult] = {}
-        for node_id, result in zip(tasks.keys(), results):
-            if isinstance(result, Exception):
-                layer_results[node_id] = ToolResult(
-                    node_id=node_id,
-                    tool="unknown",
-                    success=False,
-                    error=f"{type(result).__name__}: {result}",
-                )
-            else:
-                layer_results[node_id] = result
-
-        return layer_results
-
     async def _invoke_handler(self, handler: ToolHandler, args: dict[str, Any]) -> Any:
         """Invoke a handler, supporting both sync and async handlers."""
         if inspect.iscoroutinefunction(handler):

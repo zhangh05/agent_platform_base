@@ -28,20 +28,16 @@ from .models import (
     StatelessContext,
     ToolResult,
 )
-from .query_loop import MAX_VALIDATION_CORRECTION_ROUNDS, QueryLoop, QueryLoopResult
+from .query_loop import MAX_VALIDATION_CORRECTION_ROUNDS, QueryLoop
 from .runtime_contracts import ExecutionContract
 from .stage_events import (
-    EXECUTION_COMPLETED,
-    RESPONSE_COMPLETED,
-    RESPONSE_STARTED,
     HEARTBEAT,
-    PLANNER_COMPLETED,
     PLANNER_STARTED,
     TURN_COMPLETED,
     TURN_STARTED,
 )
 from .tool_runtime import ToolRuntime
-from .trace import SpanClock, TraceCollector
+from .trace import TraceCollector
 
 
 class SSOTRuntimeEngine:
@@ -602,9 +598,6 @@ _Q_TASK_OVERRIDES = (
     "查找", "跟踪", "发起",
 )
 
-_TASK_INTENT_RESULT_FIELDS = ("结论", "发现", "原因", "建议", "异常",
-                              "正常", "风险", "下一步", "依据", "诊断")
-
 _COMMAND_GOAL_HINTS = (
     "查看", "查询", "获取", "检查", "确认", "采集", "诊断",
     "ip", "IP", "地址", "内核", "版本", "状态", "接口",
@@ -793,109 +786,3 @@ def detect_task_intent(user_input: str) -> TaskIntentResult:
         result.requires_tool_likely = True
 
     return result
-
-# ── v3.15: Final-response validator ───────────────────────────────────────
-
-_TASK_ANALYSIS_FIELDS = (
-    "结论", "发现", "原因", "建议", "异常", "正常",
-    "风险", "下一步", "依据", "诊断",
-)
-
-_TASK_BUSINESS_RESULT_FIELDS = (
-    "状态", "数量", "报告链接", "stdout", "stderr",
-    "超时", "成功数", "失败数", "检查结果", "分析结论",
-    "文件", "制品", "数据", "来源", "引用",
-)
-
-_TASK_BOGUS_RESPONSE_PATTERNS = (
-    "工具执行成功", "结果已返回",
-    "文件已读取，可以继续",
-    "已完成本次操作",
-    "数据已获取，未发现更多",
-    "收到",
-    "已完成",
-    "No tools were executed",
-    "readartifact completed",
-    "readartifact succeeded",
-    "Completed",
-)
-
-
-@dataclass
-class FinalResponseValidatorResult:
-    valid: bool = True
-    reason: str = ""
-    matched_placeholder: str = ""
-    should_retry_response: bool = False
-    has_analysis_fields: bool = False
-    has_business_result: bool = False
-    has_explicit_failure_reason: bool = False
-    placeholder_like: bool = False
-
-
-def validate_final_response(
-    user_input: str,
-    final_response: str,
-) -> FinalResponseValidatorResult:
-    """Validate that the final_response actually completes the user's task."""
-    rr = FinalResponseValidatorResult()
-
-    task = detect_task_intent(user_input)
-    if not task.is_task:
-        return rr
-
-    response = (final_response or "").strip()
-    if not response:
-        rr.valid = False
-        rr.reason = "empty response for task request"
-        rr.should_retry_response = True
-        return rr
-
-    # ── Step 1: check analysis / business-result fields ───────────
-    rr.has_analysis_fields = any(f in response for f in _TASK_ANALYSIS_FIELDS)
-    rr.has_business_result = any(f in response for f in _TASK_BUSINESS_RESULT_FIELDS)
-
-    # Explicit failure reason ("缺少"/"无法"/"不足" + 分析意图)
-    rr.has_explicit_failure_reason = (
-        any(w in response for w in ("缺少", "无法完成", "不足", "没有可分析", "未返回"))
-        and ("分析" in response or "内容" in response or "数据" in response)
-    )
-
-    if rr.has_analysis_fields or rr.has_business_result or rr.has_explicit_failure_reason:
-        return rr  # valid
-
-    # ── Step 2: detect placeholder-like patterns ──────────────────
-    rr.placeholder_like = any(p in response for p in _TASK_BOGUS_RESPONSE_PATTERNS)
-    if rr.placeholder_like:
-        rr.valid = False
-        rr.reason = f"placeholder-like response"
-        rr.matched_placeholder = "bogus_pattern"
-        rr.should_retry_response = True
-        return rr
-
-    # ── Step 3: very short response without analysis → invalid ────
-    if len(response) < 30:
-        rr.valid = False
-        rr.reason = "very short response without analysis fields"
-        rr.should_retry_response = True
-        return rr
-
-    # ── Step 4: longer but still looks like no analysis completed ─
-    # (e.g. "我已经读取了文件，工具执行成功，数据已返回...")
-    _no_analysis_words = ("可以继续", "已获取", "已返回", "已读取", "请稍后")
-    if any(w in response for w in _no_analysis_words):
-        rr.valid = False
-        rr.reason = "response mentions tool success but no analysis"
-        rr.should_retry_response = True
-        return rr
-
-    return rr
-
-
-def plan_nodes_empty_for_task(user_input: str) -> bool:
-    return detect_task_intent(user_input).is_task
-
-
-def _is_task_incomplete_final_response(user_input: str, final_response: str) -> bool:
-    vr = validate_final_response(user_input, final_response)
-    return not vr.valid

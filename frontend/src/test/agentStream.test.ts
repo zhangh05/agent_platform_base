@@ -19,6 +19,19 @@ describe("agent stream text", () => {
     expect(finalizeStreamText("3\n3\n", "分析完成，共生成 120 行摘要。"))
       .toBe("分析完成，共生成 120 行摘要。");
   });
+
+  it.each(["收到", "已完成", "不正确", "已完成分析：此前的判断错误。"])(
+    "preserves the authoritative final response regardless of wording: %s",
+    (answer) => {
+      expect(finalizeStreamText("尚未确认的流式草稿。".repeat(30), answer)).toBe(answer);
+    },
+  );
+
+  it("uses the draft only when no final response is available", () => {
+    expect(finalizeStreamText(" 尚未提交的内容 ", " \n ")).toBe("尚未提交的内容");
+    expect(finalizeStreamText("", "正式答复")).toBe("正式答复");
+    expect(finalizeStreamText("", "")).toBe("");
+  });
 });
 
 describe("terminal stream ownership", () => {

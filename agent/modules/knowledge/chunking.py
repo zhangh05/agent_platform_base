@@ -202,31 +202,6 @@ def _split_body_by_paragraphs(body: str) -> List[str]:
     return [p for p in paras if p.strip()]
 
 
-def _split_long_paragraph(p: str, max_len: int) -> List[str]:
-    """Hard-split a single long paragraph to fit within max_len."""
-    if len(p) <= max_len:
-        return [p]
-    # Try sentence boundaries (Chinese + English).
-    out: List[str] = []
-    s = p
-    while len(s) > max_len:
-        # Find a good split point: prefer .  or 。 or ; or ; within last 200 chars
-        window = s[:max_len]
-        split_at = -1
-        for sep in ["。", ". ", ";", "；", "!", "?", "！", "？", "\n"]:
-            idx = window.rfind(sep)
-            if idx > max_len // 2:
-                split_at = idx + len(sep)
-                break
-        if split_at <= 0:
-            split_at = max_len  # hard cut
-        out.append(s[:split_at].rstrip())
-        s = s[split_at:].lstrip()
-    if s.strip():
-        out.append(s.strip())
-    return out
-
-
 def _make_parents(sections: List[Tuple[str, str, str, str, Optional[int]]],
                    source_id: str, source_title: str, scope: str) -> List[KnowledgeChunk]:
     """Create one parent per section, keeping it under PARENT_MAX by

@@ -131,10 +131,6 @@ def _run(async_fn):
         return {"ok": False, "error": str(e)[:300]}
 
 
-def _resolve_ref(ref: str) -> str | None:
-    """Resolve a snapshot ref ID to a CSS selector."""
-    return _ref_map.get(ref)
-
 # ──── Core Actions ──────────────────────────────────────────────────
 
 
@@ -371,28 +367,6 @@ def browser_screenshot(
         return {"ok": False, "error": f"Screenshot failed: {str(e)[:200]}"}
 
 
-def _resolve_target(page: Any, selector: str, ref: str, role_hint: str = "") -> str | None:
-    """Resolve a target: prefer ref over selector.
-
-    If ref is given, looks up the stored role:name mapping and uses
-    Playwright's get_by_role for precise targeting.
-    Returns the actual selector string used, or None if not found.
-    """
-    if ref:
-        mapping = _ref_map.get(ref, "")
-        if mapping.startswith("css:") and mapping[4:]:
-            return mapping[4:]
-        if mapping and mapping.startswith("role:"):
-            parts = mapping.split(":", 2)
-            if len(parts) >= 3:
-                return f"ref:{ref}"  # signal that we used ref
-    if selector:
-        return selector
-    if role_hint:
-        return role_hint
-    return None
-
-
 async def _click_by_ref(page: Any, ref: str) -> bool:
     """Click an element referenced by snapshot ref ID."""
     mapping = _ref_map.get(ref, "")
@@ -524,47 +498,6 @@ def browser_select_option(value: str, selector: str = "", ref: str = "") -> dict
             return {"ok": False, "error": f"ref {ref} not found"}
         return {"ok": True, "target": target_label, "selected": value}
     return _run(_select())
-
-
-def browser_fill_form(fields: dict[str, str]) -> dict:
-    """Fill multiple form fields. Keys can be ref IDs or CSS selectors.
-
-    Args:
-        fields: {"e1": "value", "#email": "value"} — mixed ref and selector keys.
-    """
-    async def _fill():
-        page = await _get_page()
-        filled = []
-        for key, value in fields.items():
-            try:
-                key_str = str(key)
-                val_str = str(value)
-                if key_str.startswith("e") and key_str in _ref_map:
-                    # ref-based
-                    mapping = _ref_map[key_str]
-                    if mapping.startswith("css:") and mapping[4:]:
-                        await page.locator(mapping[4:]).fill(val_str)
-                        filled.append(key_str)
-                    elif mapping.startswith("role:"):
-                        parts = mapping.split(":", 2)
-                        role = parts[1]
-                        name = parts[2] if len(parts) > 2 else ""
-                        loc = page.get_by_role(role, name=name) if name else page.get_by_role(role).first
-                        await loc.fill(val_str)
-                        filled.append(key_str)
-                else:
-                    # CSS selector
-                    await page.fill(key_str, val_str)
-                    filled.append(key_str)
-            except Exception:
-                pass
-        return {
-            "ok": len(filled) > 0,
-            "filled_count": len(filled),
-            "total_fields": len(fields),
-            "filled": filled,
-        }
-    return _run(_fill())
 
 
 def browser_extract(url: str, selector: str = "body") -> dict:

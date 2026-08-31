@@ -105,17 +105,6 @@ FORBIDDEN_RETRY_ERRORS: frozenset[str] = frozenset({
     "UNKNOWN_ARGUMENT",
 })
 
-# Side effects that cannot be retried safely — the first attempt
-# may have mutated state already.
-NON_RETRYABLE_SIDE_EFFECTS: frozenset[str] = frozenset({
-    "write_file",
-    "mutate_local",
-    "mutate_remote",
-    "execute_command",
-    "external_request",
-    "credential_access",
-})
-
 # Side effects that ARE safe to retry (read-only / pure).
 RETRYABLE_SIDE_EFFECTS: frozenset[str] = frozenset({
     "read",
@@ -159,18 +148,6 @@ class RetryDecision:
 
 
 # ── Policy entry point ────────────────────────────────────────────────
-
-# Tokens that should never appear verbatim in audit / trace events
-# (case-insensitive substring match).
-SENSITIVE_KEYWORDS: tuple[str, ...] = (
-    "api_key", "apikey", "api-key",
-    "secret", "password", "passwd",
-    "authorization", "bearer",
-    "private_key", "privatekey",
-    "access_key", "accesskey",
-    "credential", "x-admin-Token", "x-api-token",
-    "session", "token=", "key=",
-)
 
 # A loose regex that catches an entire credential-looking value
 # (`name = value`, `name: value`, or `name value`) so we can

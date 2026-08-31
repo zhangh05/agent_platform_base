@@ -213,7 +213,7 @@ install_dependencies() {
     fi
 
     log "[deps] Checking Python dependencies..."
-    if ! "$PYTHON_BIN" -c 'import flask, flask_sock, yaml, bs4, pdfplumber, scapy' >/dev/null 2>&1; then
+    if ! "$PYTHON_BIN" -c 'import flask, flask_sock, yaml, bs4, pdfplumber' >/dev/null 2>&1; then
         "$PYTHON_BIN" -m pip install -r "$ROOT/requirements.txt" || fail "Failed to install Python dependencies."
     fi
     "$PYTHON_BIN" -m pip check >/dev/null || fail "Python dependency check failed."

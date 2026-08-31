@@ -27,7 +27,6 @@ _GENERIC_CONTINUATION_RE = re.compile(
     r"^(?:请)?\s*(?:继续|接着|下一步|然后|继续完成|继续处理|恢复|再查|再验证|再分析|再试)\b",
     re.IGNORECASE,
 )
-_TASK_TERMINAL = frozenset({"completed", "failed", "cancelled"})
 _TASK_RESUMABLE = frozenset({"active", "completed", "replan_required", "waiting_user", "waiting_approval", "interrupted"})
 _MAX_CONSECUTIVE_REPLAN_ATTEMPTS = 2
 

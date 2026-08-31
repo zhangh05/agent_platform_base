@@ -32,11 +32,6 @@ def _validated_session_id(sid: str):
         return "", _json_error("INVALID_SESSION_ID", "invalid session_id", 400)
 
 
-def _json_len(value) -> int:
-    from backend.core.agent_contract import metadata_size
-    return metadata_size(value)
-
-
 def _source_config_too_large_response():
     return _json_error("SOURCE_CONFIG_TOO_LARGE", "source_config too large", 413)
 
@@ -44,15 +39,6 @@ def _source_config_too_large_response():
 def _json_error(code: str, message: str, status: int, details: dict | None = None):
     body, status_code = error_response(code, message, status, details)
     return jsonify(body), status_code
-
-
-def _result_status(result: dict) -> int:
-    error = result.get("error")
-    if error == "source_config_too_large":
-        return 413
-    if error == "invalid_workspace_id":
-        return 400
-    return 200
 
 
 def _resolve_stream_mode(data: dict) -> tuple[bool, str]:

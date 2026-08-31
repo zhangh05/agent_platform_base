@@ -29,7 +29,6 @@ from __future__ import annotations
 import logging
 from typing import List, Optional, Union
 from pathlib import Path
-from agent.protocol import ModuleResult
 
 logger = logging.getLogger("knowledge.service")
 
@@ -405,77 +404,3 @@ def _query_via_chunks(
         "errors": [],
         "metadata": dict(search.get("metadata") or {}),
     }
-
-
-def _build_source_summary(hits: list) -> list:
-    if not hits:
-        return []
-    summaries = []
-    for h in hits[:5]:
-        content = h.get("content", h.get("llm_safe_content", ""))
-        snippet = content[:200] if content else ""
-        summaries.append({
-            "title": h.get("title", ""),
-            "source": h.get("source", ""),
-            "score": h.get("score"),
-            "snippet": snippet,
-        })
-    return summaries
-
-
-# ── v0.8.2 — ModuleResult projection ──
-
-def to_module_result(result: dict) -> "ModuleResult":
-    """Project a v1.0 / v1.0.1 result dict into a standard ModuleResult."""
-    from agent.protocol.module_result import ModuleResult
-    if not isinstance(result, dict):
-        return ModuleResult.failure(
-            summary="knowledge service returned non-dict result",
-            errors=["invalid_result_shape"],
-        )
-    ok = bool(result.get("ok", False))
-    data = {
-        "query": result.get("query", ""),
-        "hits": list(result.get("hits") or []),
-        "source_count": int(result.get("source_count", 0)),
-        "source_summary": list(result.get("source_summary") or []),
-    }
-    if "source_id" in result:
-        data["source_id"] = result.get("source_id", "")
-    if "source" in result:
-        data["source"] = result.get("source", "")
-    if "sources" in result:
-        data["sources"] = list(result.get("sources") or [])
-    if "count" in result:
-        data["count"] = int(result.get("count", 0))
-    if "chunks" in result:
-        data["chunks"] = list(result.get("chunks") or [])
-    if "chunk_id" in result:
-        data["chunk_id"] = result.get("chunk_id", "")
-    if "chunk" in result:
-        data["chunk"] = result.get("chunk", "")
-    if "parent" in result:
-        data["parent"] = result.get("parent", "")
-    if "parent_count" in result:
-        data["parent_count"] = int(result.get("parent_count", 0))
-    if "chunk_count" in result:
-        data["chunk_count"] = int(result.get("chunk_count", 0))
-    if "format" in result:
-        data["format"] = result.get("format", "")
-    if "source_type" in result:
-        data["source_type"] = result.get("source_type", "")
-    if ok:
-        return ModuleResult.success(
-            summary=str(result.get("summary", "")),
-            data=data,
-            artifacts=list(result.get("artifacts") or []),
-            warnings=list(result.get("warnings") or []),
-            metadata=dict(result.get("metadata") or {}),
-        )
-    return ModuleResult.failure(
-        summary=str(result.get("summary", "")),
-        errors=list(result.get("errors") or ["unknown_error"]),
-        warnings=list(result.get("warnings") or []),
-        data=data,
-        metadata=dict(result.get("metadata") or {}),
-    )

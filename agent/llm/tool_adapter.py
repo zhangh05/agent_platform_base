@@ -12,7 +12,6 @@ internal dispatch fields are never exposed to the model.
 """
 
 from copy import deepcopy
-from typing import List
 
 
 def to_llm_tool_name(tool_id: str) -> str:
@@ -24,17 +23,6 @@ def to_llm_tool_name(tool_id: str) -> str:
         "artifact_list" -> "artifact_list"  (no dots, no change)
     """
     return tool_id.replace(".", "__")
-
-
-def from_llm_tool_name(llm_name: str) -> str:
-    """Convert LLM-safe function name back to real tool_id.
-
-    Examples:
-        "system__manage" -> "system.manage"
-        "web__manage" -> "web.manage"
-        "artifact_list" -> "artifact_list"  (no double underscore, no change)
-    """
-    return llm_name.replace("__", ".")
 
 
 def tool_spec_to_openai_function(tool: dict) -> dict:
@@ -349,19 +337,3 @@ def _format_action_profiles(action_profiles) -> str:
         f"{suffix}:[{','.join(actions)}]"
         for suffix, actions in sorted(grouped.items())
     )
-
-
-def build_tool_registry_for_llm(tools: List[dict]) -> List[dict]:
-    """Build OpenAI-format tool definitions from ToolSpec dicts.
-
-    Excludes forbidden tools and optionally disabled tools.
-    Returns a list ready to pass as LLMRequest.tools.
-    """
-    result = []
-    for tool in tools:
-        if tool.get("risk_level") == "forbidden":
-            continue
-        if not tool.get("enabled", True):
-            continue
-        result.append(tool_spec_to_openai_function(tool))
-    return result

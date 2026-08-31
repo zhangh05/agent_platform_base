@@ -532,10 +532,6 @@ def _normalize_redaction_mask(value: Any) -> Any:
         return value.replace("[REDACTED_SECRET]", "[REDACTED]")
     return value
 
-def _obfuscate_kv(text: str, key: str) -> str:
-    import re
-    return re.sub(rf'({key}\s*[=:]\s*)(\S+)', r'\1[REDACTED]', text, flags=re.I)
-
 def _contains_secret_pattern(data) -> bool:
     return _structured_contains_secret(data)
 

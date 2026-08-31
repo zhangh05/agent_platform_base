@@ -113,10 +113,6 @@ def validate_definition(payload: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
-def _topological_order(nodes: list[dict[str, Any]]) -> list[str]:
-    return [node_id for layer in _execution_layers(nodes) for node_id in layer]
-
-
 def _execution_layers(nodes: list[dict[str, Any]]) -> list[list[str]]:
     dependencies = {node["node_id"]: set(node["depends_on"]) for node in nodes}
     layers: list[list[str]] = []

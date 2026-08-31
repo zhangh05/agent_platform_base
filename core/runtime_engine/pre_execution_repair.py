@@ -115,7 +115,6 @@ class PreExecutionRepairEngine:
 
     def __init__(self):
         self._repair_count = 0
-        self._llm_repair_count = 0
 
     def can_repair(self, error_codes: list[str]) -> bool:
         """Check if any error is repairable and NONE are non-repairable."""
@@ -311,19 +310,3 @@ class PreExecutionRepairEngine:
             if n.id == node_id:
                 return n
         return None
-
-    def should_replan_with_llm(
-        self,
-        repair_result: PreExecutionRepairResult,
-        budget_llm_remaining: int,
-    ) -> bool:
-        """Check if we should attempt LLM-based replanning."""
-        return (
-            not repair_result.repaired
-            and budget_llm_remaining > 0
-            and self._llm_repair_count < 1
-        )
-
-    def mark_llm_repair_attempt(self) -> None:
-        """Record that an LLM-based repair was attempted."""
-        self._llm_repair_count += 1

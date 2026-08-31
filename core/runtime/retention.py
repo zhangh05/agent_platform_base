@@ -17,17 +17,6 @@ from core.runtime.lifecycle_base import (
 )
 
 
-# Default policy (all in days or counts)
-DEFAULT_POLICY = {
-    "runs": {"max_age_days": 30, "max_count": 500},
-    "traces": {"max_age_days": 30, "max_count": 1000},
-    "jobs": {"max_age_days": 30},
-    "artifacts": {"temp_max_age_days": 7},
-    "reports": {"auto_prune": False},  # reports are never auto-pruned
-    "sessions": {"max_age_days": 90, "deleted_max_age_days": 7},  # v3.1.1
-}
-
-
 @dataclass
 class RetentionPolicy:
     """Retention policy for a workspace."""

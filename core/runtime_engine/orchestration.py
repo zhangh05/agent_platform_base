@@ -17,9 +17,6 @@ STEP_ID_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_-]{0,63}$")
 REFERENCE_RE = re.compile(
     r"^(?:steps\.)?([A-Za-z][A-Za-z0-9_-]{0,63})(?:\.output)?(?:\.(.+))?$"
 )
-ORCHESTRATION_ARGUMENTS = frozenset({
-    "plan_step_id", "plan_depends_on", "plan_bindings", "plan_failure",
-})
 ALLOWED_FAILURE_POLICIES = frozenset({"replan", "stop", "continue"})
 
 

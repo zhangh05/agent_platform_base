@@ -272,20 +272,6 @@ def handle_memory_set_profile(inv: ToolInvocation) -> dict:
         return _error_inv(inv, str(e)[:200])
 
 
-def handle_memory_search_merged(inv: ToolInvocation) -> dict:
-    """Merged handler for memory.manage(action=search|list)."""
-    if inv.arguments.get("query", "").strip():
-        return handle_memory_search(inv)
-    return handle_memory_list(inv)
-
-
-def handle_memory_profile_merged(inv: ToolInvocation) -> dict:
-    """Merged handler for memory.manage(action=profile_get|profile_set)."""
-    if inv.arguments.get("field", "").strip():
-        return handle_memory_set_profile(inv)
-    return handle_memory_get_profile(inv)
-
-
 def handle_memory_update(inv: ToolInvocation) -> dict:
     """Propose a governed memory update.
 

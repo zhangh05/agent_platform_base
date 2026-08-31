@@ -2,8 +2,8 @@
 """AST validation and trusted-local best-effort Python execution.
 
 This module is not a sandbox. ``execute_python_code`` selects one runner from
-``core.tools.python_runner``; the legacy subprocess implementation is retained
-only as the explicitly opted-in trusted-local runner.
+``core.tools.python_runner``; subprocess execution requires explicit trusted-local
+opt-in, while exposed deployments use the isolated container runner.
 """
 
 import ast
@@ -105,13 +105,6 @@ FORBIDDEN_ATTRS = {
 class PythonExecSecurityError(Exception):
     """Raised when AST analysis finds forbidden code."""
     pass
-
-
-def _validate_ast(code: str) -> None:
-    """Parse and walk AST to reject forbidden operations.
-
-    Raises PythonExecSecurityError on the first violation.
-    """
 
 
 def validate_code(code: str) -> str:

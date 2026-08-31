@@ -19,7 +19,6 @@ import type {
   KnowledgeChunk,
   KnowledgeSearchResult,
   KnowledgeSource,
-  ReviewItem,
   RuntimeAuditTurn,
   RuntimeSummary,
   Session,
@@ -138,45 +137,6 @@ export interface WorkflowNode {
   node_id: string; name: string; tool_id: string; arguments: Record<string, unknown>;
   depends_on: string[]; when?: unknown;
 }
-export interface WorkflowDefinition {
-  workflow_id: string; name: string; description: string; version: number; status: string;
-  failure_policy: "fail_fast" | "continue"; nodes: WorkflowNode[]; execution_order?: string[]; execution_layers?: string[][];
-  template_id?: string;
-  created_at?: string; updated_at?: string;
-}
-export interface WorkflowRun {
-  run_id: string; workflow_id: string; status: string; started_at: string; finished_at?: string;
-  nodes: Array<{ node_id: string; tool_id: string; status: string; summary?: string; duration_ms?: number; orchestration?: { layer?: number; parallel?: boolean; depends_on?: string[] } }>;
-}
-export interface WorkflowTemplate {
-  template_id: string;
-  name: string;
-  description: string;
-  audience: string;
-  expected_result: string;
-  input_example: Record<string, unknown>;
-  input_fields?: Array<{
-    name: string;
-    label: string;
-    type: "text" | "select" | "multi_select";
-    required?: boolean;
-    source?: {
-      url: string;
-      collection: string;
-      value_field: string;
-      label_field: string;
-      detail_fields?: string[];
-    };
-  }>;
-}
-export const workflowsApi = {
-  list: (workspace_id: string) => apiRequest<{ ok: boolean; workflows: WorkflowDefinition[] }>({ method: "GET", url: "/workflows", params: { workspace_id } }),
-  save: (workspace_id: string, workflow: Partial<WorkflowDefinition>) => apiRequest<{ ok: boolean; workflow: WorkflowDefinition }>({ method: "POST", url: "/workflows", data: { ...workflow, workspace_id } }),
-  update: (workspace_id: string, workflow: WorkflowDefinition) => apiRequest<{ ok: boolean; workflow: WorkflowDefinition }>({ method: "PUT", url: `/workflows/${workflow.workflow_id}`, data: { ...workflow, workspace_id } }),
-  remove: (workspace_id: string, workflowId: string) => apiRequest<{ ok: boolean; deleted: { workflow_id: string; removed_runs: number } }>({ method: "DELETE", url: `/workflows/${workflowId}`, data: { workspace_id, confirm: "delete" } }),
-  run: (workspace_id: string, workflowId: string, inputs: Record<string, unknown>) => apiRequest<{ ok: boolean; run: WorkflowRun }>({ method: "POST", url: `/workflows/${workflowId}/runs`, data: { workspace_id, inputs } }),
-  runs: (workspace_id: string, workflowId: string) => apiRequest<{ ok: boolean; runs: WorkflowRun[] }>({ method: "GET", url: `/workflows/${workflowId}/runs`, params: { workspace_id } }),
-};
 
 export interface OrganizationRecord { organization_id: string; name: string; workspace_ids: string[] }
 export interface IdentityUser { username: string; role: string; organization_id: string; workspace_ids: string[]; home_workspace_id?: string; enabled?: boolean }
@@ -844,64 +804,6 @@ export const artifactsApi = {
     ),
 };
 
-export const workflowTemplatesApi = {
-  list: (signal?: AbortSignal): Promise<{ templates: WorkflowTemplate[] }> =>
-    apiRequest<{ templates: WorkflowTemplate[] }>({ method: "GET", url: "/workflow-templates" }, signal),
-  instantiate: (workspace_id: string, template_id: string, name?: string, signal?: AbortSignal): Promise<{ workflow: WorkflowDefinition; template: WorkflowTemplate }> =>
-    apiRequest<{ workflow: WorkflowDefinition; template: WorkflowTemplate }>({
-      method: "POST",
-      url: `/workflow-templates/${template_id}/instantiate`,
-      data: { workspace_id, ...(name ? { name } : {}) },
-    }, signal),
-};
-export const reviewsApi = {
-  /**
-   * GET /api/workspaces/<ws_id>/review-items — workspace-level aggregated list.
-   * Optional ?status=pending|accepted|ignored|modified filter.
-   */
-  list: (
-    workspace_id: string,
-    status?: string,
-    signal?: AbortSignal,
-  ): Promise<{ items: ReviewItem[]; count: number; workspace_id: string }> =>
-    apiRequest<{ items: ReviewItem[]; count: number; workspace_id: string }>(
-      {
-        method: "GET",
-        url: `/workspaces/${workspace_id}/review-items`,
-        params: status ? { status } : undefined,
-      },
-      signal,
-    ),
-  /** POST /api/workspaces/<ws_id>/review-items — create a durable user review. */
-  create: (
-    workspace_id: string,
-    draft: { title: string; category?: string; severity: "info" | "warning" | "error"; reason: string },
-    signal?: AbortSignal,
-  ): Promise<{ ok: boolean; item: ReviewItem }> =>
-    apiRequest<{ ok: boolean; item: ReviewItem }>(
-      { method: "POST", url: `/workspaces/${workspace_id}/review-items`, data: draft },
-      signal,
-    ),
-  /**
-   * PUT /api/review-items/<item_id>?workspace_id=&artifact_id=
-   * Body: { status, user_note }
-   */
-  update: (
-    item_id: string,
-    update: { status: string; user_note?: string; workspace_id: string; artifact_id: string },
-    signal?: AbortSignal,
-  ): Promise<{ ok: boolean; item?: ReviewItem; summary?: string }> =>
-    apiRequest<{ ok: boolean; item?: ReviewItem; summary?: string }>(
-      {
-        method: "PUT",
-        url: `/review-items/${item_id}`,
-        params: { workspace_id: update.workspace_id, artifact_id: update.artifact_id },
-        data: { status: update.status, user_note: update.user_note ?? "" },
-      },
-      signal,
-    ),
-};
-
 export const runtimeAuditApi = {
     recent: (
       workspace_id: string,
@@ -1164,21 +1066,6 @@ export const operationLedgerApi = {
     }),
 };
 
-
-/** Open the Guardian SSE stream. The caller must close the returned connection. */
-export function openApprovalStream(workspaceId: string, onEvent: (e: { kind: string; approval_id: string; session_id: string; workspace_id: string; tool_id: string; allowed: boolean; ts: number }) => void, onError?: (err: Event) => void): SSEConnection {
-  const es = openSSE(`/agent/approvals/sse?workspace_id=${encodeURIComponent(workspaceId)}`);
-  es.onmessage = (ev) => {
-    try {
-      onEvent(JSON.parse(ev.data));
-    } catch {
-      /* ignore malformed payload */
-    }
-  };
-  if (onError) es.onerror = onError;
-  return es;
-}
-
 /* ──────────────────────── 13. system status ──────────────────────── */
 
 export const agentUsageApi = {
@@ -1204,30 +1091,6 @@ export const agentUsageApi = {
         layers?: Record<string, { estimated_tokens?: number; present?: boolean; cacheable?: boolean }>;
       };
     }>({ method: "GET", url: "/agent/usage", params: { workspace_id } }, signal),
-};
-
-export interface ReportSummary {
-  artifact_id: string;
-  title?: string;
-  created_at?: string;
-  [key: string]: unknown;
-}
-
-export const reportsApi = {
-  /** POST /api/reports/create */
-  create: (data: { workspace_id: string; title?: string; content?: string }) =>
-    apiRequest<{ ok: boolean; artifact_id?: string }>({ method: "POST", url: "/reports/create", data }),
-
-  /** GET /api/workspaces/:ws/reports */
-  list: (workspace_id: string, signal?: AbortSignal) =>
-    apiRequest<{ reports: ReportSummary[] }>({ method: "GET", url: `/workspaces/${workspace_id}/reports` }, signal),
-
-  /** GET /api/workspaces/:ws/reports/:artifact_id/content */
-  content: (workspace_id: string, artifact_id: string, signal?: AbortSignal) =>
-    apiRequest<{ content: string }>(
-      { method: "GET", url: `/workspaces/${workspace_id}/reports/${artifact_id}/content` },
-      signal,
-    ),
 };
 
 export const contextApi = {
@@ -1340,30 +1203,4 @@ export const sessionExtApi = {
   /** POST /api/sessions/:id/restore */
   restore: (session_id: string, workspace_id: string) =>
     apiRequest<{ ok: boolean }>({ method: "POST", url: `/sessions/${session_id}/restore`, params: { workspace_id } }),
-};
-
-/** Workspace status API — added with FileStore stabilization. */
-export const workspaceStatusApi = {
-  /** GET /api/workspaces/<ws>/status — returns workspace health snapshot */
-  status: (workspace_id: string, signal?: AbortSignal) =>
-    apiRequest<{
-      ok: boolean;
-      workspace_id: string;
-      workspace_exists: boolean;
-      file_count: number;
-      artifact_count: number;
-      knowledge_source_count: number;
-      storage_health: string;
-      index_health: string;
-    }>({ method: "GET", url: `/workspaces/${workspace_id}/status` }, signal),
-
-  /** GET /api/workspaces/<ws>/storage/health */
-  storageHealth: (workspace_id: string, signal?: AbortSignal) =>
-    apiRequest<{ ok: boolean; data: Record<string, unknown> }>({ method: "GET", url: `/workspaces/${workspace_id}/storage/health` }, signal),
-};
-
-export const sseApi = {
-  /** Create an authenticated SSE connection for agent streaming. */
-  connect: (sessionId: string, workspaceId: string): SSEConnection =>
-    openSSE(`/agent/sse/stream/${encodeURIComponent(sessionId)}?workspace_id=${encodeURIComponent(workspaceId)}`),
 };
