@@ -890,6 +890,31 @@ def test_unsuccessful_resume_without_errors_has_fail_closed_reason():
     assert _resume_failure_reason(SimpleNamespace(ok=False, errors=["tool_failed"])) == "tool_failed"
 
 
+def test_approval_decision_projects_running_and_rejection_into_parent(monkeypatch, tmp_path):
+    _storage(monkeypatch, tmp_path)
+    from agent.runtime.approval_continuation import create_continuation, record_decision
+    from agent.runtime.turn_persistence import project_approval_pending_parent
+    from storage.records import atomic_save_json
+    from storage.run_record_store import get_run
+    from storage.message_store import SessionMessageStore
+
+    for allowed, expired, expected in [(True, False, "ready"), (False, False, "rejected"), (False, True, "expired")]:
+        run_id = f"parent-{expected}"
+        atomic_save_json("default", ("runs", f"{run_id}.json"), {"run_id": run_id, "session_id": "session-1", "status": "pending", "ok": True})
+        cid = create_continuation(workspace_id="default", session_id="session-1", parent_run_id=run_id, user_input="test", tool_calls=[{"id": "a", "name": "test.tool", "arguments": {}}], approval_ids=["apr-a"])
+        project_approval_pending_parent(workspace_id="default", parent_run_id=run_id, continuation_id=cid)
+        record_decision(workspace_id="default", continuation_id=cid, approval_id="apr-a", allowed=allowed, expired=expired)
+        parent = get_run(run_id, "default")
+        assert parent["metadata"]["approval_continuation"]["status"] == expected
+        assert parent["metadata"]["approval_required"] is False
+        if allowed:
+            assert parent["status"] == "running"
+        else:
+            assert parent["status"] == "error"
+            messages = SessionMessageStore(session_id="session-1", ws_id="default").get_messages()
+            assert any(item["run_id"] == run_id and "待审批操作未执行" in item["content"] for item in messages)
+
+
 def test_continuation_projection_rejects_parent_run_from_other_session(monkeypatch, tmp_path):
     _storage(monkeypatch, tmp_path)
     from agent.runtime.turn_persistence import project_approved_continuation_result

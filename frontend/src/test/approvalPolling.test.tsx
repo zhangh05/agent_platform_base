@@ -4,6 +4,10 @@ import { ApprovalBubble } from "../components/ApprovalBubble";
 import { approvalApi } from "../api";
 import { useSessionStore } from "../stores/session";
 
+function pendingApproval() {
+  return { ok: true, count: 1, pending: [{ approval_id: "a1", session_id: "session-1", tool_id: "network.operations.device.manage", risk_level: "high", arguments_preview: { commands: ["system-view", "return"] }, created_at: new Date().toISOString(), created_at_iso: new Date().toISOString(), expires_at: new Date(Date.now() + 1800000).toISOString(), approval_kind: "interactive", requester: "test" }] };
+}
+
 describe("approval transport lifecycle", () => {
   beforeEach(() => {
     vi.useFakeTimers();
@@ -15,6 +19,55 @@ describe("approval transport lifecycle", () => {
     vi.useRealTimers();
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
+  });
+
+  it("shows permission errors instead of silently ignoring a click", async () => {
+    vi.spyOn(approvalApi, "pending").mockResolvedValue(pendingApproval());
+    const resolve = vi.spyOn(approvalApi, "resolve").mockRejectedValue({ status: 403, message: "approval_resolver_forbidden" });
+    render(<ApprovalBubble />);
+    await act(async () => {});
+    fireEvent.click(screen.getByRole("button", { name: /允许/ }));
+    await act(async () => {});
+    expect(screen.getByRole("alert")).toHaveTextContent("当前身份没有审批权限");
+    expect(screen.getByRole("button", { name: /允许/ })).toBeEnabled();
+    expect(resolve).toHaveBeenCalledTimes(1);
+    expect(screen.getByText("查看完整操作参数")).toBeInTheDocument();
+  });
+
+  it("observes remote decisions and continuation snapshots after a refresh", async () => {
+    const pending = vi.spyOn(approvalApi, "pending").mockResolvedValue(pendingApproval());
+    const onSessionUpdate = vi.fn();
+    render(<ApprovalBubble onSessionUpdate={onSessionUpdate} />);
+    await act(async () => {});
+    pending.mockResolvedValue({ ok: true, count: 0, pending: [], continuations: [{ continuation_id: "c1", session_id: "session-1", workspace_id: "default", parent_run_id: "r1", status: "dispatching", created_at: "", updated_at: "", approval_count: 1, decision_count: 1 }] });
+    await act(async () => { vi.advanceTimersByTime(5000); });
+    expect(screen.queryByTestId("approval-bubble")).not.toBeInTheDocument();
+    expect(onSessionUpdate).toHaveBeenLastCalledWith(expect.objectContaining({ pendingCount: 0, continuations: [expect.objectContaining({ status: "dispatching" })] }));
+  });
+
+  it("reports a recorded decision whose continuation failed to start", async () => {
+    vi.spyOn(approvalApi, "pending").mockResolvedValue(pendingApproval());
+    vi.spyOn(approvalApi, "resolve").mockResolvedValue({ ok: true, approval_id: "a1", decision: "approve", runtime_result: { ok: false, error: "continuation_dispatch_unavailable" } });
+    render(<ApprovalBubble />);
+    await act(async () => {});
+    fireEvent.click(screen.getByRole("button", { name: /允许/ }));
+    await act(async () => {});
+    expect(screen.getByRole("alert")).toHaveTextContent("审批已记录，但续跑未启动");
+    expect(screen.queryByRole("button", { name: /允许/ })).not.toBeInTheDocument();
+  });
+
+  it("ignores a resolve response after switching sessions", async () => {
+    vi.spyOn(approvalApi, "pending").mockResolvedValue(pendingApproval());
+    let finish!: (value: { ok: boolean; approval_id: string; decision: string }) => void;
+    vi.spyOn(approvalApi, "resolve").mockImplementation(() => new Promise((resolve) => { finish = resolve; }));
+    const onResolved = vi.fn();
+    render(<ApprovalBubble onResolved={onResolved} />);
+    await act(async () => {});
+    fireEvent.click(screen.getByRole("button", { name: /允许/ }));
+    await act(async () => { useSessionStore.getState().setCurrentSession("session-2"); });
+    await act(async () => { finish({ ok: true, approval_id: "a1", decision: "approve" }); });
+    expect(onResolved).not.toHaveBeenCalled();
+    expect(screen.queryByTestId("approval-bubble")).not.toBeInTheDocument();
   });
 
   it("continues bounded polling when the initial check is empty", async () => {

@@ -50,6 +50,7 @@ def _expire_bound_continuation(req: "ApprovalRequest") -> None:
             continuation_id=continuation_id,
             approval_id=req.approval_id,
             allowed=False,
+            expired=True,
         )
     except (FileNotFoundError, RuntimeError, TypeError, ValueError):
         logger.warning(

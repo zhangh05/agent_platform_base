@@ -83,9 +83,21 @@
   color: var(--text-3, #999);
   font-size: 11px;
   max-width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  width: 100%;
+}
+
+.abp-args pre {
+  max-height: 240px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.abp-inner [role="alert"] {
+  color: var(--danger, #c0392b);
+  font-size: 12px;
+  margin: 0;
+  overflow-wrap: anywhere;
 }
 
 .abp-actions {

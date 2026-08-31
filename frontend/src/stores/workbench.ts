@@ -291,6 +291,7 @@ interface WorkbenchState {
     workspace_id: string,
     run_id: string,
     sid?: string,
+    force?: boolean,
   ) => Promise<AgentResult | null>;
 }
 
@@ -456,14 +457,14 @@ export const useWorkbenchStore = create<WorkbenchState>()(
       //   3. merges into an AgentResult, attaches to the matching assistant msg,
       //      and stores in `runDetails` cache for repeat expansions.
       // ────────────────────────────────────────────────────────────────────
-      loadRunDetail: function loadRunDetailImpl(workspace_id, run_id, sid) {
+      loadRunDetail: function loadRunDetailImpl(workspace_id, run_id, sid, force = false) {
         // Return a shared Promise so concurrent callers await the
         // same load instead of polling. This avoids the 6s polling loop
         // and eliminates the need for cancellation mechanisms.
         const targetSid = sid ?? get().currentSessionId;
         const state = get();
         // Already cached → return immediately.
-        if (state.runDetails[run_id]) {
+        if (!force && state.runDetails[run_id]) {
           const cached = state.runDetails[run_id];
           get().setLatestResult(cached, targetSid ?? undefined);
           return Promise.resolve(cached);
@@ -521,6 +522,8 @@ export const useWorkbenchStore = create<WorkbenchState>()(
               tool_decision: (runRecord.tool_decision as AgentResult["tool_decision"]) || { needed: false },
               no_tool_reason: (runRecord.no_tool_reason as string) || "",
               metadata: {
+                approval_required: Boolean(metadata.approval_required ?? runtimeMetadata.approval_required),
+                approval_continuation: metadata.approval_continuation as AgentResult["metadata"]["approval_continuation"],
                 selected_capabilities: (metadata.selected_capabilities as string[]) || [],
                 visible_tools: (metadata.visible_tools as string[]) || [],
                 retry_summary: (metadata.retry_summary as AgentResult["metadata"]["retry_summary"])

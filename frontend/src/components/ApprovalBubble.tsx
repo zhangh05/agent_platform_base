@@ -1,6 +1,6 @@
 import { memo, useEffect, useState, useRef, useCallback } from "react";
 import { useSessionStore } from "../stores/session";
-import { approvalApi } from "../api";
+import { approvalApi, type ApprovalContinuationSummary } from "../api";
 import { IconAlert, IconCheck, IconClose, IconClock } from "./Icon";
 import "./ApprovalBubble.css";
 
@@ -23,6 +23,24 @@ interface PendingApproval {
   recommendation?: string;
 }
 
+export interface ApprovalSessionSnapshot {
+  workspaceId: string;
+  sessionId: string;
+  pendingCount: number;
+  continuations: ApprovalContinuationSummary[];
+}
+
+function approvalError(error: unknown): string {
+  const value = error as { message?: string; error?: string; status?: number };
+  const message = value?.message || value?.error || "审批请求失败，请稍后重试。";
+  if (message === "approval_resolver_forbidden") return "当前身份没有审批权限，请由申请人或管理员处理。";
+  if (value?.status === 401) return "登录已失效，请重新登录后处理审批。";
+  if (message === "csrf_origin_denied") return "审批请求来源校验失败，请从当前服务地址重新打开页面。";
+  if (message === "approval_expired") return "审批已过期，未执行配置。请重新发起任务。";
+  if (value?.status === 404) return "该审批已被处理或不存在，正在同步会话状态。";
+  return message;
+}
+
 /**
  * ApprovalBubble — small popup above the input bar for high-risk tool approval.
  *
@@ -30,11 +48,21 @@ interface PendingApproval {
  * SSE worker. The backend-provided expires_at value is authoritative; the
  * browser never turns a display timer into an approval decision.
  */
-export const ApprovalBubble = memo(function ApprovalBubble({ onResolved }: { onResolved?: (decision: "approve" | "reject") => void }) {
+export const ApprovalBubble = memo(function ApprovalBubble({ onResolved, onSessionUpdate }: {
+  onResolved?: (decision: "approve" | "reject") => void;
+  onSessionUpdate?: (snapshot: ApprovalSessionSnapshot) => void;
+}) {
   const { currentSessionId, currentWorkspaceId } = useSessionStore();
   const [pending, setPending] = useState<PendingApproval | null>(null);
   const [secondsLeft, setSecondsLeft] = useState(0);
   const [resolving, setResolving] = useState(false);
+  const [errorMessage, setErrorMessage] = useState("");
+  const scope = `${currentWorkspaceId}:${currentSessionId}`;
+  const scopeRef = useRef(scope);
+  scopeRef.current = scope;
+  const pollRef = useRef<(() => Promise<void>) | null>(null);
+  const onSessionUpdateRef = useRef(onSessionUpdate);
+  onSessionUpdateRef.current = onSessionUpdate;
   const onResolvedRef = useRef(onResolved);
   onResolvedRef.current = onResolved;
   const mountedRef = useRef(true);
@@ -56,6 +84,7 @@ export const ApprovalBubble = memo(function ApprovalBubble({ onResolved }: { onR
     setResolving(false);
     setPending(null);
     setSecondsLeft(0);
+    setErrorMessage("");
   }, [currentSessionId, currentWorkspaceId]);
 
   // Approval discovery is intentionally HTTP polling. A persistent stream per
@@ -85,6 +114,10 @@ export const ApprovalBubble = memo(function ApprovalBubble({ onResolved }: { onR
         }
         const data = await approvalApi.pending(currentSessionId, currentWorkspaceId);
         if (cancelled) return;
+        if (data.ok) onSessionUpdateRef.current?.({
+          workspaceId: currentWorkspaceId, sessionId: currentSessionId,
+          pendingCount: data.pending?.length || 0, continuations: data.continuations || [],
+        });
         if (data.ok && data.pending?.length > 0) {
           const p = (data.pending as unknown as PendingApproval[]).find((item) => (
             item.session_id === currentSessionId && !resolvedIdsRef.current.has(item.approval_id)
@@ -118,10 +151,12 @@ export const ApprovalBubble = memo(function ApprovalBubble({ onResolved }: { onR
     // fast enough for a human approval gate and does not pin a server thread.
     void poll();
     startPoll();
+    pollRef.current = poll;
 
     return () => {
       cancelled = true;
       stopPoll();
+      pollRef.current = null;
     };
   }, [currentSessionId, currentWorkspaceId]);
 
@@ -146,33 +181,42 @@ export const ApprovalBubble = memo(function ApprovalBubble({ onResolved }: { onR
     if (!p || p.session_id !== currentSessionId || resolvingRef.current) return;
     resolvingRef.current = true;
     setResolving(true);
+    setErrorMessage("");
     try {
       const res = await approvalApi.resolve(p.approval_id, {
         decision,
         workspace_id: currentWorkspaceId,
         session_id: currentSessionId,
       });
+      if (!mountedRef.current || scopeRef.current !== scope) return;
       if (!res.ok) {
-        console.warn("[Approval] resolve returned not ok:", res);
-        // Keep showing the bubble so user can retry
-        resolvingRef.current = false;
-        setResolving(false);
+        setErrorMessage(approvalError(res));
         return;
       }
       resolvedIdsRef.current.set(p.approval_id, Date.now());
       setPending(null);
       setSecondsLeft(0);
+      if (res.runtime_result?.ok === false) {
+        setErrorMessage(`审批已记录，但续跑未启动：${res.runtime_result.message || res.runtime_result.error || "请检查运行记录"}`);
+      }
       onResolvedRef.current?.(decision);
+      await pollRef.current?.();
     } catch (err) {
-      console.error("[Approval] resolve failed:", err);
-      // Keep bubble visible so user can retry
+      if (!mountedRef.current || scopeRef.current !== scope) return;
+      setErrorMessage(approvalError(err));
+      // A lost response may follow a recorded decision. Reconcile via GET;
+      // never replay an approval POST automatically.
+      await pollRef.current?.();
     } finally {
-      resolvingRef.current = false;
-      if (mountedRef.current) setResolving(false);
+      if (mountedRef.current && scopeRef.current === scope) {
+        resolvingRef.current = false;
+        setResolving(false);
+      }
     }
-  }, [pending, currentWorkspaceId]);
+  }, [pending, currentWorkspaceId, currentSessionId, scope]);
 
-  if (!pending) return null;
+  if (!pending && !errorMessage) return null;
+  if (!pending) return <div className="approval-bubble-popup"><div className="abp-inner"><p role="alert">{errorMessage}</p><button type="button" onClick={() => setErrorMessage("")}>关闭</button></div></div>;
 
   const isUrgent = secondsLeft <= 60;
   const countdown = secondsLeft >= 60
@@ -194,11 +238,11 @@ export const ApprovalBubble = memo(function ApprovalBubble({ onResolved }: { onR
         <div className="abp-body">
           <code>{pending.tool_id}</code>
           {(pending.arguments_preview || pending.arguments_summary) && (
-            <span className="abp-args">
+            <details className="abp-args"><summary>查看完整操作参数</summary><pre>
               {pending.arguments_preview
-                ? JSON.stringify(pending.arguments_preview).substring(0, 80)
-                : pending.arguments_summary?.substring(0, 80)}
-            </span>
+                ? JSON.stringify(pending.arguments_preview, null, 2)
+                : pending.arguments_summary}
+            </pre></details>
           )}
           {/* v2.3.1-p1: risk source info */}
           {(pending.argument_source || pending.recommendation) && (
@@ -214,6 +258,8 @@ export const ApprovalBubble = memo(function ApprovalBubble({ onResolved }: { onR
             </div>
           )}
         </div>
+
+        {errorMessage && <p role="alert">{errorMessage}</p>}
 
         <div className="abp-actions">
           <button
@@ -231,7 +277,7 @@ export const ApprovalBubble = memo(function ApprovalBubble({ onResolved }: { onR
             type="button"
             autoFocus
           >
-            <IconCheck size={11} /> 允许
+            <IconCheck size={11} /> {resolving ? "提交中…" : "允许"}
           </button>
         </div>
       </div>

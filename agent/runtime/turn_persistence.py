@@ -507,6 +507,39 @@ def project_approval_pending_parent(
     })
 
 
+def project_approval_continuation_state(workspace_id: str, continuation: dict) -> None:
+    """Project approval lifecycle changes without executing or replaying tools."""
+    from storage.run_record_store import get_run
+
+    state = str(continuation.get("status") or "")
+    if state not in {"ready", "claimed", "dispatching", "rejected", "expired"}:
+        return
+    parent_id = str(continuation.get("parent_run_id") or "")
+    session_id = str(continuation.get("session_id") or "")
+    if not parent_id or not session_id:
+        return
+    record = get_run(parent_id, workspace_id)
+    if not record or record.get("session_id") != session_id:
+        return
+    metadata = dict(record.get("metadata") or {})
+    approval = dict(metadata.get("approval_continuation") or {})
+    if approval.get("continuation_id") != continuation.get("continuation_id"):
+        return
+    if approval.get("status") == state:
+        return
+    approval.update({"status": state, "updated_at": now_iso()})
+    metadata.update({"approval_continuation": approval, "approval_required": False})
+    changes = {"metadata": metadata, "status": "running", "finished_at": ""}
+    if state in {"rejected", "expired"}:
+        reason = "审批已拒绝" if state == "rejected" else "审批已过期"
+        response = f"{reason}，本次待审批操作未执行。此前已完成的操作不会自动回滚。"
+        changes.update({"status": "error", "ok": False, "error": f"approval_{state}", "final_response": response, "finished_at": now_iso()})
+        SessionMessageStore(session_id=session_id, ws_id=workspace_id).write_message(
+            parent_id, "assistant", response, metadata={"created_at": now_iso()},
+        )
+    update_run_record(workspace_id, parent_id, changes)
+
+
 def project_approved_continuation_result(
     *,
     workspace_id: str,

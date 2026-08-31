@@ -162,6 +162,10 @@ export interface AgentResult {
   cognitive?: CognitiveSummary;
   cognitive_events?: CognitiveEvent[];
   metadata: {
+    approval_pending?: boolean;
+    ssot_runtime?: { approval_required?: boolean; [key: string]: unknown };
+    approval_required?: boolean;
+    approval_continuation?: { status?: string; continuation_id?: string };
     selected_capabilities?: string[];
     visible_tools?: string[];
     planner_mode?: string;

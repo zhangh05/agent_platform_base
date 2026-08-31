@@ -145,6 +145,7 @@ def record_decision(
     continuation_id: str,
     approval_id: str,
     allowed: bool,
+    expired: bool = False,
 ) -> dict[str, Any]:
     """Durably record one Guardian decision without claiming execution.
 
@@ -174,16 +175,20 @@ def record_decision(
         record["updated_at"] = _now_iso()
         if not allowed or not all(bool(decisions.get(aid)) for aid in approval_ids if aid in decisions):
             if not allowed:
-                record["status"] = "rejected"
+                record["status"] = "expired" if expired else "rejected"
                 record["execution_phase"] = "decision_rejected"
                 atomic_write_json(path, record)
                 delete_secret(str(record.get("payload_ref") or ""))
+                from agent.runtime.turn_persistence import project_approval_continuation_state
+                project_approval_continuation_state(workspace_id, record)
                 return dict(record)
         if approval_ids and all(aid in decisions for aid in approval_ids):
             if all(bool(decisions.get(aid)) for aid in approval_ids):
                 record["status"] = "ready"
                 record["execution_phase"] = "decision_ready"
         atomic_write_json(path, record)
+        from agent.runtime.turn_persistence import project_approval_continuation_state
+        project_approval_continuation_state(workspace_id, record)
         return dict(record)
 
 
@@ -268,6 +273,8 @@ def mark_continuation_dispatching(workspace_id: str, continuation_id: str) -> di
         record["heartbeat_at"] = now
         record["updated_at"] = now
         atomic_write_json(path, record)
+        from agent.runtime.turn_persistence import project_approval_continuation_state
+        project_approval_continuation_state(workspace_id, record)
         return dict(record)
 
 
@@ -321,6 +328,8 @@ def maintain_continuations(workspace_id: str, *, force: bool = False) -> dict[st
                 record["updated_at"] = _now_iso()
                 atomic_write_json(path, record)
                 delete_secret(str(record.get("payload_ref") or ""))
+                from agent.runtime.turn_persistence import project_approval_continuation_state
+                project_approval_continuation_state(workspace_id, record)
                 counters["expired"] += 1
             elif status in {"claimed", "dispatching"}:
                 heartbeat_age = _age_seconds(
@@ -338,11 +347,16 @@ def maintain_continuations(workspace_id: str, *, force: bool = False) -> dict[st
                 delete_secret(str(record.get("payload_ref") or ""))
                 path.unlink()
                 counters["deleted"] += 1
+            elif status in {"rejected", "expired"}:
+                # Repair a crash/older deployment between the durable decision
+                # and its parent-message projection, without replaying tools.
+                from agent.runtime.turn_persistence import project_approval_continuation_state
+                project_approval_continuation_state(workspace_id, record)
     return counters
 
 
 def list_continuations(
-    workspace_id: str, *, status: str = "", limit: int = 100
+    workspace_id: str, *, status: str = "", session_id: str = "", limit: int = 100
 ) -> list[dict[str, Any]]:
     maintain_continuations(workspace_id)
     from storage.records import list_json_records
@@ -352,6 +366,8 @@ def list_continuations(
     )
     public: list[dict[str, Any]] = []
     for record in records:
+        if session_id and str(record.get("session_id") or "") != session_id:
+            continue
         if status and str(record.get("status") or "") != status:
             continue
         approval_ids = list(record.get("approval_ids") or [])

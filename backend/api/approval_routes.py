@@ -20,10 +20,17 @@ from flask import Response, jsonify, request, stream_with_context
 _LOG = logging.getLogger(__name__)
 def _approval_actor_allowed(pending_req) -> tuple[bool, dict]:
     """Authorize an approval by identity, never by source/proxy address."""
-    from backend.core.auth import current_request_actor
+    from backend.core.auth import current_request_actor, _is_auth_enabled, _is_login_enabled, _is_identity_enabled
     from backend.core.identity import has_role
 
     actor = current_request_actor() or {}
+    # Explicit no-login deployments already grant access at the API boundary.
+    # Preserve that mode without inferring trust from a client/proxy IP, and
+    # never apply it when any authentication mechanism is enabled.
+    if not actor and not (_is_auth_enabled() or _is_login_enabled() or _is_identity_enabled()):
+        from storage.principal import current_storage_principal
+        if not current_storage_principal():
+            return True, {"username": "local-operator", "auth_type": "disabled"}
     role = str(actor.get("role") or "")
     if has_role(role, "admin"):
         return True, actor
@@ -54,10 +61,13 @@ def register_approval_routes(app) -> None:
         store = get_approval_store(ws_id)
         session_id = request.args.get("session_id", "")
         pending = store.get_pending(session_id, workspace_id=ws_id)
+        from agent.runtime.approval_continuation import list_continuations
+        continuations = list_continuations(ws_id, session_id=session_id, limit=100) if session_id else []
         return jsonify({
             "ok": True,
             "pending": pending,
             "count": len(pending),
+            "continuations": continuations,
         })
 
     @app.route("/api/agent/approvals/<approval_id>/resolve", methods=["POST"])

@@ -90,6 +90,10 @@ export const ResultInline = memo(function ResultInline({
   const cognitiveSummary = String(cognitive?.visible_summary || cognitive?.decision?.visible_summary || "").trim();
   const cognitiveOutcome = String(cognitive?.outcome || "").replace(/^stop_/, "").replace(/^continue_/, "");
   const isFailed = Boolean(result && !result.ok);
+  const isApprovalPending = Boolean((result?.metadata?.approval_required ?? result?.metadata?.approval_pending
+    ?? (result?.metadata?.ssot_runtime as { approval_required?: boolean } | undefined)?.approval_required)
+    || result?.metadata?.approval_continuation?.status === "pending");
+  const isApprovalRunning = ["ready", "claimed", "dispatching"].includes(result?.metadata?.approval_continuation?.status || "");
   const hasFailedTool = ((result?.tool_calls) ?? []).some((tc) => !tc.ok);
   const finalText = (result?.final_response || fallbackText || "").trim();
   const retry = retryStats(result);
@@ -208,15 +212,15 @@ export const ResultInline = memo(function ResultInline({
       {result ? (
         <section className="result-overview" aria-label="执行摘要">
           <div className="result-overview-main">
-            <span className={`result-overview-status ${isUnknownOutcome ? "unknown" : isFailed ? "failed" : "complete"}`}>
-              {isUnknownOutcome ? "结果未知" : isFailed ? "需要关注" : "本轮完成"}
+            <span className={`result-overview-status ${isApprovalPending || isApprovalRunning || isUnknownOutcome ? "unknown" : isFailed ? "failed" : "complete"}`}>
+              {isApprovalPending ? "等待审批" : isApprovalRunning ? "正在续跑" : isUnknownOutcome ? "结果未知" : isFailed ? "需要关注" : "本轮完成"}
             </span>
             <span className="result-overview-title">
-              {actionCount > 0 ? `已处理 ${actionCount} 个工具调用` : "已生成本轮答复"}
+              {isApprovalPending ? "任务已暂停，尚未完成" : isApprovalRunning ? "审批已通过，任务尚未完成" : actionCount > 0 ? `已处理 ${actionCount} 个工具调用` : "已生成本轮答复"}
             </span>
           </div>
           <span className="result-overview-meta">
-            {isUnknownOutcome ? "写入已冻结，等待受控核对" : failedToolCount > 0 && isFailed ? `${failedToolCount} 项需要跟进` : failedToolCount > 0 ? `${successToolCount} 项成功，${failedToolCount} 次失败未影响任务完成` : successToolCount > 0 ? `${successToolCount} 项执行成功` : "可将结论沉淀到记忆或知识库"}
+            {isApprovalPending || isApprovalRunning ? "审批状态与续跑结果将自动同步" : isUnknownOutcome ? "写入已冻结，等待受控核对" : failedToolCount > 0 && isFailed ? `${failedToolCount} 项需要跟进` : failedToolCount > 0 ? `${successToolCount} 项成功，${failedToolCount} 次失败未影响任务完成` : successToolCount > 0 ? `${successToolCount} 项执行成功` : "可将结论沉淀到记忆或知识库"}
           </span>
         </section>
       ) : (

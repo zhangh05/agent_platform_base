@@ -939,6 +939,7 @@ export const approvalApi = {
       requester: string;
     }>;
     count: number;
+    continuations?: ApprovalContinuationSummary[];
   }> =>
     apiRequest({
       method: "GET",
@@ -948,7 +949,7 @@ export const approvalApi = {
   resolve: (
     approvalId: string,
     body: { decision: string; workspace_id: string; session_id: string; edited_args?: Record<string, unknown>; feedback?: string; reason?: string },
-  ): Promise<{ ok: boolean; approval_id: string; decision: string }> =>
+  ): Promise<{ ok: boolean; approval_id: string; decision: string; error?: string; runtime_result?: { ok: boolean; continuation_status?: string; error?: string; message?: string } | null }> =>
     apiRequest({
       method: "POST",
       url: `/agent/approvals/${approvalId}/resolve`,

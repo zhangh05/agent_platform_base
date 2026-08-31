@@ -16,6 +16,7 @@ import { MessageRow } from "./components/MessageRow";
 import { scopedLocalStorageKey } from "../../utils/userScope";
 import { useWorkbenchSend, type PendingAttachment } from "../../hooks/useWorkbenchSend";
 import { useActiveTurn } from "../../hooks/useActiveTurn";
+import { useApprovalObserver } from "../../hooks/useApprovalObserver";
 import { TaskProgressPanel } from "./components/TaskProgressPanel";
 
 const RuntimeEventTimeline = lazy(() => import("../../components/RuntimeEventTimeline").then((m) => ({ default: m.RuntimeEventTimeline })));
@@ -91,7 +92,7 @@ export function TaskWorkbench() {
   );
   const switchSession = useWorkbenchStore((s) => s.switchSession);
   const mergeFromBackend = useWorkbenchStore((s) => s.mergeFromBackend);
-  const approvalRefreshTimerRef = useRef<number | null>(null);
+  const { approvalStatus, onSessionUpdate } = useApprovalObserver(currentWorkspaceId, currentSessionId);
 
   useEffect(() => {
     if (!currentWorkspaceId) return;
@@ -131,60 +132,6 @@ export function TaskWorkbench() {
       setSelectedResourceIds(normalized);
     }
   }, [selectedResourceIds, selectedSkill, selectedSkillKey, skillCatalogLoaded]);
-
-  useEffect(() => () => {
-    if (approvalRefreshTimerRef.current !== null) {
-      window.clearTimeout(approvalRefreshTimerRef.current);
-      approvalRefreshTimerRef.current = null;
-    }
-  }, []);
-
-  const refreshAfterApproval = useCallback(() => {
-    const sessionId = currentSessionId;
-    const workspaceId = currentWorkspaceId;
-    if (!sessionId || !workspaceId) return;
-
-    if (approvalRefreshTimerRef.current !== null) {
-      window.clearTimeout(approvalRefreshTimerRef.current);
-      approvalRefreshTimerRef.current = null;
-    }
-
-    // Resolve returns before the server-side continuation has finished. The
-    // Resolve returns before the server-side continuation has finished. This
-    // bounded read-only hydration observes its durable result.
-    const knownAssistantKeys = new Set(
-      (useWorkbenchStore.getState().bySession[sessionId] ?? [])
-        .filter((message) => message.role === "assistant")
-        .map((message) => message.message_id ?? `${message.run_id ?? ""}:${message.created_at}:${message.text}`),
-    );
-    let attempts = 0;
-    const refresh = () => {
-      void sessionsApi.messages(sessionId, workspaceId)
-        .then((res) => {
-          const messages = res.messages ?? [];
-          if (messages.length) mergeFromBackend(sessionId, messages);
-          const receivedContinuationResult = messages.some((message) => {
-            if (message.role !== "assistant") return false;
-            const key = message.message_id ?? `${message.run_id ?? ""}:${message.created_at}:${message.content}`;
-            return !knownAssistantKeys.has(key);
-          });
-          if (receivedContinuationResult || attempts >= 30) {
-            approvalRefreshTimerRef.current = null;
-            return;
-          }
-          approvalRefreshTimerRef.current = window.setTimeout(refresh, 1000);
-        })
-        .catch(() => {
-          if (attempts >= 30) {
-            approvalRefreshTimerRef.current = null;
-            return;
-          }
-          approvalRefreshTimerRef.current = window.setTimeout(refresh, 1000);
-        });
-      attempts += 1;
-    };
-    refresh();
-  }, [currentSessionId, currentWorkspaceId, mergeFromBackend]);
 
   const [viewMode, setViewMode] = useState<ViewMode>("chat");
   const [progressPanelCollapsed, setProgressPanelCollapsed] = useState(false);
@@ -640,6 +587,7 @@ export function TaskWorkbench() {
               {visibleHistory.map((message, index) => (
                 <MessageRow key={message.message_id || message.id} m={message} idx={index} total={visibleHistory.length} lastUserInput={lastUserInput} onRetryOriginal={handleRetryOriginal} />
               ))}
+              {approvalStatus && <div className="wb-restored-run" role="status" data-testid="approval-session-status">{approvalStatus}</div>}
               {activeJob?.status === "running" && latestAssistant?.status !== "streaming" ? (
                 <div className="wb-restored-run" role="status">
                   <span className="typing-indicator"><span className="typing-dot" /><span className="typing-dot" /><span className="typing-dot" /></span>
@@ -749,7 +697,7 @@ export function TaskWorkbench() {
       />
 
       {/* ── Inline approval bubble for high-risk tools ── */}
-      <ApprovalBubble onResolved={refreshAfterApproval} />
+      <ApprovalBubble onSessionUpdate={onSessionUpdate} />
     </div>
   );
 }

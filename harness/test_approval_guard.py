@@ -32,6 +32,8 @@ def reset_approvals(tmp_path, monkeypatch):
     from agent.approval import reset_approval_store_for_tests
 
     monkeypatch.setattr(approval_module, "_APPROVALS_FILE", tmp_path / "tool_approvals.jsonl")
+    monkeypatch.setenv("LZCORE_WORKSPACE_ROOT", str(tmp_path / "workspaces"))
+    monkeypatch.setenv("LZCORE_MASTER_KEY", "approval-guard-test-key")
     reset_approval_store_for_tests(remove_persisted=True)
     yield
     reset_approval_store_for_tests(remove_persisted=True)
@@ -69,6 +71,57 @@ class TestApprovalIdentityAuthorization:
         assert data["decision"] == "approve"
         history = store.get_history(workspace_id="ws_a")
         assert history[0]["resolver"] == "alice"
+
+    @pytest.mark.parametrize("auth_mode", ["none", "token", "login", "identity"])
+    def test_no_login_operator_only_when_all_auth_is_disabled(self, client, reset_approvals, monkeypatch, auth_mode):
+        from agent.approval import get_approval_store
+        from storage.principal import storage_principal
+        monkeypatch.setattr("backend.core.auth.current_request_actor", lambda: None)
+        for name, mode in [("_is_auth_enabled", "token"), ("_is_login_enabled", "login"), ("_is_identity_enabled", "identity")]:
+            monkeypatch.setattr(f"backend.core.auth.{name}", lambda mode=mode: auth_mode == mode)
+        with storage_principal(""):
+            store = get_approval_store("default")
+            req = store.create(session_id="sess-local", tool_id="test.tool", arguments={}, description="test", risk_level="high", workspace_id="default")
+            response = client.post(f"/api/agent/approvals/{req.approval_id}/resolve", json={"decision": "reject", "workspace_id": "default", "session_id": "sess-local"})
+            assert response.status_code == (200 if auth_mode == "none" else 403)
+            if auth_mode == "none":
+                assert store.get_history(workspace_id="default")[0]["resolver"] == "local-operator"
+
+    def test_no_login_approval_still_enforces_origin(self, app_with_approvals, reset_approvals, monkeypatch):
+        from agent.approval import get_approval_store
+        from backend.core.auth import register_auth_middleware
+        for name in ["_is_auth_enabled", "_is_login_enabled", "_is_identity_enabled"]:
+            monkeypatch.setattr(f"backend.core.auth.{name}", lambda: False)
+        monkeypatch.setattr("backend.core.auth.current_request_actor", lambda: None)
+        register_auth_middleware(app_with_approvals)
+        client = app_with_approvals.test_client()
+        req = get_approval_store("default").create(session_id="s", tool_id="test.tool", arguments={}, description="test", risk_level="high", workspace_id="default")
+        url = f"/api/agent/approvals/{req.approval_id}/resolve"
+        payload = {"decision": "reject", "workspace_id": "default", "session_id": "s"}
+        rejected = client.post(url, json=payload, headers={"Origin": "http://untrusted.example"})
+        assert rejected.status_code == 403
+        assert rejected.get_json()["error"] == "csrf_origin_denied"
+        assert client.post(url, json=payload, headers={"Origin": "http://localhost"}).status_code == 200
+
+    @pytest.mark.parametrize("decision, expected", [("approve", "ready"), ("reject", "rejected")])
+    def test_session_snapshot_tracks_resolution_without_exposing_other_sessions(self, client, reset_approvals, monkeypatch, decision, expected):
+        from agent.approval import get_approval_store
+        from agent.runtime.approval_continuation import create_continuation, new_continuation_id
+        self._actor(monkeypatch, role="admin")
+        queued = []
+        monkeypatch.setattr("agent.runtime.continuation_dispatcher.dispatch_ready_continuation", lambda ws, cid: queued.append(cid) or True)
+        store = get_approval_store("default")
+        cid = new_continuation_id()
+        req = store.create(session_id="session-a", tool_id="test.tool", arguments={}, description="test", risk_level="high", workspace_id="default", metadata={"continuation_id": cid})
+        create_continuation(workspace_id="default", session_id="session-a", parent_run_id="run-a", user_input="test", tool_calls=[{"id": "call-a", "name": "test.tool", "arguments": {}}], approval_ids=[req.approval_id], continuation_id=cid)
+        response = client.post(f"/api/agent/approvals/{req.approval_id}/resolve", json={"decision": decision, "workspace_id": "default", "session_id": "session-a"})
+        assert response.status_code == 200
+        snapshot = client.get("/api/agent/approvals/pending?workspace_id=default&session_id=session-a").get_json()
+        assert snapshot["pending"] == []
+        assert snapshot["continuations"][0]["status"] == expected
+        assert "payload_ref" not in snapshot["continuations"][0]
+        assert queued == ([cid] if decision == "approve" else [])
+        assert client.get("/api/agent/approvals/pending?workspace_id=default&session_id=session-b").get_json()["continuations"] == []
 
     def test_resolve_requires_workspace_id(self, client, reset_approvals, monkeypatch):
         self._actor(monkeypatch, role="admin")
