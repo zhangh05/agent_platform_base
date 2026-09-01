@@ -1023,6 +1023,48 @@ def test_unknown_write_allows_readback_before_terminal_response():
     assert any("后续写操作已由服务端冻结" in message.content for message in prompts[1])
 
 
+def test_network_unknown_write_is_settled_only_by_same_connection_readback(monkeypatch, tmp_path):
+    """A successful probe or another device can never settle an uncertain write."""
+    monkeypatch.setenv("LZCORE_WORKSPACE_ROOT", str(tmp_path / "workspaces"))
+
+    class Runtime:
+        def invoke_raw(self, _tool_id, arguments):
+            if arguments["action"] == "configure":
+                return {
+                    "ok": False,
+                    "error": "configuration_outcome_unknown",
+                    "error_code": "prompt_timeout",
+                    "execution_may_continue": True,
+                }
+            return {"ok": True, "command_results": [{"complete": True}]}
+
+    executor = StreamingToolExecutor(Runtime(), SSOTRuntimeConfig(), tool_registry=_registry())
+    ctx = _ctx()
+    calls = [
+        LLMToolCall(id="write", name="network.operations.device.manage", arguments={
+            "action": "configure", "connection_id": "conn-a", "commands": ["system-view"],
+        }),
+        LLMToolCall(id="wrong-device", name="network.operations.device.manage", arguments={
+            "action": "read", "connection_id": "conn-b", "commands": ["display version"],
+        }),
+        LLMToolCall(id="probe", name="network.operations.device.manage", arguments={
+            "action": "probe", "connection_id": "conn-a",
+        }),
+        LLMToolCall(id="readback", name="network.operations.device.manage", arguments={
+            "action": "read", "connection_id": "conn-a", "commands": ["display interface brief"],
+        }),
+    ]
+
+    results = asyncio.run(executor.execute(calls, ctx=ctx))
+
+    assert [result.ok for result in results] == [False, True, True, True]
+    assert ctx.extras["unknown_outcome"]["connection_id"] == "conn-a"
+    assert ctx.extras["unknown_outcome_reconciliation"] == {
+        **ctx.extras["unknown_outcome"], "status": "reconciled",
+        "reconciled_by_call_id": "readback",
+    }
+
+
 def test_uncertain_read_does_not_install_write_fence(monkeypatch, tmp_path):
     monkeypatch.setenv("LZCORE_WORKSPACE_ROOT", str(tmp_path / "workspaces"))
     calls_seen = []

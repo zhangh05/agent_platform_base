@@ -1064,6 +1064,11 @@ class StreamingToolExecutor:
                     and isinstance(pending, dict)
                     and str(pending.get("status") or "") == "unknown"
                     and tc.name.replace("__", ".") == str(pending.get("tool_id") or "")
+                    # A reachability probe proves neither the command state
+                    # nor the intended configuration.  Only the network
+                    # extension's explicit evidence-producing operations may
+                    # settle a write fence.
+                    and str((tc.arguments or {}).get("action") or "") in {"read", "collect"}
                     and str((tc.arguments or {}).get("connection_id") or "")
                     and str((tc.arguments or {}).get("connection_id") or "") == str(pending.get("connection_id") or "")
                 ):

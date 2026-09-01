@@ -14,14 +14,18 @@ ANSI_ESCAPE = re.compile(r"\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1b\\))
 CONTROL_EXCEPT_LAYOUT = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
 MAX_OUTPUT_BYTES = 200_000
 MAX_PAGER_ADVANCES = 500
+# A device can emit a console/syslog notice immediately after returning its
+# prompt.  Waiting for a brief quiet period prevents that late notice from
+# leaking into the next command's buffer while keeping normal CLI latency low.
+PROMPT_SETTLE_SECONDS = 0.12
 INTERACTION_PROMPT = re.compile(
     r"(?:\[\s*(?:y/n|yes/no|confirm)\s*\]|\(\s*(?:y/n|yes/no)\s*\)|"
     r"(?:password|continue|confirm|filename)\s*[:?])\s*[:：]?\s*$", re.IGNORECASE,
 )
 
 
-def _prompt_before_async_notice(text: str, driver: DeviceDriver) -> str:
-    """Recognize a completed prompt followed only by a console/syslog notice.
+def _terminal_prompt_and_notices(text: str, driver: DeviceDriver) -> tuple[str, list[str]]:
+    """Return a terminal prompt and any safe asynchronous trailing notices.
 
     Some Comware Telnet consoles append asynchronous messages immediately after
     returning a prompt (for example ``<PE 1>%... SHELL_LOGIN``).  The command
@@ -45,11 +49,12 @@ def _prompt_before_async_notice(text: str, driver: DeviceDriver) -> str:
             # before a syslog line (``<PE>%...``) or emit the notice on its
             # own line (``%...``).  Both forms are asynchronous output after
             # an already observed prompt, never command payload.
-            line.startswith(prompt + "%") or line.startswith("%")
+            line.startswith((prompt + "%", "%"))
             for line in trailing
         ):
-            return prompt
-    return ""
+            return prompt, trailing
+    prompt = driver.extract_prompt(normalize_terminal_text(text))
+    return prompt, []
 
 
 @dataclass
@@ -62,6 +67,7 @@ class CLIReadResult:
     error_code: str = ""
     truncated: bool = False
     duration_ms: int = 0
+    async_notices: list[str] | None = None
 
     def as_dict(self) -> dict:
         return {
@@ -73,6 +79,7 @@ class CLIReadResult:
             "error_code": self.error_code,
             "truncated": self.truncated,
             "duration_ms": self.duration_ms,
+            "async_notices": list(self.async_notices or []),
             "output_hash": hashlib.sha256(self.text.encode("utf-8")).hexdigest(),
         }
 
@@ -90,6 +97,7 @@ class CLICommandResult:
     device_error: str = ""
     truncated: bool = False
     dispatch_status: str = "not_sent"
+    async_notices: list[str] | None = None
 
     def as_dict(self) -> dict:
         return {
@@ -105,6 +113,7 @@ class CLICommandResult:
             "truncated": self.truncated,
             "dispatch_status": self.dispatch_status,
             "output_hash": hashlib.sha256(self.output.encode("utf-8")).hexdigest(),
+            "async_notices": list(self.async_notices or []),
         }
 
 
@@ -142,8 +151,14 @@ def strip_command_envelope(text: str, command: str, prompt: str) -> str:
         lines.pop(0)
     while lines and not lines[-1].strip():
         lines.pop()
-    if lines and prompt and lines[-1].strip() == prompt.strip():
-        lines.pop()
+    if prompt:
+        # The runtime has already verified that only recognised async notices
+        # can follow this prompt.  Remove both from business command output;
+        # the notices remain separately in command_results for diagnostics.
+        while lines and (lines[-1].strip().startswith(prompt.strip() + "%") or lines[-1].strip().startswith("%")):
+            lines.pop()
+        if lines and lines[-1].strip() == prompt.strip():
+            lines.pop()
     return "\n".join(lines).strip()
 
 
@@ -279,6 +294,7 @@ class InteractiveCLISession:
             device_error=device_error,
             truncated=read.truncated,
             dispatch_status="sent",
+            async_notices=read.async_notices,
         )
 
     def read_until_prompt(self, *, timeout: float | None = None) -> CLIReadResult:
@@ -294,6 +310,9 @@ class InteractiveCLISession:
         truncated = False
         matched_spans: set[tuple[int, int, str]] = set()
         encoding = self.encoding
+        observed_prompt = ""
+        observed_notices: list[str] = []
+        prompt_observed_at = 0.0
 
         while time.monotonic() < deadline:
             if cancel and cancel():
@@ -331,24 +350,49 @@ class InteractiveCLISession:
                                 duration_ms=int((time.monotonic() - started) * 1000),
                             )
                         self._send(rule.response)
-                prompt = self.driver.extract_prompt(_remove_pagers(normalized, self.driver))
-                if not prompt:
-                    prompt = _prompt_before_async_notice(normalized, self.driver)
+                prompt, notices = _terminal_prompt_and_notices(
+                    _remove_pagers(normalized, self.driver), self.driver,
+                )
+                if not prompt and observed_prompt:
+                    # New ordinary output after a prompt means the prompt was
+                    # part of command payload, not a terminal boundary.
+                    observed_prompt, observed_notices = "", []
                 if not prompt and INTERACTION_PROMPT.search(normalized):
                     return CLIReadResult(normalized, pages=pages, encoding=encoding,
                                          error_code="interaction_required")
                 if prompt:
-                    text = _remove_pagers(normalized, self.driver)
+                    terminal_text = _remove_pagers(normalized, self.driver).strip()
+                    if not notices and terminal_text == prompt:
+                        # A prompt already buffered before command dispatch is
+                        # deliberately returned immediately.  run_command()
+                        # keeps the boundary open and consumes the real
+                        # response without treating this stale prompt as data.
+                        self.encoding = encoding
+                        return CLIReadResult(
+                            text=_remove_pagers(normalized, self.driver),
+                            prompt=prompt,
+                            complete=True,
+                            pages=pages,
+                            encoding=encoding,
+                            duration_ms=int((time.monotonic() - started) * 1000),
+                        )
+                    observed_prompt, observed_notices = prompt, notices
+                    prompt_observed_at = time.monotonic()
+            else:
+                if observed_prompt and time.monotonic() - prompt_observed_at >= PROMPT_SETTLE_SECONDS:
+                    text = _remove_pagers(normalize_terminal_text(
+                        decode_terminal_bytes(bytes(raw), self.driver.encodings)[0]
+                    ), self.driver)
                     self.encoding = encoding
                     return CLIReadResult(
                         text=text,
-                        prompt=prompt,
+                        prompt=observed_prompt,
                         complete=True,
                         pages=pages,
                         encoding=encoding,
                         duration_ms=int((time.monotonic() - started) * 1000),
+                        async_notices=observed_notices,
                     )
-            else:
                 time.sleep(0.02)
 
         decoded, encoding = decode_terminal_bytes(bytes(raw), self.driver.encodings)
