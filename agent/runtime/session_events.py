@@ -81,6 +81,52 @@ def push_error(session_id: str, error_type: str, message: str, *, workspace_id: 
     push_event(session_id, "error", {"type": error_type, "message": message[:200]}, workspace_id=workspace_id)
 
 
+def push_continuation_runtime_event(
+    session_id: str,
+    event: dict,
+    *,
+    workspace_id: str,
+    continuation_id: str,
+    parent_run_id: str,
+) -> None:
+    """Bridge a resumed Agent turn into the session observation stream.
+
+    The original request WebSocket has already completed at the approval gate.
+    Resumed execution therefore publishes the same StreamEmitter events through
+    the durable session scope, allowing any open workbench tab to observe model
+    and tool progress without owning the background worker.
+    """
+    if not isinstance(event, dict):
+        return
+    event_type = str(event.get("type") or event.get("name") or "event")
+    common = {
+        "continuation_id": continuation_id,
+        "parent_run_id": parent_run_id,
+    }
+    if event_type == "token":
+        push_event(session_id, "continuation_token", {
+            **common,
+            "content": str(event.get("content") or ""),
+        }, workspace_id=workspace_id)
+        return
+    data = dict(event)
+    if event_type in {"tool_call", "tool_result"}:
+        summary = str(event.get("summary") or event.get("message") or "")
+        data = {
+            "type": event_type,
+            "name": event.get("name", event.get("tool", event.get("tool_id", ""))),
+            "tool_id": event.get("tool_id", event.get("name", "")),
+            "ok": event.get("ok", event.get("status") == "ok"),
+            "summary": summary[:8000] + ("..." if len(summary) > 8000 else ""),
+            "call_id": event.get("call_id", ""),
+        }
+    push_event(session_id, "continuation_runtime_event", {
+        **common,
+        "name": event_type,
+        "data": data,
+    }, workspace_id=workspace_id)
+
+
 def subscribe(session_id: str, timeout: int = 25, *, workspace_id: str) -> Optional[str]:
     """Block up to `timeout` seconds for the next SSE-formatted event line.
 

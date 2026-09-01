@@ -75,6 +75,7 @@ def create_continuation(
     approved_node_ids: list[str] | None = None,
     cognitive_state: dict[str, Any] | None = None,
     prior_tool_evidence: list[dict[str, Any]] | None = None,
+    workbench_context: dict[str, Any] | None = None,
     continuation_id: str = "",
 ) -> str:
     if not tool_calls or not approval_ids:
@@ -98,6 +99,7 @@ def create_continuation(
         "approved_node_ids": approved_ids,
         "cognitive_state": dict(cognitive_state or {}),
         "prior_tool_evidence": list(prior_tool_evidence or []),
+        "workbench_context": dict(workbench_context or {}),
     }
     payload_text = _canonical(payload)
     secret_ref = set_secret(f"approval_continuation_{continuation_id}", payload_text)
@@ -450,6 +452,13 @@ def _validate_payload(record: dict[str, Any], payload: Any) -> None:
         or any(str(node_id) not in call_ids for node_id in approved_ids)
     ):
         raise ValueError("invalid_continuation_approved_nodes")
+    workbench_context = payload.get("workbench_context", {})
+    if not isinstance(workbench_context, dict):
+        raise ValueError("invalid_continuation_workbench_context")
+    # The context is produced by the server-side extension resolver and kept
+    # in the encrypted payload, but still bound its size before rehydration.
+    if len(_canonical(workbench_context).encode("utf-8")) > 128 * 1024:
+        raise ValueError("continuation_workbench_context_too_large")
 
 
 def reconcile_decisions_from_guardian(

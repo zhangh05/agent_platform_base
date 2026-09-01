@@ -167,7 +167,16 @@ def test_ordinary_approval_returns_pending_without_waiting(monkeypatch, tmp_path
     result = asyncio.run(handler(
         StatelessContext(
             workspace_id="default", session_id="session-1", request_id="run-1",
-            user_input="删除文件", extras={"cognitive_state": cognitive_state},
+            user_input="删除文件", extras={
+                "cognitive_state": cognitive_state,
+                "workbench_context": {
+                    "extension_id": "network.operations",
+                    "skill_id": "network-skill-1",
+                    "allowed_tool_ids": ["network.operations.device.manage"],
+                    "device_ids": ["device-1"],
+                    "connection_ids": ["connection-1"],
+                },
+            },
         ),
         {
             "risk_level": "high",
@@ -204,6 +213,118 @@ def test_ordinary_approval_returns_pending_without_waiting(monkeypatch, tmp_path
         workspace_id="default", continuation_id=result["continuation_id"],
     )
     assert payload["cognitive_state"]["known_facts"][0]["fact"] == "审批前已确认文件存在"
+    assert payload["workbench_context"]["skill_id"] == "network-skill-1"
+    assert payload["workbench_context"]["connection_ids"] == ["connection-1"]
+
+
+def test_typed_resume_control_restores_server_workbench_context():
+    from agent.runtime.ssot_runtime import _apply_runtime_control
+    from core.runtime_engine.models import ApprovedContinuationRuntimeControl
+
+    metadata = {}
+    _apply_runtime_control(metadata, ApprovedContinuationRuntimeControl(
+        grant=ApprovedToolContinuation(
+            continuation_id="cont_" + "d" * 32,
+            tool_calls=({
+                "id": "call-1",
+                "name": "network.operations.device.manage",
+                "arguments": {"action": "configure", "connection_id": "connection-1"},
+            },),
+            approved_node_ids=("call-1",),
+        ),
+        parent_run_id="parent-1",
+        workbench_context={
+            "extension_id": "network.operations",
+            "skill_id": "network-skill-1",
+            "allowed_tool_ids": ["network.operations.device.manage"],
+            "device_ids": ["device-1"],
+            "connection_ids": ["connection-1"],
+        },
+    ))
+
+    assert metadata["__approval_continuation_resume"] is True
+    assert metadata["approval_parent_run_id"] == "parent-1"
+    assert metadata["workbench_context"]["skill_id"] == "network-skill-1"
+    assert metadata["workbench_context"]["connection_ids"] == ["connection-1"]
+
+
+def test_dispatcher_restores_workbench_context_and_bridges_live_events(monkeypatch, tmp_path):
+    _storage(monkeypatch, tmp_path)
+    from types import SimpleNamespace
+    import agent.runtime.approval_continuation as continuation_store
+    import agent.runtime.continuation_dispatcher as dispatcher
+    import agent.runtime.session_events as session_events
+    import agent.runtime.turn_persistence as turn_persistence
+    import agent.app.service as app_service
+    from agent.runtime.stream_emitter import StreamEmitter
+
+    captured = {}
+    live_events = []
+
+    class App:
+        def submit_user_message(self, **kwargs):
+            captured.update(kwargs)
+            StreamEmitter().emit("model_started", {"stage": "model_started"})
+            StreamEmitter().emit("tool_call", {
+                "tool_id": "network.operations.device.manage",
+                "call_id": "call-1",
+            })
+            return SimpleNamespace(
+                ok=True,
+                turn_id="resumed-run-1",
+                final_response="配置完成。",
+                errors=[],
+                warnings=[],
+                tool_calls=[],
+                trace_id="trace-1",
+                metadata={},
+            )
+
+    monkeypatch.setattr(app_service, "get_default_agent_app", lambda: App())
+    monkeypatch.setattr(continuation_store, "mark_continuation_dispatching", lambda *_args: {})
+    monkeypatch.setattr(continuation_store, "continuation_stall_seconds", lambda: 60)
+    monkeypatch.setattr(continuation_store, "heartbeat_continuation", lambda *_args: True)
+    monkeypatch.setattr(continuation_store, "finish_continuation", lambda *_args, **_kwargs: {"status": "completed", "error": ""})
+    monkeypatch.setattr(turn_persistence, "project_approved_continuation_result", lambda **_kwargs: {"status": "ok"})
+    monkeypatch.setattr(session_events, "push_continuation_runtime_event", lambda _sid, event, **_kwargs: live_events.append(event))
+    monkeypatch.setattr(session_events, "push_event", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(session_events, "push_turn_done", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(session_events, "push_error", lambda *_args, **_kwargs: None)
+
+    grant = ApprovedToolContinuation(
+        continuation_id="cont_" + "e" * 32,
+        tool_calls=({
+            "id": "call-1",
+            "name": "network.operations.device.manage",
+            "arguments": {"action": "configure", "connection_id": "connection-1"},
+        },),
+        approved_node_ids=("call-1",),
+    )
+    dispatcher._resume_claimed_continuation(
+        "default",
+        grant.continuation_id,
+        grant,
+        {
+            "session_id": "session-1",
+            "parent_run_id": "parent-1",
+            "user_input": "执行配置",
+            "workbench_context": {
+                "extension_id": "network.operations",
+                "skill_id": "network-skill-1",
+                "allowed_tool_ids": ["network.operations.device.manage"],
+                "device_ids": ["device-1"],
+                "connection_ids": ["connection-1"],
+            },
+        },
+    )
+
+    runtime_control = captured["runtime_control"]
+    assert runtime_control.workbench_context["extension_id"] == "network.operations"
+    assert runtime_control.workbench_context["skill_id"] == "network-skill-1"
+    assert runtime_control.workbench_context["connection_ids"] == ["connection-1"]
+    assert [event["type"] for event in live_events] == ["model_started", "tool_call"]
+
+
 def test_approval_batch_failure_compensates_continuation(monkeypatch, tmp_path):
     _storage(monkeypatch, tmp_path)
     import agent.runtime.ssot_runtime as runtime

@@ -1,9 +1,16 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { sessionsApi } from "../api";
+import { openSSE, type SSEConnection } from "../api/sse";
 import type { ApprovalSessionSnapshot } from "../components/ApprovalBubble";
-import { useWorkbenchStore } from "../stores/workbench";
+import { useWorkbenchStore, type ChatMsg } from "../stores/workbench";
+import type { InlineToolCall, RuntimeEvent } from "../types";
+import { filterStreamingThink, toolLabel, type ThinkFilterState } from "../utils/displayText";
+import { progressPatchForStreamStage } from "../utils/streamStage";
 
 const activeStates = new Set(["pending", "ready", "claimed", "dispatching"]);
+type ParentMessagePatch = Partial<Pick<ChatMsg,
+  "status" | "text" | "toolCalls" | "progressText" | "runtimeEvents"
+>>;
 const labels: Record<string, string> = {
   pending: "等待审批，当前会话正在同步审批状态。",
   ready: "审批已通过，等待服务器续跑。",
@@ -25,14 +32,145 @@ export function useApprovalObserver(workspaceId: string | null, sessionId: strin
   const scopeRef = useRef(scope);
   scopeRef.current = scope;
   const requestRef = useRef<AbortController | null>(null);
+  const streamRef = useRef<SSEConnection | null>(null);
+  const draftRef = useRef("");
+  const thinkFilterRef = useRef<{ mode: ThinkFilterState }>({ mode: "idle" });
   const snapshotRef = useRef({ signature: "", settle: 0 });
   const [status, setStatus] = useState("");
+  const [activeContinuation, setActiveContinuation] = useState<{
+    continuationId: string;
+    parentRunId: string;
+  } | null>(null);
 
   useEffect(() => {
     snapshotRef.current = { signature: "", settle: 0 };
+    streamRef.current?.close();
+    streamRef.current = null;
+    draftRef.current = "";
+    thinkFilterRef.current = { mode: "idle" };
+    setActiveContinuation(null);
     setStatus("");
-    return () => { requestRef.current?.abort(); requestRef.current = null; };
+    return () => {
+      requestRef.current?.abort(); requestRef.current = null;
+      streamRef.current?.close(); streamRef.current = null;
+    };
   }, [scope]);
+
+  useEffect(() => {
+    if (!workspaceId || !sessionId || !activeContinuation) return;
+    const connection = openSSE(
+      `/agent/sse/stream/${encodeURIComponent(sessionId)}?workspace_id=${encodeURIComponent(workspaceId)}`,
+    );
+    streamRef.current?.close();
+    streamRef.current = connection;
+
+    const findParentMessage = () => {
+      const messages = useWorkbenchStore.getState().bySession[sessionId] || [];
+      return [...messages].reverse().find((item) => (
+        item.role === "assistant" && item.run_id === activeContinuation.parentRunId
+      ));
+    };
+    const patchParent = (patch: ParentMessagePatch) => {
+      const message = findParentMessage();
+      if (!message) return;
+      useWorkbenchStore.getState().updateAssistant(message.id, patch, sessionId);
+    };
+    const parse = (event: Event) => {
+      try { return JSON.parse((event as MessageEvent<string>).data || "{}"); }
+      catch { return {}; }
+    };
+    const matches = (payload: Record<string, unknown>) => (
+      String(payload.continuation_id || "") === activeContinuation.continuationId
+      && String(payload.parent_run_id || "") === activeContinuation.parentRunId
+    );
+    const onStarted = (event: Event) => {
+      const payload = parse(event);
+      if (!matches(payload)) return;
+      draftRef.current = "";
+      thinkFilterRef.current = { mode: "idle" };
+      patchParent({ status: "streaming", text: "", progressText: "审批已通过，正在恢复任务…" });
+    };
+    const onToken = (event: Event) => {
+      const payload = parse(event);
+      if (!matches(payload)) return;
+      const visible = filterStreamingThink(String(payload.content || ""), thinkFilterRef.current);
+      if (!visible) return;
+      draftRef.current += visible;
+      patchParent({ status: "streaming", text: draftRef.current, progressText: "正在生成回复…" });
+    };
+    const onRuntimeEvent = (event: Event) => {
+      const payload = parse(event);
+      if (!matches(payload)) return;
+      const name = String(payload.name || "event");
+      const data = payload.data && typeof payload.data === "object"
+        ? payload.data as Record<string, unknown>
+        : {};
+      const message = findParentMessage();
+      if (!message) return;
+      const runtimeEvent: RuntimeEvent = {
+        ...data,
+        event_id: String(data.event_id || `continuation-${activeContinuation.continuationId}-${Date.now()}`),
+        event_type: String(data.event_type || data.type || name),
+        type: String(data.type || name),
+      } as RuntimeEvent;
+      const patch: ParentMessagePatch = {
+        status: "streaming",
+        runtimeEvents: [...(message.runtimeEvents || []), runtimeEvent],
+      };
+      const progress = progressPatchForStreamStage(name, data);
+      if (progress) patch.progressText = progress.progressText;
+      if (name === "model_started") {
+        draftRef.current = "";
+        thinkFilterRef.current = { mode: "idle" };
+        patch.text = "";
+      }
+      if (name === "tool_call" || name === "tool_result") {
+        const toolId = String(data.tool_id || data.name || "");
+        const callId = String(data.call_id || data.node_id || toolId || "");
+        const previous = (message.toolCalls || []) as InlineToolCall[];
+        if (toolId && callId && name === "tool_call" && !previous.some((item) => item.call_id === callId)) {
+          patch.toolCalls = [...previous, {
+            call_id: callId,
+            tool_id: toolId,
+            tool_name: toolLabel(toolId),
+            ok: false,
+            status: "running",
+          }];
+        } else if (callId && name === "tool_result") {
+          const ok = data.ok ?? data.status === "ok";
+          patch.toolCalls = previous.map((item) => item.call_id === callId
+            ? { ...item, status: ok ? "done" : "fail", ok: Boolean(ok), summary: String(data.summary || "") }
+            : item);
+        }
+      }
+      useWorkbenchStore.getState().updateAssistant(message.id, patch, sessionId);
+    };
+    const syncTerminal = (event: Event) => {
+      const payload = parse(event);
+      if (!matches(payload)) return;
+      patchParent({ progressText: "任务已结束，正在同步最终结果…" });
+      void sessionsApi.messages(sessionId, workspaceId).then(async (response) => {
+        useWorkbenchStore.getState().mergeFromBackend(sessionId, response.messages || []);
+        await useWorkbenchStore.getState().loadRunDetail(
+          workspaceId, activeContinuation.parentRunId, sessionId, true,
+        );
+      }).catch(() => { /* durable approval polling retries synchronization */ });
+    };
+    connection.addEventListener("continuation_started", onStarted);
+    connection.addEventListener("continuation_token", onToken);
+    connection.addEventListener("continuation_runtime_event", onRuntimeEvent);
+    connection.addEventListener("continuation_completed", syncTerminal);
+    connection.addEventListener("continuation_failed", syncTerminal);
+    return () => {
+      connection.removeEventListener("continuation_started", onStarted);
+      connection.removeEventListener("continuation_token", onToken);
+      connection.removeEventListener("continuation_runtime_event", onRuntimeEvent);
+      connection.removeEventListener("continuation_completed", syncTerminal);
+      connection.removeEventListener("continuation_failed", syncTerminal);
+      connection.close();
+      if (streamRef.current === connection) streamRef.current = null;
+    };
+  }, [activeContinuation, sessionId, workspaceId]);
 
   const onSessionUpdate = useCallback((snapshot: ApprovalSessionSnapshot) => {
     if (!workspaceId || !sessionId || scopeRef.current !== scope
@@ -46,6 +184,16 @@ export function useApprovalObserver(workspaceId: string | null, sessionId: strin
       snapshotRef.current = { signature, settle: 3 };
     }
     const active = activeStates.has(state);
+    if (current && active && current.continuation_id && current.parent_run_id) {
+      setActiveContinuation((existing) => (
+        existing?.continuationId === current.continuation_id
+          && existing.parentRunId === current.parent_run_id
+          ? existing
+          : { continuationId: current.continuation_id, parentRunId: current.parent_run_id }
+      ));
+    } else if (!active) {
+      setActiveContinuation(null);
+    }
     // Terminal publication and parent-message projection are distinct writes.
     // Re-read a few snapshots after terminal state instead of stopping before
     // the in-place parent response has been persisted.

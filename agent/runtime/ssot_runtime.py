@@ -94,6 +94,8 @@ def _apply_runtime_control(metadata: dict[str, Any], runtime_control: Any) -> No
             "__approval_cognitive_state": dict(runtime_control.cognitive_state or {}),
             "__approval_prior_tool_evidence": list(runtime_control.prior_tool_evidence or ()),
         })
+        if runtime_control.workbench_context:
+            metadata["workbench_context"] = dict(runtime_control.workbench_context)
         return
 
     from core.runtime_engine.models import MainAgentRuntimeControl, SubagentRuntimeControl
@@ -1033,6 +1035,11 @@ def _build_approval_handler(
             approved_node_ids=approval_nodes,
             cognitive_state=cognitive_snapshot,
             prior_tool_evidence=prior_tool_evidence,
+            workbench_context=(
+                dict(ctx.extras.get("workbench_context") or {})
+                if isinstance(ctx.extras.get("workbench_context"), dict)
+                else {}
+            ),
             continuation_id=continuation_id,
         )
         specs: list[dict[str, Any]] = []

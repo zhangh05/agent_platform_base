@@ -75,15 +75,26 @@ def _resume_claimed_continuation(workspace_id: str, continuation_id: str, grant,
         heartbeat_continuation,
         mark_continuation_dispatching,
     )
-    from agent.runtime.session_events import push_error, push_turn_done
+    from agent.runtime.session_events import (
+        push_continuation_runtime_event,
+        push_error,
+        push_event,
+        push_turn_done,
+    )
 
     session_id = str(payload.get("session_id") or "")
     heartbeat_stop = threading.Event()
     heartbeat_thread = None
     try:
         from agent.app.service import get_default_agent_app
+        from agent.runtime.stream_emitter import StreamEmitter
 
         mark_continuation_dispatching(workspace_id, continuation_id)
+        parent_run_id = str(payload.get("parent_run_id") or "")
+        push_event(session_id, "continuation_started", {
+            "continuation_id": continuation_id,
+            "parent_run_id": parent_run_id,
+        }, workspace_id=workspace_id)
 
         def _heartbeat() -> None:
             interval = max(10.0, min(60.0, continuation_stall_seconds() / 3))
@@ -105,25 +116,41 @@ def _resume_claimed_continuation(workspace_id: str, continuation_id: str, grant,
             daemon=True,
         )
         heartbeat_thread.start()
-        resumed = get_default_agent_app().submit_user_message(
-            user_input=str(payload.get("user_input") or ""),
-            workspace_id=workspace_id,
-            session_id=session_id,
-            metadata={"transport": "approval_resume"},
-            runtime_control=ApprovedContinuationRuntimeControl(
-                grant=grant,
-                parent_run_id=str(payload.get("parent_run_id") or ""),
-                cognitive_state=dict(payload.get("cognitive_state") or {}),
-                prior_tool_evidence=tuple(payload.get("prior_tool_evidence") or ()),
-            ),
-        )
+        def _publish_runtime_event(event: dict) -> None:
+            push_continuation_runtime_event(
+                session_id,
+                event,
+                workspace_id=workspace_id,
+                continuation_id=continuation_id,
+                parent_run_id=parent_run_id,
+            )
+
+        # A continuation is a normal Agent execution owned by a background
+        # worker. Bind the same runtime emitter used by WebSocket turns to the
+        # session event bus for the entire resumed turn.
+        StreamEmitter.set_realtime_callback(_publish_runtime_event)
+        try:
+            resumed = get_default_agent_app().submit_user_message(
+                user_input=str(payload.get("user_input") or ""),
+                workspace_id=workspace_id,
+                session_id=session_id,
+                metadata={"transport": "approval_resume"},
+                runtime_control=ApprovedContinuationRuntimeControl(
+                    grant=grant,
+                    parent_run_id=parent_run_id,
+                    cognitive_state=dict(payload.get("cognitive_state") or {}),
+                    prior_tool_evidence=tuple(payload.get("prior_tool_evidence") or ()),
+                    workbench_context=dict(payload.get("workbench_context") or {}),
+                ),
+            )
+        finally:
+            StreamEmitter.clear_realtime_callback()
         completed = finish_continuation(
             workspace_id,
             continuation_id,
             completed_run_id=str(getattr(resumed, "turn_id", "") or ""),
             error=_resume_failure_reason(resumed),
         )
-        parent_run_id = str(payload.get("parent_run_id") or "")
         from agent.runtime.turn_persistence import project_approved_continuation_result
         parent_projection = project_approved_continuation_result(
             workspace_id=workspace_id,
@@ -137,6 +164,11 @@ def _resume_claimed_continuation(workspace_id: str, continuation_id: str, grant,
             and bool(getattr(resumed, "ok", False))
             and parent_projection
         ):
+            push_event(session_id, "continuation_completed", {
+                "continuation_id": continuation_id,
+                "parent_run_id": parent_run_id,
+                "resumed_run_id": str(getattr(resumed, "turn_id", "") or ""),
+            }, workspace_id=workspace_id)
             push_turn_done(
                 session_id,
                 parent_run_id or str(getattr(resumed, "turn_id", "") or ""),
@@ -144,6 +176,11 @@ def _resume_claimed_continuation(workspace_id: str, continuation_id: str, grant,
                 workspace_id=workspace_id,
             )
         else:
+            push_event(session_id, "continuation_failed", {
+                "continuation_id": continuation_id,
+                "parent_run_id": parent_run_id,
+                "error": str(completed.get("error") or "approval_parent_projection_failed")[:200],
+            }, workspace_id=workspace_id)
             push_error(
                 session_id,
                 "approval_resume_failed",
@@ -153,6 +190,11 @@ def _resume_claimed_continuation(workspace_id: str, continuation_id: str, grant,
     except Exception as exc:  # noqa: BLE001 - background boundary must persist failure
         _LOG.exception("approval continuation failed continuation=%s", continuation_id)
         finish_continuation(workspace_id, continuation_id, error=str(exc))
+        push_event(session_id, "continuation_failed", {
+            "continuation_id": continuation_id,
+            "parent_run_id": str(payload.get("parent_run_id") or ""),
+            "error": "approval_resume_failed",
+        }, workspace_id=workspace_id)
         push_error(
             session_id,
             "approval_resume_failed",

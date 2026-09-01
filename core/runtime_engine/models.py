@@ -118,6 +118,11 @@ class ApprovedContinuationRuntimeControl:
     parent_run_id: str = ""
     cognitive_state: dict[str, Any] = field(default_factory=dict)
     prior_tool_evidence: tuple[dict[str, Any], ...] = ()
+    # Server-resolved workbench authorization snapshot.  This is carried in
+    # the typed control envelope instead of caller metadata so an approved
+    # continuation sees the exact Skill/tool/device boundary of its parent
+    # turn without allowing an HTTP client to manufacture that boundary.
+    workbench_context: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
