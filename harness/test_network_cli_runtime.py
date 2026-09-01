@@ -255,6 +255,30 @@ def test_cli_runtime_accepts_prompt_followed_only_by_async_console_notice():
     assert "GE0/0 UP UP" in result.output
 
 
+@pytest.mark.parametrize("notice", [
+    b"<PE 1>%Sep  1 17:06:17:431 2026 PE 1 SHELL/5/SHELL_LOGIN: Console logged in",
+    b"%Sep  1 17:06:17:431 2026 PE 1 SHELL/5/SHELL_LOGIN: Console logged in",
+])
+def test_cli_runtime_accepts_both_comware_async_notice_forms(notice):
+    driver, _source = resolve_driver("h3c")
+    io = ScriptedIO([
+        b"return\r\n<PE 1>\r\n" + notice,
+    ])
+    session = InteractiveCLISession(
+        send=io.send,
+        receive=io.receive,
+        driver=driver,
+        initial_text="[PE 1-if]",
+        timeout=0.1,
+    )
+
+    result = session.run_command("return")
+
+    assert result.complete is True
+    assert result.error_code == ""
+    assert result.prompt == "<PE 1>"
+
+
 def test_cli_runtime_ignores_stale_prompt_before_command_response():
     driver, _source = resolve_driver("h3c")
     io = ScriptedIO([

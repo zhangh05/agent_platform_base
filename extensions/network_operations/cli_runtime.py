@@ -41,7 +41,11 @@ def _prompt_before_async_notice(text: str, driver: DeviceDriver) -> str:
             continue
         trailing = lines[index + 1:]
         if trailing and all(
-            line.startswith(prompt + "%")
+            # Different Comware console servers either repeat the prompt
+            # before a syslog line (``<PE>%...``) or emit the notice on its
+            # own line (``%...``).  Both forms are asynchronous output after
+            # an already observed prompt, never command payload.
+            line.startswith(prompt + "%") or line.startswith("%")
             for line in trailing
         ):
             return prompt
