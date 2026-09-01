@@ -140,6 +140,40 @@ def test_agent_app_projects_unknown_outcome_as_read_only_terminal_fact(monkeypat
     assert result.metadata["goal_assertions"]["status"] == "unknown"
 
 
+def test_agent_app_does_not_label_unknown_write_as_all_tool_calls_failed(monkeypatch, temp_dirs):
+    """A fenced indeterminate write has its own user-visible lifecycle state."""
+    from types import SimpleNamespace
+    from agent.app.facade import AgentApp
+
+    class FakeEngine:
+        async def run(self, **_kwargs):
+            return SimpleNamespace(
+                success=False,
+                final_response="正在等待只读核验。",
+                node_results={"write-1": SimpleNamespace(
+                    tool="network.operations.device.manage",
+                    success=False,
+                    data={"error": "configuration_outcome_unknown"},
+                    error="configuration_outcome_unknown",
+                    latency_ms=0,
+                )},
+                errors=[],
+                metadata={"execution_outcome": "unknown"},
+            )
+
+    monkeypatch.setattr(
+        "agent.runtime.ssot_runtime._build_engine",
+        lambda **_kwargs: FakeEngine(),
+    )
+    result = AgentApp().submit_user_message(
+        user_input="写入配置", workspace_id="default", metadata={"transport": "test"},
+    )
+
+    assert result.ok is False
+    assert result.errors == []
+    assert result.metadata["execution_outcome"] == "unknown"
+
+
 def test_agent_app_ignores_malformed_optional_terminal_facts(monkeypatch, temp_dirs):
     """Optional metadata must not turn a completed request into a projection crash."""
     from types import SimpleNamespace

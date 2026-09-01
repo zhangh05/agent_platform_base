@@ -1698,6 +1698,13 @@ class QueryLoop:
             }
             metric_overrides = dict(values.pop("metrics", {}) or {})
             projected_metrics.update(metric_overrides)
+            # The write fence is runtime-owned state.  It must survive a
+            # successful read-back round so task persistence and the UI can
+            # distinguish an unresolved external-write outcome from an
+            # ordinary tool failure.
+            unknown_outcome = ctx.extras.get("unknown_outcome")
+            if isinstance(unknown_outcome, dict) and unknown_outcome:
+                projected_metrics["unknown_outcome"] = dict(unknown_outcome)
             from .goal_assertions import evaluate_goal_assertions
             assertion_result = evaluate_goal_assertions(ctx, all_results)
             projected_metrics["goal_assertions"] = assertion_result
@@ -2355,22 +2362,22 @@ class QueryLoop:
                 if isinstance(unknown_outcome, dict) and unknown_outcome:
                     trigger_tool = str(unknown_outcome.get("tool_id") or "操作")
                     trigger_call = str(unknown_outcome.get("call_id") or "")
-                    return finish(
-                        final_response=(
-                            f"工具 {trigger_tool} 的执行结果处于未知状态"
-                            + (f"（调用 {trigger_call}）" if trigger_call else "")
-                            + "。系统已冻结本轮后续写操作，未自动重试、未推定成功或失败。"
-                            "请通过受控 read-back/reconcile 验证实际结果，或由操作员处置。"
-                        ),
-                        tool_results=all_results,
-                        iterations=iterations,
-                        total_tool_calls=len(all_results),
-                        llm_calls=llm_calls,
-                        error="unknown_outcome",
-                        metrics={
-                            "execution_outcome": "unknown",
-                            "unknown_outcome": dict(unknown_outcome),
-                        },
+                    # An indeterminate external write is a fence, not an
+                    # instruction to abandon the turn.  Returning here made
+                    # the model unable to perform the required read-back, and
+                    # then projected the whole turn as all-tool-failed.  Keep
+                    # the server-side fence installed by the executor while
+                    # giving the model the failed result and one safe path:
+                    # read-only reconciliation or a bounded user-facing
+                    # disposition.  Any later write is still rejected by the
+                    # executor; this does not weaken the no-replay contract.
+                    messages = self._append_turn_nudge(
+                        messages,
+                        "安全状态：外部写操作的结果尚未确定"
+                        + (f"（工具 {trigger_tool}，调用 {trigger_call}）" if trigger_call else "")
+                        + "。后续写操作已由服务端冻结，绝不可重放该写操作、自动重试或改用另一条写命令。"
+                        "现在请仅选择与该目标相关的只读 read-back/reconcile 工具调用来核验实际状态；"
+                        "若证据仍不足或设备不可达，请基于已有证据向用户说明不确定性和下一步。"
                     )
                 failed_results = [result for result in results if not result.ok]
                 if failed_results:

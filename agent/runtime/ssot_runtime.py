@@ -561,7 +561,17 @@ def run_ssot_turn(
         }
         failed_tool_count = sum(1 for call in tool_calls if not call.get("ok"))
         successful_tool_count = len(tool_calls) - failed_tool_count
-        if not runtime_result.success and failed_tool_count and not runtime_errors:
+        # An unknown external-write outcome is intentionally not a normal
+        # tool failure: the QueryLoop keeps its write fence and lets the model
+        # perform read-back or explain the remaining uncertainty.  Collapsing
+        # that state to all_tool_calls_failed both contradicts the safety
+        # contract and hides the reconciliation path from the workbench.
+        if (
+            not runtime_result.success
+            and failed_tool_count
+            and not runtime_errors
+            and metadata["execution_outcome"] != "unknown"
+        ):
             runtime_errors.append("all_tool_calls_failed")
         runtime_warnings = []
         if failed_tool_count and successful_tool_count:

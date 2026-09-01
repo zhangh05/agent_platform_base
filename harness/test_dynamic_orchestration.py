@@ -956,6 +956,73 @@ def test_uncertain_write_fences_later_writes_in_same_batch(monkeypatch, tmp_path
     assert blocked["status"] == "blocked"
 
 
+def test_unknown_write_allows_readback_before_terminal_response():
+    """An uncertain write fences writes but must not prevent LLM read-back."""
+    from agent.llm.schemas import LLMResponse
+    from core.runtime_engine.engine import SSOTRuntimeEngine
+    from core.runtime_engine.tool_runtime import ToolRuntime
+
+    responses = [
+        LLMResponse(tool_calls=[LLMToolCall(
+            id="write-1", name="workspace.file",
+            arguments={"action": "write", "filename": "state.txt", "content": "ready"},
+        )]),
+        LLMResponse(tool_calls=[LLMToolCall(
+            id="readback-1", name="workspace.file",
+            arguments={"action": "list"},
+        )]),
+        LLMResponse(content="已完成只读核验；原写入未被重放。"),
+    ]
+    prompts = []
+    calls_seen = []
+
+    def llm(**kwargs):
+        prompts.append(kwargs["messages"])
+        return responses.pop(0)
+
+    def handler(arguments):
+        calls_seen.append(dict(arguments))
+        if arguments["action"] == "write":
+            return {
+                "ok": False,
+                "error_code": "TOOL_TIMEOUT_UNCERTAIN",
+                "error": "remote write may still be running",
+                "execution_may_continue": True,
+            }
+        return {"ok": True, "files": ["state.txt"]}
+
+    config = SSOTRuntimeConfig(max_query_loop_iterations=4)
+    runtime = ToolRuntime(config)
+    runtime.register("workspace.file", handler)
+    registry = {"workspace.file": {
+        "description": "workspace files",
+        "args_schema": {
+            "type": "object", "required": ["action"],
+            "properties": {
+                "action": {"type": "string", "enum": ["list", "write"]},
+                "filename": {"type": "string"},
+                "content": {"type": "string"},
+            },
+        },
+    }}
+    engine = SSOTRuntimeEngine(
+        config=config, llm_invoke=llm, tool_registry=registry, tool_runtime=runtime,
+    )
+
+    result = asyncio.run(engine.run(
+        "写入后核验", workspace_id="default", session_id="unknown-write-readback",
+    ))
+
+    assert calls_seen == [
+        {"action": "write", "filename": "state.txt", "content": "ready"},
+        {"action": "list"},
+    ]
+    assert result.final_response == "已完成只读核验；原写入未被重放。"
+    assert result.metadata["execution_outcome"] == "unknown"
+    assert result.metadata["unknown_outcome"]["call_id"] == "write-1"
+    assert any("后续写操作已由服务端冻结" in message.content for message in prompts[1])
+
+
 def test_uncertain_read_does_not_install_write_fence(monkeypatch, tmp_path):
     monkeypatch.setenv("LZCORE_WORKSPACE_ROOT", str(tmp_path / "workspaces"))
     calls_seen = []
