@@ -713,6 +713,8 @@ def _merge_evidence(existing: list[dict[str, Any]], evidence: Any, tool_calls: l
 
 def _unknowns_from_metadata(metadata: dict[str, Any]) -> list[dict[str, str]]:
     unknown = metadata.get("unknown_outcome")
+    if isinstance(unknown, dict) and str(unknown.get("status") or "") == "reconciled":
+        return []
     if isinstance(unknown, dict) and unknown:
         return [{"kind": _bounded_text(unknown.get("kind") or "unknown_outcome", 80), "reason": _bounded_text(unknown.get("reason") or unknown.get("message") or "", 240)}]
     cognitive = metadata.get("cognitive")

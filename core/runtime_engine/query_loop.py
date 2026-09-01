@@ -557,6 +557,7 @@ class StreamingToolExecutor:
             ),
             "occurred_at": time.time(),
             "execution_may_continue": True,
+            "connection_id": str((tool_call.arguments or {}).get("connection_id") or ""),
         }
         if ctx is not None:
             current = ctx.extras.get("unknown_outcome")
@@ -1057,6 +1058,19 @@ class StreamingToolExecutor:
                     output = dict(result.output or {})
                     output["read_only"] = True
                     result.output = output
+                pending = ctx.extras.get("unknown_outcome") if ctx is not None else None
+                if (
+                    result.ok
+                    and isinstance(pending, dict)
+                    and str(pending.get("status") or "") == "unknown"
+                    and tc.name.replace("__", ".") == str(pending.get("tool_id") or "")
+                    and str((tc.arguments or {}).get("connection_id") or "")
+                    and str((tc.arguments or {}).get("connection_id") or "") == str(pending.get("connection_id") or "")
+                ):
+                    ctx.extras["unknown_outcome_reconciliation"] = {
+                        **pending, "status": "reconciled",
+                        "reconciled_by_call_id": tc.id,
+                    }
 
         read_group: list[LLMToolCall] = []
         for tc in tool_calls:
@@ -1702,7 +1716,7 @@ class QueryLoop:
             # successful read-back round so task persistence and the UI can
             # distinguish an unresolved external-write outcome from an
             # ordinary tool failure.
-            unknown_outcome = ctx.extras.get("unknown_outcome")
+            unknown_outcome = ctx.extras.get("unknown_outcome_reconciliation") or ctx.extras.get("unknown_outcome")
             if isinstance(unknown_outcome, dict) and unknown_outcome:
                 projected_metrics["unknown_outcome"] = dict(unknown_outcome)
             from .goal_assertions import evaluate_goal_assertions
@@ -1715,7 +1729,11 @@ class QueryLoop:
                 derive_tool_execution_outcome,
             )
             projected_metrics["tool_execution_outcome"] = derive_tool_execution_outcome(all_results)
+            reconciliation = ctx.extras.get("unknown_outcome_reconciliation")
             projected_metrics["execution_outcome"] = (
+                "complete"
+                if isinstance(reconciliation, dict) and reconciliation.get("status") == "reconciled"
+                else
                 "unknown"
                 if metric_overrides.get("execution_outcome") == "unknown"
                 else derive_execution_outcome(
@@ -2359,6 +2377,10 @@ class QueryLoop:
                         "restart the full inspection or substitute assumptions for evidence.",
                     )
                 unknown_outcome = ctx.extras.get("unknown_outcome")
+                reconciliation = ctx.extras.get("unknown_outcome_reconciliation")
+                if isinstance(reconciliation, dict) and reconciliation.get("status") == "reconciled":
+                    messages = self._append_turn_nudge(messages, "受控 read-back 已完成；原写操作仍未被重放。请依据回读证据完成答复。")
+                    continue
                 if isinstance(unknown_outcome, dict) and unknown_outcome:
                     trigger_tool = str(unknown_outcome.get("tool_id") or "操作")
                     trigger_call = str(unknown_outcome.get("call_id") or "")
