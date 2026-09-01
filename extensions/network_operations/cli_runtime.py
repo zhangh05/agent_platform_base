@@ -20,6 +20,34 @@ INTERACTION_PROMPT = re.compile(
 )
 
 
+def _prompt_before_async_notice(text: str, driver: DeviceDriver) -> str:
+    """Recognize a completed prompt followed only by a console/syslog notice.
+
+    Some Comware Telnet consoles append asynchronous messages immediately after
+    returning a prompt (for example ``<PE 1>%... SHELL_LOGIN``).  The command
+    has completed, but a strict final-line prompt check turns that transcript
+    into a false timeout.  Accept only a known full prompt followed by lines
+    that repeat that prompt as a percent-prefixed notification; arbitrary
+    output after a prompt remains incomplete.
+    """
+    lines = [
+        line.strip()
+        for line in normalize_terminal_text(text).split("\n")
+        if line.strip()
+    ]
+    for index in range(len(lines) - 2, -1, -1):
+        prompt = lines[index]
+        if not any(pattern.fullmatch(prompt) for pattern in driver.prompt_patterns):
+            continue
+        trailing = lines[index + 1:]
+        if trailing and all(
+            line.startswith(prompt + "%")
+            for line in trailing
+        ):
+            return prompt
+    return ""
+
+
 @dataclass
 class CLIReadResult:
     text: str
@@ -300,6 +328,8 @@ class InteractiveCLISession:
                             )
                         self._send(rule.response)
                 prompt = self.driver.extract_prompt(_remove_pagers(normalized, self.driver))
+                if not prompt:
+                    prompt = _prompt_before_async_notice(normalized, self.driver)
                 if not prompt and INTERACTION_PROMPT.search(normalized):
                     return CLIReadResult(normalized, pages=pages, encoding=encoding,
                                          error_code="interaction_required")

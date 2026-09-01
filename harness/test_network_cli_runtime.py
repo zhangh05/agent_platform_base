@@ -233,6 +233,28 @@ def test_cli_runtime_only_accepts_prompt_on_final_nonempty_line():
     assert "still running" in result.output
 
 
+def test_cli_runtime_accepts_prompt_followed_only_by_async_console_notice():
+    driver, _source = resolve_driver("h3c")
+    io = ScriptedIO([
+        b"display interface brief\r\nGE0/0 UP UP\r\n<PE 1>\r\n"
+        b"<PE 1>%Sep  1 17:06:17:431 2026 PE 1 SHELL/5/SHELL_LOGIN: Console logged in"
+    ])
+    session = InteractiveCLISession(
+        send=io.send,
+        receive=io.receive,
+        driver=driver,
+        initial_text="<PE 1>",
+        timeout=0.1,
+    )
+
+    result = session.run_command("display interface brief")
+
+    assert result.complete is True
+    assert result.error_code == ""
+    assert result.prompt == "<PE 1>"
+    assert "GE0/0 UP UP" in result.output
+
+
 def test_cli_runtime_ignores_stale_prompt_before_command_response():
     driver, _source = resolve_driver("h3c")
     io = ScriptedIO([
