@@ -200,6 +200,32 @@ def test_manual_resolution_requires_reason_and_preserves_audit(monkeypatch, tmp_
     assert resolved["resolution_reason"] == "已核对目标系统记录"
 
 
+def test_readback_reconciliation_is_a_terminal_audit_state(monkeypatch, tmp_path):
+    monkeypatch.setenv("LZCORE_WORKSPACE_ROOT", str(tmp_path / "workspaces"))
+    from core.runtime_engine.operation_ledger import (
+        finish_operation, plan_operation, settle_operation, start_operation,
+    )
+    operation = plan_operation(
+        _ctx(), "network.operations.device.manage", "call-readback", {"action": "configure"},
+    )
+    start_operation("default", operation["operation_id"])
+    finish_operation("default", operation["operation_id"], SimpleNamespace(
+        ok=False, error="configuration_outcome_unknown", error_code="prompt_timeout",
+        execution_may_continue=True, output={"executed": True},
+    ))
+
+    reconciled = settle_operation(
+        "default", operation["operation_id"], status="reconciled",
+        resolved_by="network_readback", resolution_reason="same_connection_readback:call-read",
+        result_summary="同连接只读回读已完成；写入结果以回读证据为准",
+        require_unresolved=True,
+    )
+
+    assert reconciled["status"] == "reconciled"
+    assert reconciled["resolved_by"] == "network_readback"
+    assert reconciled["error_code"] == ""
+
+
 def test_detached_handler_eventually_settles_timeout_truth(monkeypatch, tmp_path):
     monkeypatch.setenv("LZCORE_WORKSPACE_ROOT", str(tmp_path / "workspaces"))
     from core.runtime_engine.models import ExecutionNode, SSOTRuntimeConfig, StatelessContext

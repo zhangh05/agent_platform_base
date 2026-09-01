@@ -558,6 +558,11 @@ class StreamingToolExecutor:
             "occurred_at": time.time(),
             "execution_may_continue": True,
             "connection_id": str((tool_call.arguments or {}).get("connection_id") or ""),
+            # finish_operation() has already projected this id into the tool
+            # result by the time an uncertain write reaches this method.  It
+            # makes the runtime read-back and the durable ledger one state
+            # machine instead of two unrelated warnings.
+            "operation_id": str(output.get("operation_id") or ""),
         }
         if ctx is not None:
             current = ctx.extras.get("unknown_outcome")
@@ -1072,10 +1077,25 @@ class StreamingToolExecutor:
                     and str((tc.arguments or {}).get("connection_id") or "")
                     and str((tc.arguments or {}).get("connection_id") or "") == str(pending.get("connection_id") or "")
                 ):
-                    ctx.extras["unknown_outcome_reconciliation"] = {
+                    reconciliation = {
                         **pending, "status": "reconciled",
                         "reconciled_by_call_id": tc.id,
                     }
+                    ctx.extras["unknown_outcome_reconciliation"] = reconciliation
+                    operation_id = str(pending.get("operation_id") or "")
+                    if operation_id:
+                        from .operation_ledger import settle_operation
+                        settle_operation(
+                            ctx.workspace_id,
+                            operation_id,
+                            status="reconciled",
+                            resolved_by="network_readback",
+                            result_summary="同连接只读回读已完成；写入结果以回读证据为准",
+                            resolution_reason=(
+                                f"same_connection_readback:{tc.id}"
+                            ),
+                            require_unresolved=True,
+                        )
 
         read_group: list[LLMToolCall] = []
         for tc in tool_calls:

@@ -150,7 +150,7 @@ def settle_operation(
     require_unresolved: bool = False,
 ) -> dict[str, Any]:
     """Resolve planned/running/unknown state from durable or human evidence."""
-    if status not in {"succeeded", "failed", "blocked"}:
+    if status not in {"succeeded", "failed", "blocked", "reconciled"}:
         raise ValueError("invalid_operation_resolution_status")
     path = _path(workspace_id, op_id)
     if not path.is_file():
@@ -171,8 +171,8 @@ def settle_operation(
             "resolved_at": now,
             "resolved_by": str(resolved_by or "system")[:80],
             "resolution_reason": redact_text(str(resolution_reason or ""))[:500],
-            "error_code": str(error_code or "")[:120] if status != "succeeded" else "",
-            "error": redact_text(str(error or ""))[:500] if status != "succeeded" else "",
+            "error_code": str(error_code or "")[:120] if status not in {"succeeded", "reconciled"} else "",
+            "error": redact_text(str(error or ""))[:500] if status not in {"succeeded", "reconciled"} else "",
             "result_summary": redact_text(str(result_summary or ""))[:800],
             "updated_at": now,
         })

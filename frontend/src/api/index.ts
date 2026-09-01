@@ -937,7 +937,7 @@ export type OperationLedgerSummary = {
   session_id: string;
   canonical_tool: string;
   call_id: string;
-  status: "planned" | "running" | "succeeded" | "failed" | "unknown" | "blocked" | string;
+  status: "planned" | "running" | "succeeded" | "failed" | "unknown" | "blocked" | "reconciled" | string;
   risk_level?: string;
   idempotency?: string;
   error_code?: string;

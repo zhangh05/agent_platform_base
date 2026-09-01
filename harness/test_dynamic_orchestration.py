@@ -1063,6 +1063,11 @@ def test_network_unknown_write_is_settled_only_by_same_connection_readback(monke
         **ctx.extras["unknown_outcome"], "status": "reconciled",
         "reconciled_by_call_id": "readback",
     }
+    from core.runtime_engine.operation_ledger import list_operations
+    ledger = {item["operation_id"]: item for item in list_operations("default")}
+    operation_id = ctx.extras["unknown_outcome"]["operation_id"]
+    assert ledger[operation_id]["status"] == "reconciled"
+    assert ledger[operation_id]["resolved_by"] == "network_readback"
 
 
 def test_uncertain_read_does_not_install_write_fence(monkeypatch, tmp_path):
