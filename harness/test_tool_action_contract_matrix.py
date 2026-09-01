@@ -208,7 +208,7 @@ def test_extension_action_semantics_are_declared_once_and_shared_by_catalog_and_
             args={"action": "run", "connection_ids": ["connection-1"]},
         ),
     ])
-    assert decision.requires_approval is False
+    assert decision.hard_block is False
     assert decision.risk_level == "medium"
 
     from core.tools.canonical_registry import to_tool_specs
@@ -226,7 +226,7 @@ def test_extension_action_semantics_are_declared_once_and_shared_by_catalog_and_
             arguments={"action": "run", "connection_ids": ["connection-1"]},
         ),
     )
-    assert direct_policy.requires_approval is False
+    assert direct_policy.allowed is True
     assert direct_policy.risk_level == "medium"
 
 
@@ -589,18 +589,18 @@ def test_semantic_validator_rejects_public_argument_range_violation():
     assert any(error.code == "ARG_RANGE_INVALID" and "days" in error.message for error in result.errors)
 
 @pytest.mark.parametrize(
-    ("tool_id", "action", "permission", "side_effects", "idempotency", "approval"),
+    ("tool_id", "action", "permission", "side_effects", "idempotency"),
     [
-        ("workspace.file", "read", "read", "none", "safe_to_retry", False),
-        ("workspace.file", "delete", "write", "workspace", "unsafe_to_retry", True),
-        ("workspace.artifact", "save", "write", "workspace", "unsafe_to_retry", False),
-        ("workspace.artifact", "delete", "write", "workspace", "unsafe_to_retry", True),
-        ("workspace.filestore", "import", "write", "workspace", "unsafe_to_retry", False),
-        ("agent.manage", "spawn", "exec", "task_state", "unsafe_to_retry", False),
+        ("workspace.file", "read", "read", "none", "safe_to_retry"),
+        ("workspace.file", "delete", "write", "workspace", "unsafe_to_retry"),
+        ("workspace.artifact", "save", "write", "workspace", "unsafe_to_retry"),
+        ("workspace.artifact", "delete", "write", "workspace", "unsafe_to_retry"),
+        ("workspace.filestore", "import", "write", "workspace", "unsafe_to_retry"),
+        ("agent.manage", "spawn", "exec", "task_state", "unsafe_to_retry"),
     ],
 )
 def test_action_contracts_drive_catalog_risk_and_side_effects(
-    tool_id, action, permission, side_effects, idempotency, approval,
+    tool_id, action, permission, side_effects, idempotency,
 ):
     from core.tools.catalog_snapshot import build_action_profiles_for_tool
 
@@ -616,7 +616,6 @@ def test_action_contracts_drive_catalog_risk_and_side_effects(
     assert profile["permission_action"] == permission
     assert profile["side_effects"] == side_effects
     assert profile["idempotency"] == idempotency
-    assert profile["requires_approval"] is approval
 
 
 def test_runtime_routes_do_not_expose_direct_tool_execution():
@@ -696,11 +695,11 @@ def test_action_contract_risk_is_enforced_by_real_policy():
 
     specs = {spec.tool_id: spec for spec, _handler in to_tool_specs()}
     cases = [
-        ("workspace.filestore", "import", "medium", False),
-        ("workspace.artifact", "save", "medium", False),
-        ("workspace.artifact", "delete", "high", True),
+        ("workspace.filestore", "import", "medium"),
+        ("workspace.artifact", "save", "medium"),
+        ("workspace.artifact", "delete", "high"),
     ]
-    for tool_id, action, risk_level, requires_approval in cases:
+    for tool_id, action, risk_level in cases:
         decision = ToolPolicy().check(
             specs[tool_id],
             ToolInvocation(
@@ -711,4 +710,4 @@ def test_action_contract_risk_is_enforced_by_real_policy():
             ),
         )
         assert decision.risk_level == risk_level
-        assert decision.requires_approval is requires_approval
+        assert decision.allowed is True

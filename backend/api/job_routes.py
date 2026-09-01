@@ -80,12 +80,13 @@ def register_job_routes(app):
         from jobs.store import list_jobs
         return jsonify({"jobs": list_jobs(ws_id=ws, status=status, job_type=jtype, limit=lim)})
 
-    @app.route("/api/jobs/<job_id>")
+    @app.route("/api/jobs/<job_id>", methods=["GET", "DELETE"])
     def api_job_detail(job_id):
         job_id, err = _validated_job_id(job_id)
         if err:
             return err
-        ws = request.args.get("workspace_id", "")
+        data = (request.get_json(silent=True) or {}) if request.method == "DELETE" else {}
+        ws = data.get("workspace_id", "") if request.method == "DELETE" else request.args.get("workspace_id", "")
         if not ws:
             return jsonify(
                 {"ok": False, "error": "workspace_id is required for job lookup"}
@@ -97,6 +98,14 @@ def register_job_routes(app):
         rec = get_job(ws, job_id)
         if not rec:
             return jsonify({"ok": False, "error": "job not found"}), 404
+        if request.method == "DELETE":
+            if str(data.get("confirmation") or "") != f"DELETE {job_id}":
+                return jsonify({"ok": False, "error": "job_delete_confirmation_required"}), 400
+            if rec.status in {"queued", "running"}:
+                return jsonify({"ok": False, "error": "active_job_cannot_be_deleted"}), 409
+            from jobs.store import delete_job
+            delete_job(ws, job_id, soft=False)
+            return jsonify({"ok": True, "job_id": job_id, "deleted": True})
         return jsonify({"ok": True, "job": sanitize_job_record_for_api(rec.as_dict())})
 
     @app.route("/api/workspaces/<ws_id>/jobs")

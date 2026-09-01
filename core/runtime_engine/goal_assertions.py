@@ -1,27 +1,14 @@
-"""Deterministic goal assertions for selected high-risk runtime turns."""
+"""Deterministic goal assertions for runtime turns."""
 from __future__ import annotations
 
 from typing import Any
 
 
-def _default_assertions(ctx) -> list[dict[str, Any]]:
-    continuation_id = str((getattr(ctx, "extras", {}) or {}).get("approval_continuation_id") or "")
-    if not continuation_id:
-        return []
-    approved = list((getattr(ctx, "extras", {}) or {}).get("approved_tool_call_ids") or [])
-    return [{
-        "assertion_id": "approved_operations_succeeded",
-        "kind": "all_approved_operations_succeeded",
-        "continuation_id": continuation_id,
-        "required_call_keys": approved,
-    }]
-
-
 def evaluate_goal_assertions(ctx, tool_results: list[Any]) -> dict[str, Any]:
-    """Evaluate only explicit or approval-bound assertions from durable facts."""
+    """Evaluate explicit assertions from durable tool facts."""
     extras = getattr(ctx, "extras", {}) or {}
     configured = extras.get("goal_assertions")
-    assertions = [dict(item) for item in configured if isinstance(item, dict)] if isinstance(configured, list) else _default_assertions(ctx)
+    assertions = [dict(item) for item in configured if isinstance(item, dict)] if isinstance(configured, list) else []
     if not assertions:
         return {"required": False, "status": "not_required", "assertions": []}
     results = {str(getattr(item, "call_id", "")): item for item in tool_results}
@@ -30,8 +17,8 @@ def evaluate_goal_assertions(ctx, tool_results: list[Any]) -> dict[str, Any]:
         keys = [str(key) for key in assertion.get("required_call_keys") or []]
         missing_keys = [key for key in keys if key not in results]
         # Explicit assertions without keys apply to all observed operations.
-        # Approval-bound assertions always carry exact call IDs and must never
-        # pass when one of those durable results is absent.
+        # Assertions with exact call IDs must never pass when a durable result
+        # is absent.
         candidates = [results[key] for key in keys if key in results] if keys else list(results.values())
         if missing_keys or not candidates or any(bool(getattr(item, "execution_may_continue", False)) for item in candidates):
             status = "unknown"

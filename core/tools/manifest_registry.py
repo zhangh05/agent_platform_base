@@ -15,7 +15,7 @@ MANIFESTS: dict[str, CapabilityManifest] = {
         tool_id="exec.run",
         category="exec",
         display_name="Local Exec",
-        description="Local shell, slash, and Python data processing. Python is medium risk; destructive actions require approval, while non-loopback or multi-user execution requires strong container isolation.",
+        description="Local shell, slash, and Python data processing. Destructive shell actions are blocked, while non-loopback or multi-user execution requires strong container isolation.",
         action_class="execute",
         risk_level="medium",
         side_effects="local_exec",
@@ -230,7 +230,6 @@ def get_manifest(tool_id: str) -> CapabilityManifest | None:
                         spec.permission_action if spec.permission_action in {"read", "write", "network"} else "read"
                     ),
                     risk_level=spec.risk_level,
-                    requires_approval=spec.requires_approval,
                     side_effects="write" if spec.permission_action == "write" else "none",
                     idempotency="safe_to_retry" if spec.permission_action == "read" else "unknown",
                     timeout_seconds=spec.timeout_seconds,

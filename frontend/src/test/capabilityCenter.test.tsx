@@ -25,7 +25,6 @@ const tool = (id: string): ToolCatalogItem => ({
   action: "inspect",
   display_name: id,
   risk_level: "low",
-  requires_approval: false,
   enabled: true,
   callable_by_llm: true,
   planner_visible: true,

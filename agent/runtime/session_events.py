@@ -91,7 +91,7 @@ def push_continuation_runtime_event(
 ) -> None:
     """Bridge a resumed Agent turn into the session observation stream.
 
-    The original request WebSocket has already completed at the approval gate.
+    The original request WebSocket may already have completed.
     Resumed execution therefore publishes the same StreamEmitter events through
     the durable session scope, allowing any open workbench tab to observe model
     and tool progress without owning the background worker.

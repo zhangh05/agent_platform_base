@@ -16,7 +16,7 @@ This file is the handoff contract for AI coding agents working in LZCore.
 2. All tool invocation goes through the SSOT QueryLoop runtime and registered canonical handlers. Do not add alternate planner, dispatch, or compatibility paths.
 3. Canonical tool definitions are the single source of truth for LLM-visible capabilities.
 4. `workspace_id` must be explicit and validated at API boundaries. Empty values return 400.
-5. Approval is for high-risk/destructive actions, not for ordinary read/list/query operations.
+5. Product-owned authorization is enforced at execution time. Unauthorized or destructive host actions are rejected directly; do not add pause-and-resume approval flows.
 6. Memory writes go through `storage.memory_governance.MemoryWriteGate`.
 7. Do not commit runtime data, provider secrets, logs, build output, caches, or workspace contents.
 8. Removed product modules must not be kept as hidden compatibility layers.

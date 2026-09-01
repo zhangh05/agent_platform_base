@@ -6,7 +6,6 @@ from core.runtime_engine.cognitive_gate import (
     CONTINUE_REPLAN,
     STOP_COMPLETED,
     STOP_UNKNOWN_OUTCOME,
-    STOP_WAITING_APPROVAL,
     decide_next_action,
 )
 from core.runtime_engine.cognitive_state import initialize_cognitive_state
@@ -41,7 +40,7 @@ def test_cognitive_event_discards_untrusted_payload_fields_and_bounds_text():
     assert len(event["payload"]["visible_summary"]) == 320
 
 
-def test_cognitive_gate_hard_stops_unknown_and_pending_approval():
+def test_cognitive_gate_hard_stops_unknown_outcomes():
     unknown = decide_next_action(
         tool_results=[SimpleNamespace(ok=False, execution_may_continue=True)],
         execution_outcome="unknown",
@@ -49,8 +48,6 @@ def test_cognitive_gate_hard_stops_unknown_and_pending_approval():
     )
     assert unknown.outcome == STOP_UNKNOWN_OUTCOME
     assert unknown.terminal is True
-    approval = decide_next_action(tool_results=[], execution_outcome="success", goal_assertions={}, pending_approval=True)
-    assert approval.outcome == STOP_WAITING_APPROVAL
 
 
 def test_cognitive_gate_replans_failed_observations():

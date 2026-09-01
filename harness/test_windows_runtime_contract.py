@@ -44,7 +44,7 @@ def test_exec_run_propagates_native_shell_failure(monkeypatch):
             "error": "command failed",
         },
     )
-    result = command_tools.handle_command_approved_exec(
+    result = command_tools.handle_command_exec(
         _inv("exec.run", command="where missing-command")
     )
     assert result["ok"] is False
@@ -72,7 +72,7 @@ def test_powershell_respects_cwd_timeout_env_and_exit_code(monkeypatch, tmp_path
     monkeypatch.setattr("platform.system", lambda: "Windows")
     monkeypatch.setattr("shutil.which", lambda name: r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe")
     monkeypatch.setattr("subprocess.run", fake_run)
-    result = command_tools.handle_powershell_approved_script(
+    result = command_tools.handle_powershell_script(
         _inv(
             "exec.run",
             command="Get-Item missing",

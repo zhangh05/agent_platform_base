@@ -150,7 +150,7 @@ class CognitiveState:
             "selected_action": _text(selected_action, 120),
             "visible_summary": _text(visible_summary),
         }
-        for key in ("risk_level", "requires_approval", "expected_observation", "next_action"):
+        for key in ("risk_level", "expected_observation", "next_action"):
             if key in extra:
                 self.decision[key] = extra[key]
         self._append(COGNITIVE_DECISION_MADE, self.decision)

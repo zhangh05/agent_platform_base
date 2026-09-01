@@ -111,34 +111,13 @@ def persist_run_record(session, turn, result, context) -> bool:
         )
         write_run_record(state, ws_id)
         _merge_result_projection(run_id, ws_id, result, context)
-        is_approval_pending = bool(
-            (result_metadata.get("ssot_runtime") or {}).get("approval_required")
-        )
-        if is_approval_pending:
-            continuation_id = str(
-                (result_metadata.get("ssot_runtime") or {}).get("approval_continuation_id")
-                or result_metadata.get("approval_continuation_id")
-                or ""
-            )
-            if continuation_id:
-                project_approval_pending_parent(
-                    workspace_id=ws_id,
-                    parent_run_id=run_id,
-                    continuation_id=continuation_id,
-                )
 
         # v1.0.3.1: also persist full messages independently
         if session.session_id and not is_internal_session:
             from core.runtime_engine.context_compaction import build_history_state_record
 
             store = SessionMessageStore(session_id=session.session_id, ws_id=ws_id)
-            is_approval_resume = bool(
-                (getattr(turn.op, "metadata", {}) or {}).get("__approval_continuation_resume")
-            )
-            is_approval_pending = bool(
-                (result_metadata.get("ssot_runtime") or {}).get("approval_required")
-            )
-            if user_input and not is_approval_resume:
+            if user_input:
                 user_attachments = list((getattr(turn.op, "metadata", {}) or {}).get("attachments") or [])
                 user_message_run_id = user_message_storage_run_id(
                     client_request_id, run_id,
@@ -155,14 +134,9 @@ def persist_run_record(session, turn, result, context) -> bool:
                         "user", user_input, references=user_attachments,
                     ),
                 })
-            if final_response and not is_approval_pending:
+            if final_response:
                 history_tools = _history_tool_context(result)
-                parent_run_id = str(
-                    (getattr(turn.op, "metadata", {}) or {}).get("approval_parent_run_id")
-                    or ""
-                )
-                message_run_id = parent_run_id if is_approval_resume and parent_run_id else run_id
-                store.write_message(message_run_id, "assistant", final_response, metadata={
+                store.write_message(run_id, "assistant", final_response, metadata={
                     "created_at": now_iso(),
                     "intent": state.intent,
                     "trace_id": result.trace_id if result else "",
@@ -477,150 +451,3 @@ def _created_at_for_turn(turn, context) -> str:
         if value:
             return str(value)
     return datetime.now(timezone.utc).isoformat()
-
-
-def project_approval_pending_parent(
-    *,
-    workspace_id: str,
-    parent_run_id: str,
-    continuation_id: str,
-) -> dict:
-    """Project a durable approval wait as non-terminal on its parent run."""
-    from storage.run_record_store import get_run
-
-    record = get_run(parent_run_id, workspace_id)
-    if not record:
-        return {}
-    metadata = dict(record.get("metadata") or {})
-    approval = dict(metadata.get("approval_continuation") or {})
-    approval.update({
-        "continuation_id": continuation_id,
-        "status": "pending",
-        "updated_at": now_iso(),
-    })
-    metadata["approval_continuation"] = approval
-    metadata["approval_required"] = True
-    return update_run_record(workspace_id, parent_run_id, {
-        "status": "pending",
-        "metadata": metadata,
-        "finished_at": "",
-    })
-
-
-def project_approval_continuation_state(workspace_id: str, continuation: dict) -> None:
-    """Project approval lifecycle changes without executing or replaying tools."""
-    from storage.run_record_store import get_run
-
-    state = str(continuation.get("status") or "")
-    if state not in {"ready", "claimed", "dispatching", "rejected", "expired", "failed"}:
-        return
-    parent_id = str(continuation.get("parent_run_id") or "")
-    session_id = str(continuation.get("session_id") or "")
-    if not parent_id or not session_id:
-        return
-    record = get_run(parent_id, workspace_id)
-    if not record or record.get("session_id") != session_id:
-        return
-    metadata = dict(record.get("metadata") or {})
-    approval = dict(metadata.get("approval_continuation") or {})
-    continuation_id = str(continuation.get("continuation_id") or "")
-    bound_id = str(approval.get("continuation_id") or "")
-    if bound_id != continuation_id:
-        # Older pending runs were persisted before the continuation identifier
-        # was projected.  Repair only when the durable approval-id set proves
-        # this continuation belongs to this exact parent; never attach a merely
-        # nearby continuation by workspace/session alone.
-        if bound_id:
-            return
-        runtime = dict(metadata.get("ssot_runtime") or {})
-        expected_ids = {str(value) for value in list(runtime.get("approval_ids") or metadata.get("approval_ids") or []) if value}
-        actual_ids = {str(value) for value in list(continuation.get("approval_ids") or []) if value}
-        if not expected_ids or expected_ids != actual_ids:
-            return
-        approval["continuation_id"] = continuation_id
-    if approval.get("status") == state:
-        return
-    approval.update({"status": state, "updated_at": now_iso()})
-    metadata.update({"approval_continuation": approval, "approval_required": False})
-    changes = {"metadata": metadata, "status": "running", "finished_at": ""}
-    if state in {"rejected", "expired", "failed"}:
-        reason = "审批已拒绝" if state == "rejected" else "审批已过期" if state == "expired" else "审批后的任务恢复失败"
-        response = (
-            f"{reason}，本次待审批操作未执行。此前已完成的操作不会自动回滚。"
-            if state != "failed"
-            else "审批后的任务恢复失败。请查看执行记录并核对设备实际状态，避免重复执行配置。"
-        )
-        changes.update({"status": "error", "ok": False, "error": f"approval_{state}", "final_response": response, "finished_at": now_iso()})
-        SessionMessageStore(session_id=session_id, ws_id=workspace_id).write_message(
-            parent_id, "assistant", response, metadata={"created_at": now_iso()},
-        )
-    update_run_record(workspace_id, parent_id, changes)
-
-
-def project_approved_continuation_result(
-    *,
-    workspace_id: str,
-    session_id: str,
-    parent_run_id: str,
-    continuation_id: str,
-    resumed,
-) -> dict:
-    """Merge a continuation terminal result into the user-visible parent turn."""
-    from storage.run_record_store import get_run
-
-    record = get_run(parent_run_id, workspace_id)
-    if not record:
-        return {}
-    if str(record.get("session_id") or "") != session_id:
-        _log.warning(
-            "approval continuation parent session mismatch continuation=%s parent_run=%s",
-            continuation_id, parent_run_id,
-        )
-        return {}
-    result_metadata = dict(getattr(resumed, "metadata", {}) or {})
-    resumed_ok = bool(getattr(resumed, "ok", False))
-    errors = [str(value) for value in list(getattr(resumed, "errors", []) or []) if value]
-    final_response = str(getattr(resumed, "final_response", "") or "")
-    completed_run_id = str(getattr(resumed, "turn_id", "") or "")
-    metadata = dict(record.get("metadata") or {})
-    approval = dict(metadata.get("approval_continuation") or {})
-    approval.update({
-        "continuation_id": continuation_id,
-        "status": "completed" if resumed_ok and not errors else "failed",
-        "completed_run_id": completed_run_id,
-        "updated_at": now_iso(),
-    })
-    metadata["approval_continuation"] = approval
-    metadata["approval_required"] = False
-    execution_outcome = str(result_metadata.get("execution_outcome") or ("complete" if resumed_ok and not errors else "failed"))
-    tool_execution_outcome = str(result_metadata.get("tool_execution_outcome") or execution_outcome)
-    status = "ok" if resumed_ok and not errors else "error"
-    projected = update_run_record(workspace_id, parent_run_id, {
-        "status": status,
-        "ok": resumed_ok and not errors,
-        "error": "; ".join(errors),
-        "warnings": list(getattr(resumed, "warnings", []) or []),
-        "tool_calls": list(getattr(resumed, "tool_calls", []) or []),
-        "final_response": final_response,
-        "execution_outcome": execution_outcome,
-        "tool_execution_outcome": tool_execution_outcome,
-        "metadata": metadata,
-        "finished_at": now_iso(),
-    })
-    if final_response:
-        from core.runtime_engine.context_compaction import build_history_state_record
-        history_tools = _history_tool_context(resumed)
-        SessionMessageStore(session_id=session_id, ws_id=workspace_id).write_message(
-            parent_run_id,
-            "assistant",
-            final_response,
-            metadata={
-                "created_at": now_iso(),
-                "trace_id": str(getattr(resumed, "trace_id", "") or ""),
-                "tool_context": history_tools,
-                "history_state": build_history_state_record(
-                    "assistant", final_response, tool_context=history_tools,
-                ),
-            },
-        )
-    return projected

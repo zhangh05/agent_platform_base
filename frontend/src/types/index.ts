@@ -50,12 +50,10 @@ export interface ToolCatalogItem {
   action_profiles?: {
     action: string;
     risk_level: RiskLevel;
-    requires_approval: boolean;
     permission_action: string;
   }[];
   capability_actions?: string[];
   risk_level: RiskLevel;
-  requires_approval: boolean;
   permission_action?: string;
   governance_status?: ToolGovernanceStatus;
   planner_visible?: boolean;
@@ -153,7 +151,6 @@ export interface AgentResult {
     selected_tools?: string[];
     failed_tools?: string[];
     blocked_by?: string[];
-    approval_required?: boolean;
     reason?: string;
   };
   /** v2.1.2: Human-readable reason when no tools called */
@@ -162,10 +159,7 @@ export interface AgentResult {
   cognitive?: CognitiveSummary;
   cognitive_events?: CognitiveEvent[];
   metadata: {
-    approval_pending?: boolean;
-    ssot_runtime?: { approval_required?: boolean; [key: string]: unknown };
-    approval_required?: boolean;
-    approval_continuation?: { status?: string; continuation_id?: string };
+    ssot_runtime?: Record<string, unknown>;
     selected_capabilities?: string[];
     visible_tools?: string[];
     planner_mode?: string;
@@ -284,7 +278,7 @@ export interface AgentResult {
       occurred_at?: number;
       execution_may_continue?: boolean;
     };
-    /** Tool-fact validation summary for approval-bound work. */
+    /** Tool-fact validation summary for evidence-bound work. */
     goal_assertions?: {
       required?: boolean;
       status?: "not_required" | "passed" | "failed" | "unknown";
@@ -313,9 +307,7 @@ export interface RuntimeEvent {
   timestamp?: number;
   started_at?: string;
   duration_ms?: number | null;
-  /** v2.1.3: Approval and tool details */
-  approval_id?: string;
-  approval_status?: string;
+  /** v2.1.3: Tool details */
   blocked_by?: string;
   input_preview?: string | Record<string, unknown>;
   output_preview?: string | Record<string, unknown>;
@@ -750,7 +742,6 @@ export interface RuntimeAuditTurn {
     selected_tools?: string[];
     failed_tools?: string[];
     blocked_by?: string[];
-    approval_required?: boolean;
     reason?: string;
   };
   /** v2.1.2: Human-readable reason when no tools called */
@@ -891,7 +882,6 @@ export interface ToolPermission {
   tool_id: string;
   enabled: boolean;
   risk_level: string;
-  requires_approval: boolean;
 }
 
 /* ──────────────────────────── Message Status ──────────────────────────── */

@@ -25,7 +25,7 @@ Use this skill when the user asks for the specific business outcome.
 ## Tool Strategy
 - Prefer existing canonical tools.
 - Cite retrieved evidence.
-- Stop before destructive operations unless approval is granted.
+- Stop before destructive operations unless the published product authorization permits them.
 
 ## Output
 Return a concise, verified answer with warnings separated from facts.
@@ -43,7 +43,7 @@ related_tools:
   - workspace.file
   - text.analyze
 safety_rules:
-  - no_unapproved_destructive_actions
+  - no_unauthorized_destructive_actions
   - cite_sources_when_using_retrieval
 ```
 

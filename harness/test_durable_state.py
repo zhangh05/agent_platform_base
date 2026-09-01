@@ -8,7 +8,7 @@ Validates:
 4. RuntimeCheckpoint persistence and query
 5. Redaction of secrets
 6. Cross-workspace isolation
-7. Existing approval guard unaffected
+7. Existing authorization guards unaffected
 """
 
 import pytest

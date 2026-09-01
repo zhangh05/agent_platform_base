@@ -4,9 +4,7 @@
 A destructive command is one that, when executed, can permanently or
 significantly damage the local host or remote device state. Examples:
 ``rm -rf /tmp/foo``, ``dd if=/dev/zero of=/dev/sda``, ``mkfs``, fork
-bombs, etc. These are the only command-level signals that should
-escalate a tool call to ``high`` risk + ``requires_approval`` (i.e. the
-approval bubble UX).
+bombs, etc. These command-level signals are blocked by the runtime.
 
 The set of patterns lives here so policy and risk evaluation agree on
 what "destructive" means.

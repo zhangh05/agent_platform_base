@@ -51,8 +51,6 @@ class ExecutionNode:
     priority: NodePriority = NodePriority.NORMAL
     optional: bool = False
     node_run_id: str = ""
-    approval_required: bool = False
-    approval_granted: bool = False
     # Action-alias normalization bookkeeping for audit and diagnostics.
     action_original: str = ""
     action_normalized_from_alias: bool = False
@@ -88,41 +86,6 @@ class StatelessContext:
     os: str = ""
     timestamp: float = field(default_factory=time.time)
     extras: dict[str, Any] = field(default_factory=dict)
-
-
-@dataclass(frozen=True)
-class ApprovedToolContinuation:
-    """Server-created approval grant for one exact persisted tool batch.
-
-    This type is deliberately not JSON-deserialised at the HTTP/runtime
-    boundary.  Only the encrypted continuation store may construct it, which
-    prevents caller metadata from manufacturing an approval bypass.
-    """
-
-    continuation_id: str
-    tool_calls: tuple[dict[str, Any], ...]
-    approved_node_ids: tuple[str, ...]
-    # Server-recorded approval ids; never constructed from caller metadata.
-    approval_ids: tuple[str, ...] = ()
-
-
-@dataclass(frozen=True)
-class ApprovedContinuationRuntimeControl:
-    """Typed, server-only control envelope for an approved continuation.
-
-    This envelope is intentionally carried outside caller-provided turn metadata.
-    HTTP/WebSocket request metadata is data-only and must never manufacture an
-    approval, restore cognitive state, or inject previous tool evidence.
-    """
-    grant: ApprovedToolContinuation
-    parent_run_id: str = ""
-    cognitive_state: dict[str, Any] = field(default_factory=dict)
-    prior_tool_evidence: tuple[dict[str, Any], ...] = ()
-    # Server-resolved workbench authorization snapshot.  This is carried in
-    # the typed control envelope instead of caller metadata so an approved
-    # continuation sees the exact Skill/tool/device boundary of its parent
-    # turn without allowing an HTTP client to manufacture that boundary.
-    workbench_context: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -210,14 +173,11 @@ class SSOTRuntimeConfig:
     max_output_tokens: int = 8192
     context_safety_tokens: int = 2048
 
-    # RiskPolicy warning thresholds. These no longer trigger approval/blocking;
-    # QueryLoop budgets enforce hard runtime limits.
+    # RiskPolicy warning thresholds. QueryLoop budgets enforce hard limits.
     rp_max_tool_nodes_allow: int = 20
-    rp_max_tool_nodes_approval: int = 50
 
     # Exec.run command count warning threshold.
     rp_max_exec_allow: int = 5
-    rp_max_exec_approval: int = 20
 
 
 @dataclass
@@ -272,7 +232,6 @@ class AuditRecord:
     llm_call_count: int = 0
     tool_call_count: int = 0
     risk_level: str = "low"
-    approval_required: bool = False
     executed_nodes: list[dict[str, Any]] = field(default_factory=list)
     blocked_nodes: list[dict[str, Any]] = field(default_factory=list)
     failed_nodes: list[dict[str, Any]] = field(default_factory=list)

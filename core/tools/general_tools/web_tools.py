@@ -557,7 +557,6 @@ def _invoke_internal_web_search(inv: ToolInvocation, arguments: dict) -> dict:
         job_id=inv.job_id,
         dry_run=inv.dry_run,
         requested_by=inv.requested_by,
-        approval_id=inv.approval_id,
     )
     return handle_web_search(sub_inv)
 
@@ -750,7 +749,6 @@ def handle_weather_batch(inv: ToolInvocation) -> dict:
             job_id=inv.job_id,
             dry_run=inv.dry_run,
             requested_by=inv.requested_by,
-            approval_id=inv.approval_id,
         )
         child.arguments.pop("locations", None)
         try:

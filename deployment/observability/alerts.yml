@@ -21,14 +21,6 @@ groups:
           summary: HTTP 5xx 比例持续超过 5%
           runbook: docs/OPERATIONS_RUNBOOK.md#接口错误率升高
 
-      - alert: LZCoreApprovalWaitingTooLong
-        expr: lzcore_operational_gauge{name="approval_pending"} > 0
-        for: 20m
-        labels: {severity: warning}
-        annotations:
-          summary: 存在长时间未处理的高风险审批
-          runbook: docs/OPERATIONS_RUNBOOK.md#审批积压
-
       - alert: LZCoreToolFailures
         expr: sum(increase(lzcore_operations_total{operation="tool",status!="succeeded",status!="dry_run"}[10m])) > 5
         for: 5m
@@ -44,24 +36,3 @@ groups:
         annotations:
           summary: 后台作业连续失败
           runbook: docs/OPERATIONS_RUNBOOK.md#作业失败
-      - alert: LZCoreContinuationStalled
-        expr: lzcore_operational_gauge{name="continuation_stalled"} > 0
-        for: 5m
-        labels: {severity: warning}
-        annotations:
-          summary: 联智中枢存在停滞的审批续跑记录
-          runbook: docs/OPERATIONS_RUNBOOK.md#审批续跑停滞
-      - alert: LZCoreContinuationDecisionMismatch
-        expr: lzcore_operational_gauge{name="continuation_decision_mismatch"} > 0
-        for: 2m
-        labels: {severity: critical}
-        annotations:
-          summary: 联智中枢审批决定与续跑记录不一致
-          runbook: docs/OPERATIONS_RUNBOOK.md#审批续跑不一致
-      - alert: LZCoreContinuationReconcileFailures
-        expr: sum(increase(lzcore_operations_total{operation="continuation_reconcile",status=~"failed|lease_failed"}[10m])) > 0
-        for: 2m
-        labels: {severity: warning}
-        annotations:
-          summary: 联智中枢审批续跑协调器持续失败
-          runbook: docs/OPERATIONS_RUNBOOK.md#审批续跑协调器

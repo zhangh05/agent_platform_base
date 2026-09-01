@@ -66,16 +66,16 @@ def test_configuration_failure_retains_unknown_effects(monkeypatch, tmp_path):
     assert result["execution_may_continue"] and not result["automatic_retry_allowed"]
 
 
-def test_configuration_contract_requires_approval_and_cannot_retry():
+def test_configuration_contract_is_high_risk_and_cannot_retry():
     from extensions.runtime import get_extension_tool_specs
     from core.tools.policy import ToolPolicy
     from core.tools.schemas import ToolInvocation
     spec = next(s for s, _ in get_extension_tool_specs() if s.tool_id == "network.operations.device.manage")
     contract = spec.metadata["action_execution_contracts"]["configure"]
-    assert contract["requires_approval"] and contract["side_effects"] == "external_write"
+    assert contract["side_effects"] == "external_write"
     assert contract["idempotency"] == "unsafe_to_retry" and not contract["read_only"]
     decision = ToolPolicy().check(spec, ToolInvocation(tool_id=spec.tool_id, workspace_id="default", arguments={"action": "configure", "connection_id": "test", "commands": ["system-view"]}))
-    assert decision.requires_approval and decision.risk_level == "high"
+    assert decision.allowed and decision.risk_level == "high"
 
 
 def _register_connection(workspace_id, payload):

@@ -12,7 +12,7 @@ def test_workspace_file_delete_soft_deletes_matching_managed_file(monkeypatch, t
     created = handle_ws_write_artifact_file(ToolInvocation(
         tool_id="workspace.file", workspace_id="test_ws", session_id="session_1",
         run_id="run_1", requested_by="turn_runner",
-        arguments={"action": "write_artifact", "filename": "approval_delete_probe.md", "content": "approved delete probe"},
+        arguments={"action": "write_artifact", "filename": "delete_probe.md", "content": "delete projection probe"},
     ))
     assert created["ok"] is True
     filepath = created["filepath"]

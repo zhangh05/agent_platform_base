@@ -89,9 +89,6 @@ def _build_tools(manifest: ExtensionManifest, contribution: dict[str, Any]) -> t
         if not callable(handler):
             raise ExtensionValidationError(f"extension tool handler is not callable: {tool_id}")
         risk_level = str(item.get("risk_level") or "low")
-        requires_approval = bool(item.get("requires_approval", False))
-        if risk_level == "high" and not requires_approval:
-            raise ExtensionValidationError(f"high-risk extension tool requires approval: {tool_id}")
         permission_action = str(item.get("permission_action") or "read")
         if permission_action not in {"read", "write", "exec", "network"}:
             raise ExtensionValidationError(f"invalid permission_action for {tool_id}: {permission_action}")
@@ -109,8 +106,6 @@ def _build_tools(manifest: ExtensionManifest, contribution: dict[str, Any]) -> t
         required_any = action_requirements.get("any") or {}
         if not isinstance(required_all, dict) or not isinstance(required_any, dict):
             raise ExtensionValidationError(f"action_requirements all/any must be objects: {tool_id}")
-        approval_actions = tuple(str(action) for action in (item.get("approval_actions") or ()))
-        approval_when_truthy = tuple(str(field) for field in (item.get("approval_when_truthy") or ()))
         bindable_inputs = item.get("bindable_inputs") or {}
         if not isinstance(bindable_inputs, dict):
             raise ExtensionValidationError(f"bindable_inputs must be an object: {tool_id}")
@@ -193,7 +188,6 @@ def _build_tools(manifest: ExtensionManifest, contribution: dict[str, Any]) -> t
             input_schema=dict(item.get("input_schema") or {}),
             timeout_seconds=int(item.get("timeout_seconds") or 30),
             dry_run_supported=bool(item.get("dry_run_supported", True)),
-            requires_approval=requires_approval,
             callable_by_llm=bool(item.get("callable_by_llm", True)),
             permission_action=permission_action,
             metadata={
@@ -210,8 +204,6 @@ def _build_tools(manifest: ExtensionManifest, contribution: dict[str, Any]) -> t
                         for action, groups in required_any.items()
                     },
                 },
-                "approval_actions": approval_actions,
-                "approval_when_truthy": approval_when_truthy,
                 "bindable_inputs": {
                     str(action): tuple(str(field) for field in fields)
                     for action, fields in bindable_inputs.items()
@@ -575,9 +567,6 @@ def _sync_runtime_contracts(specs) -> None:
             idempotent=spec.permission_action == "read",
             timeout_seconds=spec.timeout_seconds,
             max_retries=1 if spec.permission_action == "read" else 0,
-            requires_approval=spec.requires_approval,
-            approval_actions=frozenset(str(action).lower() for action in spec.metadata.get("approval_actions", ())),
-            approval_when_truthy=frozenset(str(field) for field in spec.metadata.get("approval_when_truthy", ())),
             always_read_only=spec.permission_action == "read",
             read_only_actions=frozenset(
                 str(profile.get("action") or "").lower()

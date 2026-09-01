@@ -466,19 +466,9 @@ class SemanticValidator:
         node: ExecutionNode,
         result: SemanticValidationResult,
     ) -> None:
-        """Check for forbidden command patterns using command_policy (v1.0 unified).
-        v3.12: destructive commands (rm -f, rm -rf, git reset --hard, etc.)
-        are NOT blocked here — they are routed to the RiskPolicyEngine's
-        approval gate instead.
-        """
+        """Check command arguments against the canonical command policy."""
         command = node.args.get("command", "")
         if not command or not isinstance(command, str):
-            return
-
-        # v3.12: check destructive patterns before command_policy.
-        # Commands that match our destructive patterns are deferred
-        # to the RiskPolicyEngine (approval_required), not blocked.
-        if _is_destructive_for_approval(command):
             return
 
         normalized = normalize_command(command)
@@ -524,21 +514,3 @@ class SemanticValidator:
             max_risk = RiskLevel.CRITICAL
 
         return max_risk.value
-
-
-# ── v3.12: Destructive command patterns shared with risk_policy ────────
-# Commands matching these patterns are NOT blocked by semantic validation.
-# Instead, they are deferred to RiskPolicyEngine for approval_required
-# (or hard_block for system-destroy patterns).
-
-_SV_DESTRUCTIVE_RE = r"(?i)(^|\s)(rm\s+-[rf]|del\s+/[fs]|rmdir\s+/s|Remove-Item\s+-Recurse|git\s+reset\s+--hard|git\s+clean\s+-fd|docker\s+system\s+prune|kubectl\s+delete|chmod\s+-R\s+777|chown\s+-R|dd\s+if=)"
-
-
-def _is_destructive_for_approval(command: str) -> bool:
-    """Check if a command is destructive-but-approvable (not system-destroy).
-
-    Returns True if the command should skip command_policy blocking
-    and be deferred to RiskPolicyEngine's approval gate.
-    """
-    import re
-    return bool(re.search(_SV_DESTRUCTIVE_RE, command))

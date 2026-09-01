@@ -19,7 +19,6 @@ def _truthy(name: str) -> bool:
 
 
 def check_configuration() -> list[str]:
-    from agent.approval import approval_ttl_seconds
     from backend.core.auth import _get_api_token, _get_login_password, _secret_value
     from jobs.queue import queue_mode
     from storage.backend import backend_mode, validate_backend_configuration
@@ -58,8 +57,6 @@ def check_configuration() -> list[str]:
             errors.append("OIDC client ID is required")
         if not _secret_value("LZCORE_OIDC_CLIENT_SECRET"):
             errors.append("OIDC client secret is required")
-    if approval_ttl_seconds() < 900:
-        errors.append("approval TTL must be at least 900 seconds in production")
     image = os.environ.get("LZCORE_PYTHON_CONTAINER_IMAGE", "").strip()
     if "@sha256:" not in image:
         errors.append("Python runner image must use an immutable sha256 digest")

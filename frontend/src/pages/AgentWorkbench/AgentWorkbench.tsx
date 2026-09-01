@@ -7,7 +7,6 @@ import { useToastStore } from "../../stores/toast";
 import { humanFailure } from "../../utils/humanizeError";
 import "./WorkbenchHighlight";
 import { IconAlert, IconAttachment, IconChat, IconChevronDown, IconClose, IconDocument, IconHistory, IconRefresh, IconSend, IconStop } from "../../components/Icon";
-import { ApprovalBubble } from "../../components/ApprovalBubble";
 import "../../components/RuntimeEventTimeline.css";
 import "./AgentWorkbench.css";
 import { formatFileSize } from "../../utils/format";
@@ -16,7 +15,6 @@ import { MessageRow } from "./components/MessageRow";
 import { scopedLocalStorageKey } from "../../utils/userScope";
 import { useWorkbenchSend, type PendingAttachment } from "../../hooks/useWorkbenchSend";
 import { useActiveTurn } from "../../hooks/useActiveTurn";
-import { useApprovalObserver } from "../../hooks/useApprovalObserver";
 import { TaskProgressPanel } from "./components/TaskProgressPanel";
 
 const RuntimeEventTimeline = lazy(() => import("../../components/RuntimeEventTimeline").then((m) => ({ default: m.RuntimeEventTimeline })));
@@ -92,7 +90,6 @@ export function TaskWorkbench() {
   );
   const switchSession = useWorkbenchStore((s) => s.switchSession);
   const mergeFromBackend = useWorkbenchStore((s) => s.mergeFromBackend);
-  const { approvalStatus, onSessionUpdate } = useApprovalObserver(currentWorkspaceId, currentSessionId);
 
   useEffect(() => {
     if (!currentWorkspaceId) return;
@@ -587,7 +584,6 @@ export function TaskWorkbench() {
               {visibleHistory.map((message, index) => (
                 <MessageRow key={message.message_id || message.id} m={message} idx={index} total={visibleHistory.length} lastUserInput={lastUserInput} onRetryOriginal={handleRetryOriginal} />
               ))}
-              {approvalStatus && <div className="wb-restored-run" role="status" data-testid="approval-session-status">{approvalStatus}</div>}
               {activeJob?.status === "running" && latestAssistant?.status !== "streaming" ? (
                 <div className="wb-restored-run" role="status">
                   <span className="typing-indicator"><span className="typing-dot" /><span className="typing-dot" /><span className="typing-dot" /></span>
@@ -696,8 +692,6 @@ export function TaskWorkbench() {
         onToggleCollapsed={handleToggleProgressPanel}
       />
 
-      {/* ── Inline approval bubble for high-risk tools ── */}
-      <ApprovalBubble onSessionUpdate={onSessionUpdate} />
     </div>
   );
 }

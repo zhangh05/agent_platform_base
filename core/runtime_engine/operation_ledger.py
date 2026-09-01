@@ -55,7 +55,6 @@ def plan_operation(ctx, tool_id: str, call_id: str, arguments: dict[str, Any]) -
             "arguments_sha256": _digest(arguments),
             "read_only": False,
             "risk_level": str(extras.get("risk_level") or "unknown"),
-            "approval_continuation_id": str(extras.get("approval_continuation_id") or ""),
             "idempotency": "unknown",
             "status": "planned",
             "planned_at": now,
@@ -293,7 +292,7 @@ def _public_operation_record(record: dict[str, Any]) -> dict[str, Any]:
     allowed = (
         "schema", "operation_id", "turn_id", "workspace_id", "session_id",
         "canonical_tool", "call_id", "read_only", "risk_level",
-        "approval_continuation_id", "idempotency", "status", "planned_at",
+        "idempotency", "status", "planned_at",
         "started_at", "finished_at", "updated_at", "error_code",
         "resource_kind", "resource_id", "resolved_at", "resolved_by",
         "resolution_reason",

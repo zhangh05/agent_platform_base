@@ -14,7 +14,7 @@ import * as confirmModule from "../components/ConfirmDialog";
 import type { ProviderConfig, ProviderListResponse, LlmTestResult } from "../types";
 
 // Settings.reset() now uses the shared `confirm()` portal modal — swap the
-// module export for a promise-returning stub so consumers always auto-approve
+// module export for a promise-returning stub so consumers always auto-resolve
 // and the tests don't need to drive the dialog DOM. Stubbing at the module
 // level ensures the same function reference is returned to Settings.tsx and
 // to the test, so the spy assertion matches.

@@ -183,7 +183,6 @@ export function TraceDetailPanel({ traceEvents, selectedRun }: Props) {
                     {e.message && <div className="trace-detail-message">{e.message}</div>}
                     {e.error && <div className="trace-detail-error">{e.error}</div>}
                     {e.duration_ms && <div className="trace-detail-duration">耗时：{e.duration_ms} 毫秒</div>}
-                    {e.approval_id && <div className="trace-detail-approval">审批：{e.approval_id}（{approvalStatusLabel(e.approval_status)}）</div>}
                     {e.input_preview && (
                       <details className="trace-detail-fold">
                         <summary className="trace-detail-fold-summary">输入内容</summary>
@@ -295,14 +294,9 @@ function evTypeLabel(rawType: string, ev: RuntimeEvent): string {
   if (t.includes("error")) return "错误";
   // Intent
   if (t.includes("intent")) return "意图路由";
-  if (t.includes("approval")) return "审批";
   // Fallback: use event name or summary
   if (ev?.name) return ev.name.length > 10 ? ev.name.slice(0, 10) + "…" : ev.name;
   if (ev?.summary) return ev.summary.length > 10 ? ev.summary.slice(0, 10) + "…" : ev.summary;
   // Last resort: show original type truncated
   return rawType.length > 14 ? rawType.slice(0, 14) + "…" : rawType;
-}
-
-function approvalStatusLabel(status?: string): string {
-  return ({ pending: "待审批", approved: "已批准", rejected: "已拒绝", expired: "已过期" } as Record<string, string>)[status || ""] || status || "待审批";
 }

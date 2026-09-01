@@ -64,7 +64,7 @@ test("13b. API-token SSE uses an Authorization header and a credential-free URL"
   }, apiToken);
   const tokenPage = await context.newPage();
   const streamRequest = tokenPage.waitForRequest(
-    (request) => request.url().includes("/api/agent/approvals/sse"),
+    (request) => request.url().includes("/api/agent/sse/stream/"),
   );
   await tokenPage.goto("/workbench");
   await tokenPage.evaluate(async () => {
@@ -72,7 +72,7 @@ test("13b. API-token SSE uses an Authorization header and a credential-free URL"
     const transport = await import(/* @vite-ignore */ modulePath) as {
       openSSE: (path: string) => { close(): void };
     };
-    const connection = transport.openSSE("/agent/approvals/sse?workspace_id=default");
+    const connection = transport.openSSE("/agent/sse/stream/e2e-auth-probe?workspace_id=default");
     window.setTimeout(() => connection.close(), 1_000);
   });
   const request = await streamRequest;

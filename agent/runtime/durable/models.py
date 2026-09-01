@@ -6,8 +6,8 @@ from dataclasses import dataclass, field, asdict
 from typing import Optional, Literal
 from agent.runtime.utils import now_iso, duration_ms
 
-TaskStatus = Literal["pending","running","interrupting","waiting_approval","succeeded","failed","cancelled"]
-StepKind = Literal["message","model","tool","approval","checkpoint","validation","final","error"]
+TaskStatus = Literal["pending","running","interrupting","succeeded","failed","cancelled"]
+StepKind = Literal["message","model","tool","checkpoint","validation","final","error"]
 StepStatus = Literal["pending","running","succeeded","failed","skipped","cancelled"]
 
 # v3.9.10: thin alias kept for callers that historically imported
@@ -21,7 +21,7 @@ class RuntimeStep:
     step_id: str; task_id: str; kind: StepKind = "message"; status: StepStatus = "pending"
     title: str = ""; summary: str = ""; tool_id: Optional[str] = None
     input_ref: Optional[str] = None; output_ref: Optional[str] = None
-    approval_id: Optional[str] = None; started_at: str = ""; finished_at: str = ""
+    started_at: str = ""; finished_at: str = ""
     # v3.9.8: duration_ms is now int milliseconds (matches ToolResult
     # and TrajectoryRecord). Float with millisecond decimal precision
     # was unnecessary; int covers up to ~2.9e6 hours without overflow.
@@ -54,7 +54,7 @@ class TaskState:
     task_id: str; workspace_id: str; session_id: str
     run_id: str = ""; job_id: str = ""; trace_id: str = ""; user_goal: str = ""
     status: TaskStatus = "pending"; current_step_id: str = ""
-    steps: list = field(default_factory=list); pending_approval_id: Optional[str] = None
+    steps: list = field(default_factory=list)
     pending_action_id: str = ""; interrupted_at: str = ""
     tool_results: list = field(default_factory=list); artifact_ids: list = field(default_factory=list)
     warnings: list = field(default_factory=list); errors: list = field(default_factory=list)

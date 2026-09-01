@@ -3,7 +3,7 @@
 Workflows are workspace-scoped DAGs whose nodes reference canonical platform or
 installed extension tool IDs. They never call extension handlers directly. Each
 node enters `ToolRuntimeClient`, preserving caller checks, JSON-schema validation,
-risk policy, approval requirements, redaction, quotas, tracing, and workspace
+risk policy, product authorization, redaction, quotas, tracing, and workspace
 scope.
 
 Nodes in the same dependency layer are scheduled together: independent
@@ -46,11 +46,10 @@ every node status, summary, safe output projection, errors, timing, and cancella
 state. Queued execution inherits the production queue's at-least-once semantics,
 so external writes must use job/node idempotency keys.
 
-High-risk tools still require an approval. Pass an approval map keyed by node ID:
-
-```json
-{"workspace_id":"default","inputs":{},"approvals":{"change":"approval_123"}}
-```
+Workflows do not create an interactive authorization state. Product-owned tools
+validate their own published scope at invocation time; rejected nodes fail with
+a structured authorization error. Destructive host commands are blocked by the
+shared runtime policy.
 
 Roles are explicit in identity mode: viewers can read definitions and runs,
 operators can execute/cancel, developers can create or update, and organization

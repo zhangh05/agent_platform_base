@@ -49,16 +49,10 @@ Base URL: `http://localhost:8011`
 | `GET` | `/api/memory/search?workspace_id=<ws>` | 记忆检索 |
 | `POST` | `/api/memory/write` | 通过记忆门控写入 |
 
-## Approval
+## Jobs
 
-| Method | Path | Purpose |
-| --- | --- | --- |
-| `GET` | `/api/agent/approvals/pending?workspace_id=<ws>` | 待审批列表 |
-| `GET` | `/api/agent/approvals/history?workspace_id=<ws>` | 审批历史 |
-| `GET` | `/api/agent/approvals/sse?workspace_id=<ws>` | 审批事件流 |
-| `POST` | `/api/agent/approvals/<approval_id>/resolve` | 处理审批 |
-
-审批只用于策略判定为高风险或破坏性的动作。
+终态任务可通过 `DELETE /api/jobs/<job_id>` 硬删除；请求体必须包含工作区和精确确认字符串
+`DELETE <job_id>`。排队或运行中的任务返回 409，必须先取消并等待进入终态。
 
 ## Error Shape
 

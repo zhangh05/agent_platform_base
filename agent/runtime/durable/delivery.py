@@ -72,7 +72,7 @@ class DeliveryArtifact:
 
 VALIDATION_REQUIREMENTS = {
     "code": ["test_passed", "build_passed", "lint_passed"],
-    "network_change": ["precheck", "approval", "rollback_plan", "postcheck"],
+    "network_change": ["precheck", "rollback_plan", "postcheck"],
     "diagnosis": ["evidence_collected"],
     "report": ["artifact_generated"],
     "data_processing": ["validation_summary"],

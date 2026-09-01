@@ -18,7 +18,6 @@ from __future__ import annotations
 import asyncio
 import copy
 import hashlib
-import inspect
 import json
 import logging
 import re
@@ -31,12 +30,8 @@ from agent.llm.schemas import LLMMessage, LLMResponse, LLMToolCall
 from agent.llm.tool_adapter import tool_spec_to_openai_function
 from core.tools.redaction import redact_tool_output
 
-from .approval_evidence import (
-    project_approval_resume_evidence,
-    render_approval_resume_evidence,
-)
 from .cognitive_gate import decide_next_action
-from .cognitive_state import initialize_cognitive_state, restore_cognitive_state
+from .cognitive_state import initialize_cognitive_state
 from .context_budget import (
     RuntimeContextBudget,
     estimate_json_tokens,
@@ -59,7 +54,6 @@ from .evidence import (
     register_tool_evidence,
 )
 from .models import (
-    ApprovedToolContinuation,
     ExecutionNode,
     ExecutionStatus,
     SSOTRuntimeConfig,
@@ -1524,9 +1518,6 @@ class QueryLoopResult:
     error: str | None = None
     errors: list[str] = field(default_factory=list)
     risk_level: str = "low"
-    approval_required: bool = False
-    approval_nodes: list[str] = field(default_factory=list)
-    approval_details: list[dict[str, Any]] = field(default_factory=list)
     hard_block: bool = False
     metrics: dict[str, Any] = field(default_factory=dict)
 
@@ -1546,14 +1537,12 @@ class QueryLoop:
         tool_runtime,
         llm_invoke: Callable[..., Any] | None = None,
         emitter=None,
-        approval_handler: Callable[[StatelessContext, dict[str, Any]], Any] | None = None,
     ):
         self._config = config
         self._tool_registry = tool_registry
         self._tool_runtime = tool_runtime
         self._llm_invoke = llm_invoke
         self._emitter = emitter
-        self._approval_handler = approval_handler
         self._executor = StreamingToolExecutor(
             tool_runtime, config, emitter, tool_registry=tool_registry,
         )
@@ -1650,30 +1639,14 @@ class QueryLoop:
         output_truncated = False
         output_truncation_reason = ""
         planner_completed_emitted = False
-        resumed_cognitive_state = restore_cognitive_state(
-            ctx.extras.get("__approval_cognitive_state"),
-            turn_id=ctx.request_id,
-            trace_id=str(ctx.extras.get("trace_id") or ctx.request_id),
-        ) if isinstance(ctx.extras.get("__approved_tool_continuation"), ApprovedToolContinuation) else None
-        cognitive_state = resumed_cognitive_state or initialize_cognitive_state(
+        cognitive_state = initialize_cognitive_state(
             turn_id=ctx.request_id,
             trace_id=str(ctx.extras.get("trace_id") or ctx.request_id),
             user_input=ctx.user_input,
             constraints=("SSOT QueryLoop is the only tool execution path",),
         )
-        if resumed_cognitive_state is not None:
-            cognitive_state.set_outcome(
-                "running",
-                reason_codes=("approval_resumed",),
-                visible_summary="审批已通过，正在从受控状态继续执行。",
-            )
-            cognitive_state.set_decision(
-                "resume_approved_tool",
-                reason_codes=("approval_resumed",),
-                visible_summary="审批已通过，正在从已登记证据继续。",
-            )
         ctx.extras["cognitive_state"] = cognitive_state
-        if self._emitter is not None and resumed_cognitive_state is None:
+        if self._emitter is not None:
             for event in cognitive_state.events:
                 self._emitter.emit(event["type"], event)
         cognitive_events_emitted = len(cognitive_state.events)
@@ -1683,13 +1656,6 @@ class QueryLoop:
 
         # Build initial messages (cacheable prefix)
         messages = self._build_initial(ctx)
-        if isinstance(ctx.extras.get("__approved_tool_continuation"), ApprovedToolContinuation):
-            prior_evidence = render_approval_resume_evidence(
-                ctx.extras.get("__approval_prior_tool_evidence")
-            )
-            if prior_evidence:
-                messages.append(LLMMessage(role="user", content=prior_evidence))
-
         max_iterations = getattr(self._config, "max_query_loop_iterations", 20)
 
         def finish(**values) -> QueryLoopResult:
@@ -1792,100 +1758,6 @@ class QueryLoop:
             values.setdefault("total_tool_calls", len(all_results))
             values.setdefault("llm_calls", llm_calls)
             return QueryLoopResult(metrics=projected_metrics, **values)
-        # A resolved ordinary approval re-enters the same QueryLoop with a
-        # server-only typed grant. Revalidate the exact persisted calls, then
-        # execute through the canonical executor before asking the LLM to
-        # synthesize or continue. Plain caller JSON can never satisfy this
-        # isinstance boundary.
-        continuation = ctx.extras.get("__approved_tool_continuation")
-        if isinstance(continuation, ApprovedToolContinuation):
-            resumed_calls = self._parse_tool_calls(list(continuation.tool_calls))
-            resumed_calls = self._unique_call_ids(resumed_calls, iterations, used_call_ids)
-            approved_keys = set(ctx.extras.get("approved_tool_call_keys") or [])
-            approved_node_ids = set(continuation.approved_node_ids)
-            approved_keys.update(
-                self._tool_call_key(call)
-                for call in resumed_calls
-                if call.id in approved_node_ids
-            )
-            ctx.extras["approved_tool_call_keys"] = sorted(approved_keys)
-            ctx.extras["approved_tool_call_ids"] = [
-                call.id for call in resumed_calls if call.id in approved_node_ids
-            ]
-            ctx.extras["approval_resolved"] = True
-            ctx.extras["approval_allowed"] = True
-            ctx.extras["approval_continuation_id"] = continuation.continuation_id
-            resumed_gate = self._prepare_tool_calls(ctx, resumed_calls)
-            if not resumed_gate.get("ok"):
-                return finish(
-                    final_response=str(resumed_gate.get("message") or "审批后的工具调用校验失败。"),
-                    error=str(resumed_gate.get("error") or "approval_continuation_invalid"),
-                    errors=list(resumed_gate.get("errors") or []),
-                    risk_level=str(resumed_gate.get("risk_level") or "high"),
-                    hard_block=bool(resumed_gate.get("hard_block")),
-                )
-            resumed_calls = list(resumed_gate["tool_calls"])
-            used_call_ids.update(call.id for call in resumed_calls)
-            execution_started = time.monotonic()
-            budget.begin_execution()
-            try:
-                resumed_results = await self._executor.execute(resumed_calls, ctx=ctx, budget=budget)
-            finally:
-                budget.end_execution()
-                execution_duration_ms += (time.monotonic() - execution_started) * 1000
-            # A server-issued grant is single-use; later model calls must re-enter the normal risk gate.
-            ctx.extras.pop("__approved_tool_continuation", None)
-            ctx.extras.pop("approved_tool_call_keys", None)
-            ctx.extras.pop("approved_tool_call_ids", None)
-            all_results.extend(resumed_results)
-            self._record_task_state_execution_manifest(ctx, resumed_calls, resumed_results)
-            for call, result in zip(resumed_calls, resumed_results):
-                completed_call_keys.add(self._completion_key(call, mutation_epoch))
-                if result.ok and not self._executor._is_read_only_call(call):
-                    mutation_epoch += 1
-            polled_results = await self._settle_tracking(ctx, resumed_results, budget=budget)
-            if polled_results:
-                all_results.extend(polled_results)
-                resumed_results = resumed_results + polled_results
-            messages = self._append_tool_round(messages, resumed_calls, resumed_results)
-            register_tool_evidence(ctx.extras, resumed_results)
-            cognitive_state.register_tool_results(
-                resumed_results,
-                evidence=evidence_summary(ctx.extras),
-            )
-            cognitive_registered_results = len(all_results)
-            if self._emitter is not None:
-                for event in cognitive_state.events[cognitive_events_emitted:]:
-                    self._emitter.emit(event["type"], event)
-            cognitive_events_emitted = len(cognitive_state.events)
-            unknown_outcome = ctx.extras.get("unknown_outcome")
-            if isinstance(unknown_outcome, dict) and unknown_outcome:
-                trigger_tool = str(unknown_outcome.get("tool_id") or "操作")
-                trigger_call = str(unknown_outcome.get("call_id") or "")
-                return finish(
-                    final_response=(
-                        f"工具 {trigger_tool} 的执行结果处于未知状态"
-                        + (f"（调用 {trigger_call}）" if trigger_call else "")
-                        + "。系统已冻结本轮后续写操作，未自动重试、未推定成功或失败。"
-                        "请通过受控 read-back/reconcile 验证实际结果，或由操作员处置。"
-                    ),
-                    tool_results=all_results,
-                    iterations=iterations,
-                    total_tool_calls=len(all_results),
-                    llm_calls=llm_calls,
-                    error="unknown_outcome",
-                    metrics={
-                        "execution_outcome": "unknown",
-                        "unknown_outcome": dict(unknown_outcome),
-                    },
-                )
-            if any(not result.ok for result in resumed_results):
-                messages = self._append_turn_nudge(
-                    messages, self._build_tool_failure_recovery_nudge(
-                        [result for result in resumed_results if not result.ok]
-                    ),
-                )
-
         # Trusted UI workflows may hand off explicit artifact ids after a
         # background task completes. Read those workspace-scoped artifacts
         # through the canonical runtime before planning, then let the LLM decide
@@ -2181,72 +2053,8 @@ class QueryLoop:
                     continue
 
                 gate = self._prepare_tool_calls(ctx, tool_calls)
-                if (
-                    not gate["ok"]
-                    and gate.get("approval_required")
-                    and not gate.get("hard_block")
-                    and self._approval_handler is not None
-                ):
-                    if self._emitter:
-                        self._emitter.emit("approval_required", {
-                            "risk_level": gate.get("risk_level", "high"),
-                            "approval_nodes": list(gate.get("approval_nodes") or []),
-                        })
-                    ctx.extras["__approval_prior_tool_evidence"] = project_approval_resume_evidence(all_results)
-                    gate_for_approval = {
-                        **gate,
-                        "tool_calls": [
-                            asdict(call)
-                            for call in list(gate.get("tool_calls") or tool_calls)
-                        ],
-                    }
-                    decision = self._approval_handler(ctx, gate_for_approval)
-                    if inspect.isawaitable(decision):
-                        decision = await decision
-                    if isinstance(decision, dict) and decision.get("status") == "pending":
-                        return finish(
-                            final_response="该操作正在等待审批，批准后将从当前步骤继续。",
-                            tool_results=all_results,
-                            iterations=iterations,
-                            total_tool_calls=len(all_results),
-                            llm_calls=llm_calls,
-                            error="approval_required",
-                            risk_level=gate.get("risk_level", "high"),
-                            approval_required=True,
-                            approval_nodes=list(gate.get("approval_nodes") or []),
-                            approval_details=list(gate.get("approval_details") or []),
-                            metrics={
-                                "approval_pending": True,
-                                "approval_ids": list(decision.get("approval_ids") or []),
-                                "approval_continuation_id": str(decision.get("continuation_id") or ""),
-                            },
-                        )
-                    if not bool(decision):
-                        ctx.extras["approval_resolved"] = True
-                        ctx.extras["approval_allowed"] = False
-                        return finish(
-                            final_response="操作已取消（审批未通过）。",
-                            tool_results=all_results,
-                            iterations=iterations,
-                            total_tool_calls=len(all_results),
-                            llm_calls=llm_calls,
-                            risk_level=gate.get("risk_level", "high"),
-                            approval_required=False,
-                            metrics={"approval_denied": True},
-                        )
-                    approved_node_ids = set(gate.get("approval_nodes") or [])
-                    approved_keys = set(ctx.extras.get("approved_tool_call_keys") or [])
-                    approved_keys.update(
-                        self._tool_call_key(call)
-                        for call in tool_calls
-                        if not approved_node_ids or call.id in approved_node_ids
-                    )
-                    ctx.extras["approved_tool_call_keys"] = sorted(approved_keys)
-                    ctx.extras["approval_resolved"] = True
-                    ctx.extras["approval_allowed"] = True
-                    gate = self._prepare_tool_calls(ctx, tool_calls)
                 if not gate["ok"]:
-                    if gate.get("hard_block") or gate.get("approval_nodes") or gate.get("approval_required"):
+                    if gate.get("hard_block"):
                         return finish(
                             final_response=gate["message"],
                             tool_results=all_results,
@@ -2256,9 +2064,6 @@ class QueryLoop:
                             error=gate["error"],
                             errors=list(gate.get("errors") or []),
                             risk_level=gate.get("risk_level", "high"),
-                            approval_required=bool(gate.get("approval_required", False)),
-                            approval_nodes=list(gate.get("approval_nodes") or []),
-                            approval_details=list(gate.get("approval_details") or []),
                             hard_block=bool(gate.get("hard_block", False)),
                         )
                     # Soft validation errors (e.g. missing_required_arg) —
@@ -2734,37 +2539,6 @@ class QueryLoop:
                     ctx.extras["response_outcome"] = "failed"
             else:
                 final_text = final_text.strip()
-
-            # A model must never turn a prose claim into an approval state.
-            # Only the canonical risk gate may create approval continuation.
-            approval_claim_markers = (
-                "等待您批准", "等待批准", "等待审批", "需要审批",
-                "请确认是否批准", "批准后将", "approval pending", "awaiting approval",
-                "requires approval", "confirm approval",
-            )
-            has_unbacked_approval_claim = (
-                any(marker in final_text.lower() for marker in approval_claim_markers)
-                and not bool(ctx.extras.get("approval_continuation_id"))
-                and not bool(ctx.extras.get("approval_required"))
-            )
-            if has_unbacked_approval_claim:
-                correction_attempts = int(ctx.extras.get("unbacked_approval_claim_attempts") or 0)
-                if correction_attempts < 1 and iterations < max_iterations:
-                    ctx.extras["unbacked_approval_claim_attempts"] = correction_attempts + 1
-                    messages = self._append_turn_nudge(
-                        messages,
-                        "系统校验：当前没有生成真实审批请求，不能声称等待审批。"
-                        "如果确实需要审批，必须发出对应的 canonical 工具调用；否则请直接报告当前结果。",
-                    )
-                    continue
-                return finish(
-                    final_response="模型声称等待审批，但当前没有生成真实审批请求；已安全停止。",
-                    tool_results=all_results,
-                    iterations=iterations,
-                    total_tool_calls=len(all_results),
-                    llm_calls=llm_calls,
-                    error="unbacked_approval_claim",
-                )
 
             # Semantic answer quality belongs to the model, its prompt and the
             # evidence/tool contracts.  Do not regex-score or regenerate a
@@ -3445,7 +3219,7 @@ class QueryLoop:
         """Run QueryLoop's pre-execution hard boundaries.
 
         QueryLoop is the execution path. It still keeps semantic repair, risk,
-        and approval boundaries directly on the current call batch.
+        and hard policy boundaries directly on the current call batch.
         """
         nodes = self._tool_calls_to_nodes(tool_calls)
         from .pre_execution_repair import (
@@ -3538,11 +3312,7 @@ class QueryLoop:
 
         risk = RiskPolicyEngine(self._config).assess(nodes)
         ctx.extras.update({
-            "approval_required": bool(risk.requires_approval),
             "hard_block": bool(risk.hard_block),
-            "approval_reason": risk.approval_reason,
-            "approval_nodes": list(risk.approval_nodes),
-            "approval_details": list(risk.approval_details),
         })
 
         if risk.hard_block:
@@ -3561,51 +3331,6 @@ class QueryLoop:
                 "message": f"工具调用被安全策略阻断：{reason}",
             }
 
-        approved_keys = set(ctx.extras.get("approved_tool_call_keys") or [])
-        approval_nodes = [node for node in nodes if node.id in risk.approval_nodes]
-        continuation = ctx.extras.get("__approved_tool_continuation")
-        continuation_node_ids = set(getattr(continuation, "approved_node_ids", ()) or ())
-        approval_satisfied = bool(approval_nodes) and all(
-            self._tool_call_key(LLMToolCall(
-                id=node.id,
-                name=node.tool,
-                arguments=dict(node.args or {}),
-                step_id=node.step_id,
-                depends_on=list(node.depends_on),
-                result_bindings=dict(node.result_bindings),
-                failure_policy=node.failure_policy,
-            )) in approved_keys
-            for node in approval_nodes
-        )
-        if continuation_node_ids:
-            approval_satisfied = bool(approval_nodes) and all(
-                node.id in continuation_node_ids for node in approval_nodes
-            )
-        if risk.requires_approval and not approval_satisfied:
-            repaired_calls = [LLMToolCall(
-                id=n.id,
-                name=n.tool,
-                arguments=dict(n.args or {}),
-                step_id=n.step_id,
-                depends_on=list(n.depends_on),
-                result_bindings=dict(n.result_bindings),
-                failure_policy=n.failure_policy,
-            ) for n in nodes]
-            return {
-                "ok": False,
-                "error": "approval_required",
-                "errors": [],
-                "approval_required": True,
-                "approval_nodes": list(risk.approval_nodes),
-                "approval_details": list(risk.approval_details),
-                "tool_calls": repaired_calls,
-                "risk_level": risk.risk_level,
-                "message": (
-                    "该操作需要用户审批后才能继续执行。"
-                    f"原因：{risk.approval_reason or 'high_risk_tool_or_command'}"
-                ),
-            }
-
         repaired_calls = [LLMToolCall(
             id=n.id,
             name=n.tool,
@@ -3619,7 +3344,6 @@ class QueryLoop:
             "ok": True,
             "tool_calls": repaired_calls,
             "risk_level": risk.risk_level,
-            "approval_required": False,
         }
 
     @staticmethod
@@ -3806,7 +3530,7 @@ class QueryLoop:
             '<tool_failure_evidence data_only="true">\n'
             + failure_data
             + "\n</tool_failure_evidence>\n"
-            "Do not repeat an unchanged failed call. Do not bypass security or approval policy. "
+            "Do not repeat an unchanged failed call. Do not bypass security or authorization policy. "
             "First use any successful evidence already in the conversation. If the requested "
             "outcome still needs work, issue a changed safe call using corrected arguments, a "
             "more appropriate tool, or a different strategy. If no safe recovery exists, answer "

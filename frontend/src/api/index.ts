@@ -338,6 +338,14 @@ export const jobsApi = {
   retry: (job_id: string, workspace_id: string) =>
     apiRequest<{ ok: boolean }>({ method: "POST", url: `/jobs/${job_id}/retry`, data: { workspace_id } }),
 
+  /** DELETE /api/jobs/:id — terminal task record and its event/log directory */
+  delete: (job_id: string, workspace_id: string) =>
+    apiRequest<{ ok: boolean; deleted: boolean }>({
+      method: "DELETE",
+      url: `/jobs/${job_id}`,
+      data: { workspace_id, confirmation: `DELETE ${job_id}` },
+    }),
+
   /** GET /api/jobs/:id/events */
   events: (job_id: string, workspace_id: string, signal?: AbortSignal) =>
     apiRequest<{ events: JobEvent[] }>({ method: "GET", url: `/jobs/${job_id}/events`, params: { workspace_id } }, signal),
@@ -370,7 +378,7 @@ export const toolsApi = {
   catalog: (signal?: AbortSignal): Promise<ToolCatalogResponse> =>
     apiRequest<ToolCatalogResponse>({ method: "GET", url: "/tools/catalog" }, signal),
   dryRun: (data: { tool_id: string; params: Record<string, unknown>; workspace_id: string }) =>
-    apiRequest<{ ok: boolean; requires_approval?: boolean }>({
+    apiRequest<{ ok: boolean }>({
       method: "POST",
       url: "/tools/dry-run",
       params: { workspace_id: data.workspace_id },
@@ -382,7 +390,6 @@ export const toolsApi = {
       tools: ToolPermission[];
       forbidden_count: number;
       high_risk_count: number;
-      approval_required_count: number;
     }>({ method: "GET", url: "/tools/permissions" }, signal),
 };
 
@@ -923,101 +930,6 @@ export const settingsApi = {
     ),
 };
 
-export const approvalApi = {
-  pending: (sessionId: string, workspaceId: string, signal?: AbortSignal): Promise<{
-    ok: boolean;
-    pending: Array<{
-      approval_id: string;
-      session_id: string;
-      tool_id: string;
-      risk_level: string;
-      arguments_preview: Record<string, unknown>;
-      created_at: string;
-      created_at_iso: string;
-      expires_at: string;
-      approval_kind: string;
-      requester: string;
-    }>;
-    count: number;
-    continuations?: ApprovalContinuationSummary[];
-  }> =>
-    apiRequest({
-      method: "GET",
-      url: `/agent/approvals/pending?session_id=${encodeURIComponent(sessionId)}&workspace_id=${encodeURIComponent(workspaceId)}`,
-    }, signal),
-
-  resolve: (
-    approvalId: string,
-    body: { decision: string; workspace_id: string; session_id: string; edited_args?: Record<string, unknown>; feedback?: string; reason?: string },
-  ): Promise<{ ok: boolean; approval_id: string; decision: string; error?: string; runtime_result?: { ok: boolean; continuation_status?: string; error?: string; message?: string } | null }> =>
-    apiRequest({
-      method: "POST",
-      url: `/agent/approvals/${approvalId}/resolve`,
-      data: body,
-    }),
-
-  history: (params: { workspaceId: string; sessionId?: string; toolId?: string; limit?: number }): Promise<{
-    ok: boolean;
-    history: Array<Record<string, unknown>>;
-    count: number;
-  }> => {
-    const q = new URLSearchParams();
-    q.set("workspace_id", params.workspaceId);
-    if (params.sessionId) q.set("session_id", params.sessionId);
-    if (params.toolId) q.set("tool_id", params.toolId);
-    if (params.limit) q.set("limit", String(params.limit));
-    const qs = q.toString();
-    const url = qs ? `/agent/approvals/history?${qs}` : "/agent/approvals/history";
-    return apiRequest({
-      method: "GET",
-      url,
-    });
-  },
-};
-
-export type ApprovalContinuationSummary = {
-  continuation_id: string;
-  workspace_id: string;
-  session_id: string;
-  parent_run_id: string;
-  status: string;
-  execution_phase?: string;
-  created_at: string;
-  updated_at: string;
-  heartbeat_at?: string;
-  stalled_at?: string;
-  stall_reason?: string;
-  error?: string;
-  approval_count: number;
-  decision_count: number;
-};
-
-export const approvalContinuationsApi = {
-  list: (workspaceId: string, signal?: AbortSignal) =>
-    apiRequest<{
-      ok: boolean;
-      continuations: ApprovalContinuationSummary[];
-      count: number;
-      counts: Record<string, number>;
-      maintenance: { stalled: number; expired: number; deleted: number };
-    }>({
-      method: "GET",
-      url: "/admin/approval-continuations",
-      params: { workspace_id: workspaceId },
-    }, signal),
-
-  closeStalled: (workspaceId: string, continuationId: string, reason: string) =>
-    apiRequest<{ ok: boolean; continuation_id: string; status: string }>({
-      method: "POST",
-      url: `/admin/approval-continuations/${encodeURIComponent(continuationId)}/close`,
-      data: {
-        workspace_id: workspaceId,
-        reason,
-        confirmation: `CLOSE ${continuationId}`,
-      },
-    }),
-};
-
 export type OperationLedgerSummary = {
   operation_id: string;
   turn_id: string;
@@ -1027,7 +939,6 @@ export type OperationLedgerSummary = {
   call_id: string;
   status: "planned" | "running" | "succeeded" | "failed" | "unknown" | "blocked" | string;
   risk_level?: string;
-  approval_continuation_id?: string;
   idempotency?: string;
   error_code?: string;
   error?: string;

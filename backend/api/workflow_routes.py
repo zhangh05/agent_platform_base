@@ -88,10 +88,10 @@ def register_workflow_routes(app) -> None:
         if data.get("enqueue"):
             from jobs.manager import create_job
             from jobs.redaction import sanitize_job_record_for_api
-            job = create_job(workspace_id, "workflow_run", f"Workflow: {workflow_id}", {"workflow_id": workflow_id, "inputs": inputs, "approvals": data.get("approvals") or {}})
+            job = create_job(workspace_id, "workflow_run", f"Workflow: {workflow_id}", {"workflow_id": workflow_id, "inputs": inputs})
             return jsonify({"ok": True, "queued": True, "job": sanitize_job_record_for_api(job.as_dict())}), 202
         try:
-            run = execute_workflow(workspace_id, workflow_id, inputs, approvals=data.get("approvals") or {})
+            run = execute_workflow(workspace_id, workflow_id, inputs)
         except WorkflowError as exc:
             return jsonify({"ok": False, "error": str(exc)}), 400
         return jsonify({"ok": run["status"] == "succeeded", "run": run}), 200 if run["status"] == "succeeded" else 409

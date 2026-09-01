@@ -27,7 +27,7 @@ _GENERIC_CONTINUATION_RE = re.compile(
     r"^(?:请)?\s*(?:继续|接着|下一步|然后|继续完成|继续处理|恢复|再查|再验证|再分析|再试)\b",
     re.IGNORECASE,
 )
-_TASK_RESUMABLE = frozenset({"active", "completed", "replan_required", "waiting_user", "waiting_approval", "interrupted"})
+_TASK_RESUMABLE = frozenset({"active", "completed", "replan_required", "waiting_user", "interrupted"})
 _MAX_CONSECUTIVE_REPLAN_ATTEMPTS = 2
 
 
@@ -319,7 +319,7 @@ def reconcile_active_task_states(
     """Mark only pre-start durable in-flight TaskStates interrupted after service start.
 
     This function never dispatches a model or tool.  Explicit user continuation
-    must re-enter AgentApp and QueryLoop, where the normal policy, approval and
+    must re-enter AgentApp and QueryLoop, where the normal policy and
     TaskState CAS fences remain authoritative.
     """
     sessions_dir = workspace_record_dir(workspace_id, "sessions", create=False)
@@ -402,7 +402,6 @@ def resolve_task_state(
     session_id: str,
     user_input: str,
     messages: Iterable[dict[str, Any]],
-    approval_parent_run_id: str = "",
 ) -> dict[str, Any] | None:
     """Resolve a resumable generic task using a recent complete exchange guard.
 
@@ -413,26 +412,15 @@ def resolve_task_state(
     task = state.get("task") if isinstance(state.get("task"), dict) else None
     if not task or str(task.get("status") or "") not in _TASK_RESUMABLE:
         return None
-    approval_parent_run_id = str(approval_parent_run_id or "").strip()
-    is_approval_resume = (
-        str(task.get("status") or "") == "waiting_approval"
-        and bool(approval_parent_run_id)
-        and approval_parent_run_id == str(task.get("source_run_id") or "")
-    )
     is_waiting_user_attestation = (
         str(task.get("status") or "") == "waiting_user"
         and _explicit_unknown_mutation_attestation(user_input)
     )
-    relation = (
-        {"kind": "approval_resume"}
-        if is_approval_resume
-        else ({"kind": "user_verified_mutation_outcome"} if is_waiting_user_attestation else _continuation_relation(user_input))
-    )
+    relation = {"kind": "user_verified_mutation_outcome"} if is_waiting_user_attestation else _continuation_relation(user_input)
     if relation is None:
         return None
-    if not is_approval_resume:
-        latest_user, latest_assistant = _latest_complete_exchange(messages)
-        if str(task.get("status") or "") in {"interrupted", "waiting_user"}:
+    latest_user, latest_assistant = _latest_complete_exchange(messages)
+    if str(task.get("status") or "") in {"interrupted", "waiting_user"}:
             # A restart can leave either a plain interrupted checkpoint or a
             # waiting_user unknown-mutation fence without an assistant half.
             # Resume only when the last durable user request is exactly the
@@ -446,11 +434,11 @@ def resolve_task_state(
             )
             if not isinstance(last_user, dict) or str(last_user.get("run_id") or "") != str(task.get("source_run_id") or ""):
                 return None
-        else:
-            if not latest_user or not latest_assistant:
-                return None
-            if str(latest_assistant.get("run_id") or "") != str(task.get("source_run_id") or ""):
-                return None
+    else:
+        if not latest_user or not latest_assistant:
+            return None
+        if str(latest_assistant.get("run_id") or "") != str(task.get("source_run_id") or ""):
+            return None
     return _contract_from_state(state, task, relationship=relation)
 
 
@@ -542,9 +530,7 @@ def render_task_state_guidance(contract: dict[str, Any]) -> str:
     recovery_status = str(contract.get("recovery_status") or "")
     if prior_status == "replan_required" or recovery_status == "replan_required":
         lines.append("Replan from the recorded failure and verified evidence. Select a different, policy-valid observation or recovery step; do not merely retry the same failed plan.")
-    elif prior_status == "waiting_approval":
-        lines.append("This is an approved continuation. Continue only through the server-issued approval grant and preserve prior task evidence.")
-    elif _relationship_kind(contract.get("relationship")) in {"resume", "approval_resume"}:
+    elif _relationship_kind(contract.get("relationship")) == "resume":
         lines.append("Resume the existing task. Preserve verified evidence and do not repeat completed side-effecting actions.")
     return "\n".join(lines)
 
@@ -769,8 +755,6 @@ def _derive_status(task: dict[str, Any], metadata: dict[str, Any], run_ok: bool)
         return "cancelled", "cancelled_by_user"
     if _bounded_key_list(task.get("pending_mutation_keys")):
         return "waiting_user", "resolve_unknown_mutation_outcome"
-    if bool(metadata.get("approval_required")):
-        return "waiting_approval", "resume_after_approval"
     if str(metadata.get("execution_outcome") or "") == "unknown" or unknowns:
         return "waiting_user", "resolve_blocking_unknown"
     if _replan_requested(task, metadata):
@@ -799,7 +783,6 @@ def _event_from_transition(
         "completed": "task_completed",
         "replan_required": "replan_required",
         "waiting_user": "task_waiting_user",
-        "waiting_approval": "task_waiting_approval",
         "failed": "task_failed",
         "cancelled": "task_cancelled",
         "interrupted": "task_interrupted",

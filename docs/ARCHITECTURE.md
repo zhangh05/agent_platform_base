@@ -31,7 +31,7 @@ HTTP / WebSocket / SSE / Job entry
 
 ## Data Boundary
 
-所有用户数据都以 `workspace_id` 隔离。运行记录、会话、制品、FileStore、记忆、审批、作业和 trace 都属于工作区数据。后端路由不得静默推断工作区；缺失或非法 `workspace_id` 必须返回客户端错误。
+所有用户数据都以 `workspace_id` 隔离。运行记录、会话、制品、FileStore、记忆、作业和 trace 都属于工作区数据。后端路由不得静默推断工作区；缺失或非法 `workspace_id` 必须返回客户端错误。
 
 ## Capability Boundary
 

@@ -1,4 +1,4 @@
-"""Governed device connectivity with separate read and approved write paths."""
+"""Governed device connectivity with separate read and Skill-authorized write paths."""
 
 from __future__ import annotations
 
@@ -410,7 +410,7 @@ class _ConnectError(RuntimeError):
 
 
 def normalize_configuration_commands(commands, vendor: str) -> list[str]:
-    """Validate framing, not business intent: the approved model supplies every line.
+    """Validate framing, not business intent: the authorized model supplies every line.
 
     Only known network CLIs are supported; never reinterpret a network grant as
     shell access. Repeated lines are meaningful in different configuration views.
@@ -506,7 +506,7 @@ def probe_target(
     started = time.monotonic()
     # A one-shot probe must never share the empty key with another caller.
     # Writes use an isolated shell: a configuration view must never leak into a
-    # later read or another approved batch. Business mode transitions are explicit;
+    # later read or another authorized batch. Business mode transitions are explicit;
     # terminal housekeeping may first leave a retained console configuration view.
     key = session_key if session_key and not configure else "oneshot:" + uuid.uuid4().hex
     try:

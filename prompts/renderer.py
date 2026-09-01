@@ -72,7 +72,7 @@ def render_prompt(task: str, safe_context: dict = None, user_input: str = "",
 
 
 def _render_template(text: str, values: dict) -> str:
-    """Render conditionals, loops, variables and approved filters."""
+    """Render conditionals, loops, variables and allowlisted filters."""
     text = _replace_conditionals(text, values)
     text = _replace_loops(text, values)
     return _replace_variables(text, values)

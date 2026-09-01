@@ -180,7 +180,7 @@ def handle_memory_list(inv: ToolInvocation) -> dict:
 
 
 def handle_memory_confirm(inv: ToolInvocation) -> dict:
-    """Confirm a pending memory (typically from frontend approval UI)."""
+    """Confirm a pending memory from the explicit memory review flow."""
     args = inv.arguments
     memory_id = str(args.get("memory_id", "")).strip()
     if not memory_id:

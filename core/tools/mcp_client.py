@@ -27,7 +27,7 @@ class StdioMcpClient:
     """Synchronous MCP client for discovery and tool calls.
 
     Returned tools must still be mapped through the platform's manifest, risk,
-    approval and audit pipeline before they become model-visible.
+    authorization and audit pipeline before they become model-visible.
     """
 
     def __init__(self, config: McpServerConfig):

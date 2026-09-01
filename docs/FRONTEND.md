@@ -4,7 +4,7 @@
 
 ## Main Screens
 
-- `AgentWorkbench` (`/workbench`): 对话、运行时间线、工具调用、审批。
+- `AgentWorkbench` (`/workbench`): 对话、运行时间线和工具调用。
 - `RunsPage` (`/runs`): 最近运行记录和 trace。
 - `CapabilityCenter` (`/capabilities`): 能力目录和推荐工具。
 - `JobsPage` (`/jobs`): 后台作业。

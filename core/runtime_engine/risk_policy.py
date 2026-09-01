@@ -1,13 +1,10 @@
 """
 Risk Policy Engine for SSOT Runtime Engine.
 
-Assesses the current QueryLoop tool-call batch and distinguishes between:
-  - **allow**: safe to run directly
-  - **approval_required**: needs user confirmation (frontend approval bubble)
-  - **hard_block**: absolutely forbidden, cannot be overridden
-
-This is the last gate before execution — hard_block rejects immediately;
-approval_required defers to the caller for user consent.
+Assesses the current QueryLoop tool-call batch and distinguishes between
+allowed calls and absolute policy blocks. Product-specific authorization is
+enforced by the owning tool handler, such as a selected Skill's device and
+connection boundary for network configuration.
 """
 
 from __future__ import annotations
@@ -21,7 +18,7 @@ from .models import ExecutionNode, RiskLevel
 from .command_policy import normalize_command, evaluate_command_policy
 
 
-# ── Destructive command patterns (trigger approval, not hard block) ────
+# ── Destructive command patterns (hard blocked) ──────────────────────
 
 _DESTRUCTIVE_COMMAND_PATTERNS: list[tuple[str, str]] = [
     # Each tuple: (regex, human_label)
@@ -45,7 +42,7 @@ _DESTRUCTIVE_COMMAND_PATTERNS: list[tuple[str, str]] = [
 ]
 
 
-# ── Hard-block patterns (absolute, no approval possible) ────────────
+# ── Absolute hard-block patterns ───────────────────────────────────
 
 _SYSTEM_DESTROY_PATTERNS: list[tuple[str, str]] = [
     (r"rm\s+-rf\s+/(\s|$)", "rm -rf /"),
@@ -62,13 +59,9 @@ class RiskAssessment:
     """Result of a tool-call batch risk check."""
     risk_level: str = "low"
     safe_to_run: bool = True
-    requires_approval: bool = False
     hard_block: bool = False
     blocked_reason: str = ""
     blocked_nodes: list[str] = field(default_factory=list)
-    approval_reason: str = ""
-    approval_nodes: list[str] = field(default_factory=list)
-    approval_details: list[dict[str, Any]] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
     combo_reasons: list[str] = field(default_factory=list)
     alias_normalizations: list[dict[str, str]] = field(default_factory=list)
@@ -79,9 +72,9 @@ class RiskPolicyEngine:
 
     Rules:
       - credential_access / system dir delete → **hard_block**
-      - Destructive commands (rm -rf, git reset --hard, etc.) → **approval_required**
+      - Destructive shell commands (rm -rf, git reset --hard, etc.) → **hard_block**
       - Large write/exec/tool batches → warnings only. They are bounded by
-        runtime budgets and must not trigger approval by themselves.
+        runtime budgets and remain warnings rather than execution blocks.
     """
 
     def __init__(self, config=None):
@@ -89,9 +82,7 @@ class RiskPolicyEngine:
         from .models import SSOTRuntimeConfig
         cfg = config if config is not None else SSOTRuntimeConfig()
         self._max_tool_allow = getattr(cfg, "rp_max_tool_nodes_allow", 20)
-        self._max_tool_approval = getattr(cfg, "rp_max_tool_nodes_approval", 50)
         self._max_exec_allow = getattr(cfg, "rp_max_exec_allow", 5)
-        self._max_exec_approval = getattr(cfg, "rp_max_exec_approval", 20)
 
     def assess(self, nodes: list[ExecutionNode]) -> RiskAssessment:
         assessment = RiskAssessment()
@@ -119,78 +110,6 @@ class RiskPolicyEngine:
                     f"Critical-risk node '{node.id}' ({node.tool}) — hard blocked"
                 )
 
-            # ── HIGH contract risk → approval gate ──
-            elif node_risk == RiskLevel.HIGH.value:
-                if node.id not in assessment.approval_nodes:
-                    assessment.approval_nodes.append(node.id)
-                assessment.requires_approval = True
-                node.approval_required = True
-
-            # ── Contract-based approval flag ──
-            if contract.requires_approval or bool(action_contract.get("requires_approval")):
-                if node.id not in assessment.approval_nodes:
-                    assessment.approval_nodes.append(node.id)
-                assessment.requires_approval = True
-                node.approval_required = True
-
-            # A conversational artifact deletion is recoverable, but it still
-            # hides a durable user result and cascades to its FileStore record.
-            # Require explicit approval for this action without penalising the
-            # normal list/read/save/tag operations of the merged tool.
-            if (
-                node.tool == "workspace.artifact"
-                and str(node.args.get("action") or "").lower() == "delete"
-            ):
-                if node.id not in assessment.approval_nodes:
-                    assessment.approval_nodes.append(node.id)
-                assessment.requires_approval = True
-                node.approval_required = True
-                assessment.approval_reason = assessment.approval_reason or "artifact_delete"
-                assessment.approval_details.append({
-                    "node_id": node.id,
-                    "tool": node.tool,
-                    "action": "delete",
-                    "risk_reason": "recoverable_artifact_deletion",
-                })
-
-            # Recoverable file deletion is still a durable state change.  It
-            # belongs to a merged base tool with safe read actions, so keep
-            # this approval boundary action-aware.
-            guarded_action = node.tool == "workspace.file" and action == "delete"
-            if guarded_action:
-                if node.id not in assessment.approval_nodes:
-                    assessment.approval_nodes.append(node.id)
-                assessment.requires_approval = True
-                node.approval_required = True
-                reason = "workspace_file_delete"
-                assessment.approval_reason = assessment.approval_reason or reason
-                assessment.approval_details.append({
-                    "node_id": node.id,
-                    "tool": node.tool,
-                    "action": action,
-                    "risk_reason": reason,
-                })
-
-            # Extensions provide their action-level approval boundary through
-            # ToolSpec metadata, then the runtime contract mirrors it here.
-            # The base must not know product/extension tool IDs.
-            extension_guarded = (
-                action in contract.approval_actions
-                or any(bool(node.args.get(field)) for field in contract.approval_when_truthy)
-            )
-            if extension_guarded:
-                if node.id not in assessment.approval_nodes:
-                    assessment.approval_nodes.append(node.id)
-                assessment.requires_approval = True
-                node.approval_required = True
-                assessment.approval_reason = assessment.approval_reason or "extension_sensitive_action"
-                assessment.approval_details.append({
-                    "node_id": node.id,
-                    "tool": node.tool,
-                    "action": action,
-                    "risk_reason": "extension_sensitive_action",
-                })
-
             # ── Unified command policy check ──
             if node.tool == "exec.run" and "command" in node.args:
                 cmd = node.args.get("command", "")
@@ -207,53 +126,33 @@ class RiskPolicyEngine:
                         )
                         continue  # don't process further — already hard blocked
 
-                    # Destructive command check (approval, not hard block).
-                    # We mark it as approval_required but do NOT continue —
-                    # command_policy below still runs so that credential
-                    # patterns (cat ~/.ssh/id_rsa, etc.) take precedence
-                    # and hard_block the node.
+                    # Destructive shell commands are not recoverable through a
+                    # product Skill contract, so reject them at the canonical gate.
                     dest_label = _check_destructive_command(cmd)
                     if dest_label:
-                       if node.id not in assessment.approval_nodes:
-                           assessment.approval_nodes.append(node.id)
-                       assessment.requires_approval = True
-                       assessment.approval_reason = (
-                           assessment.approval_reason or "destructive_command"
-                       )
-                       assessment.approval_details.append({
-                           "node_id": node.id,
-                           "tool": node.tool,
-                           "command": cmd[:200],
-                           "risk_reason": dest_label,
-                       })
+                        assessment.blocked_nodes.append(node.id)
+                        assessment.hard_block = True
+                        assessment.safe_to_run = False
+                        assessment.blocked_reason = (
+                            assessment.blocked_reason or
+                            f"Destructive command in node '{node.id}': {dest_label}"
+                        )
 
                     # Unified command policy check.
                     # Runs AFTER destructive check.  If command_policy
-                    # blocks for destructive-only reasons (rm, rm -rf,
-                    # del, rd) we downgrade to approval_required instead
-                    # of hard_block.  Credential / path-traversal /
-                    # registry / PowerShell-abuse blocks remain hard_block.
+                    # Command-policy violations are hard blocks. Product
+                    # authorization cannot override host command safety.
                     normalized = normalize_command(cmd)
                     decision = evaluate_command_policy(normalized)
                     if not decision.allowed:
                         reason_lower = (decision.reason or "").lower()
-                        # Destructive-only blocks → approval, not hard_block
-                        if _is_cp_destructive_only(reason_lower):
-                            if node.id not in assessment.approval_nodes:
-                                assessment.approval_nodes.append(node.id)
-                            assessment.requires_approval = True
-                            if not assessment.approval_reason:
-                                assessment.approval_reason = "destructive_command"
-                        else:
-                            # Real hard block: credential, path traversal,
-                            # registry, PowerShell abuse, etc.
-                            assessment.blocked_nodes.append(node.id)
-                            assessment.hard_block = True
-                            assessment.safe_to_run = False
-                            assessment.blocked_reason = (
-                                assessment.blocked_reason or
-                                f"Command policy blocked node '{node.id}': {decision.reason}"
-                            )
+                        assessment.blocked_nodes.append(node.id)
+                        assessment.hard_block = True
+                        assessment.safe_to_run = False
+                        assessment.blocked_reason = (
+                            assessment.blocked_reason or
+                            f"Command policy blocked node '{node.id}': {decision.reason}"
+                        )
 
                     # Credential scan: commands containing destructive
                     # patterns AND credential patterns are hard_blocked
@@ -317,12 +216,6 @@ class RiskPolicyEngine:
             assessment.safe_to_run = False
             return assessment
 
-        # ── If approval is required, mark safe_to_run accordingly ──
-        if assessment.requires_approval:
-            # Not hard_block, but needs user consent — still
-            # "not safe to run automatically"
-            assessment.safe_to_run = False
-
         return assessment
 
     def _apply_combo_escalation(
@@ -337,7 +230,7 @@ class RiskPolicyEngine:
         total_nodes = len(nodes)
 
         # 3+ writes → warning only. The user-facing policy is destructive-only
-        # approval; ordinary batches stay usable and are bounded elsewhere.
+        # warning; ordinary batches stay usable and are bounded elsewhere.
         if write_count >= 3 and not assessment.hard_block:
             assessment.combo_reasons.append(f"{write_count} write/mutate operations")
             assessment.warnings.append(
@@ -387,8 +280,7 @@ class RiskPolicyEngine:
 
 
 def _check_destructive_command(cmd: str) -> str:
-    """Return a human-readable label if ``cmd`` matches a destructive
-    pattern that should trigger an approval gate (NOT hard block)."""
+    """Return a human-readable label for a blocked destructive command."""
     # P3-5: consider precompiling union regex instead of list traversal
     for pattern, label in _DESTRUCTIVE_COMMAND_PATTERNS:
         if re.search(pattern, cmd, re.IGNORECASE):
@@ -406,36 +298,6 @@ def _check_system_destroy(cmd: str) -> str:
         if re.search(pattern, cmd_norm, re.IGNORECASE):
             return label
     return ""
-
-
-# ── Command-policy destructive-only block detection ────────────────────
-
-# Patterns that command_policy blocks for destructive-only reasons.
-# When command_policy returns not_allowed with one of these reasons,
-# we downgrade from hard_block to approval_required because the
-# command is destructive-but-approvable (not a true security threat).
-
-_CP_DESTRUCTIVE_ONLY_PATTERNS: list[str] = [
-    "destructive command pattern",
-    "powershell cmdlet 'rm'",
-    "powershell cmdlet 'remove-item'",
-    "powershell cmdlet 'rmdir'",
-    "powershell cmdlet 'del'",
-]
-
-
-def _is_cp_destructive_only(reason: str) -> bool:
-    """Returns True if command_policy blocked for destructive-only reasons.
-
-    These are downgraded from hard_block to approval_required by
-    the risk policy.  Credential access, path traversal, registry
-    abuse, and PowerShell injection NEVER match here.
-    """
-    reason_lower = reason.lower()
-    for pat in _CP_DESTRUCTIVE_ONLY_PATTERNS:
-        if pat in reason_lower:
-            return True
-    return False
 
 
 _CREDENTIAL_SCAN_RE = re.compile(

@@ -131,9 +131,8 @@ def _build_tool_description(tool: dict, metadata: dict, canonical_tool_id: str) 
     usage_hint = metadata.get("usage_hint") or tool.get("usage_hint")
     not_for = metadata.get("not_for") or tool.get("not_for")
     risk = tool.get("risk_level", "")
-    approval = tool.get("requires_approval", False)
     if risk and str(risk).lower() not in {"low", "safe"}:
-        parts.append(f"Risk: {risk}; approval_required={bool(approval)}.")
+        parts.append(f"Risk: {risk}.")
     boundary = _format_action_profiles(tool.get("action_profiles") or metadata.get("action_profiles"))
     if boundary:
         parts.append(f"Action boundaries: {boundary}")
@@ -306,7 +305,7 @@ def _soft_truncate(text: str, limit: int) -> str:
 
 
 def _format_action_profiles(action_profiles) -> str:
-    """Compact action-level risk/approval hints for LLM tool selection."""
+    """Compact action-level risk hints for LLM tool selection."""
     if not isinstance(action_profiles, list):
         return ""
     chunks: list[tuple[str, str]] = []
@@ -318,13 +317,7 @@ def _format_action_profiles(action_profiles) -> str:
             continue
         perm = str(item.get("permission_action") or "").strip()
         risk = str(item.get("risk_level") or "").strip()
-        approval = bool(item.get("requires_approval"))
-        # Keep read-only actions compact; spell out approval gates because
-        # those change the model's execution plan.
-        if approval:
-            suffix = f"{perm or 'write'}/{risk or 'high'}/approval_required"
-        else:
-            suffix = perm or risk or "read"
+        suffix = "/".join(part for part in (perm, risk if risk in {"high", "critical"} else "") if part) or risk or "read"
         chunks.append((action, suffix))
     if not chunks:
         return ""

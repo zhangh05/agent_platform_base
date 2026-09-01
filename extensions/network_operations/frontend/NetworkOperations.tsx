@@ -250,7 +250,7 @@ export default function NetworkOperations() {
         <fieldset><legend>设备连接</legend>{connections.filter((connection) => connection.credential_configured && skillForm.device_ids.includes(connection.device_id)).map((connection) => <label className="check" key={connection.connection_id}><input type="checkbox" checked={skillForm.connection_ids.includes(connection.connection_id)} onChange={(event) => setSkillForm({ ...skillForm, connection_ids: event.target.checked ? [...skillForm.connection_ids, connection.connection_id] : skillForm.connection_ids.filter((id) => id !== connection.connection_id) })} />{byDevice.get(connection.device_id)?.name} · {connection.protocol.toUpperCase()}:{connection.port} · {connection.verified ? "最近连接成功" : "调用时主动连接"}</label>)}</fieldset>
         <fieldset className="full-field"><legend>允许的能力</legend>{toolOptions.map((tool) => <label className="check capability-check" key={tool.id}><input type="checkbox" checked={skillForm.allowed_tool_ids.includes(tool.id)} onChange={(event) => setSkillForm({ ...skillForm, allowed_tool_ids: event.target.checked ? [...skillForm.allowed_tool_ids, tool.id] : skillForm.allowed_tool_ids.filter((id) => id !== tool.id) })} /><span><b>{tool.label}</b><small>{tool.description}</small></span></label>)}</fieldset>
         <fieldset className="full-field write-capability"><legend>配置权限</legend>
-          <label className="check capability-check"><input type="checkbox" checked={skillForm.capabilities.includes("configuration_write")} onChange={(event) => setSkillForm({ ...skillForm, capabilities: event.target.checked ? ["configuration_write"] : [] })} /><span><b>允许配置写入</b><small>允许 LLM 自主生成配置命令。仅限所选设备和连接，每批配置执行前需审批；失败不自动重试。</small></span></label>
+          <label className="check capability-check"><input type="checkbox" checked={skillForm.capabilities.includes("configuration_write")} onChange={(event) => setSkillForm({ ...skillForm, capabilities: event.target.checked ? ["configuration_write"] : [] })} /><span><b>允许配置写入</b><small>允许 LLM 自主生成配置命令，仅限所选设备和连接；失败不自动重试。</small></span></label>
           <p>默认只读。开启不会立即连接或修改设备，也不会自动保存配置、确认交互或重启。</p>
         </fieldset>
         <label className="full-field">使用说明<textarea value={skillForm.instructions} onChange={(event) => setSkillForm({ ...skillForm, instructions: event.target.value })} placeholder="描述目标、证据要求和操作边界；模型自行决定工具顺序与并行关系。" /></label>
@@ -326,7 +326,7 @@ export default function NetworkOperations() {
             <dl className="skill-scope">
               <div><dt>设备</dt><dd>{skillDevices.length ? skillDevices.join("、") : "无可用设备"}</dd></div>
               <div><dt>连接</dt><dd>{skillConnections.length ? skillConnections.join("、") : "无可用连接"}</dd></div>
-              <div><dt>能力</dt><dd>{skill.allowed_tool_ids.length} 项已授权 · <b className={skill.capabilities?.includes("configuration_write") ? "write-enabled" : ""}>{skill.capabilities?.includes("configuration_write") ? "可配置 · 需审批" : "只读"}</b></dd></div>
+              <div><dt>能力</dt><dd>{skill.allowed_tool_ids.length} 项已授权 · <b className={skill.capabilities?.includes("configuration_write") ? "write-enabled" : ""}>{skill.capabilities?.includes("configuration_write") ? "可配置" : "只读"}</b></dd></div>
             </dl>
           </article>;
         }) : <div className="empty">{skills.length ? "没有匹配的 Skill" : "尚未创建 Skill，选择设备并配置能力后发布到工作台"}</div>}</div>

@@ -206,7 +206,7 @@ select.input:focus-visible {
   border-radius: var(--r-4);
   box-shadow: none;
 }
-.job-card { margin: 0 8px 4px; background: transparent; }
+.job-card { width: calc(100% - 16px); margin: 0 8px 4px; background: transparent; }
 .job-card:hover { background: var(--console-surface); border-color: var(--console-border); }
 .job-card.selected { background: var(--console-action-soft); border-color: color-mix(in srgb, var(--console-action) 34%, var(--console-border)); }
 .job-card.selected::before { width: 2px; background: var(--console-action); }

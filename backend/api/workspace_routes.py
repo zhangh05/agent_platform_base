@@ -59,7 +59,7 @@ def _safe_run_trace_summary(run: dict, trace: dict | None) -> dict:
             timestamps.append(event_time)
 
         tool_id = _trace_event_tool_id(event)
-        if "tool" in event_type or "approval" in event_type or tool_id:
+        if "tool" in event_type or tool_id:
             if tool_id:
                 tool_ids.add(tool_id)
             else:

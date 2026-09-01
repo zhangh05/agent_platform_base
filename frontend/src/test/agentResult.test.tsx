@@ -7,7 +7,6 @@ import { RuntimeEventTimeline } from "../components/RuntimeEventTimeline";
 import { installMockApi, resetMocks } from "./mockServer";
 import type { AgentResult } from "../types";
 import type { ChatMsg } from "../stores/workbench";
-import { ResultInline } from "../pages/AgentWorkbench/components/ResultInline";
 
 const sampleResult: AgentResult = {
   ok: true,
@@ -42,23 +41,6 @@ const failedResult: AgentResult = {
   tool_calls: [], warnings: ["Retry limit exceeded"], errors: ["SSH connection refused: port 22"],
   metadata: { workspace_id: "default" },
 };
-
-it("does not label an approval pause as task completion", () => {
-  render(<ResultInline result={{ ...sampleResult, metadata: { ssot_runtime: { approval_required: true } } }} fallbackText="等待审批" />);
-  expect(screen.getByText("等待审批")).toBeInTheDocument();
-  expect(screen.queryByText("本轮完成")).not.toBeInTheDocument();
-});
-
-it("does not present expired approval as a successful execution", () => {
-  render(<ResultInline result={{
-    ...sampleResult,
-    ok: false,
-    metadata: { approval_continuation: { status: "expired" } },
-  }} fallbackText="审批已过期" />);
-  expect(screen.getByText("审批已过期")).toBeInTheDocument();
-  expect(screen.getByText("待审批操作未执行")).toBeInTheDocument();
-  expect(screen.queryByText("1 项执行成功")).not.toBeInTheDocument();
-});
 
 function messagesFor(result: AgentResult): ChatMsg[] {
   const runId = result.turn_id || "run-test";

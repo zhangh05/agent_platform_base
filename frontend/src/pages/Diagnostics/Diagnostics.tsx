@@ -9,9 +9,9 @@ import { useEffect, useRef, useState, useCallback, useMemo, useSyncExternalStore
 import { Link } from "../../router";
 import {
   runtimeApi, agentUsageApi, retentionApi, archiveApi, contextApi, promptsApi,
-  approvalContinuationsApi, operationLedgerApi,
+  operationLedgerApi,
 } from "../../api";
-import type { ApprovalContinuationSummary, OperationLedgerSummary } from "../../api";
+import type { OperationLedgerSummary } from "../../api";
 import { useSessionStore } from "../../stores/session";
 import { LoadingState } from "../../components/common";
 import { IconRefresh } from "../../components/Icon";
@@ -70,10 +70,6 @@ type PromptItem = {
 };
 
 type PolicyData = { policy?: Record<string, unknown> };
-type ContinuationData = {
-  continuations: ApprovalContinuationSummary[];
-  counts: Record<string, number>;
-};
 
 type OperationLedgerData = {
   operations: OperationLedgerSummary[];
@@ -90,7 +86,6 @@ type DiagnosticsCache = {
   prompts: PromptItem[] | null;
   retention: PolicyData;
   archive: PolicyData;
-  continuations: ContinuationData | null;
   operations: OperationLedgerData | null;
 };
 
@@ -212,11 +207,9 @@ export function Diagnostics() {
   const [prompts, setPrompts] = useState<PromptItem[] | null>(cache?.prompts ?? null);
   const [retention, setRetention] = useState<PolicyData>(cache?.retention ?? {});
   const [archive, setArchive] = useState<PolicyData>(cache?.archive ?? {});
-  const [continuations, setContinuations] = useState<ContinuationData | null>(cache?.continuations ?? null);
   const [operations, setOperations] = useState<OperationLedgerData | null>(cache?.operations ?? null);
   const [operationLedgerError, setOperationLedgerError] = useState(false);
   const [lastCheck, setLastCheck] = useState<string | null>(cache?.ts ?? null);
-  const [closingContinuation, setClosingContinuation] = useState("");
   const [resolvingOperation, setResolvingOperation] = useState("");
 
   const [detecting, setDetecting] = useState(false);
@@ -236,7 +229,7 @@ export function Diagnostics() {
       return;
     }
     setOperationLedgerError(false);
-    const [rh, sc, us, cs, pr, rp, ap, ac, ol] = await Promise.allSettled([
+    const [rh, sc, us, cs, pr, rp, ap, ol] = await Promise.allSettled([
       runtimeApi.health(wsId, ctrl.signal),
       runtimeApi.selfcheck(wsId, ctrl.signal),
       agentUsageApi.get(wsId, ctrl.signal),
@@ -244,14 +237,12 @@ export function Diagnostics() {
       promptsApi.list(ctrl.signal),
       retentionApi.preview(wsId, ctrl.signal),
       archiveApi.preview(wsId, ctrl.signal),
-      approvalContinuationsApi.list(wsId, ctrl.signal),
       operationLedgerApi.list(wsId, ctrl.signal),
     ]);
     if (!mountedRef.current || seq !== seqRef.current) return;
 
     let newHealth = health, newSelfcheck = selfcheck, newUsage = usage;
     let newContextOk = contextOk, newPrompts = prompts, newRetention = retention, newArchive = archive;
-    let newContinuations = continuations;
     let newOperations = operations;
 
     if (rh.status === "fulfilled") { newHealth = rh.value as HealthData; setHealth(newHealth); }
@@ -272,13 +263,6 @@ export function Diagnostics() {
     if (pr.status === "fulfilled") { newPrompts = ((pr.value).prompts ?? []) as PromptItem[]; setPrompts(newPrompts); }
     if (rp.status === "fulfilled") { newRetention = rp.value as PolicyData; setRetention(newRetention); }
     if (ap.status === "fulfilled") { newArchive = ap.value as PolicyData; setArchive(newArchive); }
-    if (ac.status === "fulfilled") {
-      newContinuations = {
-        continuations: ac.value.continuations ?? [],
-        counts: ac.value.counts ?? {},
-      };
-      setContinuations(newContinuations);
-    }
     if (ol.status === "fulfilled") {
       newOperations = {
         operations: ol.value.operations ?? [],
@@ -294,13 +278,12 @@ export function Diagnostics() {
       health: newHealth, selfcheck: newSelfcheck, usage: newUsage,
       contextOk: newContextOk, prompts: newPrompts,
       retention: newRetention, archive: newArchive,
-      continuations: newContinuations,
       operations: newOperations,
     });
     setLastCheck(new Date().toISOString());
 
     setDetecting(false);
-  }, [currentWorkspaceId, health, selfcheck, usage, contextOk, prompts, retention, archive, continuations, operations]);
+  }, [currentWorkspaceId, health, selfcheck, usage, contextOk, prompts, retention, archive, operations]);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -314,26 +297,10 @@ export function Diagnostics() {
   const runtimeOk = (hs.ok ?? 0) > 0 && (hs.warning ?? 0) === 0 && (hs.error ?? 0) === 0;
   const selfcheckIssueCount = selfcheck?.issues?.length ?? 0;
   const selfcheckOk = !selfcheck || (selfcheck.status === "healthy" && selfcheckIssueCount === 0);
-  const continuationOk = (continuations?.counts.stalled ?? 0) === 0;
   const operationUnknownCount = operations?.counts.unknown ?? 0;
   const operationRunningCount = operations?.counts.running ?? 0;
-  const allOk = runtimeOk && selfcheckOk && continuationOk && operationUnknownCount === 0 && operationRunningCount === 0;
+  const allOk = runtimeOk && selfcheckOk && operationUnknownCount === 0 && operationRunningCount === 0;
   const hasData = health !== null || selfcheck !== null || usage !== null;
-
-  const closeStalledContinuation = useCallback(async (continuationId: string) => {
-    if (!currentWorkspaceId || closingContinuation) return;
-    const reason = window.prompt("填写人工核对结果。该操作只关闭异常记录，不会重新执行工具。")?.trim();
-    if (!reason) return;
-    if (!window.confirm("确认已核对外部执行结果，并将该异常任务标记为人工处置完成？")) return;
-    setClosingContinuation(continuationId);
-    try {
-      await approvalContinuationsApi.closeStalled(currentWorkspaceId, continuationId, reason);
-      const refreshed = await approvalContinuationsApi.list(currentWorkspaceId);
-      setContinuations({ continuations: refreshed.continuations, counts: refreshed.counts });
-    } finally {
-      setClosingContinuation("");
-    }
-  }, [currentWorkspaceId, closingContinuation]);
 
   const resolveUnknownOperation = useCallback(async (
     operationId: string,
@@ -578,37 +545,6 @@ export function Diagnostics() {
           </div>
 
           <div>
-            <Section title="审批续跑状态" badge={continuations ? (
-              <span className={`diag-section-badge ${continuationOk ? "diag-text-ok" : "diag-text-warn"}`}>
-                {continuationOk ? "无异常" : `${continuations.counts.stalled ?? 0} 项待人工核对`}
-              </span>
-            ) : null}>
-              {continuations ? (
-                <div className="diag-continuation-panel">
-                  <div className="diag-continuation-summary">
-                    <Row label="等待审批" value={String(continuations.counts.pending ?? 0)} compact />
-                    <Row label="执行中" value={String(continuations.counts.running ?? 0)} compact />
-                    <Row label="失联待核对" value={String(continuations.counts.stalled ?? 0)} compact />
-                    <Row label="历史失败" value={String(continuations.counts.failed ?? 0)} compact />
-                  </div>
-                  {continuations.continuations.filter((item) => item.status === "stalled").map((item) => (
-                    <div className="diag-continuation-alert" key={item.continuation_id}>
-                      <div>
-                        <b>{item.continuation_id}</b>
-                        <span>会话 {item.session_id} · 心跳失联，执行结果未知，系统未自动重放</span>
-                      </div>
-                      <button
-                        className="btn sm"
-                        disabled={closingContinuation === item.continuation_id}
-                        onClick={() => { void closeStalledContinuation(item.continuation_id); }}
-                      >
-                        {closingContinuation === item.continuation_id ? "处理中…" : "标记已人工处置"}
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              ) : <Dim>管理员执行系统检测后可查看审批续跑状态</Dim>}
-            </Section>
             <Section title="写操作账本" badge={operations ? (
               <span className={`diag-section-badge ${operationUnknownCount + operationRunningCount === 0 ? "diag-text-ok" : "diag-text-warn"}`}>
                 {operationUnknownCount + operationRunningCount === 0 ? "无待核对项" : `${operationUnknownCount + operationRunningCount} 项未决操作`}

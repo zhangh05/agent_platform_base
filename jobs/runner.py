@@ -189,7 +189,6 @@ def _run_workflow(rec: JobRecord):
         rec.workspace_id,
         str(payload.get("workflow_id") or ""),
         payload.get("inputs") or {},
-        approvals=payload.get("approvals") or {},
         job_id=rec.job_id,
     )
     update_job(rec.workspace_id, rec.job_id, {"result_summary": {

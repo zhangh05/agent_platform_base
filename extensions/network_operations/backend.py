@@ -238,7 +238,7 @@ def skills_read(invocation):
 
 
 def device_manage(invocation):
-    """Probe, read, or execute an approved configuration batch on a network device.
+    """Probe, read, or execute a Skill-authorized configuration batch on a network device.
 
     Only a server-registered, Skill-authorized connection is accepted. Each
     call connects on demand; raw hosts and credentials are never accepted
@@ -525,7 +525,7 @@ def register():
             {
                 "tool_id": "network.operations.device.manage",
                 "name": "网络设备命令执行",
-                "description": "自主选择已授权 connection_id 和明确 commands，用 read 读取，不补默认命令。probe 仅测试连通性；collect + facts 是可选预制采集。仅 Skill 启用 configuration_write 时可用 configure 写入：模型提供全部命令和模式切换，每批需审批，独立会话，遇错停止，禁止自动重试，写后需读取验证。不自动保存或确认交互。只读会话按任务复用，过期按需重连，同连接串行、不同连接并行。运行时处理分页、提示符和编码，返回逐命令回显、完整性和错误，单台失败不阻断其他设备。",
+                "description": "自主选择已授权 connection_id 和明确 commands，用 read 读取，不补默认命令。probe 仅测试连通性；collect + facts 是可选预制采集。仅 Skill 启用 configuration_write 时可用 configure 写入：模型提供全部命令和模式切换，独立会话，遇错停止，禁止自动重试，写后需读取验证。不自动保存或确认交互。只读会话按任务复用，过期按需重连，同连接串行、不同连接并行。运行时处理分页、提示符和编码，返回逐命令回显、完整性和错误，单台失败不阻断其他设备。",
                 "category": "ops",
                 "risk_level": "medium",
                 "permission_action": "network",
@@ -533,9 +533,8 @@ def register():
                     "probe": {"action_class": "network", "risk_level": "medium", "side_effects": "external_read", "idempotency": "safe_to_retry", "read_only": True},
                     "read": {"action_class": "network", "risk_level": "medium", "side_effects": "external_read", "idempotency": "safe_to_retry", "read_only": True},
                     "collect": {"action_class": "network", "risk_level": "medium", "side_effects": "external_read", "idempotency": "safe_to_retry", "read_only": True},
-                    "configure": {"action_class": "write", "risk_level": "high", "requires_approval": True, "side_effects": "external_write", "idempotency": "unsafe_to_retry", "read_only": False},
+                    "configure": {"action_class": "write", "risk_level": "high", "side_effects": "external_write", "idempotency": "unsafe_to_retry", "read_only": False},
                 },
-                "approval_actions": ["configure"],
                 "bindable_inputs": {"probe": ["connection_id"], "read": ["connection_id"], "collect": ["connection_id"], "configure": ["connection_id"]},
                 "referenceable_outputs": {
                     "probe": ["connection_ok", "connection", "status", "error", "stages", "fingerprint"],

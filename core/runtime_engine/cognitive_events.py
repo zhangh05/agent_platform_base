@@ -44,8 +44,6 @@ def build_cognitive_event(event_type: str, *, turn_id: str, trace_id: str, state
                 safe[key] = max(0, int(source[key]))
             except (TypeError, ValueError):
                 pass
-    if "requires_approval" in source:
-        safe["requires_approval"] = bool(source["requires_approval"])
     return {
         "event_id": f"cog-{uuid4().hex}", "type": event_type,
         "turn_id": _text(turn_id, 128), "trace_id": _text(trace_id, 128),

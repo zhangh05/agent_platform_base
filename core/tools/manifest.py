@@ -35,7 +35,6 @@ class CapabilityManifest:
     # ── Risk & safety ──
     action_class: ActionClass = "read"
     risk_level: RiskLevel = "low"
-    requires_approval: bool = False
     destructive: bool = False
     side_effects: SideEffect = "none"
 
@@ -64,7 +63,6 @@ class CapabilityManifest:
     output_schema: dict = field(default_factory=dict)
 
     # ── Display ──
-    approval_reason_template: str = ""
 
     def validate(self) -> list[str]:
         """Return list of validation errors. Empty = valid."""
@@ -72,9 +70,5 @@ class CapabilityManifest:
         if not self.tool_id: errors.append("tool_id required")
         if not self.display_name: errors.append("display_name required")
         if not self.category: errors.append("category required")
-        if self.destructive and not self.requires_approval:
-            errors.append(f"{self.tool_id}: destructive tool must require approval")
-        if self.risk_level in ("high", "critical") and not self.requires_approval:
-            errors.append(f"{self.tool_id}: high/critical risk must require approval")
         if self.timeout_seconds < 1: errors.append("timeout_seconds must be >= 1")
         return errors

@@ -107,7 +107,7 @@ def register_runtime_routes(app):
         v3.0 contract: only canonical tool_ids are accepted. The
         response envelope is canonical-only:
           ok, dry_run, tool_id, canonical_tool_id, governance_status,
-          risk_level, requires_approval, params, would_do, note
+          risk_level, params, would_do, note
 
         Unknown tool_ids return:
           ok=false, error="unknown_tool_id",
@@ -168,7 +168,6 @@ def register_runtime_routes(app):
             "canonical_tool_id": requested_tool_id,
             "governance_status": gov.status if gov else "active",
             "risk_level": policy_decision.risk_level or spec.risk_level,
-            "requires_approval": bool(policy_decision.requires_approval),
             "policy_decision": policy_decision.__dict__,
             "params": list(arguments.keys()),
             "would_do": f"Would invoke {requested_tool_id} with {len(arguments)} argument(s)",
@@ -194,22 +193,18 @@ def register_runtime_routes(app):
             "tools": [],
             "forbidden_count": 0,
             "high_risk_count": 0,
-            "approval_required_count": 0,
         }
         for t in tools:
             perm = {
                 "tool_id": t["tool_id"],
                 "enabled": t.get("enabled", True),
                 "risk_level": t.get("risk_level", "low"),
-                "requires_approval": t.get("requires_approval", False),
             }
             permissions["tools"].append(perm)
             if t.get("risk_level") == "forbidden":
                 permissions["forbidden_count"] += 1
             if t.get("risk_level") == "high":
                 permissions["high_risk_count"] += 1
-            if t.get("requires_approval"):
-                permissions["approval_required_count"] += 1
 
         return jsonify(permissions)
 

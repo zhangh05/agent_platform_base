@@ -55,7 +55,6 @@ class SSOTRuntimeEngine:
         tool_registry: dict[str, dict[str, Any]] | None = None,
         tool_runtime: ToolRuntime | None = None,
         emitter: Any | None = None,
-        approval_handler: Callable[[StatelessContext, dict[str, Any]], Any] | None = None,
         heartbeat_interval_s: float = 1.0,
     ):
         self._config = config or SSOTRuntimeConfig()
@@ -69,7 +68,6 @@ class SSOTRuntimeEngine:
         # of staring at "思考中…" for 12 seconds on cold-start.
         # Falls back to a no-op so the engine still works in offline tests.
         self._emitter = emitter
-        self._approval_handler = approval_handler
         self._heartbeat_interval_s = max(0.5, float(heartbeat_interval_s))
         self._heartbeat_task: asyncio.Task | None = None
 
@@ -188,8 +186,8 @@ class SSOTRuntimeEngine:
 
         Args:
             extras: caller-supplied metadata map that lands in ``ctx.extras``.
-                Approval decisions are bound internally to exact tool-call
-                fingerprints and cannot be supplied by callers.
+                Product authorization is resolved by the owning execution
+                service and cannot be widened by caller metadata.
         """
         t_total = time.monotonic()
         metrics = MetricsCollector()
@@ -225,7 +223,7 @@ class SSOTRuntimeEngine:
             )
             return self._build_result(
                 fallback_ctx, {}, "运行时异常，当前请求未完成。请查看系统诊断或稍后重试。", errors, metrics, budget, t_total,
-                "critical", False,
+                "critical",
             )
 
     async def _run_internal(
@@ -301,13 +299,12 @@ class SSOTRuntimeEngine:
                 return self._build_result(
                     ctx, node_results, final_response,
                     errors, metrics, budget, t_total,
-                    risk_level="high", approval_required=False,
+                    risk_level="high",
                     extra={"contract_report": contract_report},
                 )
             ctx.extras["contract_report"] = contract_report
 
             risk_level = "low"
-            approval_required = False
 
             conv_history_block = ctx.extras.get("conversation_history_block") or ""
             task_intent = detect_task_intent(user_input)
@@ -327,7 +324,6 @@ class SSOTRuntimeEngine:
                 self._tool_runtime,
                 llm_invoke=self._llm_invoke,
                 emitter=self._emitter,
-                approval_handler=self._approval_handler,
             )
             loop_result = await query_loop.run(ctx, budget, metrics)
 
@@ -343,9 +339,7 @@ class SSOTRuntimeEngine:
 
             final_response = loop_result.final_response
             risk_level = loop_result.risk_level or "low"
-            approval_required = bool(loop_result.approval_required)
             if loop_result.error and loop_result.error not in {
-                    "approval_required",
                     "duplicate_successful_tool_call",
                     "duplicate_tool_call",
                     "unknown_outcome",
@@ -379,7 +373,7 @@ class SSOTRuntimeEngine:
             return self._build_result(
                     ctx, node_results, final_response,
                     errors, metrics, budget, t_total,
-                    risk_level, approval_required,
+                    risk_level,
                     extra={
                         "query_loop": True,
                         "iterations": loop_result.iterations,
@@ -388,9 +382,6 @@ class SSOTRuntimeEngine:
                         "used_tools": loop_result.total_tool_calls > 0,
                         "conversation_ref": bool(conv_history_block),
                         "conversation_history_used": bool(conv_history_block),
-                        "approval_required": approval_required,
-                        "approval_nodes": loop_result.approval_nodes,
-                        "approval_details": loop_result.approval_details,
                         "hard_block": bool(loop_result.hard_block),
                         **loop_result.metrics,
                     },
@@ -413,7 +404,6 @@ class SSOTRuntimeEngine:
         budget: BudgetController,
         t_total: float,
         risk_level: str,
-        approval_required: bool,
         extra: dict[str, Any] | None = None,
     ) -> SSOTRuntimeResult:
         total_ms = (time.monotonic() - t_total) * 1000
@@ -421,7 +411,6 @@ class SSOTRuntimeEngine:
         self._audit.create_record(
             ctx, node_results,
             risk_level=risk_level,
-            approval_required=approval_required,
             llm_call_count=budget.llm_calls,
             duration_ms=total_ms,
         )
@@ -433,12 +422,7 @@ class SSOTRuntimeEngine:
             "planner_skipped": False,
             "used_tools": len(node_results) > 0,
             "tool_calls": len(node_results),
-            # v3.12: approval tracking
-            "approval_required": False,
             "hard_block": False,
-            "approval_reason": "",
-            "approval_nodes": [],
-            "approval_details": [],
             "command_summary": [],
             "tool_summary": [],
             # Server-generated cognitive projection; client metadata is never trusted here.
@@ -487,7 +471,6 @@ class SSOTRuntimeEngine:
                 "node_failure_count": sum(1 for r in node_results.values() if not r.success),
                 "all_nodes_success": all(r.success for r in node_results.values()) if node_results else True,
                 "risk_level": risk_level,
-                "approval_required": approval_required,
                 "llm_calls": budget.llm_calls,
                 "structured_errors": [e.to_dict() for e in errors],
                 "metrics": metrics.to_dict(),
@@ -515,8 +498,6 @@ class SSOTRuntimeEngine:
                 "tool_recovery_events": ctx.extras.get("tool_recovery_events", []),
                 "tracking_summary": ctx.extras.get("tracking_summary", {}),
                 "tracking_events": ctx.extras.get("tracking_events", []),
-                "approval_events": ctx.extras.get("approval_events", []),
-                "approval_resolved": ctx.extras.get("approval_resolved", False),
                 "output_truncated": bool(
                     base_meta.get("output_truncated") or ctx.extras.get("output_truncated", False)
                 ),

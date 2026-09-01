@@ -25,9 +25,6 @@ class TrajectoryMetrics:
     tool_call_count: int = 0
     tool_failure_count: int = 0
     retry_count: int = 0
-    approval_count: int = 0
-    approval_reject_count: int = 0
-    approval_edit_count: int = 0
     checkpoint_count: int = 0
     subagent_count: int = 0
     artifact_count: int = 0
@@ -56,7 +53,6 @@ class TrajectoryRecord:
     plan_steps: list = field(default_factory=list)
     runtime_events: list = field(default_factory=list)
     tool_calls: list = field(default_factory=list)
-    approvals: list = field(default_factory=list)
     checkpoints: list = field(default_factory=list)
     retries: list = field(default_factory=list)
     cancellations: list = field(default_factory=list)
@@ -127,10 +123,6 @@ def build_trajectory(task_id: str, ws_id: str) -> Optional[TrajectoryRecord]:
         t = e.get("type","")
         if t == "tool_call_failed": m.tool_failure_count += 1
         if "retry" in t: m.retry_count += 1
-        if "approval" in t:
-            m.approval_count += 1
-            if "reject" in t: m.approval_reject_count += 1
-            if "edit" in t: m.approval_edit_count += 1
         if "subagent" in t: m.subagent_count += 1
         if "cancelled" in t: traj.cancellations.append(e)
         if "conflict" in t: m.memory_conflict_count += 1
@@ -181,7 +173,6 @@ def evaluate_trajectory(traj: dict) -> dict:
     if m.get("unverified_completion"): issues.append({"rule": "unverified_completion", "detail": "Task marked succeeded but no verification"})
     if m.get("tool_failure_count", 0) > 0: issues.append({"rule": "tool_failures", "detail": f"{m['tool_failure_count']} tool(s) failed"})
     if m.get("retry_count", 0) > 2: issues.append({"rule": "retry_loop", "detail": f"{m['retry_count']} retries"})
-    if m.get("approval_reject_count", 0) > 0: issues.append({"rule": "approval_friction", "detail": f"{m['approval_reject_count']} rejections"})
     if m.get("memory_conflict_count", 0) > 0: issues.append({"rule": "memory_conflict", "detail": f"{m['memory_conflict_count']} conflicts"})
     if m.get("workspace_boundary_violation_count", 0) > 0: issues.append({"rule": "boundary_violation", "detail": f"{m['workspace_boundary_violation_count']} violations"})
     if m.get("duration_ms", 0) > 300_000: issues.append({"rule": "long_running", "detail": f"Duration {m['duration_ms']}ms > 300s"})

@@ -63,7 +63,7 @@ describe("authenticated SSE transport", () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 401 }));
     vi.stubGlobal("fetch", fetchMock);
 
-    const connection = openSSE("/agent/approvals/sse?workspace_id=default");
+    const connection = openSSE("/agent/sse/stream/session-1?workspace_id=default");
     const error = new Promise<Event>((resolve) => { connection.onerror = resolve; });
     await error;
     await vi.advanceTimersByTimeAsync(60_000);

@@ -4,7 +4,7 @@
   "version": "2.2.0",
   "api_version": "1",
   "min_platform_version": "1.1.0",
-  "description": "以授权设备连接为基础，提供自主 CLI、只读巡检、Skill 多能力编排及显式授权审批的配置写入。",
+  "description": "以授权设备连接为基础，提供自主 CLI、只读巡检、Skill 多能力编排及受 Skill 运行配置约束的配置写入。",
   "capabilities": ["network_devices", "network_connections", "network_skills", "network_cli_runtime", "semantic_collection", "network_inspection", "configuration_write"],
   "tools": [
     "network.operations.devices_read",

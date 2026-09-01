@@ -53,4 +53,4 @@ lzcore/
 
 ## Removed Concepts
 
-The current tree does not use tool aliases, compatibility shims, generated module capability registries, or multiple approval stores. Do not reintroduce them.
+The current tree does not use tool aliases, compatibility shims, generated module capability registries, or an interactive approval subsystem. Do not reintroduce them.

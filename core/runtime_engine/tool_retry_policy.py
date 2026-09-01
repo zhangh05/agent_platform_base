@@ -9,7 +9,7 @@ Hard rules (security-first, conservative):
      against silently retrying tools that were added without explicit
      contract metadata.
   2. NEVER retry on policy / safety errors (FORBIDDEN_COMMAND,
-     POLICY_BLOCKED, APPROVAL_REQUIRED, CRITICAL_RISK,
+     POLICY_BLOCKED, CRITICAL_RISK,
      PATH_TRAVERSAL, CREDENTIAL_ACCESS, …). These errors mean the
      call should not run again unchanged.
   3. NEVER retry on side_effect ∈ {write_file, mutate_local,
@@ -81,7 +81,6 @@ FORBIDDEN_RETRY_ERRORS: frozenset[str] = frozenset({
     "TOOL_TIMEOUT_UNCERTAIN",
     "FORBIDDEN_COMMAND",
     "POLICY_BLOCKED",
-    "APPROVAL_REQUIRED",
     "CRITICAL_RISK",
     "PATH_TRAVERSAL",
     "SYSTEM_DIRECTORY_WRITE",
@@ -90,7 +89,6 @@ FORBIDDEN_RETRY_ERRORS: frozenset[str] = frozenset({
     "FORBIDDEN_OPERATION",
     "DANGEROUS_OPERATION",
     "BUDGET_EXCEEDED",
-    "USER_DENIED_APPROVAL",
     "TOOL_NOT_ALLOWED",
     "CALLER_NOT_ALLOWED",
     "ARGS_INVALID",

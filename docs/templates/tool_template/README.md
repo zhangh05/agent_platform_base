@@ -17,7 +17,6 @@ CapabilityManifest(
     tool_id="text.analyze",
     action_class="read",
     risk_level="low",
-    requires_approval=False,
     destructive=False,
     side_effects=False,
     allowed_callers=("turn_runner", "rest_api", "job_runner", "subagent"),
@@ -27,12 +26,12 @@ CapabilityManifest(
 
 Risk levels:
 
-| Risk | Meaning | Approval |
+| Risk | Meaning | Runtime handling |
 | --- | --- | --- |
-| `low` | Read-only local analysis | No |
-| `medium` | Writes, external network, or state changes without destructive intent | Usually no |
-| `high` | Destructive or sensitive mutation such as delete/remove/reset/connect with risk | Yes |
-| `critical` | Explicitly dangerous operation | Yes or blocked |
+| `low` | Read-only local analysis | Execute within the caller and workspace scope |
+| `medium` | Writes, external network, or state changes without destructive intent | Execute only when the product owner authorizes the action |
+| `high` | Destructive or sensitive mutation such as delete/remove/reset/connect with risk | Require an explicit product authorization contract or reject |
+| `critical` | Explicitly dangerous operation | Reject |
 
 Safety policy should block dangerous arguments such as destructive shell commands, not ordinary tool use.
 

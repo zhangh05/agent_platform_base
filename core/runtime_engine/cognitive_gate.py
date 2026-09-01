@@ -4,7 +4,6 @@ from typing import Any, Iterable, Mapping
 
 STOP_COMPLETED = "stop_completed"
 STOP_NEEDS_USER_INPUT = "stop_needs_user_input"
-STOP_WAITING_APPROVAL = "stop_waiting_approval"
 STOP_UNKNOWN_OUTCOME = "stop_unknown_outcome"
 STOP_FAILED = "stop_failed"
 CONTINUE_REPLAN = "continue_replan"
@@ -27,14 +26,12 @@ class CognitiveDecision:
 def decide_next_action(
     *, tool_results: Iterable[Any], execution_outcome: str,
     goal_assertions: Mapping[str, Any] | None,
-    pending_approval: bool = False, terminal_error: str = "",
+    terminal_error: str = "",
     blocking_unknowns: int = 0,
 ) -> CognitiveDecision:
     """Choose a safe next state without allowing a model to bypass policy."""
     results = list(tool_results or [])
     assertions = dict(goal_assertions or {})
-    if pending_approval:
-        return CognitiveDecision(STOP_WAITING_APPROVAL, ("pending_approval",), "存在待审批动作，等待批准后再继续。", True)
     if str(execution_outcome or "").lower() == "unknown" or any(
         bool(getattr(item, "execution_may_continue", False)) for item in results
     ):

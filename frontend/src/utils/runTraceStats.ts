@@ -32,7 +32,7 @@ function eventTimestamp(ev: RuntimeEvent): string {
 
 export function isTraceToolEvent(ev: RuntimeEvent): boolean {
   const type = traceEventType(ev);
-  return type.includes("tool") || type.includes("approval") || !!eventToolId(ev);
+  return type.includes("tool") || !!eventToolId(ev);
 }
 
 export function isTraceWarningEvent(ev: RuntimeEvent): boolean {

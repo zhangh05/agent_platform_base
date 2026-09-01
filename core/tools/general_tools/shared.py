@@ -239,7 +239,7 @@ def _run_shell(command: str, cwd: str = None, shell: str = "/bin/bash",
         sub_env["PATH"] = _python_bin + _os.pathsep + existing_path
     # Apply caller-provided overrides on top (caller must not bypass
     # the allowlist for sensitive keys — but caller sanitization at
-    # handle_command_approved_exec already strips *_BLOCKED_ENV_KEYS).
+    # handle_command_exec already strips *_BLOCKED_ENV_KEYS).
     if env:
         sub_env.update(env)
 

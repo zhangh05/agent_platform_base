@@ -41,7 +41,6 @@ def test_observability_profile_has_alerts_dashboard_and_runbook():
     assert {
         "LZCoreTargetDown",
         "LZCoreHighHttp5xxRate",
-        "LZCoreApprovalWaitingTooLong",
         "LZCoreToolFailures",
         "LZCoreJobFailures",
     } <= names

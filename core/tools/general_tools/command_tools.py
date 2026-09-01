@@ -73,12 +73,12 @@ def _build_safe_shell_env() -> dict:
         _PS_SAFE_ENV_ALLOWLIST if os.name == "nt" else _LINUX_SAFE_ENV_ALLOWLIST
     )
 
-def handle_command_approved_exec(inv: ToolInvocation) -> dict:
+def handle_command_exec(inv: ToolInvocation) -> dict:
     """Run a local shell command through the native platform shell.
 
     Linux/macOS use ``/bin/bash -c``; Windows uses ``cmd.exe /d /s /c``.
     Safety limits: dangerous command detection, configurable timeout, output truncation.
-    Base risk is medium; destructive patterns escalate to high-risk approval.
+    Base risk is medium; destructive patterns are blocked.
     """
     # Only accept `command`; alternate identifiers are never executed as shell.
     command = (inv.arguments.get("command") or "").strip()
@@ -107,7 +107,7 @@ def handle_command_approved_exec(inv: ToolInvocation) -> dict:
     else:
         # Commands may only use a directory below the caller's workspace.
         # An arbitrary absolute cwd would bypass the storage boundary even
-        # though the command itself is approval-gated.
+        # even though command policy is evaluated separately.
         workspace_id = _caller_workspace(inv)
         from core.tools.general_tools.shared import _workspace_path
         try:
@@ -148,12 +148,12 @@ def handle_command_approved_exec(inv: ToolInvocation) -> dict:
         result["description"] = description
     return _result(inv, result.pop("ok", False), result)
 
-def handle_powershell_approved_script(inv: ToolInvocation) -> dict:
+def handle_powershell_script(inv: ToolInvocation) -> dict:
     """PowerShell script execution on Windows.
 
     Accepts a PowerShell command string, executes via powershell -Command.
     Safety limits: dangerous command detection, 15s timeout, output truncation.
-    Base risk is medium; destructive patterns escalate to high-risk approval.
+    Base risk is medium; destructive patterns are blocked.
 
     Security: subprocess uses a minimal safe environment (mirrors
     python_exec's P0-3 model) — no API keys, tokens, or proxy config.
@@ -236,7 +236,7 @@ def handle_slash_run(inv: ToolInvocation) -> dict:
 def handle_python_exec(inv: ToolInvocation) -> dict:
     """Execute Python data processing through the policy-selected runner.
 
-    Medium-risk execution. Destructive operations still require approval; ordinary Python processing does not. Code is parsed with AST to reject forbidden imports,
+    Medium-risk execution. Destructive operations are blocked. Code is parsed with AST to reject forbidden imports,
     builtins, and dunder access before execution. Runs in a subprocess with
     timeout. Best-effort local execution is explicitly labeled and is not a sandbox.
     """
@@ -266,4 +266,4 @@ def handle_python_exec(inv: ToolInvocation) -> dict:
     except Exception as e:
         return _error_inv(inv, str(e)[:200])
 
-__all__ = ['handle_command_approved_exec', 'handle_powershell_approved_script', 'handle_slash_run', 'handle_python_exec']
+__all__ = ['handle_command_exec', 'handle_powershell_script', 'handle_slash_run', 'handle_python_exec']

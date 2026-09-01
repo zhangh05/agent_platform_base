@@ -72,18 +72,16 @@ def test_user_creation_eagerly_provisions_immutable_root_and_delete_removes_it(m
     assert not root.exists()
 
 
-def test_workspace_objects_and_approval_audit_follow_user_workspace_root(monkeypatch, tmp_path):
+def test_workspace_objects_follow_user_workspace_root(monkeypatch, tmp_path):
     monkeypatch.setenv("LZCORE_WORKSPACE_ROOT", str(tmp_path))
     upsert_user("alice", "password", "viewer", "org", ["team"])
     upsert_user("bob", "password", "viewer", "org_b", ["team_b"])
-    from storage.approval_record_store import approval_log_path
     from storage.object_store import get_object_store
 
     with storage_principal("alice"):
         objects = get_object_store("team")
         objects.put("uploads/example.bin", b"alice")
         assert objects.root == workspace_root("team") / "objects"
-        assert approval_log_path("team") == workspace_root("team") / "approvals" / "tool_approvals.jsonl"
 
     with storage_principal("bob"):
         assert get_object_store("team_b").get("uploads/example.bin") is None

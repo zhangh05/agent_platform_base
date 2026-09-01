@@ -14,7 +14,7 @@ import { APP_EVENTS } from "../../utils/appEvents";
 import { useToastStore } from "../../stores/toast";
 import { Badge, StatusDot, EmptyState, LoadingState, CodeBlock } from "../../components/common";
 import { PageHeader, DetailPanel, Button } from "../../components/ui";
-import { IconRefresh, IconDocument, IconHistory, IconBolt, IconAlert } from "../../components/Icon";
+import { IconRefresh, IconDocument, IconHistory, IconBolt, IconAlert, IconTrash } from "../../components/Icon";
 import { TraceDetailPanel } from "../../components/TraceDetailPanel";
 import { deriveRunTraceStats } from "../../utils/runTraceStats";
 import { formatEventTime, formatEventDetail, formatEventLabel } from "../../utils/runEvent";
@@ -51,6 +51,7 @@ function getSessionId(job: JobItem): string {
 
 const JOB_TYPE_LABELS: Record<string, string> = {
   agent_run: "智能体对话",
+  network_inspection: "网络巡检任务",
   export_report: "报告导出",
   knowledge_index: "知识索引",
   generic_agent_task: "通用任务",
@@ -58,6 +59,7 @@ const JOB_TYPE_LABELS: Record<string, string> = {
 
 const JOB_TYPE_ICONS: Record<string, typeof IconHistory> = {
   agent_run: IconHistory,
+  network_inspection: IconBolt,
   export_report: IconBolt,
   knowledge_index: IconDocument,
 };
@@ -366,6 +368,25 @@ export function OperationsPage() {
     try { await jobsApi.retry(job_id, wsId); toast({ kind: "success", title: "已重试" }); loadJobs(); }
     catch (e: unknown) { toast({ kind: "error", title: "重试失败", body: isApiError(e) ? e.message : String(e) }); }
   };
+  const handleDelete = async (job: JobItem) => {
+    if (["queued", "running"].includes(job.status)) {
+      toast({ kind: "error", title: "运行中的任务不能删除", body: "请先取消任务，等待状态结束后再删除。" });
+      return;
+    }
+    if (!window.confirm(`永久删除任务「${job.title || job.job_id}」及其事件和日志？此操作不可恢复。`)) return;
+    try {
+      await jobsApi.delete(job.job_id, wsId);
+      if (selectedJob?.job_id === job.job_id) {
+        setSelectedJob(null);
+        setRuns(null);
+        setSelRun(null);
+      }
+      toast({ kind: "success", title: "任务已删除" });
+      await loadJobs();
+    } catch (e: unknown) {
+      toast({ kind: "error", title: "删除失败", body: isApiError(e) ? e.message : String(e) });
+    }
+  };
   const handleRestore = async (job: JobItem) => {
     const sid = getSessionId(job);
     if (!sid) return;
@@ -467,6 +488,9 @@ export function OperationsPage() {
                     )}
                     {canRestore(job) && (
                       <Button variant="ghost" size="sm" onClick={(e) => { e.stopPropagation(); handleRestore(job); }}>恢复</Button>
+                    )}
+                    {!(["queued", "running"].includes(job.status)) && (
+                      <Button variant="danger-ghost" size="sm" title="永久删除任务" onClick={(e) => { e.stopPropagation(); void handleDelete(job); }}><IconTrash size={13} />删除</Button>
                     )}
                   </div>
                 </article>

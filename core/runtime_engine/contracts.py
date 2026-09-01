@@ -20,17 +20,14 @@ class ToolContract:
     timeout_seconds: int = 60
     max_retries: int = 0
     concurrency_group: str | None = None
-    requires_approval: bool = False
     rollback_supported: bool = False
     optional: bool = False
     priority: str = "normal"
-    approval_actions: frozenset[str] = field(default_factory=frozenset)
-    approval_when_truthy: frozenset[str] = field(default_factory=frozenset)
     always_read_only: bool = False
     read_only_actions: frozenset[str] = field(default_factory=frozenset)
     # Action-specific semantics are required for merged tools and extension
     # tools alike.  Keeping them on the runtime contract lets scheduling,
-    # retries and approval use the same declared facts as the catalog.
+    # retries and authorization use the same declared facts as the catalog.
     action_contracts: dict[str, dict[str, Any]] = field(default_factory=dict)
 
 

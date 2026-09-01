@@ -154,7 +154,7 @@ def test_exec_defaults_to_current_workspace(monkeypatch, tmp_path):
         return {"ok": True, "exit_code": 0, "stdout": "", "stderr": ""}
 
     monkeypatch.setattr(command_tools, "_run_shell", fake_run)
-    result = command_tools.handle_command_approved_exec(ToolInvocation(
+    result = command_tools.handle_command_exec(ToolInvocation(
         tool_id="exec.run",
         workspace_id="default",
         arguments={"action": "shell", "command": "pwd"},
@@ -169,7 +169,7 @@ def test_exec_rejects_workdir_outside_current_workspace(monkeypatch, tmp_path):
     from core.tools.general_tools import command_tools
 
     monkeypatch.setenv("LZCORE_WORKSPACE_ROOT", str(tmp_path))
-    result = command_tools.handle_command_approved_exec(ToolInvocation(
+    result = command_tools.handle_command_exec(ToolInvocation(
         tool_id="exec.run", workspace_id="default",
         arguments={"action": "shell", "command": "pwd", "working_dir": "/tmp"},
     ))
@@ -201,7 +201,6 @@ def test_tool_executor_redacts_non_dict_handler_output_before_returning():
             description="test-only plain-text result",
             category="tool",
             risk_level="low",
-            requires_approval=False,
             input_schema={"type": "object"},
             permission_action="read",
         ),
@@ -229,7 +228,6 @@ def test_tool_executor_redacts_secret_in_handler_exception_before_returning():
             description="test-only failing handler",
             category="tool",
             risk_level="low",
-            requires_approval=False,
             input_schema={"type": "object"},
             permission_action="read",
         ),

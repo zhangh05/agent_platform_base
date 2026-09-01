@@ -41,8 +41,8 @@ class ToolRuntimeClient:
     def canonicalize_arguments(self, tool_id: str, arguments: dict = None) -> dict:
         """Project arguments using the exact ToolSpec used by this client.
 
-        Approval producers call this before persisting an approval so the
-        durable binding includes schema defaults inserted by ToolExecutor.
+        Validation and execution use the same schema defaults inserted by
+        ToolExecutor.
         """
         try:
             from core.tools.tool_namespace import get_canonical_tool_id
@@ -97,8 +97,6 @@ class ToolRuntimeClient:
             requested_by=getattr(context, "requested_by", "") if context else "",
             skill=getattr(context, "skill", None) if context else None,
             skill_connection_ids=tuple(getattr(context, "skill_connection_ids", ()) or ()) if context else (),
-            approval_id=getattr(context, "approval_id", None) if context else None,
-            approval_run_id=getattr(context, "approval_run_id", None) if context else None,
             cancel_check=getattr(context, "cancel_check", None) if context else None,
         )
 

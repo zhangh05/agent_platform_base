@@ -92,16 +92,10 @@ export LZCORE_OBJECT_STORE_BUCKET='lzcore-artifacts'
 export LZCORE_OBJECT_STORE_PREFIX='production'
 export LZCORE_QUEUE_MODE=redis
 export LZCORE_QUEUE_URL='redis://...'
-export LZCORE_APPROVAL_TTL_SECONDS=1800
-export LZCORE_CONTINUATION_STALL_SECONDS=900
-export LZCORE_CONTINUATION_RETENTION_DAYS=30
 ```
 
-普通 Agent 的高风险审批以最终 approval id 和加密 continuation 一致创建。
-执行线程会持续写入 heartbeat；超过 stall 阈值的 `running` 记录只会转为
-`stalled` 并告警，平台不会自动重放结果未知的外部操作。管理员可在系统状态页
-核对异常记录并将其关闭，关闭操作不会重新执行工具。终态记录按 retention 天数
-清理，密文在拒绝、失败、完成、过期或人工关闭时立即删除。
+网络配置权限由已发布 Skill 的运行配置核定。结果未知的外部写入进入操作账本并等待
+read-back/reconcile，平台不会自动重放非幂等操作。
 
 `GET /api/health` is the lightweight liveness check. `GET /api/ready` performs
 real writable/connectivity checks for record storage, object storage, and the

@@ -2,7 +2,7 @@
 
 This repository is now treated as an agent application platform rather than a
 single domain application. The existing `SSOTRuntimeEngine`, tool governance,
-workspace boundaries, durable tasks, approvals, memory gate and local
+workspace boundaries, durable tasks, product authorization, memory gate and local
 filesystem mode remain the runtime kernel.
 
 ## Stage 1: extension contract
@@ -12,7 +12,7 @@ capabilities, permissions, routes and frontend modules. `scripts/platform_contra
 prints the current tool/capability counts and validates discovered manifests.
 `core.tools.mcp_client.StdioMcpClient` provides a timeout-bounded MCP stdio
 boundary. Registered MCP tools are discovered and invoked through
-`skill.manage`, so trust checks, permissions, approvals, redaction and audit
+`skill.manage`, so trust checks, permissions, authorization, redaction and audit
 remain in the existing governance pipeline.
 
 The `evaluation` package provides the first deterministic golden-case contract.
@@ -62,9 +62,9 @@ longer bypass tenant scope. The 组织与成员 workbench exposes the control pl
 
 The PostgreSQL, S3, Redis queue and Redis workspace-event adapters support
 cross-process state, and Redis workers can execute concurrently under leases.
-The current live per-turn WebSocket and approval continuation coordinator still
-use a single web process; deployments must not scale the web service beyond one
-process until those coordinators move to a shared transport. Larger enterprise
+The current live per-turn WebSocket coordinator still uses a single web process;
+deployments must not scale the web service beyond one process until that event
+transport becomes shared. Larger enterprise
 installations still need an external secret manager, OIDC/SSO, database-native
 schema migrations, and broader migration of workspace metadata from files to
 PostgreSQL. OIDC/SCIM, database row-level security, scheduler clustering, and a

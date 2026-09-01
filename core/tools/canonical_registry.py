@@ -30,7 +30,6 @@ class CanonicalToolEntry:
     handler: Callable[[ToolInvocation], dict]
     input_schema: dict[str, Any]
     risk_level: str = "low"
-    requires_approval: bool = False
     callable_by_llm: bool = True
     enabled: bool = True
     description: str = ""
@@ -169,8 +168,8 @@ def _local_delete(inv: ToolInvocation) -> dict:
     return result
 def _handle_exec(inv: ToolInvocation) -> dict:
     from core.tools.general_tools.command_tools import (
-        handle_command_approved_exec,
-        handle_powershell_approved_script,
+        handle_command_exec,
+        handle_powershell_script,
         handle_python_exec,
         handle_slash_run,
     )
@@ -184,8 +183,8 @@ def _handle_exec(inv: ToolInvocation) -> dict:
         if str((inv.arguments or {}).get("target") or "local").lower() != "local":
             return {"ok": False, "error": "联智中枢仅支持本地执行"}
         if str((inv.arguments or {}).get("shell") or "").lower() == "powershell":
-            return handle_powershell_approved_script(inv)
-        return handle_command_approved_exec(inv)
+            return handle_powershell_script(inv)
+        return handle_command_exec(inv)
     return _unsupported(inv, "shell|python|slash")
 
 
@@ -1067,7 +1066,6 @@ def to_tool_specs() -> list[tuple[ToolSpec, Callable[[ToolInvocation], dict]]]:
             risk_level=entry.risk_level,
             input_schema=entry.input_schema,
             enabled=entry.enabled,
-            requires_approval=entry.requires_approval,
             callable_by_llm=entry.callable_by_llm,
             permission_action=entry.permission_action,
             metadata={**ns_entry.metadata(), **_execution_metadata(entry)},
@@ -1098,7 +1096,6 @@ def to_openai_tools() -> list[dict[str, Any]]:
             "description": description,
             "input_schema": entry.input_schema,
             "risk_level": entry.risk_level,
-            "requires_approval": entry.requires_approval,
             "action_profiles": build_action_profiles_for_tool(
                 tool_id,
                 input_schema=entry.input_schema,
@@ -1115,7 +1112,6 @@ def to_openai_tools() -> list[dict[str, Any]]:
             "description": spec.description or spec.name or spec.tool_id,
             "input_schema": spec.input_schema,
             "risk_level": spec.risk_level,
-            "requires_approval": spec.requires_approval,
             "action_profiles": build_action_profiles_for_tool(
                 spec.tool_id,
                 input_schema=spec.input_schema,

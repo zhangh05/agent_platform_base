@@ -522,8 +522,6 @@ export const useWorkbenchStore = create<WorkbenchState>()(
               tool_decision: (runRecord.tool_decision as AgentResult["tool_decision"]) || { needed: false },
               no_tool_reason: (runRecord.no_tool_reason as string) || "",
               metadata: {
-                approval_required: Boolean(metadata.approval_required ?? runtimeMetadata.approval_required),
-                approval_continuation: metadata.approval_continuation as AgentResult["metadata"]["approval_continuation"],
                 selected_capabilities: (metadata.selected_capabilities as string[]) || [],
                 visible_tools: (metadata.visible_tools as string[]) || [],
                 retry_summary: (metadata.retry_summary as AgentResult["metadata"]["retry_summary"])

@@ -6684,11 +6684,6 @@ summary:focus-visible,
   font-size: var(--fs-11);
 }
 
-.trace-detail-approval {
-  color: var(--warn);
-  font-size: var(--fs-11);
-}
-
 .trace-detail-fold {
   margin-top: 4px;
 }

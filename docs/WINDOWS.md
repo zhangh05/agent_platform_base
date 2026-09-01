@@ -13,4 +13,4 @@ For source development:
 2. Install backend and frontend dependencies.
 3. Run `start.bat` or use the platform-specific development commands.
 
-High-risk destructive local commands remain approval-gated by policy.
+High-risk destructive local commands are blocked by policy.

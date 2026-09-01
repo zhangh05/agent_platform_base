@@ -23,8 +23,6 @@ from flask import request, jsonify
 RATE_LIMITS = {
     "/api/agent/message": (10, 60),
     "/api/agent/llm/test": (5, 60),
-    "/api/agent/approvals/pending": (200, 60),
-    "/api/agent/approvals/": (60, 60),
 }
 
 # Default limit for any unmatched /api/* endpoint

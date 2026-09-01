@@ -212,7 +212,6 @@ def category_tree_from_specs(specs: list) -> list[dict[str, Any]]:
             "tool_id": getattr(spec, "tool_id", ""),
             "canonical_tool_id": meta["canonical_tool_id"],
             "risk_level": getattr(spec, "risk_level", "low"),
-            "requires_approval": bool(getattr(spec, "requires_approval", False)),
             "permission_action": getattr(spec, "permission_action", ""),
             "enabled": bool(getattr(spec, "enabled", True)),
             "callable_by_llm": bool(getattr(spec, "callable_by_llm", True)),

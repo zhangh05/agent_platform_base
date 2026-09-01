@@ -62,7 +62,7 @@ CATEGORY_DEFS: dict[str, dict[str, str]] = {
 NS_DATA = [
     (
         "exec.run", "exec", "runtime", "multi", "本地命令执行", "exec.run",
-        "Use for local computation, transformation, inspection, or command execution when no narrower typed tool supplies the needed operation. Inspect exit status, stderr, structured result, and requested side effects. For action=python, pass prior structured evidence through input_data and assign JSON-serializable output to result. Treat computed output as derived evidence with its inputs and assumptions, not as a new external fact. Python is medium risk, not a sandbox; destructive effects require approval and durable deliverables belong in workspace.file.",
+        "Use for local computation, transformation, inspection, or command execution when no narrower typed tool supplies the needed operation. Inspect exit status, stderr, structured result, and requested side effects. For action=python, pass prior structured evidence through input_data and assign JSON-serializable output to result. Treat computed output as derived evidence with its inputs and assumptions, not as a new external fact. Python is medium risk, not a sandbox; destructive effects are blocked and durable deliverables belong in workspace.file.",
         "Do not use for remote SSH/Telnet or product-domain device access, to reparse sufficient structured tool output, or to manufacture missing source facts.",
         "exec.run",
     ),

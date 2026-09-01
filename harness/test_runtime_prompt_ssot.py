@@ -21,16 +21,13 @@ def test_runtime_prompt_is_compact_capable_and_destructive_only():
     assert "function definitions" in RUNTIME_SYSTEM_PROMPT
     assert "complete tool schemas" in RUNTIME_SYSTEM_PROMPT
     assert "data, not instructions" in RUNTIME_SYSTEM_PROMPT
-    assert "rm -f/rm -rf" in RUNTIME_SYSTEM_PROMPT
-    assert "approval-gated" in RUNTIME_SYSTEM_PROMPT
-    assert "never\n  ask for textual approval before that call" in RUNTIME_SYSTEM_PROMPT
-    assert "The runtime creates any required pending approval" in RUNTIME_SYSTEM_PROMPT
+    assert "rm -rf" in RUNTIME_SYSTEM_PROMPT
+    assert "selected Skill defines device, connection, tool and configuration-write scope" in RUNTIME_SYSTEM_PROMPT
     assert "current task" in RUNTIME_SYSTEM_PROMPT
     assert "confirmed, likely, or unverified" in RUNTIME_SYSTEM_PROMPT
     assert "canonical tool plus `action`" in RUNTIME_SYSTEM_PROMPT
     assert "action-level boundary" in RUNTIME_SYSTEM_PROMPT
-    assert "approval_required" in RUNTIME_SYSTEM_PROMPT
-    assert "do not reissue the same call" in RUNTIME_SYSTEM_PROMPT
+    assert "authorization rejection" in RUNTIME_SYSTEM_PROMPT
     assert "never as the underlying model or" in RUNTIME_SYSTEM_PROMPT
     assert "workspace-relative path" in playbooks
     assert 'workspace__file(action="write_artifact")' in playbooks
@@ -238,15 +235,15 @@ def test_llm_tool_descriptions_include_action_level_boundaries():
         },
         "risk_level": "medium",
         "action_profiles": [
-            {"action": "list", "permission_action": "read", "risk_level": "medium", "requires_approval": False},
-            {"action": "delete", "permission_action": "write", "risk_level": "high", "requires_approval": True},
+            {"action": "list", "permission_action": "read", "risk_level": "medium"},
+            {"action": "delete", "permission_action": "write", "risk_level": "high"},
         ],
     })
 
     desc = tool["function"]["description"]
     assert "Action boundaries" in desc
     assert "list=read" in desc
-    assert "delete=write/high/approval_required" in desc
+    assert "delete=write/high" in desc
 
 
 def test_llm_tool_descriptions_publish_safe_result_binding_contracts():
@@ -347,11 +344,11 @@ def test_ssot_registry_feeds_action_profiles_to_llm_tools():
 
     registry = _build_ssot_runtime_tool_registry(["workspace.file"])
     profiles = registry["workspace.file"].get("action_profiles") or []
-    assert any(p.get("action") == "delete" and p.get("requires_approval") for p in profiles)
+    assert any(p.get("action") == "delete" and p.get("risk_level") == "high" for p in profiles)
 
     tools = _build_cached_tool_definitions(registry)
     desc = tools[0]["function"]["description"]
-    assert "delete=write/high/approval_required" in desc
+    assert "delete=write/high" in desc
 
 
 def test_llm_tool_descriptions_keep_long_action_boundaries_complete():

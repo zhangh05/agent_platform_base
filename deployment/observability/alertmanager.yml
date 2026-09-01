@@ -8,5 +8,5 @@ route:
 receivers:
   - name: operator-config-required
 
-# Production operators must replace the empty receiver with their approved
+# Production operators must replace the empty receiver with their authorized
 # email, webhook or incident-management integration before go-live.

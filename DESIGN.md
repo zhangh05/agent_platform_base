@@ -5,7 +5,7 @@
 ## 设计原则
 
 1. **单主链**：所有用户请求进入同一条运行时链路，避免旁路执行。
-2. **硬边界**：工具必须经过 manifest、caller、risk、approval、redaction、audit。
+2. **硬边界**：工具必须经过 manifest、caller、risk、authorization、redaction、audit。
 3. **显式 workspace**：所有跨数据边界操作必须带已验证 `workspace_id`。
 4. **能力只描述，工具才执行**：业务能力目录用于提示和 UI，不参与 handler 注册。
 5. **当前口径优先**：不为已移除 API、历史工具名、过期文档叙述保留分支。
@@ -45,7 +45,7 @@ sequenceDiagram
 - `TaskState`：一次用户任务的权威状态。
 - `RuntimeStep`：context、model、tool、final 等阶段步骤。
 - `RuntimeEvent`：前端时间线和审计事件来源。
-- `RuntimeCheckpoint`：中断、审批、失败恢复的快照。
+- `RuntimeCheckpoint`：取消、中断和失败恢复的快照。
 
 SSOT Runtime 主链将执行结果投影为 `AgentResult`、message、run 和 trace；长任务类能力仍使用 durable task/checkpoint API 管理自己的可取消状态。
 
@@ -58,7 +58,7 @@ canonical tool id
   -> CapabilityManifest
   -> requested_by caller gate
   -> ToolPolicy
-  -> approval/interrupt when needed
+  -> product authorization and hard policy checks
   -> ToolExecutor
   -> redaction
   -> trace/audit
@@ -73,7 +73,7 @@ canonical tool id
 
 QueryLoop 不要求模型预先猜测完整工作流。模型可发起普通单工具调用，也可为一小组调用声明稳定步骤标识、依赖和安全结果绑定；每组执行完成后，模型根据真实证据继续、改路或结束。运行时把每组调用校验为增量任务图：独立只读节点在并发上限内执行，有副作用的节点形成顺序屏障，依赖失败会阻止下游执行。
 
-跨工具结果只允许绑定到声明过的分析输入，不能绕过写入、命令或审批参数的风险检查。`exec.run` 的 Python 动作用 `input_data` 接收结构化证据，并通过 `result` 返回 JSON 可序列化结果。固定工作流与对话编排共享相同的依赖层语义；固定流程用于复用已验证经验，不作为限制对话模型的默认路径。
+跨工具结果只允许绑定到声明过的分析输入，不能绕过写入、命令或产品授权边界。`exec.run` 的 Python 动作用 `input_data` 接收结构化证据，并通过 `result` 返回 JSON 可序列化结果。固定工作流与对话编排共享相同的依赖层语义；固定流程用于复用已验证经验，不作为限制对话模型的默认路径。
 
 工具可以在 canonical 定义中声明批处理契约。QueryLoop 可把同一资源的连续范围，或同一动作下不同标量参数的连续集合，编译为有上限的批量动作；有依赖、结果绑定或不连续的任务图节点保持原样。每轮模型计划还受独立节点上限和整轮剩余预算约束，超限计划在任何 handler 执行前退回模型重新分区，不生成虚假的失败调用。子 Agent 的 `max_steps` 约束推理轮次，`max_tool_nodes` 独立约束累计执行节点，不能通过单轮大批量绕过节点预算。批量优化属于运行时通用能力，不在提示词里为某个工具写固定流程。
 
@@ -97,31 +97,11 @@ QueryLoop 不要求模型预先猜测完整工作流。模型可发起普通单�
 
 它不注册工具、不控制权限、不分发 handler。
 
-## Approval
+## Product authorization
 
-审批只用于高危或破坏性操作。普通 read/list/query 不应因为工具类别本身被阻断。审批生命周期是 durable interrupt：
+运行时不包含交互式审批子系统。产品动作由其所有者执行服务核定权限；网络设备写入以工作台选择的已发布 Skill 为唯一授权来源，必须同时满足 `configuration_write`、目标连接范围和允许工具范围。未授权调用直接返回结构化错误，不进入等待、续跑或后台重放状态。
 
-```text
-tool policy requires approval
-  -> preallocate final approval ids
-  -> persist encrypted exact-call continuation bound to final ids
-  -> atomically persist the complete pending-approval batch, then publish it
-  -> return immediately without occupying a runtime/HTTP worker
-  -> user approve/reject
-  -> atomically claim once
-  -> re-enter QueryLoop and revalidate schema, policy, risk and approved call keys
-  -> canonical ToolRuntime execution + final response, or fail closed
-```
-
-普通 Agent continuation 只接受由服务端从加密持久记录构造的类型化授权对象；HTTP/WS
-metadata 中的同名 JSON 不能形成授权。多个审批全部通过后才能抢占执行，重复 resolve 不会
-重复执行；进程若在执行抢占后异常退出，状态保持 `claimed` 或 `dispatching` 并禁止自动重放破坏性操作。
-待审批轮只持久化用户消息，恢复成功后只补最终助手消息，避免把“等待审批”写成对话结论。
-
-审批创建不存在 placeholder 绑定窗口：整批审批持久化失败时 continuation 会补偿删除，
-审批只有在 durable batch 成功后才进入内存和 SSE。执行抢占后记录 `dispatching` 与 heartbeat；
-失联记录转为 `stalled` 供管理员核对，但不自动重放结果未知的工具调用。管理员只能显式关闭
-已核对的 stalled 记录，恢复执行必须由新的用户任务重新经过 QueryLoop、风险和审批边界。
+主机级破坏性命令由通用策略直接阻断。外部写入若返回结果未知，操作账本保留事实并要求 read-back/reconcile；系统不得因重试、恢复或进程重启自动重放非幂等写入。
 
 ## Memory Governance
 
@@ -160,7 +140,7 @@ system 规则。子 Agent 的角色、工具范围和预算进入 system prompt�
 
 前端以任务工作台为中心：
 
-- 对话视图展示用户消息、LLM 回复、工具卡、审批气泡。
+- 对话视图展示用户消息、LLM 回复和工具卡。
 - 时间线视图读取 `AgentResult.events` 和 runtime state。
 - 会话、最近运行、workspace 全部显式绑定。
 - 前端不得制造默认 workspace，也不得自行补已移除的 API 格式。

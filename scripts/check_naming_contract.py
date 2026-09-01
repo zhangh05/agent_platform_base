@@ -33,7 +33,6 @@ REQUIRED_TEXT = {
     "deployment/observability/alerts.yml": (
         "LZCoreTargetDown",
         "LZCoreHighHttp5xxRate",
-        "LZCoreApprovalWaitingTooLong",
         "LZCoreToolFailures",
         "LZCoreJobFailures",
     ),

@@ -28,12 +28,12 @@ def handle_capabilities():
             "requires_verification": any(
                 word in note.lower()
                 for note in cap["safety_notes"]
-                for word in ("approval", "verify")
+                for word in ("verify",)
             ),
             "requires_human_review": any(
                 word in note.lower()
                 for note in cap["safety_notes"]
-                for word in ("approval", "verify")
+                for word in ("verify",)
             ),
         }
 

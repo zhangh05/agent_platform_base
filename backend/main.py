@@ -411,25 +411,6 @@ def create_app():
             _task_state_log.getLogger(__name__).warning(
                 "[task state startup] reconcile failed: %s", exc, exc_info=True,
             )
-        try:
-            from agent.runtime.continuation_reconciler import (
-                reconcile_all_workspaces,
-                start_continuation_reconciler,
-            )
-            reconciled_continuations = reconcile_all_workspaces()
-            start_continuation_reconciler()
-            if reconciled_continuations:
-                import logging as _continuation_log
-                _continuation_log.getLogger(__name__).info(
-                    "[continuation startup] reconciliation complete: %s",
-                    reconciled_continuations,
-                )
-        except Exception as exc:
-            import logging as _continuation_log
-            _continuation_log.getLogger(__name__).warning(
-                "[continuation startup] reconcile failed: %s", exc,
-                exc_info=True,
-            )
         if os.environ.get("LZCORE_EMBEDDED_WORKER", "").strip().lower() in {
             "1", "true", "yes", "on",
         }:
@@ -446,10 +427,6 @@ def create_app():
     # ── WebSocket routes (real-time streaming) ──
     from backend.ws.agent_ws import register_ws_routes
     register_ws_routes(app)
-
-    # ── Tool approval routes ──
-    from backend.api.approval_routes import register_approval_routes
-    register_approval_routes(app)
 
     # ── Usage endpoint ──
     @app.route("/api/agent/usage")

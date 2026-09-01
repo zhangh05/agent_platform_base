@@ -23,7 +23,6 @@ from agent.runtime.result import AgentResult
 from agent.runtime.turn_persistence import persist_run_record
 from agent.runtime.stream_emitter import build_trace_id
 from agent.runtime.utils import now_iso
-from agent.approval import get_approval_store
 
 _LOG = logging.getLogger(__name__)
 _MEMORY_WRITE_EXECUTOR = ContextThreadPoolExecutor(
@@ -33,13 +32,6 @@ _MEMORY_WRITE_EXECUTOR = ContextThreadPoolExecutor(
 
 
 _CALLER_RESERVED_RUNTIME_METADATA_KEYS = frozenset({
-    "approval_parent_run_id",
-    "approved_tool_call_ids",
-    "approved_tool_call_keys",
-    "approval_allowed",
-    "approval_continuation_id",
-    "approval_required",
-    "approval_resolved",
     "cognitive_state",
     "conversation_history_block",
     "operational_clarification",
@@ -71,33 +63,8 @@ def _sanitize_caller_runtime_metadata(metadata: Any) -> dict[str, Any]:
     }
 
 
-def _is_approved_continuation_runtime_control(runtime_control: Any) -> bool:
-    """Return true only for a server-created typed approval continuation."""
-    from core.runtime_engine.models import (
-        ApprovedContinuationRuntimeControl,
-        ApprovedToolContinuation,
-    )
-
-    return (
-        isinstance(runtime_control, ApprovedContinuationRuntimeControl)
-        and isinstance(runtime_control.grant, ApprovedToolContinuation)
-    )
-
-
 def _apply_runtime_control(metadata: dict[str, Any], runtime_control: Any) -> None:
     """Install only typed, server-created runtime control envelopes."""
-    if _is_approved_continuation_runtime_control(runtime_control):
-        metadata.update({
-            "__approved_tool_continuation": runtime_control.grant,
-            "__approval_continuation_resume": True,
-            "approval_parent_run_id": str(runtime_control.parent_run_id or ""),
-            "__approval_cognitive_state": dict(runtime_control.cognitive_state or {}),
-            "__approval_prior_tool_evidence": list(runtime_control.prior_tool_evidence or ()),
-        })
-        if runtime_control.workbench_context:
-            metadata["workbench_context"] = dict(runtime_control.workbench_context)
-        return
-
     from core.runtime_engine.models import MainAgentRuntimeControl, SubagentRuntimeControl
     if isinstance(runtime_control, MainAgentRuntimeControl):
         if callable(runtime_control.cancel_check):
@@ -128,9 +95,7 @@ def _persist_inflight_user_message(session, turn, user_input: str) -> None:
     again, so this is idempotent.  An interrupted process therefore restores a
     safe untrusted context for an explicit later resume.
     """
-    if not user_input or _is_approved_continuation_runtime_control(
-        getattr(turn.op, "runtime_control", None)
-    ):
+    if not user_input:
         return
     from agent.runtime.message_identity import (
         user_message_storage_run_id,
@@ -268,10 +233,7 @@ def run_ssot_turn(
 
     # ── Build canonical conversation context for prompt injection ──
     metadata_in["__raw_user_input"] = user_input
-    history_exclude_run_id = (
-        str(metadata_in.get("approval_parent_run_id") or "")
-        if metadata_in.get("__approval_continuation_resume") else ""
-    )
+    history_exclude_run_id = ""
     history_exclude_client_request_id = str(metadata_in.get("client_request_id") or "")
     history_block = _build_history_block(
         session,
@@ -320,10 +282,6 @@ def run_ssot_turn(
     # It carries only server-derived lifecycle facts into the canonical QueryLoop.
     task_state_contract: dict[str, Any] | None = None
     task_state_resolution_error: Exception | None = None
-    approval_parent_run_id = (
-        str(metadata_in.get("approval_parent_run_id") or "")
-        if metadata_in.get("__approval_continuation_resume") else ""
-    )
     try:
         from agent.runtime.task_state import render_task_state_guidance, resolve_task_state
         from core.runtime_engine.prompt_contract import trusted_prompt_item
@@ -332,7 +290,6 @@ def run_ssot_turn(
             session_id=session_id,
             user_input=user_input,
             messages=context_messages,
-            approval_parent_run_id=approval_parent_run_id,
         )
         if task_state_contract:
             from agent.runtime.task_state import acknowledge_pending_mutation_outcome
@@ -457,12 +414,6 @@ def run_ssot_turn(
             max_query_loop_iterations=metadata_in.get("max_steps"),
             max_tool_nodes=metadata_in.get("max_tool_nodes"),
             context_budget=runtime_context_budget,
-            approved_tool_grant=metadata_in.get("__approved_tool_continuation"),
-            approval_run_id=(
-                str(metadata_in.get("approval_parent_run_id") or "")
-                if metadata_in.get("__approval_continuation_resume")
-                else ""
-            ),
             workbench_context=workbench_context if isinstance(workbench_context, dict) else None,
         )
         runtime_result = _run_async(
@@ -696,16 +647,12 @@ def run_ssot_turn(
 
     # ── Section 2: unified exit — sync session.history for both success
     #    and exception paths so the next turn always has context.
-    is_approval_resume = bool(metadata_in.get("__approval_continuation_resume"))
-    is_approval_pending = bool(
-        (result.metadata or {}).get("ssot_runtime", {}).get("approval_required")
-    )
     _sync_session_history(
         session,
-        "" if is_approval_resume else user_input,
+        user_input,
         result.final_response,
-        include_user=not is_approval_resume,
-        include_assistant=not is_approval_pending,
+        include_user=True,
+        include_assistant=True,
         run_id=turn.turn_id,
         client_request_id=history_exclude_client_request_id,
     )
@@ -735,7 +682,7 @@ def run_ssot_turn(
         _LOG.warning("task state commit failed", exc_info=True)
     if task_state_commit_error:
         _mark_task_state_persistence_failure(result, task_state_commit_error)
-    elif not is_approval_pending:
+    else:
         # Enumerated delivery continuation is a secondary, domain-specific
         # projection.  It may advance only after the generic TaskState SSOT
         # accepted the same terminal turn; otherwise the two stores diverge.
@@ -764,7 +711,7 @@ def run_ssot_turn(
     # Every completed turn is durable experience. Explicit user memory
     # commands are applied immediately; ordinary turns are consolidated only
     # at an operational task boundary or after a small accumulated batch.
-    if run_record_persisted is not False and not bool((result.metadata or {}).get("ssot_runtime", {}).get("approval_required")):
+    if run_record_persisted is not False:
         _record_experience_and_maybe_reflect(
             workspace_id=workspace_id,
             session_id=session_id,
@@ -882,8 +829,6 @@ def _build_engine(
     max_query_loop_iterations: int | None = None,
     max_tool_nodes: int | None = None,
     context_budget=None,
-    approved_tool_grant=None,
-    approval_run_id: str = "",
     workbench_context: dict[str, Any] | None = None,
 ):
     from core.runtime_engine import SSOTRuntimeConfig, SSOTRuntimeEngine
@@ -923,15 +868,7 @@ def _build_engine(
     }
     if emitter is not None:
         engine_kwargs["emitter"] = emitter
-    engine_kwargs["approval_handler"] = _build_approval_handler(
-        workspace_id=workspace_id,
-        session_id=session_id,
-        run_id=run_id,
-        emitter=emitter,
-        client=client,
-    )
     engine = SSOTRuntimeEngine(**engine_kwargs)
-    approved_call_grants = _approved_call_grants(approved_tool_grant)
 
     for tool_id in registry:
         engine.register_tool(
@@ -942,10 +879,8 @@ def _build_engine(
                 workspace_id=workspace_id,
                 session_id=session_id,
                 run_id=run_id,
-                approval_run_id=approval_run_id or "",
                 trace_id=trace_id,
                 requested_by=requested_by,
-                approved_call_grants=approved_call_grants,
                 skill_id=str((workbench_context or {}).get("skill_id") or ""),
                 skill_connection_ids=tuple(str(item) for item in ((workbench_context or {}).get("connection_ids") or [])),
             ),
@@ -954,143 +889,6 @@ def _build_engine(
         )
     return engine
 
-
-def _build_approval_handler(
-    *,
-    workspace_id: str,
-    session_id: str,
-    run_id: str,
-    emitter: Any | None = None,
-    client: Any | None = None,
-):
-    """Persist an ordinary Agent approval continuation without blocking a worker."""
-    client = client or _tool_runtime_client()
-
-    async def _handle(ctx, gate: dict[str, Any]) -> dict[str, Any]:
-        from agent.approval import new_approval_id
-        from agent.runtime.approval_continuation import (
-            create_continuation,
-            delete_continuation,
-            new_continuation_id,
-        )
-
-        store = get_approval_store(workspace_id)
-        tool_calls = [dict(item) for item in list(gate.get("tool_calls") or []) if isinstance(item, dict)]
-        if not tool_calls:
-            raise RuntimeError("approval continuation requires exact tool calls")
-        raw_details = list(gate.get("approval_details") or [])
-        approval_nodes = [str(node_id) for node_id in list(gate.get("approval_nodes") or []) if str(node_id)]
-        if not approval_nodes or len(set(approval_nodes)) != len(approval_nodes):
-            raise RuntimeError("approval continuation requires unique approval nodes")
-        calls_by_node_id: dict[str, dict[str, Any]] = {}
-        for call in tool_calls:
-            node_id = str(call.get("id") or "")
-            if node_id:
-                calls_by_node_id[node_id] = call
-        missing_calls = [node_id for node_id in approval_nodes if node_id not in calls_by_node_id]
-        if missing_calls:
-            raise RuntimeError("approval continuation nodes missing exact tool calls: " + ", ".join(missing_calls))
-        details_by_node_id: dict[str, dict[str, Any]] = {}
-        for raw_detail in raw_details:
-            if not isinstance(raw_detail, dict):
-                raise RuntimeError("approval detail must be an object")
-            detail = dict(raw_detail)
-            node_id = str(detail.get("node_id") or "")
-            # Older single-node gates did not carry a node_id.  Do not infer an
-            # ordering for batches: it would bind the wrong user decision.
-            if not node_id and len(approval_nodes) == 1 and len(raw_details) == 1:
-                node_id = approval_nodes[0]
-            if not node_id or node_id not in calls_by_node_id or node_id in details_by_node_id:
-                raise RuntimeError("approval details must map uniquely to approval nodes")
-            details_by_node_id[node_id] = detail
-        # Bind the durable approval to the same default-expanded parameters
-        # that the final ToolRuntimeClient will pass to ToolExecutor.
-        for node_id in approval_nodes:
-            call = calls_by_node_id[node_id]
-            tool_id = str(call.get("name") or "").replace("__", ".")
-            if not tool_id:
-                raise RuntimeError(f"approval node {node_id} has no canonical tool id")
-            call["name"] = tool_id
-            call["arguments"] = client.canonicalize_arguments(
-                tool_id,
-                call.get("arguments") if isinstance(call.get("arguments"), dict) else {},
-            )
-
-        approval_ids = [new_approval_id() for _ in approval_nodes]
-        continuation_id = new_continuation_id()
-        cognitive_state = ctx.extras.get("cognitive_state")
-        cognitive_snapshot = (
-            cognitive_state.as_trace_payload()
-            if hasattr(cognitive_state, "as_trace_payload")
-            else {}
-        )
-        prior_tool_evidence = list(ctx.extras.get("__approval_prior_tool_evidence") or [])
-        continuation_id = create_continuation(
-            workspace_id=workspace_id,
-            session_id=session_id,
-            parent_run_id=run_id,
-            user_input=str(ctx.user_input or ""),
-            tool_calls=tool_calls,
-            approval_ids=approval_ids,
-            approved_node_ids=approval_nodes,
-            cognitive_state=cognitive_snapshot,
-            prior_tool_evidence=prior_tool_evidence,
-            workbench_context=(
-                dict(ctx.extras.get("workbench_context") or {})
-                if isinstance(ctx.extras.get("workbench_context"), dict)
-                else {}
-            ),
-            continuation_id=continuation_id,
-        )
-        specs: list[dict[str, Any]] = []
-        for approval_id, node_id in zip(approval_ids, approval_nodes):
-            call = calls_by_node_id[node_id]
-            tool_id = str(call.get("name") or "")
-            arguments = dict(call.get("arguments") or {})
-            if not tool_id:
-                raise RuntimeError(f"approval node {node_id} has no canonical tool id")
-            detail = details_by_node_id.get(node_id, {})
-            reason = str(detail.get("risk_reason") or gate.get("message") or "高危操作需要确认")
-            command = str(arguments.get("command") or detail.get("command") or "")
-            description = f"{reason}: {tool_id}"
-            if command:
-                description += f" → {command[:120]}"
-            specs.append({
-                "approval_id": approval_id,
-                "session_id": session_id,
-                # The durable approval binding is the exact canonical call, not
-                # a lossy risk detail nor a position in a details list.
-                "tool_id": tool_id,
-                "arguments": arguments,
-                "description": description,
-                "risk_level": str(gate.get("risk_level") or "high"),
-                "workspace_id": workspace_id,
-                "run_id": run_id,
-                "metadata": {"continuation_id": continuation_id, "node_id": node_id},
-            })
-
-        try:
-            store.create_batch(specs)
-        except Exception:
-            delete_continuation(workspace_id, continuation_id)
-            raise
-        event = {
-            "approval_ids": approval_ids,
-            "continuation_id": continuation_id,
-            "risk_level": str(gate.get("risk_level") or "high"),
-            "status": "pending",
-        }
-        ctx.extras.setdefault("approval_events", []).append(event)
-        if emitter is not None:
-            emitter.emit("approval_waiting", event)
-
-        return {
-            "status": "pending",
-            "approval_ids": approval_ids,
-            "continuation_id": continuation_id,
-        }
-
-    return _handle
 
 
 def _build_ssot_runtime_tool_registry(allowed_tool_ids=None) -> dict[str, dict[str, Any]]:
@@ -2306,42 +2104,6 @@ def _sync_session_history(
             ))
     except Exception:
         logging.getLogger(__name__).warning("Failed to sync session history", exc_info=True)
-def _approved_call_key(tool_id: str, args: dict[str, Any]) -> str:
-    """Stable private key for an exact server-approved tool call."""
-    import json
-
-    return json.dumps(
-        {"tool_id": str(tool_id), "arguments": dict(args or {})},
-        ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str,
-    )
-
-
-def _approved_call_grants(grant) -> dict[str, list[str]]:
-    """Build single-use approval queues from a typed server grant only."""
-    from core.runtime_engine.models import ApprovedToolContinuation
-
-    if not isinstance(grant, ApprovedToolContinuation):
-        return {}
-    node_ids = tuple(str(value) for value in grant.approved_node_ids)
-    approval_ids = tuple(str(value) for value in grant.approval_ids)
-    if not node_ids or not approval_ids:
-        return {}
-    # A persisted approval is never a bearer capability for a batch.  Only
-    # a one-to-one node/id mapping may produce a canonical execution grant.
-    if len(approval_ids) != len(node_ids):
-        return {}
-    node_approval_ids = dict(zip(node_ids, approval_ids))
-    grants: dict[str, list[str]] = {}
-    for call in grant.tool_calls:
-        if not isinstance(call, dict):
-            continue
-        approval_id = node_approval_ids.get(str(call.get("id") or ""))
-        call_tool_id = str(call.get("name") or "").replace("__", ".")
-        call_args = call.get("arguments") if isinstance(call.get("arguments"), dict) else {}
-        if approval_id and call_tool_id:
-            grants.setdefault(_approved_call_key(call_tool_id, call_args), []).append(approval_id)
-    return grants
-
 
 def _make_tool_handler(
     *,
@@ -2350,35 +2112,24 @@ def _make_tool_handler(
     workspace_id: str,
     session_id: str,
     run_id: str,
-    approval_run_id: str = "",
     trace_id: str,
     requested_by: str,
-    approved_call_grants: dict[str, list[str]] | None = None,
     skill_id: str = "",
     skill_connection_ids: tuple[str, ...] = (),
 ):
-    single_use_grants = approved_call_grants if approved_call_grants is not None else {}
-
     async def _handler(args: dict[str, Any]) -> dict[str, Any]:
         from core.tools.context import ToolRuntimeContext, get_runtime_cancel_check
 
         args = client.canonicalize_arguments(tool_id, dict(args or {}))
-        grant_key = _approved_call_key(tool_id, args)
-        approval_queue = single_use_grants.get(grant_key) or []
-        approval_id = approval_queue.pop(0) if approval_queue else None
-        if not approval_queue:
-            single_use_grants.pop(grant_key, None)
         ctx = ToolRuntimeContext(
             workspace_id=workspace_id,
             session_id=session_id,
             run_id=run_id,
-            approval_run_id=approval_run_id or None,
             trace_id=trace_id,
             requested_by=requested_by,
             skill=skill_id or None,
             skill_connection_ids=skill_connection_ids,
             module="ssot_runtime",
-            approval_id=approval_id,
             cancel_check=get_runtime_cancel_check(),
         )
         result = await asyncio.to_thread(client.invoke, tool_id, args, context=ctx)

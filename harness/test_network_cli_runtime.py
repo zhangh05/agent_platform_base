@@ -26,7 +26,7 @@ def test_config_prompt_is_conditional_and_read_contract_is_unchanged():
     assert "configuration writes and destructive confirmation are not supported" in readonly
     assert "Configuration write capability is enabled" in writer
     assert "configuration writes and destructive confirmation are not supported" not in writer
-    assert "approval" in writer and "fresh shell" in writer
+    assert "configuration_write" in writer and "fresh shell" in writer
 
 
 @pytest.mark.parametrize("commands,vendor", [([], "h3c"), (["system-view\nreboot"], "h3c"), (["x\x03"], "cisco"), (["system-view"], "generic"), ([42], "h3c"), (["x"] * 21, "huawei")])

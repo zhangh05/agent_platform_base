@@ -18,7 +18,6 @@ class StreamEvent:
     RUN_STARTED = "run_started"
     MODEL_STARTED = "model_started"
     TOOL_CALL = "tool_call"
-    APPROVAL_REQUIRED = "approval_required"
     TOOL_RESULT = "tool_result"
     COMPACT = "compact"
     FINAL = "final"

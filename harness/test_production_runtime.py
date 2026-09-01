@@ -120,10 +120,10 @@ def test_readiness_and_bounded_http_metrics(monkeypatch, tmp_path: Path):
 
     from observability.metrics import record_operation, set_operational_gauge, render_prometheus
     record_operation("tool", "failed")
-    set_operational_gauge("approval_pending", 2)
+    set_operational_gauge("jobs_running", 2)
     rendered = render_prometheus()
     assert 'lzcore_operations_total{operation="tool",status="failed"}' in rendered
-    assert 'lzcore_operational_gauge{name="approval_pending"} 2.0' in rendered
+    assert 'lzcore_operational_gauge{name="jobs_running"} 2.0' in rendered
 
 
 def test_metrics_require_auth_when_api_auth_is_enabled(monkeypatch, tmp_path: Path):

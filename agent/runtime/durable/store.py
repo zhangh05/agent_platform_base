@@ -75,7 +75,7 @@ def append_event(evt: RuntimeEvent):
     except OSError:
         # v3.9.9: was bare ``except Exception: pass`` — losing the
         # entire event log silently hides every tool error, every
-        # approval decision, every retry. Surface it at WARNING so
+        # tool decision and every retry. Surface it at WARNING so
         # the admin sees disk pressure.
         logger.warning("durable: append_event write failed for %s",
                        evt.task_id, exc_info=True)

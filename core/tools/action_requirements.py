@@ -138,7 +138,7 @@ _LOCAL_EXECUTE = {
 _DELETE = {
     "action_class": "delete", "risk_level": "high", "side_effects": "workspace",
     "idempotency": "unsafe_to_retry", "read_only": False,
-    "requires_approval": True, "destructive": True,
+    "destructive": True,
 }
 
 

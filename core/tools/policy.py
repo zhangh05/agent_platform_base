@@ -11,9 +11,8 @@ Checks:
   5. not a removed or blocked tool_id (e.g. ssh.exec, nmap.scan)
   6. dry_run support
   7. timeout within limits
-  8. arguments free of destructive command patterns → escalates to
-     ``high`` + ``requires_approval`` (the approval bubble UX), does
-     **not** block the call.
+  8. arguments free of destructive command patterns; destructive host
+     commands are blocked directly.
   9. broad char-blacklist (| && || ; ` $ > <) and sensitive-path
      substring (/etc/passwd, ../) are gone. Only the destructive
      command set in ``core.tools.dangerous_patterns`` matters.
@@ -48,12 +47,12 @@ V02_FORBIDDEN_PATTERNS = [
     _re.compile(r"^nmap[\._].*scan", _re.IGNORECASE),
     _re.compile(r"^ping[\._].*sweep", _re.IGNORECASE),
     _re.compile(r"^command\.exec$"),
-    _re.compile(r"^command[\._]exec(?!_approved$)[_\w]*$", _re.IGNORECASE),  # P0-11: _approved suffix whitelist; bypass if renamed
+    _re.compile(r"^command[\._]exec[_\w]*$", _re.IGNORECASE),
     _re.compile(r"^device[\._].*exec", _re.IGNORECASE),
     _re.compile(r"^config[\._].*push", _re.IGNORECASE),
     _re.compile(r"^file[\._].*(read_any|write_any|delete_any)", _re.IGNORECASE),
     _re.compile(r"^powershell\.exec$"),
-    _re.compile(r"^powershell[\._]exec(?!_approved)[_\w]*$", _re.IGNORECASE),
+    _re.compile(r"^powershell[\._]exec[_\w]*$", _re.IGNORECASE),
 ]
 
 _DESTRUCTIVE_ACTIONS = {
@@ -113,7 +112,7 @@ __all__ = [
 class ToolPolicy:
     """Stateless policy checker for Tool Runtime.
 
-    Supports low/medium/high risk levels with approval gates.
+    Supports low/medium/high risk metadata and direct policy blocks.
     All checks are pure functions. No side effects, no state.
     """
 
@@ -123,7 +122,7 @@ class ToolPolicy:
         reason_parts = []
 
         # ── 0. v3.10: CapabilityManifest is the single truth source ──
-        # All policy decisions (risk, approval, idempotency, timeout, etc.)
+        # All policy decisions (risk, idempotency, timeout, etc.)
         # must derive from CapabilityManifest, not ToolSpec alone.
         manifest = None
         if spec.tool_id:
@@ -161,20 +160,17 @@ class ToolPolicy:
                     f"not in canonical risks={sorted(allowed_declared_risks)}"
                 )
             effective_risk = manifest.risk_level or spec.risk_level or "low"
-            effective_approval = manifest.requires_approval
             effective_destructive = manifest.destructive
             effective_idempotency = manifest.idempotency or "safe_to_retry"
             effective_timeout = manifest.timeout_seconds or spec.timeout_seconds or 30
         else:
             effective_risk = spec.risk_level or "low"
-            effective_approval = spec.requires_approval
             effective_destructive = spec.destructive if hasattr(spec, "destructive") else False
             effective_idempotency = "unsafe_to_retry"  # P0-12: default unsafe for unknown manifests
             effective_timeout = spec.timeout_seconds or 30
 
         if action_contract:
             effective_risk = action_contract.get("risk_level", effective_risk)
-            effective_approval = bool(action_contract.get("requires_approval", effective_approval))
             effective_destructive = bool(action_contract.get("destructive", effective_destructive))
             effective_idempotency = action_contract.get("idempotency", effective_idempotency)
 
@@ -231,11 +227,7 @@ class ToolPolicy:
             )
 
         # ── 10. Argument safety check (v3.9.5: destructive-only) ──
-        # v3.9.5: only destructive command patterns escalate. They bump
-        # the effective risk to ``high`` and require approval via the
-        # manifest. They DO NOT block the call outright — the user
-        # can still see the bubble and approve if they want to run
-        # the destructive command. Shell syntax characters
+        # Destructive shell patterns are blocked directly. Shell syntax characters
         # (|, &&, ||, ;, `, $, >, <), sensitive-path substrings, and
         # "rm -rf" in user text are no longer treated as unsafe
         # arguments.
@@ -243,25 +235,14 @@ class ToolPolicy:
             invocation.arguments, spec.tool_id
         )
         if arg_risk == "high":
-            # Escalate to high risk + approval. Do NOT block.
             effective_risk = "high"
-            effective_approval = True
+            blocked.append("destructive_command")
             reason_parts.append(
-                f"Destructive command requires approval: {arg_reason}"
+                f"Destructive command blocked: {arg_reason}"
             )
         # arg_risk in {"medium", "low", "forbidden"} → no escalation.
         # Note: forbidden command-level is reserved for future use; tool-
         # level forbids are handled separately in step 3 above.
-
-        # ── Decision ──
-        if _is_destructive_action(invocation.arguments):
-            effective_risk = "high"
-            effective_approval = True
-            reason_parts.append(
-                f"Destructive action requires approval: {invocation.arguments.get('action')}"
-            )
-
-        requires_approval = effective_risk in ("high", "critical") and effective_approval
 
         if blocked:
             return PolicyDecision(
@@ -269,7 +250,6 @@ class ToolPolicy:
                 reason="; ".join(reason_parts),
                 risk_level=effective_risk,
                 blocked_rules=blocked,
-                requires_approval=requires_approval,
             )
 
         return PolicyDecision(
@@ -277,7 +257,6 @@ class ToolPolicy:
             reason="ok" if not reason_parts else "; ".join(reason_parts),
             risk_level=effective_risk,
             blocked_rules=[],
-            requires_approval=requires_approval,
         )
 
 
@@ -290,8 +269,7 @@ def _check_argument_safety(
     is one of:
 
     - ``"high"``  — destructive command pattern detected. The caller
-      should escalate the effective risk to ``high`` and require
-      approval; it must NOT block the call outright.
+      blocks the call and reports the policy reason.
     - ``"medium"`` — command-bearing arguments are present but no
       destructive pattern was found. The prompt layer surfaces risk
       awareness; the call proceeds.
@@ -326,7 +304,7 @@ def _check_argument_safety(
     if matched:
         return "high", (
             f"destructive command pattern detected ({matched}); "
-            f"requires user approval before execution"
+            "blocked by destructive command policy"
         )
 
     return "medium", "exec-class tool call (non-destructive)"

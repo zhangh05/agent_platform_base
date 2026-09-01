@@ -14,4 +14,4 @@ cd "$ROOT"
   harness/test_startup_security.py \
   harness/test_python_runner_policy.py \
   harness/test_session_store_concurrency.py \
-  harness/test_workflow_approval_binding.py
+  harness/test_workflow_orchestration.py

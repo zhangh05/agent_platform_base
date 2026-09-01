@@ -110,7 +110,7 @@ def cancel_task(task_id: str, ws_id: str) -> dict:
     if not task or task.workspace_id != ws_id:
         return {"ok": False, "error": "task not found in workspace", "status": "not_found"}
 
-    cancellable = {"pending", "running", "interrupting", "waiting_approval"}
+    cancellable = {"pending", "running", "interrupting"}
     if task.status not in cancellable:
         # Already terminal — idempotent return
         return {"ok": True, "status": task.status, "message": f"task already {task.status}"}
@@ -208,7 +208,7 @@ def resume_task(task_id: str, ws_id: str) -> dict:
     if not task or task.workspace_id != ws_id:
         return {"ok": False, "error": "task not found in workspace"}
 
-    resumable = {"interrupted", "waiting_approval", "failed"}
+    resumable = {"interrupted", "failed"}
     if task.status not in resumable:
         return {"ok": False, "error": f"task status {task.status} not resumable"}
 

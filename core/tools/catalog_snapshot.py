@@ -149,7 +149,6 @@ def _action_profiles(
         if not action_contract:
             action_contract = action_execution_contract(tool_id, action)
         risk_level = getattr(manifest, "risk_level", "low") if manifest else "low"
-        requires_approval = bool(getattr(manifest, "requires_approval", False)) if manifest else False
         if policy and ToolInvocation and ToolSpec:
             decision = policy.check(
                 ToolSpec(
@@ -158,7 +157,6 @@ def _action_profiles(
                     description=tool_id,
                     category=category or "tool",
                     risk_level=risk_level,
-                    requires_approval=requires_approval,
                     input_schema=input_schema or {},
                 ),
                 ToolInvocation(
@@ -169,14 +167,9 @@ def _action_profiles(
                 ),
             )
             risk_level = decision.risk_level or risk_level
-            requires_approval = bool(decision.requires_approval)
-        # An action declaration is more specific than the tool-level policy
-        # default. Apply it after the generic policy projection so extension
-        # actions such as baseline.confirm cannot be advertised as safe while
-        # the runtime correctly requires approval.
+        # An action declaration is more specific than the tool-level policy.
         if action_contract:
             risk_level = action_contract.get("risk_level", risk_level)
-            requires_approval = bool(action_contract.get("requires_approval", requires_approval))
         action_class = action_contract.get("action_class") or base_permission
         side_effects = action_contract.get(
             "side_effects", getattr(manifest, "side_effects", "none") if manifest else "none",
@@ -187,7 +180,6 @@ def _action_profiles(
         profiles.append({
             "action": action,
             "risk_level": risk_level,
-            "requires_approval": requires_approval,
             "permission_action": _action_permission(tool_id, action, action_class),
             "read_only": bool(action_contract.get("read_only", _action_is_read_only(tool_id, action, action_class))),
             "action_class": action_class,
@@ -232,7 +224,6 @@ def build_catalog_snapshot() -> dict:
             "not_for": meta.get("not_for", ""),
             "description": manifest.description if manifest else cr_entry.description,
             "risk_level": manifest.risk_level if manifest else cr_entry.risk_level,
-            "requires_approval": manifest.requires_approval if manifest else bool(cr_entry.requires_approval),
             "input_schema": cr_entry.input_schema,
             "permission_action": permission_action,
             "callable_by_llm": True,
@@ -247,7 +238,6 @@ def build_catalog_snapshot() -> dict:
             "output_sensitivity": manifest.output_sensitivity if manifest else "internal",
             "timeout_seconds": manifest.timeout_seconds if manifest else 30,
             "action_class": action_class,
-            "approval_reason": manifest.approval_reason_template if manifest else "",
             "rollback_strategy": manifest.rollback_strategy if manifest else "none",
             "allowed_callers": manifest.allowed_callers if manifest else ["turn_runner"],
             "reads_artifact": manifest.reads_artifact if manifest else False,
@@ -299,7 +289,6 @@ def build_catalog_snapshot() -> dict:
             "not_for": str(raw_metadata.get("not_for") or ""),
             "description": spec.description,
             "risk_level": spec.risk_level,
-            "requires_approval": bool(spec.requires_approval),
             "input_schema": spec.input_schema,
             "permission_action": spec.permission_action or "read",
             "callable_by_llm": bool(spec.callable_by_llm),
@@ -313,7 +302,6 @@ def build_catalog_snapshot() -> dict:
             "output_sensitivity": "internal",
             "timeout_seconds": spec.timeout_seconds,
             "action_class": spec.permission_action or "read",
-            "approval_reason": "",
             "rollback_strategy": "none",
             "allowed_callers": ["turn_runner"],
             "reads_artifact": False,
@@ -355,7 +343,6 @@ def build_catalog_snapshot() -> dict:
                     "not_for": item.get("not_for", ""),
                 }
             self.risk_level = item["risk_level"]
-            self.requires_approval = item["requires_approval"]
             self.permission_action = item["permission_action"]
             self.enabled = item["enabled"]
             self.callable_by_llm = item["callable_by_llm"]

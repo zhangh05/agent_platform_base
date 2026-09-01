@@ -2,7 +2,7 @@
 """ToolRuntimeContext — carries invocation context from caller through to ToolInvocation.
 
 Provides a standard way for Module / Service layers to pass workspace, run, job,
-caller identity, and already-validated approval information when invoking tools.
+caller identity and server-resolved product authorization when invoking tools.
 
 Example usage in a Module service:
     ctx = ToolRuntimeContext(
@@ -11,7 +11,6 @@ Example usage in a Module service:
         module="example_module",
         skill="example_skill",
         requested_by="turn_runner",
-        approval_id=approved_id,  # only after the caller has validated it
     )
     client = get_default_tool_runtime_client()
     result = client.invoke("workspace.metadata.get", {}, context=ctx)
@@ -86,11 +85,6 @@ class ToolRuntimeContext:
     module: Optional[str] = None
     requested_by: str = ""
     dry_run_default: bool = False
-    approval_id: Optional[str] = None
-    # Server-owned parent run used only to validate a resolved approval during
-    # an approval continuation. Normal invocations leave this unset and use
-    # run_id as their approval binding.
-    approval_run_id: Optional[str] = None
     # Server-owned process-local callback. Never serialise or accept this
     # from model arguments, transport metadata, or durable records.
     cancel_check: Optional[Callable[[], bool]] = None
@@ -109,6 +103,4 @@ class ToolRuntimeContext:
             "module": self.module,
             "requested_by": self.requested_by,
             "dry_run_default": self.dry_run_default,
-            "approval_id": self.approval_id,
-            "approval_run_id": self.approval_run_id,
         }

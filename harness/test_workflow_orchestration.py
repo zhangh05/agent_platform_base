@@ -178,24 +178,6 @@ def test_progress_save_cannot_erase_a_concurrent_cancel_request(monkeypatch, tmp
     assert get_run("default", "cancel_race")["cancel_requested"] is True
 
 
-def test_awaiting_approval_workflow_can_be_cancelled(monkeypatch, tmp_path):
-    monkeypatch.setenv("LZCORE_WORKSPACE_ROOT", str(tmp_path / "workspaces"))
-    from workflows.service import _save_run, cancel_run
-
-    _save_run({
-        "workspace_id": "default",
-        "run_id": "cancel_waiting",
-        "workflow_id": "network_asset_read",
-        "status": "awaiting_approval",
-        "nodes": [],
-    })
-    cancelled = cancel_run("default", "cancel_waiting")
-
-    assert cancelled["status"] == "cancelled"
-    assert cancelled["cancel_requested"] is True
-    assert cancelled["finished_at"]
-
-
 def test_organization_workspace_isolation_and_workflow_roles(monkeypatch, tmp_path):
     monkeypatch.setenv("LZCORE_WORKSPACE_ROOT", str(tmp_path / "workspaces"))
     monkeypatch.setenv("LZCORE_IDENTITY_ENABLED", "true")

@@ -56,7 +56,6 @@ class ToolSpec:
     dry_run_supported: bool = True
     writes_artifact: bool = False
     reads_artifact: bool = False
-    requires_approval: bool = False
     callable_by_llm: bool = True
     tags: list = field(default_factory=list)
     permission_action: str = ""  # read | write | exec | network — set by _reg
@@ -83,7 +82,6 @@ class ToolSpec:
             "dry_run_supported": self.dry_run_supported,
             "writes_artifact": self.writes_artifact,
             "reads_artifact": self.reads_artifact,
-            "requires_approval": self.requires_approval,
             "callable_by_llm": self.callable_by_llm,
             "tags": self.tags,
             "permission_action": self.permission_action,
@@ -114,8 +112,6 @@ class ToolInvocation:
     requested_by: str = ""            # e.g. "module:example", "agent:admin"
     skill: Optional[str] = None         # server-resolved workbench skill binding
     skill_connection_ids: tuple[str, ...] = ()  # server-resolved selected connection boundary
-    approval_id: Optional[str] = None  # Required for high-risk tools
-    approval_run_id: Optional[str] = None  # Parent run bound to the approval
     # Process-local server callback; never supplied by JSON or persisted.
     cancel_check: Optional[Callable[[], bool]] = None
     created_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
@@ -129,7 +125,6 @@ class PolicyDecision:
     reason: str = ""
     risk_level: str = "low"
     blocked_rules: list = field(default_factory=list)     # which rules blocked execution
-    requires_approval: bool = False
 
 
 @dataclass

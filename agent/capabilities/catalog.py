@@ -2,7 +2,7 @@
 
 A "business capability" is a thin description of a thing the agent can
 do, plus a list of recommended tool ids. It is NOT a tool registration
-mechanism, NOT a visibility gate, NOT a permission/approval layer —
+mechanism, NOT a visibility gate, NOT a permission/authorization layer —
 those concerns live in canonical_registry / manifest_registry / sandbox.
 
 Three rules:

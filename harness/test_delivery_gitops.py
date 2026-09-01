@@ -31,7 +31,7 @@ class TestValidationGate:
 
     def test_network_change_with_all_checks_passes(self):
         ok, missing = validate_delivery("network_change", {
-            "precheck": True, "approval": True, "rollback_plan": True, "postcheck": True,
+            "precheck": True, "authorization": True, "rollback_plan": True, "postcheck": True,
         })
         assert ok
 

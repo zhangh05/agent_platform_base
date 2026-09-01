@@ -138,8 +138,6 @@ const G_LABEL: Record<ToolGovernanceStatus, string> = { active: "活跃", disabl
 function TRow({ tool }: { tool: ToolCatalogItem }) {
   const canonicalRefs = tool.capability_actions ?? [];
   const actionProfiles = tool.action_profiles ?? [];
-  const actionProfileMap = new Map(actionProfiles.map((profile) => [profile.action, profile]));
-  const needsApproval = tool.requires_approval;
   const riskBadge = R_LABEL[tool.risk_level] ?? tool.risk_level;
   const govLabel = G_LABEL[(tool.governance_status ?? "active")] ?? tool.governance_status ?? "未知";
 
@@ -148,7 +146,7 @@ function TRow({ tool }: { tool: ToolCatalogItem }) {
     list: "查看列表", find: "查找", search: "搜索", get: "获取详情",
     create: "创建", update: "更新", delete: "删除", load: "加载",
     inspect: "检查", execute: "执行", send: "发送", upload: "上传",
-    download: "下载", approve: "审批", reject: "驳回",
+    download: "下载",
   };
 
   return (
@@ -181,10 +179,6 @@ function TRow({ tool }: { tool: ToolCatalogItem }) {
             <Badge kind={R_KIND[tool.risk_level] ?? "muted"}>{riskBadge}</Badge>
           </div>
           <div className="tool-info-item">
-            <span className="tool-info-label">人工审批</span>
-            <Badge kind={needsApproval ? "warn" : "ok"}>{needsApproval ? "需要审批" : "无需审批"}</Badge>
-          </div>
-          <div className="tool-info-item">
             <span className="tool-info-label">AI 是否可用</span>
             <Badge kind={tool.planner_visible ? "ok" : "muted"}>{tool.planner_visible ? "可以使用" : "不可使用"}</Badge>
           </div>
@@ -202,7 +196,6 @@ function TRow({ tool }: { tool: ToolCatalogItem }) {
               {tool.actions.map((a) => (
                 <span key={a} className="tool-action-chip">
                   {actionLabels[a] || a}
-                  {actionProfileMap.get(a)?.requires_approval ? " · 审批" : ""}
                 </span>
               ))}
             </div>
@@ -228,7 +221,7 @@ function TRow({ tool }: { tool: ToolCatalogItem }) {
               <D label="动作边界">
                 {actionProfiles.map((profile) => (
                   <InlineCode key={profile.action}>
-                    {profile.action}:{profile.permission_action}/{R_LABEL[profile.risk_level] ?? profile.risk_level}{profile.requires_approval ? "/审批" : ""}
+                    {profile.action}:{profile.permission_action}/{R_LABEL[profile.risk_level] ?? profile.risk_level}
                   </InlineCode>
                 ))}
               </D>
@@ -315,7 +308,7 @@ function matchF(t: ToolCatalogItem, f: ToolFilter): boolean {
   if (f === "disabled") return t.governance_status === "disabled";
   if (f === "internal") return t.governance_status === "internal";
   if (f === "forbidden") return t.governance_status === "forbidden";
-  if (f === "high") return t.risk_level === "high" || t.requires_approval;
+  if (f === "high") return t.risk_level === "high";
   if (f === "host" || f === "workspace" || f === "knowledge") return t.category === f;
   return true;
 }

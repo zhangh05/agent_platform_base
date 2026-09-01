@@ -1,6 +1,6 @@
 # 联智中枢
 
-联智中枢 v2 是可二次开发的企业智能运维平台。它提供运行时、工具治理、组织与工作区隔离、制品、记忆、知识库、作业、审批、诊断、扩展分发、跨扩展流程和前端工作台；不把任何特定行业能力写死在平台内核中。
+联智中枢 v2 是可二次开发的企业智能运维平台。它提供运行时、工具治理、组织与工作区隔离、制品、记忆、知识库、作业、诊断、扩展分发、跨扩展流程和前端工作台；不把任何特定行业能力写死在平台内核中。
 
 命名约定：面向用户的产品名称统一使用“联智中枢”；框架与工程名称使用 `LZCore`，仓库、包、部署、存储、指标和配置标识使用 `lzcore`。
 
@@ -37,7 +37,7 @@ bash start.sh
 
 ### Python 执行隔离
 
-`exec.run(action=python)` 始终经 canonical ToolRuntime 和 policy-selected runner 执行。普通数据处理保持 medium 风险；只有破坏性动作才进入审批流程。默认本地子进程仅是 **best effort**，不是 sandbox，必须显式设置 `LZCORE_TRUSTED_LOCAL_PYTHON_EXECUTION=true` 才能在 loopback 单用户开发模式使用。非 loopback、identity 或登录模式下，Python 执行只允许使用 Docker 强隔离 runner；其不可用时返回结构化拒绝，不会回退为本地子进程。
+`exec.run(action=python)` 始终经 canonical ToolRuntime 和 policy-selected runner 执行。普通数据处理保持 medium 风险；破坏性主机动作由策略直接拒绝。默认本地子进程仅是 **best effort**，不是 sandbox，必须显式设置 `LZCORE_TRUSTED_LOCAL_PYTHON_EXECUTION=true` 才能在 loopback 单用户开发模式使用。非 loopback、identity 或登录模式下，Python 执行只允许使用 Docker 强隔离 runner；其不可用时返回结构化拒绝，不会回退为本地子进程。
 
 Docker runner 使用单次容器，通过标准输入传递校验后的脚本，不挂载后端工作区或临时目录；因此裸机、Compose、命名卷和远程 Docker daemon 采用同一执行契约。容器保持无网络、只读文件系统、非 root、capability drop 及 CPU/内存/PID/文件大小限制，超时后强制移除具名容器。强隔离模式要求通过 `LZCORE_PYTHON_CONTAINER_IMAGE` 配置带 `@sha256:` digest 的固定镜像；默认不使用可变 tag。生产部署仍应审查 Docker daemon 权限、镜像供应链与宿主机隔离配置。
 源码运行需要 Python 3.12+、Node.js 24 LTS。
