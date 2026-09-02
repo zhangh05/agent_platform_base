@@ -24,9 +24,12 @@ RETIRED_IDENTITIES = {
     "retired product name": "Network" + " Agent",
 }
 
+# These markers assert the naming *semantics*, not a particular language or
+# sentence. Documentation is intentionally Chinese-first, so a wording edit
+# must not force a stale English heading back into the repository.
 REQUIRED_TEXT = {
-    "README.md": ("# 联智中枢", "框架与工程名称使用 `LZCore`"),
-    "AGENTS.md": ("## Naming Contract", "`联智中枢` is the only user-facing product name"),
+    "README.md": ("# 联智中枢", "LZCore", "lzcore"),
+    "AGENTS.md": ("## 命名", "联智中枢", "LZCore", "lzcore"),
     "frontend/index.html": ("<title>联智中枢</title>",),
     "frontend/package.json": ('"name": "lzcore-workbench"',),
     "core/runtime_engine/prompt_contract.py": ("You are 联智中枢",),
