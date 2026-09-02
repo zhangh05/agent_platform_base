@@ -1265,7 +1265,19 @@ class StreamingToolExecutor:
             result = await self._runtime.execute_node(node, ctx, {})
             result = self._normalize_read_timeout_for_retry(node, result)
             if not result.success:
-                result = await self._maybe_retry_node(node, ctx, result, budget)
+                if self._has_safe_read_recovery(node, result):
+                    # A registered handler can declare one typed, read-only
+                    # fallback. It is deterministic evidence, not a transient
+                    # failure, so the unchanged call is never retried.
+                    ctx.extras.setdefault("retry_events", []).append({
+                        "tool_id": node.tool,
+                        "node_id": node.id,
+                        "retry_allowed": False,
+                        "reason": "safe_read_recovery_requires_changed_call",
+                        "error_code": "SAFE_READ_RECOVERY",
+                    })
+                else:
+                    result = await self._maybe_retry_node(node, ctx, result, budget)
             return self._from_tool_result(result, fallback_call_id=tc.id)
 
         try:
@@ -1426,6 +1438,17 @@ class StreamingToolExecutor:
         )):
             return "ARGS_INVALID"
         return "TOOL_EXCEPTION"
+
+    @staticmethod
+    def _has_safe_read_recovery(node: ExecutionNode, result: ToolResult) -> bool:
+        """Recognise a registered handler's typed, read-only fallback."""
+        payload = result.data if isinstance(result.data, dict) else {}
+        directive = payload.get("runtime_recovery")
+        return bool(
+            isinstance(directive, dict)
+            and directive.get("kind") == "safe_read_fallback"
+            and isinstance(directive.get("arguments"), dict)
+        )
 
     @staticmethod
     def _record_retry_decision(ctx: StatelessContext, node: ExecutionNode, decision) -> int:
@@ -1730,6 +1753,9 @@ class QueryLoop:
                 "llm_usage": self._aggregate_llm_usage(ctx.extras),
                 "active_capability_playbooks": list(
                     ctx.extras.get("active_capability_playbooks") or []
+                ),
+                "safe_read_recovery_events": list(
+                    ctx.extras.get("safe_read_recovery_events") or []
                 ),
                 "task_state_execution_manifest": list(
                     ctx.extras.get("task_state_execution_manifest") or []
@@ -2318,6 +2344,10 @@ class QueryLoop:
                     )
                     continue
                 execution_started = time.monotonic()
+                # Keep the model-requested graph distinct from server-owned
+                # read recovery. The latter is rendered as auto-tracking
+                # evidence, never forged as a provider function call.
+                model_tool_calls = list(tool_calls)
                 self._emit_stage(
                     EXECUTION_STARTED, t_start, stage_started_at=execution_started,
                     iteration=iterations, tool_calls=len(tool_calls),
@@ -2336,6 +2366,17 @@ class QueryLoop:
                                 final_response="工具已返回，但任务状态结果检查点未能写入；系统停止，结果不得视为完成。",
                                 error="task_state_checkpoint_failed",
                             )
+                    recovery_calls, recovery_results = await self._execute_safe_read_recovery(
+                        ctx,
+                        tool_calls,
+                        results,
+                        budget=budget,
+                        checkpoint=checkpoint,
+                    )
+                    if recovery_results:
+                        tool_calls = [*tool_calls, *recovery_calls]
+                        results = [*results, *recovery_results]
+                        all_results.extend(recovery_results)
                     for tc, result in zip(tool_calls, results):
                         ctx.extras.setdefault("tool_call_history", []).append({
                             "tool": tc.name.replace("__", "."),
@@ -2389,7 +2430,7 @@ class QueryLoop:
                 ]
 
                 # Append assistant message (with tool_calls) + tool results
-                messages = self._append_tool_round(messages, tool_calls, results)
+                messages = self._append_tool_round(messages, model_tool_calls, results)
                 if self._producer_requests_final_synthesis(polled_results):
                     messages = self._append_turn_nudge(
                         messages,
@@ -2442,6 +2483,9 @@ class QueryLoop:
                         "failed_tools": [result.tool_name for result in failed_results],
                         "errors": [str(result.error or "")[:240] for result in failed_results],
                     })
+                safe_recovery_nudge = self._build_safe_read_recovery_nudge(ctx)
+                if safe_recovery_nudge:
+                    messages = self._append_turn_nudge(messages, safe_recovery_nudge)
                 if self._has_complete_analysis_artifact(results):
                     messages = self._append_turn_nudge(
                         messages,
@@ -3256,6 +3300,129 @@ class QueryLoop:
             })
         if len(manifest) > 128:
             del manifest[:-128]
+
+    async def _execute_safe_read_recovery(
+        self,
+        ctx: StatelessContext,
+        tool_calls: list[LLMToolCall],
+        results: list[StreamingToolResult],
+        *,
+        budget,
+        checkpoint,
+    ) -> tuple[list[LLMToolCall], list[StreamingToolResult]]:
+        """Execute bounded registered safe-read fallbacks through QueryLoop."""
+        attempted = set(ctx.extras.get("safe_read_recovery_attempted") or [])
+        directives: list[tuple[LLMToolCall, dict[str, Any]]] = []
+        for call, result in zip(tool_calls, results):
+            output = result.output if isinstance(result.output, dict) else {}
+            directive = output.get("runtime_recovery")
+            if (
+                call.id in attempted
+                or not isinstance(directive, dict)
+                or directive.get("kind") != "safe_read_fallback"
+                or not isinstance(directive.get("tool_id"), str)
+                or not isinstance(directive.get("arguments"), dict)
+            ):
+                continue
+            directives.append((call, directive))
+        if not directives:
+            return [], []
+        directives = directives[:2]
+        recovery_calls = [
+            LLMToolCall(
+                id=f"safe-read-recovery-{call.id[:72]}",
+                name=str(directive["tool_id"]),
+                arguments=dict(directive["arguments"]),
+            )
+            for call, directive in directives
+        ]
+        attempted.update(call.id for call, _directive in directives)
+        ctx.extras["safe_read_recovery_attempted"] = sorted(attempted)
+        events = ctx.extras.setdefault("safe_read_recovery_events", [])
+        if not isinstance(events, list):
+            events = []
+            ctx.extras["safe_read_recovery_events"] = events
+        for call, directive in directives:
+            events.append({
+                "kind": "safe_read_fallback",
+                "source_tool": call.name.replace("__", "."),
+                "source_call_id": call.id,
+                "recovery_tool": str(directive["tool_id"]),
+                "summary": str(directive.get("summary") or "safe_read_fallback"),
+                "status": "planned",
+            })
+
+        if budget.remaining_execution_seconds() <= 0:
+            for event in events[-len(directives):]:
+                event["status"] = "not_run_budget_exhausted"
+            return [], []
+        prepared = self._prepare_tool_calls(ctx, recovery_calls)
+        if not prepared.get("ok"):
+            for event in events[-len(directives):]:
+                event.update({
+                    "status": "blocked_by_runtime_policy",
+                    "error": "; ".join(str(item) for item in prepared.get("errors") or [])[:240],
+                })
+            return [], []
+        recovery_calls = list(prepared.get("tool_calls") or [])
+        if len(recovery_calls) != len(directives) or any(not self._executor._is_read_only_call(call) for call in recovery_calls):
+            for event in events[-len(directives):]:
+                event.update({"status": "blocked_invalid_recovery_plan"})
+            return [], []
+        if callable(checkpoint):
+            manifest = [
+                {
+                    "tool_id": str(call.name or "")[:160],
+                    "call_key": self._durable_call_key(call),
+                    "side_effecting": False,
+                }
+                for call in recovery_calls
+            ]
+            try:
+                checkpoint("prepared", manifest)
+            except Exception:  # noqa: BLE001 -- checkpoint boundary must fail closed
+                for event in events[-len(directives):]:
+                    event.update({"status": "not_run_checkpoint_failed"})
+                return [], []
+        recovery_results = await self._executor.execute(recovery_calls, ctx=ctx, budget=budget)
+        self._record_task_state_execution_manifest(ctx, recovery_calls, recovery_results)
+        if callable(checkpoint):
+            settled = list(ctx.extras.get("task_state_execution_manifest") or [])[-len(recovery_results):]
+            try:
+                checkpoint("settled", settled)
+            except Exception:  # noqa: BLE001 -- checkpoint boundary must fail closed
+                # The reads have happened, so keep their evidence but force a
+                # terminal failure instead of pretending their state was made
+                # durable. This matches the primary execution contract.
+                raise RuntimeError("task_state_checkpoint_failed_after_network_read_recovery")
+        for result, event in zip(recovery_results, events[-len(directives):]):
+            event.update({
+                "status": "recovered" if result.ok else "recovery_failed",
+                "recovery_call_id": result.call_id,
+                "error": str(result.error or "")[:240],
+            })
+        return recovery_calls, recovery_results
+
+    @staticmethod
+    def _build_safe_read_recovery_nudge(ctx: StatelessContext) -> str:
+        """Explain typed recovery state; never replay a rejected call."""
+        events = ctx.extras.get("safe_read_recovery_events") or []
+        if not isinstance(events, list) or not events:
+            return ""
+        latest = [item for item in events[-4:] if isinstance(item, dict)]
+        recovered = [item for item in latest if item.get("status") == "recovered"]
+        unresolved = [item for item in latest if item.get("status") != "recovered"]
+        observations = ", ".join(str(item.get("summary") or "safe read") for item in recovered)
+        if recovered and not unresolved:
+            return (
+                "[SAFE READ RECOVERY] A registered handler rejected an invalid read and the runtime completed "
+                f"its safe alternative ({observations}). Use that evidence; do not repeat the rejected call."
+            )
+        return (
+            "[SAFE READ RECOVERY] The registered safe alternative did not complete. Do not repeat the rejected "
+            "call. If the observation remains necessary, use an authoritative documentation source and then issue "
+            "one materially different read-only call."
+        )
 
 
     def _completion_key(self, tc: LLMToolCall, mutation_epoch: int) -> str:

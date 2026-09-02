@@ -291,7 +291,19 @@ def device_manage(invocation):
     if action == "configure":
         return {**result, "automatic_retry_allowed": False, "requires_readback": True}
     if result.get("ok"):
-        return {**result, "connection_ok": True}
+        response = {**result, "connection_ok": True}
+        # The extension owns device-specific recovery classification. Core
+        # QueryLoop receives only this typed, read-only contract and still
+        # validates/executes it through the normal registered runtime path.
+        if action == "read":
+            from extensions.network_operations.read_recovery import (
+                safe_read_recovery_directive,
+            )
+
+            directive = safe_read_recovery_directive(args, response)
+            if directive:
+                response["runtime_recovery"] = directive
+        return response
     current = result.get("connection") if isinstance(result.get("connection"), dict) else service.get_connection(invocation.workspace_id, connection_id)
     return {
         "ok": True,
