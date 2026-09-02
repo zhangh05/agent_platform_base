@@ -1,76 +1,21 @@
-# Skill 提示词装配架构
+# Skill 与提示词装配
 
-## 目标
+生产工具回合的提示词事实来源是 `core/runtime_engine/prompt_contract.py`。它组合运行时不变量、受治理上下文、按条件启用的 capability playbook 与当前用户请求；工具 schema 由 provider 的 function calling 接口传递，不拼接为 prompt 文本。
 
-LZCore 将长期稳定的通用 Agent 契约与业务 Skill 契约分开。基础系统提示词在所有任务中保持稳定；业务提示词只在用户于工作台明确选择、并由服务端完成资源与权限解析后注入。
+## 装配顺序
 
-## Provider 无关的请求装配顺序
+```text
+runtime identity and invariants
+-> trusted runtime items
+-> data_only history / knowledge / memory / artifacts
+-> selected capability and Skill context
+-> current user request
+```
 
-1. 稳定排序的工具定义与基础系统提示词构成缓存前缀。
-2. 子 Agent 分工、服务端时间、运行状态和能力指引位于动态层，不改变基础系统前缀。
-3. 若工作台选择 Skill，平台调用该扩展的 `workbench_prompt_renderer`，把独立 Skill 提示词作为受控运行指引加入当前用户消息。
-4. 加入受治理历史、检索上下文和当前用户请求。
-5. 工具结果追加到同一回合；后续模型调用继续看到已选 Skill 契约。
+外部内容只能作为 `data_only` 数据。历史、网页、设备输出、附件名称或客户端 metadata 都不能添加 system 指令、扩大工具范围或改变预算。
 
-没有选择 Skill 时，第 3 步完全省略，不允许注入网络设备、命令或连接领域规则。
+## 网络 Skill
 
-## 网络设备 Skill
+工作台仅选择已发布 Skill；服务端在每次调用前重新读取其启用状态、设备、连接、允许工具与 `configuration_write`。未选 Skill 时不注入网络设备专用上下文。选择 Skill 不预连设备；模型在需要时连接目标，连接过期时由驱动恢复。
 
-`extensions/network_operations/skill_prompt.py` 是网络设备 Skill 的唯一提示词来源，负责说明：
-
-- 选择 Skill 只校验授权和读取历史连接元数据，不探测、不预连接设备；
-- 设备操作按需连接指定目标，同一任务复用有效会话，不依赖浏览器连接；授权六台不代表每次都操作六台，诊断两台只传两台的连接 ID；
-- 模型自主提交 `read + commands`，按真实回显选择下一步；不传命令不会执行任何默认命令。`collect + facts` 或巡检 `script_id` 仅为显式可选模板；
-- `probe`、单设备 `read` 和多设备 `inspection` 的选择；
-- 一个数组元素对应一条设备 CLI 命令；
-- H3C/Huawei 与 Cisco 的只读命令习惯；
-- 分页、提示符、Telnet 协商和命令刷入由连接驱动处理；
-- 多设备独立失败、持续执行和覆盖范围核对；
-- Skill 自定义说明不能扩大工具、设备、连接、权限或安全边界。
-
-扩展只负责领域行为，服务端仍负责验证 Skill、设备、连接和工具授权。浏览器提交的原始选择不能直接成为提示词。
-
-### 执行与会话边界
-
-SSH/Telnet 认证后共用 `InteractiveCLISession` 与执行结果契约。连接按用户存储目录、任务、连接 ID、配置版本和实际端点隔离；同端点执行有跨进程锁，不同端点可并行。每个进程最多保留 32 个会话，空闲 60 秒自动关闭；没有服务端任务上下文的管理测试是一次性连接。跨进程/重启不迁移 socket，重新建立连接。
-
-复用前检查提示符，失效则在发送业务命令前重连。已发送但未读完的命令不自动重放，剩余命令不发送；分页以外的确认提示返回 `interaction_required`，不自动确认。超时为单次执行的共享预算；取消、断连、输出截断均保留不完整状态。长结果沿用 QueryLoop 的证据投影与 artifact 引用，不新增回答质量门禁。只读权限不因自主选命令而放宽。
-
-原始单命令只读查询被设备拒绝时，网络扩展可把命令意图映射为驱动支持的 canonical fact，并通过 `runtime_recoveries` 交给 QueryLoop 生成下一次只读观察；缺少安全驱动模板时可先查询权威厂商资料来修正后续命令。模型不能因一次 CLI 语法错误停止，也不能重复同一错误命令。每个替代调用必须遵循运行时恢复目标和预算；多设备的恢复目标彼此独立。资料本身不等于实时设备事实，仍须取得设备读取证据。详见 [Loop Engineering](LOOP_ENGINEERING.md)。
-
-命令完成后的提示符安静等待由驱动 profile 的 `prompt_settle_seconds` 控制，当前默认 `0.12` 秒。异步 syslog/notice 会单独保留为诊断信息，不得污染下一条业务命令或被当成前一条命令的输出。
-
-历史 `vendor_defaults` 任务不再隐式重放：重试时必须重新明确命令或模板。已保存的显式命令和模板快照保持可追踪。
-
-### 可选配置写入能力
-
-实时设备只读操作是 Skill 的基础能力，不再单独勾选。服务端在保存、读取和列举 Skill 时统一补入 `network.operations.device.manage`，旧 Skill 无需重新保存即可使用；设备范围、连接范围和启用状态仍严格校验，可选工具不自动扩权。
-
-Skill 的 `capabilities` 默认为空；只有显式勾选 `configuration_write` 才允许配置。基础能力不会授予写入，旧 Skill 未授权配置的仍保持只读，未选择 Skill 不注入配置指引。创建、编辑、启停和复制配置均保留服务端校验，未知能力拒绝保存。
-
-配置使用同一工具的 `configure + connection_id + commands` 动作，不走只读巡检或预制业务脚本。该动作声明 `external_write` 且不可自动重试；服务端执行时重新核定已发布 Skill 的写入能力、目标连接和工具范围。模型自主提供每条配置命令和视图切换。SSH/Telnet 的认证、端点锁、分页和输出完整性共用既有驱动；每批配置使用独立会话，结束即关闭，避免配置视图进入只读连接池。
-
-部分 Telnet console 会在断线后保留远端配置视图。执行前若明确识别到该视图，驱动只执行 `return` / `end` 返回操作视图，并在 `session.mode_reset` 留证；不会因此自动保存、提交或回答确认提示。
-
-每批最多 20 条单行 ASCII 命令，目前仅支持 H3C、Huawei、Cisco 网络 CLI。未知驱动不继承配置权限。遇到命令错误、断线或交互确认立即停止；不自动确认、不自动保存、不自动回滚。返回逐条执行证据和未发送命令；发送后结果不明标记 `unknown`，须读取核对，不能盲目重放。CLI 完成不等于配置目标达成，模型必须另行读取验证，并说明是否持久保存。
-
-执行前重新读取 Skill 是否启用、配置能力和连接范围，防止旧提示词或已被撤销的授权继续生效。页面勾选定义能力边界，不代替用户提出的具体配置请求。
-
-## 分层、指纹与缓存
-
-`agent/llm/prompt_assembly.py` 是 Provider 无关的装配观测层。每次真实调用都生成：
-
-- 稳定系统契约、工具 schema、动态系统约束、历史、检索、附件、能力指引、Skill 和当前请求的独立大小与指纹；
-- 稳定前缀指纹、工具面指纹和完整装配指纹；
-- 不含提示词正文、用户输入、设备数据或工具参数的安全诊断快照。
-
-协议适配如下：
-
-- Anthropic 与使用 Anthropic Messages 协议的 MiniMax：在稳定 system 块设置 `cache_control`，动态子 Agent 约束放在后续非缓存 system 块；
-- OpenAI 官方接口：保持稳定前缀在最前，使用自动前缀缓存和按工作区/会话哈希分片的稳定 `prompt_cache_key`，流式请求收集 provider 原生缓存用量；分片数量可用 `LZCORE_PROMPT_CACHE_SHARDS` 调整；
-- DeepSeek、方舟、Ollama 和自定义 OpenAI-compatible 网关：保持相同稳定前缀顺序，但不发送 OpenAI 私有缓存参数，只读取网关实际返回的缓存统计；
-- Mock/禁用 Provider：明确标记为不缓存。
-
-任何可选缓存字段被 HTTP 400/422 拒绝时，传输层只移除缓存增强字段并重试一次，消息、工具和模型语义保持不变。缓存优化不得影响请求可用性。
-
-可在每个 Provider 的设置中关闭提示词缓存，也可通过 `LZCORE_PROMPT_CACHE_ENABLED=false` 全局禁用。诊断记录 Provider 策略、稳定前缀大小/指纹、Skill 是否按需装配、缓存写入 token、缓存读取 token、命中比例和缓存降级次数。
+被拒绝的单命令只读 CLI 查询可被扩展映射为 canonical fact，并通过 `runtime_recoveries` 让 QueryLoop 尝试受限的替代读取。文档检索只用于改正后续命令，不是实时设备事实。写入未知只允许 read-back/reconcile，不能作为循环重放入口。

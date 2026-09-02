@@ -1,8 +1,6 @@
-# Production operations
+# 生产部署与运行
 
-LZCore separates record storage, object storage, and the job queue.
-They can be enabled independently; this allows the common production combination
-of PostgreSQL records, S3 artifacts, and Redis workers.
+本文描述当前生产配置与操作边界。LZCore 将记录存储、对象存储和作业队列分离，可按部署 profile 组合 PostgreSQL、S3 与 Redis。配置、密钥、工作区数据和备份均为环境状态，不应进入 Git 或镜像。
 
 ## Supported production profile
 

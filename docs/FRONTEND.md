@@ -1,53 +1,39 @@
-# Frontend
+# 前端
 
-前端是 React 18 + TypeScript + Vite 应用，使用 Zustand 管理本地状态，并通过 `frontend/src/api` 的 typed API helpers 访问后端。
+前端位于 `frontend/`，使用 React、Vite、TypeScript 与 Zustand。它是联智中枢的工作台，不是运行时、授权或审计逻辑的副本。
 
-## Main Screens
+## 主要界面
 
-- `AgentWorkbench` (`/workbench`): 对话、运行时间线和工具调用。
-- `RunsPage` (`/runs`): 最近运行记录和 trace。
-- `CapabilityCenter` (`/capabilities`): 能力目录和推荐工具。
-- `JobsPage` (`/jobs`): 后台作业。
-- `KnowledgeLibrary` (`/knowledge`): 知识库。
-- `DataCenter` (`/data`): 文件、制品、引用关系和生命周期。
-- `MemoryPage` (`/memory`): 记忆记录。
-- `Diagnostics` (`/diagnostics`): 健康检查、自检、提示词、策略。
-- `Settings` (`/settings`): LLM 和运行时配置。
+- 工作台：会话、工具调用、最终答复、Skill 选择和实时状态。
+- 任务：运行记录、事件、作业状态和终态删除入口。
+- 资料中心：工作区制品、知识源、记忆与文件。
+- 能力中心：平台能力、扩展和业务对象入口。
+- 系统管理：运行健康、提供方、存储、备份和操作账本。
 
-## Workbench Data Flow
+页面导航的实际路径以 `frontend/src/app/App.tsx` 为准；API 请求以对应客户端模块为准。
+
+## 数据流
 
 ```text
-user sends message
-  -> append optimistic user message
-  -> create one assistant placeholder
-  -> WebSocket or HTTP stream
-  -> merge backend messages by stable id / role / content / timestamp
-  -> render chat + timeline from store
+Zustand store + route state
+  -> HTTP / WebSocket / SSE client
+  -> backend API
+  -> AgentResult、runtime event、workspace resource
+  -> UI projection
 ```
 
-后端持久消息是事实来源；前端乐观消息只是临时状态，最终必须合并而不是重复追加。
+登录态使用 HttpOnly Cookie；受控 token 流仅从 sessionStorage 读取，不能出现在 URL、localStorage、构建变量或日志中。分离部署时 `VITE_API_BASE` 同时决定 HTTP、WebSocket 和 SSE 的 API origin。
 
-## Recovery visibility
+## 显示规则
 
-工作台的工具卡、结果内联区和运行时间线必须保留失败尝试，同时展示服务端投影的
-`execution_outcome`、`tool_execution_outcome`、`recovery_goals` 和 `goal_loop`。UI 不得把
-单个失败工具卡直接渲染为“任务失败”：当替代证据满足目标时，显示任务完成及已恢复的尝试；当
-目标耗尽时，显示 `partial`、已验证覆盖与确切 blocker；当写入结果未知时，显示 `unknown` 和
-read-back/reconcile 要求。
+前端显示服务端给出的 `execution_outcome`、`tool_execution_outcome`、恢复目标和结构化错误。单个工具失败不能被渲染为整个任务失败；外部写入未知应明确呈现为待 read-back/reconcile，不能提供重放原操作的按钮。浏览器不能自行补全 `workspace_id`、设备权限、Skill 范围或恢复目标。
 
-这些字段只从 AgentResult、会话持久化结果或 runtime 事件合并，不由浏览器推导、修改或构造。
-
-## Workspace Contract
-
-所有触碰用户数据的 API helper 都必须传 `currentWorkspaceId`。空工作区 ID 要在 UI 上显示错误，不得静默调用后端。
-
-## Tool And Capability UI
-
-工具目录来自 17 个通用 canonical tools。前端可以显示友好名称，但 API payload 必须使用 canonical tool id。
-
-## Validation
+## 验证
 
 ```bash
-npm --prefix frontend run typecheck
-npm --prefix frontend test -- --run
+cd frontend
+npm test -- --run
+npm run build
 ```
+
+涉及真实交互、代理、认证或发布路径时，还要用浏览器验证实际页面请求和服务端返回，而不能只看组件测试。

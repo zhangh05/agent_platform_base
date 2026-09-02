@@ -1,53 +1,7 @@
-# Organization-level tenancy
+# 组织与工作区隔离
 
-Identity mode now models users, organizations, memberships, and organization-owned
-workspaces. Workspace ownership is unique: a workspace cannot be assigned to two
-organizations. Renaming or deleting a workspace updates organization, membership,
-and user access records together.
+组织、用户、成员关系与工作区授权由 identity 和 workspace API 管理。每个资源访问都以服务端验证的 `workspace_id` 为边界；UI 路由、会话参数或客户端缓存不能跨越这一边界。
 
-Enable the control plane with:
+在 identity 模式下，用户、组织、成员关系和角色通过 `/api/identity/*` 管理；工作区通过 `/api/workspaces/*` 管理。角色控制读取、执行、编辑和管理能力，具体工具仍执行自身的 caller、policy 与产品授权检查。
 
-```bash
-export LZCORE_IDENTITY_ENABLED=true
-export LZCORE_SESSION_SECRET='...'
-export LZCORE_MASTER_KEY='...'
-```
-
-The configured `Admin` environment-login account is the protected platform
-administrator. It is the only account exposed by the product for user and access
-management. The backend keeps `admin` and `owner` roles readable for migration
-compatibility, but the management API creates ordinary users only.
-
-Ordinary users have three assignable roles: `viewer`, `operator`, and `developer`.
-`Admin` explicitly grants one or more logical workspaces and the first grant is the
-user's default workspace. Business data is then isolated by the composite key
-`(immutable user_id, workspace_id)`: including `Admin`, two users in the same workspace do
-not share sessions, runs, knowledge, artifacts, files, or data-center
-results. A user root and all granted workspace roots are created at account
-creation time; username is a login/display field rather than a storage key.
-Each user has one shared governed long-term memory collection across their
-workspaces; a memory record still retains its source workspace for provenance.
-Frontend session selection, conversation cache, drafts, and diagnostics use the
-same user/workspace scope. Accounts can be disabled without changing their data;
-deleting an account removes its isolated data root, and access changes do not
-require a password reset. API tokens remain platform-level service credentials
-and should be restricted and rotated.
-
-Enterprise deployments may use the optional OIDC login adapter. OIDC identities
-must match pre-provisioned enabled users; token claims never auto-create roles,
-organizations or workspace grants. Resolution and all business authorization
-still use the local immutable user ID plus workspace boundary.
-
-Useful endpoints:
-
-- `GET/POST /api/identity/organizations`
-- `GET/POST /api/identity/organizations/<id>/memberships`
-- `GET/POST /api/identity/users`
-- `PUT /api/identity/users/<username>`
-- `GET/POST /api/workspaces`
-
-`GET /api/auth/status` exposes only the current safe session projection: role,
-organization ID, accessible workspace IDs, whether identity mode is active, and
-whether the session is a platform administrator. The 用户与权限 page and its route
-chunk are available only to that administrator; ordinary users are redirected to
-the workbench and the same restriction is enforced again by the backend API.
+不要把“工作区可见”理解为“设备、外部系统或写配置可操作”。网络设备写入还必须满足发布 Skill 的实时服务端授权范围。

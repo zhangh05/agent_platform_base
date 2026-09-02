@@ -1,37 +1,25 @@
-# 生产值班手册
-
-本手册对应 `deployment/observability/alerts.yml`。任何恢复操作都先保留日志、当前发布槽、`/api/ready` 响应和最近一次备份校验结果。
+# 运维处置手册
 
 ## 服务不可达
 
-1. 检查 gateway、frontend、backend 容器状态和 backend `/api/ready`。
-2. 如果依赖组件异常，先恢复 PostgreSQL、Redis 或对象存储，不跳过 readiness 强行发布。
-3. 新发布导致异常时，使用 `scripts/release_slots.py rollback` 或回退上一镜像摘要。
+1. 确认目标提交和工作树：`git rev-parse HEAD && git status --short`。
+2. 查看 Compose 状态：`docker compose -f deployment/compose.server.yml ps`。
+3. 验证 backend：`curl -fsS http://127.0.0.1:8011/api/health`。
+4. 验证真实前端入口：`curl -fsSI http://127.0.0.1:5273/` 与 `curl -fsS http://127.0.0.1:5273/api/health`。
+5. 需要重建时执行 `bash scripts/deploy_server_compose.sh`，不要只重启其中一个服务。
 
-## 接口错误率升高
+## 错误率或工具失败上升
 
-1. 按路由模板和状态码查看指标，避免使用含用户、workspace 或 run ID 的高基数标签。
-2. 对照 trace 与审计记录定位 LLM、工具、存储或代理层故障。
-3. 不通过扩大重试次数掩盖非幂等写入失败。
+先查看 runtime summary、trace、作业事件与工具结构化错误，区分参数/连接/策略/授权/外部服务故障。不要把单次工具失败直接归类为任务失败，也不要通过重启或重试重放未知外部写入。
 
-## 工具失败
+## 作业与 worker
 
-1. 从运行 trace 检查 canonical tool ID、action、参数校验、权限和外部依赖。
-2. Python 强隔离失败时确认固定镜像摘要和 Docker daemon；不得自动降级为本地执行。
-3. 查看 `goal_loop`、`recovery_goals` 和 `recovery_goal_events`：`pending` 表示运行时仍在等待另一条安全观察，`passed` 表示替代证据已闭环，`blocked` 表示有界策略已耗尽。
-4. 仅让 QueryLoop 对结构化标记为可恢复、无不可逆副作用的读取做实质不同的替代观察；不要人工或脚本化重放同一失败调用。
-5. 若结果为 `partial`，交接已验证覆盖和每个 blocked goal 的缺失证据；若为 `unknown`，按操作账本执行 read-back/reconcile，不把它改判为失败或成功。
-
-## 作业失败
-
-1. 检查 Redis lease、worker heartbeat、attempt 和幂等键。
-2. worker 中断后确认 stale lease 已回收，再允许新 worker claim。
-3. 外部副作用不明确时停止自动重放并转人工核对。
-
-## 备份与恢复演练
-
-每月至少执行一次 `backup_cli.py create`、`verify` 和隔离目录恢复；记录 RPO、RTO、文件数、摘要校验和回滚路径。恢复前必须使用 `RESTORE` 明确确认，并在恢复后重新验证 `/api/ready`。
+检查 `/api/jobs/<job_id>`、事件、日志和 worker status。运行中或排队作业必须先取消并等待终态；终态作业才能按 API 的确认值永久删除。队列是 at-least-once，外部写 handler 必须依赖幂等键。
 
 ## 外部写入结果未知
 
-网络配置或其他非幂等外部写入返回 unknown 时，不自动重试。使用操作账本中的 connection、命令摘要和调用标识进行只读回查；确认成功或失败后再人工核定结果。无法核对时保持 unknown，并发起新的可审计任务，不重放原写入。
+保持原操作冻结，检查操作账本与目标系统的只读证据。只在 read-back/reconcile 确认事实后关闭记录；不得让模型、worker 或人工“再试一次”盲目重放。
+
+## 备份恢复
+
+先 `python3 scripts/backup_cli.py verify <archive>`，再使用明确确认值执行 restore。恢复会保留可回退的旧数据根；恢复后重新检查 ready、worker、前端代理与关键业务读路径。

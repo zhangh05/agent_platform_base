@@ -1,80 +1,19 @@
-# Platformization roadmap
+# 平台演进路线
 
-This repository is now treated as an agent application platform rather than a
-single domain application. The existing `SSOTRuntimeEngine`, tool governance,
-workspace boundaries, durable tasks, product authorization, memory gate and local
-filesystem mode remain the runtime kernel.
+本路线记录方向，不是已交付功能承诺。当前实现以仓库代码、API 与部署配置为准。
 
-The kernel also includes domain-neutral goal-driven recovery: a recoverable
-read failure becomes a bounded evidence goal inside QueryLoop, not an extension
-specific retry worker. This keeps cross-capability recovery governed by the same
-tool, authorization and audit boundaries. See [Loop Engineering](LOOP_ENGINEERING.md).
+## 已具备的基础
 
-## Stage 1: extension contract
+- 统一运行时、canonical tool、策略与审计边界。
+- 工作区数据、制品、知识、记忆、作业和工作流。
+- 扩展清单、签名包与网络运维扩展示例。
+- Docker Compose 服务器部署与生产 profile。
 
-The `extensions` package defines a declarative manifest with version, tools,
-capabilities, permissions, routes and frontend modules. `scripts/platform_contract.py`
-prints the current tool/capability counts and validates discovered manifests.
-`core.tools.mcp_client.StdioMcpClient` provides a timeout-bounded MCP stdio
-boundary. Registered MCP tools are discovered and invoked through
-`skill.manage`, so trust checks, permissions, authorization, redaction and audit
-remain in the existing governance pipeline.
+## 后续优先级
 
-The `evaluation` package provides the first deterministic golden-case contract.
-It is intentionally small; domain-specific golden cases should live with the
-extension that owns them.
+1. 将更多行业对象以扩展形式接入，保持对象生命周期、工具权限与 UI 闭环。
+2. 扩充驱动的事实采集与厂商适配，同时保留平台无关的恢复合同。
+3. 完善多节点部署前的分布式存储、队列、锁和故障演练验证。
+4. 建立版本化 API 兼容性、扩展升级和可观测性指标的发布门禁。
 
-## Stage 2: production adapters
-
-The filesystem adapter remains the development default. Concrete adapters now
-cover PostgreSQL JSON runtime records, S3-compatible objects, Redis
-cross-process events and durable jobs, plus OTLP trace export. Record and object
-storage are independently selectable, so PostgreSQL and S3 can run together.
-Redis workers use renewable leases and reclaim stale work with at-least-once
-semantics. Verified snapshots, readiness probes, Prometheus HTTP metrics, and
-immutable release slots with rollback complete the production operations path. They are selected
-through environment variables, while local mode remains zero-infrastructure.
-`scripts/platform_runtime_check.py` validates required production environment
-variables without making network calls.
-
-## Stage 3: enterprise control plane
-
-Set `LZCORE_IDENTITY_ENABLED=true` to enable the file-backed identity
-adapter. User passwords are PBKDF2-hashed, sessions refresh current roles and
-workspace membership on every request, and `/api/identity/users` supports
-administrator-managed users. Provider API keys are encrypted at rest when
-`LZCORE_MASTER_KEY` is configured. The existing
-environment-variable login remains compatible and acts as an administrator
-bootstrap when identity mode is enabled.
-
-Task-specific model routing is available through variables such as
-`LZCORE_MODEL_ROUTE_ASSISTANT_CHAT=deepseek`. A routed provider is tried
-first and real invocation failures fall back to the active provider. Explicit
-per-call configuration remains authoritative.
-
-## Stage 4: multi-application control plane
-
-Workspace-scoped DAG workflows compose core and extension tools through the
-governed runtime. Durable workflow jobs, cancellation, safe output projections,
-template/dependency validation, and the 应用编排 workbench make multi-application
-orchestration a platform feature rather than application-specific glue.
-
-Organizations now own workspaces uniquely. Membership-derived roles and workspace
-sets are refreshed on every authenticated request; organization administrators no
-longer bypass tenant scope. The 组织与成员 workbench exposes the control plane.
-
-## Further scale-out work
-
-The PostgreSQL, S3, Redis queue and Redis workspace-event adapters support
-cross-process state, and Redis workers can execute concurrently under leases.
-The current live per-turn WebSocket coordinator still uses a single web process;
-deployments must not scale the web service beyond one process until that event
-transport becomes shared. Larger enterprise
-installations still need an external secret manager, OIDC/SSO, database-native
-schema migrations, and broader migration of workspace metadata from files to
-PostgreSQL. OIDC/SCIM, database row-level security, scheduler clustering, and a
-visual drag-and-drop workflow canvas remain optional enterprise follow-on work,
-not blockers for the v2 platform contract.
-
-`start.sh` serves a production build through Vite preview by default; use
-`FRONTEND_MODE=dev` only for local hot-reload development.
+所有路线项目都必须先定义数据模型、授权边界、失败语义、删除/恢复生命周期和真实验收路径，再进入实现。

@@ -1,56 +1,17 @@
-# Storage Boundaries
+# 存储边界
 
-## Local Data Roots
+## 数据根
 
-| Path | Purpose | Git |
-| --- | --- | --- |
-| `workspaces/users/<user_id>/` | One user's durable root, created with the account | ignored |
-| `workspaces/users/<user_id>/memory/` | One shared governed long-term memory collection for that user | ignored |
-| `workspaces/users/<user_id>/workspaces/<workspace_id>/` | User workspace files, runs, memory, knowledge, artifacts, objects, and operation audit | ignored |
-| `workspaces/catalog/<workspace_id>/` | Shared workspace metadata | ignored |
-| `workspaces/_runtime/` | Platform-only identity, extension, and service-control records | ignored |
-| `logs/` | Local logs | ignored |
-| `config/providers/` | Provider config and secrets | ignored |
-| `artifacts/` | Source code for artifact store, not artifact payload data | tracked |
+`storage/` 提供记录、会话、工作区、文件、密钥、记忆和运行记录的持久化边界。工作区数据位于 `workspaces/`；应用级运行状态位于 `workspaces/_runtime/`；provider 配置位于 `config/providers/`。这些均为环境数据，不提交到 Git。
 
-## Boundary Rules
+## 规则
 
-- Workspace data is scoped by immutable `user_id`, validated `workspace_id`, and the authenticated user.
-- Creating an account provisions its user root and every granted workspace; deleting it removes that root.
-- Only platform control-plane state belongs under `workspaces/_runtime/`.
-- Store functions should not invent a workspace for caller mistakes.
-- Deletion must be scoped and explicit.
-- Redacted summaries may be returned in list APIs; raw secret-bearing payloads must not.
-- Provider credentials must be encrypted at rest with AES-GCM or an equivalent authenticated encryption scheme.
-- Business modules call domain repositories for persistence. Low-level path,
-  atomic-I/O, and generic-record helpers remain inside data-plane adapters;
-  business services must not assemble `workspace_root()/module/*.json(l)` paths
-  or perform ad hoc JSON/JSONL file writes.
-- Every read-modify-write sequence is one locked repository transaction.
-- Lock acquisition is fail-closed: timeout raises an error and the protected
-  write is not attempted.
-- Reads are side-effect free and do not initialize absent workspaces.
+- 业务代码使用对应 store，不自行拼接工作区路径或散落读写 JSON。
+- 所有存取操作验证 workspace 边界，并使用原子写入和受限文件名。
+- 密钥使用 `storage/secret_store.py` 的加密存储，不能写入普通记录、日志、trace 或文档。
+- FileStore、制品、知识源和报告保留来源关系；删除、归档、恢复和 retention 走对应 runtime/API 生命周期。
+- 备份和恢复使用 `scripts/backup_cli.py`，恢复前验证归档完整性与路径安全。
 
-## Runtime State
+## 运行时状态
 
-Durable runtime state lives under workspace runtime storage and is addressed by task/session/workspace IDs. Task checkpoints are implementation state, not user documents.
-
-## Managed Files
-
-- `files/data/` is the only durable payload directory. Uploads, artifacts, reports, generated outputs, and normalized knowledge documents are distinguished by `FileRecord.logical_type`, not by directory names.
-- `files/tmp/` is the only transient payload directory. Temporary parser and executor inputs must be purged after use.
-- Business stores hold `file_id` references and must not copy payloads into module-owned directories.
-- Frontend file views are projections of backend APIs and FileRecords; they never enumerate workspace directories.
-- `storage.data_management` is the read-model boundary for the user-facing Data Center. It joins FileRecords, artifact metadata, references, and health without exposing physical paths.
-- The Data Center is the only general-purpose management surface for files, evidence artifacts, relations, retention, and archives; separate file/artifact management pages are not maintained.
-- Permanent file deletion is rejected while any artifact or reference points to the payload. Archive and retention scans protect all session-owned runs, run traces, workspace current/last IDs, and artifact references.
-- Archive restore validates month, kind, name, workspace containment, and target collisions before moving an entry back to active runtime storage.
-
-## Knowledge Library
-
-- `context/items.jsonl` is the metadata and chunk index SSOT. A knowledge source uses a stable `ksrc_<id>` identifier.
-- Upload payloads are temporary parser inputs and are purged after normalization.
-- Every indexed source has exactly one persistent Markdown document at `files/data/<source_id>.md`.
-- The source record's `normalized_file_id` points to that Markdown file. Code must not infer source identity from filenames, titles, vendors, or protocol keywords.
-- Rename changes source and chunk metadata; it does not rewrite document content. Disable controls retrieval visibility. Delete removes the normalized document and its source/chunk projections.
-- The frontend manages knowledge only through `/api/knowledge/*`; it does not enumerate or mutate workspace files directly.
+`agent/runtime/task_state.py` 与 `storage/runtime_state_store.py` 管理可信任务状态；会话消息、run、job、artifact 和 audit 各有自己的 store。不要引入第二套“镜像状态”以同步这些事实。

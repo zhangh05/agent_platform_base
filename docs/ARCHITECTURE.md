@@ -1,54 +1,19 @@
-# Architecture
+# 架构边界
 
-LZCore 只有一条运行时主链路：
+LZCore 的边界由执行链路而非页面或提示词决定：`backend/` 接收请求，`agent/` 建立会话与 runtime，`core/runtime_engine/` 运行 QueryLoop，`core/tools/` 执行受治理工具，`storage/` 与相应 store 持久化事实。
 
-```text
-HTTP / WebSocket / SSE / Job entry
-  -> AgentApp.submit_user_message
-  -> AgentThread + SessionManager
-  -> run_ssot_turn
-  -> QueryLoop
-  -> typed evidence ledger + goal-driven recovery + LLM function calling + bounded tool loop
-  -> ToolRuntimeClient.invoke / ToolRuntime.invoke_raw
-  -> canonical handlers
-  -> AgentResult + RuntimeEvent timeline
-```
+## 运行时
 
-## Tool Boundary
+`SSOTRuntimeEngine` 以 `TaskState` 保存一次任务的受信任状态，并投影为 `AgentResult`、消息、事件和运行记录。浏览器、对话历史和工具输出只能提供证据，不能修改 runtime 的授权、预算或恢复目标。
 
-底座暴露 17 个通用 canonical tools。`core/tools/tool_namespace.py`、`core/tools/manifest_registry.py`、`core/runtime_engine/contracts.py` 和 `core/tools/canonical_registry.py` 必须数量一致、ID 一致。
+## 工具
 
-工具执行必须经过：
+工具通过 `ToolRuntimeClient` 统一进入 manifest、调用方检查、风险策略、产品授权、executor、脱敏和审计。通用工具由 canonical registry 管理；扩展工具仍须使用同一执行边界。
 
-- canonical tool id
-- CapabilityManifest
-- explicit `requested_by`
-- workspace/session/run context
-- caller gate
-- risk policy
-- redacted result
-- audit / trace event
+## 恢复
 
-## Data Boundary
+QueryLoop 只对可恢复的只读观察建立有界目标。替代调用必须经 `plan_goal_ids` 关联目标，并取得真实证据；写入、取消、授权/策略拒绝和写入结果未知不会自动重试。新扩展发布 `runtime_recoveries` 列表，旧单数 `runtime_recovery` 仅为读取兼容。
 
-所有用户数据都以 `workspace_id` 隔离。运行记录、会话、制品、FileStore、记忆、作业和 trace 都属于工作区数据。后端路由不得静默推断工作区；缺失或非法 `workspace_id` 必须返回客户端错误。
+## 数据与界面
 
-## Capability Boundary
-
-`agent/capabilities/catalog.py` 只描述业务能力，不执行工具。业务项目可以添加自己的能力目录，但工具执行仍必须走 canonical registry。
-
-## Memory Boundary
-
-记忆写入由 `MemoryWriteGate` 管控。每轮经验进入持久日志，任务边界或显式记忆指令触发整理，再写入 MemoryStore 并索引到 ContextStore。检索结果以 `data_only` 形式进入运行时提示词，不能变成系统指令。
-
-## Prompt Boundary
-
-`core/runtime_engine/prompt_contract.py` 是生产 QueryLoop 的系统提示词源。历史、记忆、知识和制品摘要都放入明确边界的 data-only 区块；当前用户请求单独隔离。
-
-`core/runtime_engine/evidence.py` 定义请求级证据协议与消费账本。canonical 工具只输出 `evidence_parts` 引用，QueryLoop 负责登记和交付，模型适配器仅在单次调用边界解析图片字节。`core/runtime_engine/batch_compiler.py` 根据工具声明的批处理契约优化独立标量调用，不包含具体工具分支，也不改变依赖图语义。
-
-## Goal-driven recovery boundary
-
-`core/runtime_engine/goal_loop.py` 将每一轮 canonical ToolResult 规范为观察。可恢复的只读失败生成服务端拥有的恢复目标，目标未被真实读取证据满足时，最终门禁止模型提前结束。模型可修正参数、缩小范围或调用其他已授权读取能力；跨工具恢复必须在 `plan_goal_ids` 中显式引用目标 ID，避免同一 workspace 或设备内的无关调用错误结案。
-
-目标与断言通过 TaskState 以有界标识持久化，并在受信任的续跑合同中恢复。通用目标的当前最大尝试数为三（含原始失败）；领域证据目标使用独立的最终重规划预算。预算耗尽后状态为 `blocked`；有已验证覆盖时任务投影为 `partial`。授权、策略、取消、凭据和未知外部写入不进入自动恢复。新扩展通过 `runtime_recoveries` 列表发布领域恢复计划；QueryLoop 仍读取旧的单数 `runtime_recovery` 作为兼容输入，但新代码不得再产生它。完整契约见 [Loop Engineering](LOOP_ENGINEERING.md)。
+所有数据操作验证 `workspace_id`。Zustand 仅管理前端状态；服务端才是权限、任务状态和审计事实来源。WebSocket、SSE 与 HTTP 返回的结果均以 `AgentResult` 及对应的运行时记录为准。

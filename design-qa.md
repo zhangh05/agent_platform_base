@@ -1,50 +1,21 @@
-# Design QA — 设备连接、Skill 运行时与设备生命周期管理
+# 设计验收准则
 
-## Visual truth
+本文定义联智中枢界面与交互验收的当前基线。
 
-- Reference screenshots:
-  - `/var/folders/yg/hf791pl16b3g8n4001_tjngc0000gn/T/codex-clipboard-107605a3-2b2f-4a9f-a601-e54e80968e74.png`
-  - `/var/folders/yg/hf791pl16b3g8n4001_tjngc0000gn/T/codex-clipboard-a48f0709-e163-4ec8-9a7c-cc6a791adcea.png`
-  - `/var/folders/yg/hf791pl16b3g8n4001_tjngc0000gn/T/codex-clipboard-ff0bfad5-8a3a-4c5f-b184-6fb508dff6d5.png`
-  - `/var/folders/yg/hf791pl16b3g8n4001_tjngc0000gn/T/codex-clipboard-a730e070-98a4-4965-ae5c-af708ea37e97.png`
-- Implementation routes:
-  - `http://127.0.0.1:5273/extensions/network.operations/manage`
-  - `http://127.0.0.1:5273/workbench`
-- Implementation capture: `/tmp/lzcore-workbench-skill-badge.png`
-- Device-management capture: `/tmp/lzcore-device-management-full.png`
-- State checked: CE1 连接列表、Skill 配置可用连接、带 Skill 的用户消息、刷新后的持久化消息、设备编辑和硬删除闭环。
+## 视觉与信息层级
 
-## Findings and fixes
+- 左侧导航始终可见，主体区域充分使用剩余宽度，不挤压导航。
+- 工作台以对话为核心；实时状态、工具卡与时间线提供辅助信息，不抢占主阅读区。
+- 输入框有明确边界和焦点状态；表单标签、错误、必填与危险操作清晰可辨。
+- 空状态解释下一步；对象列表避免无意义留白和装饰性颜色。
 
-1. Reference: one CE1 endpoint appeared twice in both the registered-device and Skill connection lists.
-   Fix: one logical endpoint is now identified by device, protocol, and port. Repeated saves update it; legacy duplicates are merged and Skill references are rewritten before the duplicate is hard-deleted.
-2. Reference: the composer showed the selected Skill, but the submitted user message did not state which Skill governed that turn.
-   Fix: each user bubble now carries a compact `Skill / name` label. The server writes a validated Skill snapshot with the message, so the label survives refresh and cannot depend on the current composer selection.
-3. Reference: registered-device rows exposed no understandable management hierarchy; device and connection controls both used generic “编辑/删除” labels at the far edge.
-   Fix: each device is now a management card with a fixed header and explicit `编辑设备` / `永久删除设备` controls. Connections have their own section and explicit `添加连接` / `编辑连接` / `测试连接` / `永久删除连接` controls.
-4. Reference: destructive scope was unclear.
-   Fix: device deletion confirmation states the number of connections, Skill reconciliation behavior, hard-delete semantics, and irreversibility before execution.
-5. Reference: published Skill rows still exposed generic “编辑/删除” actions and hid their effective resource boundary.
-   Fix: every published Skill now has explicit `编辑 Skill`, `启用/停用 Skill`, and `永久删除 Skill` controls plus readable device, connection, capability, and status details. Hard deletion explicitly preserves devices and connections.
-6. Reference: a second independently named device on the same management address was rejected as `device host already exists`.
-   Fix: device identity is now the normalized pair of device name and management address. The same address can serve multiple independently named devices; only a repeated name-and-address pair is rejected. Connections remain scoped to their device and may use different protocols or ports independently.
-7. Reference: an expired connection caused `workbench_skill_has_no_verified_connection` before the model could reason, and one failed target could invalidate a multi-device Skill.
-   Fix: Skill bindings now authorize configured connections independently of their last probe state. Selecting a Skill performs no network I/O and gives the model only the server-resolved authorized resources. The model connects on demand through an explicit `read`, `collect` or `probe` call and may choose only the devices needed for the current question. Unavailable devices remain isolated; device tools reconnect as needed and return remote unavailability as structured decision evidence. Multi-device inspections persist every target independently, producing `partial` only when actual required coverage remains unavailable.
+## 生命周期与语义
 
-## Verification
+- 设备、连接、Skill、任务、工作区、制品与知识源均提供与其后端合同一致的创建、读取、更新和删除/恢复入口。
+- 终态任务可按明确确认值硬删除；运行中和排队任务先取消并等待终态。
+- 单个工具失败不等于任务失败；多设备失败独立显示；写入未知显示为需要 read-back/reconcile。
+- 页面显示真实服务端结果，不能把缓存、猜测或文档描述渲染为实时外部状态。
 
-- Browser DOM: the CE1 card contains exactly one `TELNET:30001` connection.
-- API state: local workspace contains one CE1 connection and Skill `测试1` references that surviving connection ID.
-- Browser interaction: sending `验证 Skill 标签显示` shows `Skill / 测试1` on the user bubble immediately.
-- Refresh recovery: after the successful turn completed and the page reloaded, the same Skill label was restored from durable session-message metadata.
-- Browser interaction: CE1 `编辑设备` restores its name, address, vendor and region into the edit form; a temporary device was registered, displayed with zero-connection guidance, permanently deleted through confirmation, and absent afterward.
-- Browser DOM: CE1 exposes distinct device and connection management groups with unambiguous accessible labels.
-- Browser interaction: published Skill `测试1` restores its complete edit form, exposes a reversible enable/disable action, and presents an irreversible hard-delete confirmation without mutating its devices or connections.
-- Browser interaction: `同IP临时设备` was successfully registered on `100.117.194.25` alongside CE1 and CE2, then permanently deleted through the product confirmation flow; the two intended devices remained and browser error logs were empty.
-- Runtime selection: local Skill `测试1` resolved CE1 and CE2 resource IDs without contacting either endpoint; the former `workbench_skill_has_no_verified_connection` gate did not reappear.
-- Runtime recovery: target connection failures are now returned only by the explicit device operation, remain isolated per device, and enter the bounded QueryLoop recovery/evidence contract instead of invalidating the selected Skill.
-- Focused verification: 47 network-extension tests, 244 cross-layer backend tests, 14 frontend tests, TypeScript typecheck, CSS token validation, and the production frontend build pass.
+## 验证方式
 
-## Result
-
-Final result: passed. Device and published-Skill management present complete lifecycle actions, Skill invocation owns connection activation and per-target failure isolation, and connection identity plus per-turn Skill visibility remain unambiguous.
+组件测试验证状态映射；浏览器测试验证路由、代理、认证和交互；上线前在实际服务上确认 HTTP、WebSocket/SSE、任务记录和对象生命周期。截图仅是视觉证据，不能代替真实 API 或设备验证。

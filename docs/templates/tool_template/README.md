@@ -1,16 +1,14 @@
-# Tool Template
+# 工具模板
 
-Public tools are canonical IDs in `core/tools/tool_namespace_data.py`. Prefer adding an operation behind an existing canonical tool before creating a new public tool.
+优先在现有 canonical tool 中增加动作。只有确实需要新的公共工具时，才在 `core/tools/tool_namespace_data.py` 新增 ID。
 
-## Change Checklist
+## 接入顺序
 
-1. Update namespace data in `core/tools/tool_namespace_data.py` only if a new canonical public ID is truly needed.
-2. Add or update the manifest in `core/tools/manifest_registry.py`.
-3. Wire the handler in `core/tools/canonical_registry.py`.
-4. Keep all execution behind `ToolRuntimeClient.invoke()`.
-5. Add focused tests for namespace, manifest, policy, and handler result shape.
-
-## Manifest Guidance
+1. 更新 tool namespace、manifest registry 与 canonical registry。
+2. 定义 JSON schema、调用方范围、风险等级、side effect 与输出敏感性。
+3. 保持执行经 `ToolRuntimeClient.invoke()`。
+4. 添加 namespace、manifest、policy、handler、脱敏和 API/前端路径测试。
+5. 更新 API、架构和用户文档。
 
 ```python
 CapabilityManifest(
@@ -24,17 +22,4 @@ CapabilityManifest(
 )
 ```
 
-Risk levels:
-
-| Risk | Meaning | Runtime handling |
-| --- | --- | --- |
-| `low` | Read-only local analysis | Execute within the caller and workspace scope |
-| `medium` | Writes, external network, or state changes without destructive intent | Execute only when the product owner authorizes the action |
-| `high` | Destructive or sensitive mutation such as delete/remove/reset/connect with risk | Require an explicit product authorization contract or reject |
-| `critical` | Explicitly dangerous operation | Reject |
-
-Safety policy should block dangerous arguments such as destructive shell commands, not ordinary tool use.
-
-## Result Shape
-
-Handlers return plain dictionaries that `ToolExecutor` wraps into `ToolResult`. Include a concise `summary`, structured fields, and no raw secrets.
+handler 返回可序列化字典，由 `ToolExecutor` 包装为 `ToolResult`。返回 summary、结构化字段和可引用证据；绝不返回原始密钥或把外部写入未知伪装为失败后可重试。

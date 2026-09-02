@@ -1,54 +1,27 @@
-# LZCore Frontend
+# 联智中枢前端
 
-LZCore 的 React/TypeScript 前端。
+前端使用 React 18、TypeScript、Vite 8、Zustand、Axios、Vitest 与 Playwright，源码位于 `frontend/src/`。
 
-## Run
-
-```bash
-cd /Users/zhangh01/Desktop/lzcore/frontend
-npm run dev -- --host 0.0.0.0
-```
-
-The dev server listens on port `5273` and proxies `/api` to `VITE_DEV_API_TARGET`, defaulting to `http://127.0.0.1:8011`.
-
-## Stack
-
-- React 18
-- TypeScript
-- Vite 8
-- Same-origin application router (`src/router.tsx`)
-- Zustand
-- Axios
-- Vitest
-- Playwright
-
-## Source Layout
-
-- `src/app/App.tsx`: route table and top-level shell
-- `src/router.tsx`: same-origin navigation and search parameters
-- `src/api/client.ts`: Axios wrapper and timeout policy
-- `src/api/index.ts`: API modules
-- `src/pages/`: route pages
-- `src/layouts/`: sidebar and app layout
-- `src/stores/`: session, workbench, toast state
-- `src/types/index.ts`: shared API-facing types
-- `src/styles/global.css`: design system and interaction polish
-- `src/test/`: Vitest tests
-- `e2e/`: Playwright specs
-
-## Commands
+## 开发与验证
 
 ```bash
+cd frontend
+npm run dev -- --host 127.0.0.1
 npm run typecheck
 npm test -- --run
 npm run build
 npm run e2e
 ```
 
-## Notes
+开发服务器默认端口为 `5273`，`/api` 代理到 `VITE_DEV_API_TARGET`（默认 `http://127.0.0.1:8011`）。
 
-- Agent turns use `TIMEOUTS.agentTurn = 180_000`.
-- Workbench messages are stored per session.
-- Capability state and tool counts come from backend APIs.
-- Runtime outcome and recovery-goal state come only from backend AgentResult metadata;
-  a failed tool card alone is never sufficient to label the user task failed.
+## 代码导航
+
+- `src/app/App.tsx`：顶层应用与导航路由。
+- `src/api/`：API 客户端与资源模块。
+- `src/pages/`、`src/layouts/`、`src/components/`：页面、布局与组件。
+- `src/stores/`：Zustand 视图状态。
+- `src/types/`：API 面向的类型。
+- `src/test/`、`e2e/`：单元和浏览器测试。
+
+前端只呈现服务端事实：不得在浏览器补充 `workspace_id`、Skill 权限、任务终态或恢复目标。登录使用 HttpOnly 会话；临时 token 仅可存于 sessionStorage，不能写入 URL、localStorage、日志或构建变量。

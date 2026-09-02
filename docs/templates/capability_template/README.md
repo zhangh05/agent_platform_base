@@ -1,31 +1,22 @@
-# Business Capability Template
+# 能力目录模板
 
-Business capabilities describe user-facing outcomes. They are not tool registrations and do not dispatch handlers.
+能力是面向用户的结果说明、推荐工具和安全提示，不是工具注册表，也不分发 handler。
 
-## Add Or Update A Capability
-
-1. Edit `agent/capabilities/catalog.py`.
-2. Reference only canonical tool IDs from `core/tools/tool_namespace_data.py`.
-3. Add the capability only after the runtime path and tests exist; the current catalog contains enabled capabilities only.
-4. Run:
-
-```bash
-python3 -m pytest harness/test_business_capability_catalog.py harness/test_ssot_runtime_contract_canonical_sync.py -q
-```
-
-## Entry Shape
+1. 在 `agent/capabilities/catalog.py` 增加或更新条目。
+2. `recommended_tool_ids` 只能引用 `core/tools/tool_namespace_data.py` 中的 canonical tool ID。
+3. 先实现运行时路径与测试，再暴露能力目录。
 
 ```python
 {
     "capability_id": "my_feature",
     "display_name": "My Feature",
-    "description": "One sentence describing the user outcome.",
+    "description": "说明用户可获得的结果。",
     "module_ids": ("my_feature",),
     "recommended_tool_ids": ("workspace.file", "text.analyze"),
-    "prompt_hints": ("Read source files before producing analysis.",),
-    "safety_notes": ("Do not claim unverified output is production-ready.",),
+    "prompt_hints": ("先读取证据，再给出结论。",),
+    "safety_notes": ("不要把未验证结果表述为生产事实。",),
     "status": "enabled",
 }
 ```
 
-Do not add tool aliases or separate capability registries.
+禁止增加工具别名、第二套 capability registry 或把能力目录作为授权依据。

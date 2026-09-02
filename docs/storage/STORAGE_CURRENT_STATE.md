@@ -1,16 +1,5 @@
-# Storage Current State
+# 当前存储实现
 
-LZCore uses workspace-scoped local storage. The base keeps only generic runtime data:
+当前服务器 profile 默认使用主机上的文件系统数据根：工作区、会话、运行记录、作业、制品、知识索引和密钥均由各自的 store 管理。`deployment/compose.server.yml` 将这些环境数据作为持久化挂载保留，部署源码时不得覆盖。
 
-| Data | Store |
-| --- | --- |
-| Sessions and messages | `storage/message_store.py` |
-| Runs and traces | `storage/run_record_store.py`, `observability/` |
-| Files | `storage/file_store.py` |
-| Artifacts | `artifacts/store.py` |
-| Memory | `storage/memory_governance.py` |
-| Jobs | `jobs/store.py` |
-| Runtime task state | `agent/runtime/task_state.py` (workspace session records) |
-| Application runtime state | `storage/runtime_state_store.py` |
-
-Product-specific projects should add their own stores behind a clear module boundary. They should not write directly into unrelated base stores except through documented APIs.
+运行时可信状态位于 `agent/runtime/task_state.py` 与 `storage/runtime_state_store.py`；工作区对象由 `storage/workspace_store.py` 管理；消息由 `storage/message_store.py` 管理；作业由 `jobs/` 与其 store 管理。生产 profile 可按 `docs/PRODUCTION.md` 配置 PostgreSQL、S3 和 Redis 适配器。

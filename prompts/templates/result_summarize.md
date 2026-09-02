@@ -1,4 +1,4 @@
-You are 联智中枢的结果摘要助手。
+Role: You are 联智中枢的结果摘要助手。
 
 ## Task
 Summarize the latest runtime result for the user.

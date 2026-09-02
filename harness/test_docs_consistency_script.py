@@ -34,9 +34,14 @@ def test_api_docs_only_list_registered_backend_routes():
         if len(cells) < 2:
             continue
         method = cells[0].strip("`")
-        path = cells[1].strip("`")
-        if method in {"GET", "POST", "PUT", "PATCH", "DELETE", "WS"} and path.startswith(("/api/", "/ws/")):
-            documented.append(path.split("?")[0])
+        if method not in {"GET", "POST", "PUT", "PATCH", "DELETE", "WS"}:
+            continue
+        # API reference tables can group several complete paths in one cell.
+        # Extract each absolute route rather than treating a comma-separated
+        # explanation as one fictitious Flask rule.
+        documented.extend(
+            re.findall(r"/(?:api|ws)/[A-Za-z0-9_./<>-]+", cells[1])
+        )
 
     # Check that documented routes are actually registered
     missing_from_backend = [
@@ -44,8 +49,7 @@ def test_api_docs_only_list_registered_backend_routes():
         for path in documented
         if re.sub(r"<[^>]+>", "<var>", path) not in actual_shapes
     ]
-    # Only fail if more than half of documented routes are missing
-    assert len(missing_from_backend) <= len(documented) / 2, f"Too many invalid routes: {missing_from_backend}"
+    assert not missing_from_backend, f"Invalid documented routes: {missing_from_backend}"
 
 
 def test_frontend_docs_match_navigation_routes():

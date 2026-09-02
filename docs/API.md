@@ -1,11 +1,10 @@
-# API
+# 联智中枢 API 参考
 
-Base URL: `http://localhost:8011`。
+服务基地址：`http://127.0.0.1:8011`（本地默认）。生产环境由反向代理提供同源 `/api`、`/ws/agent` 与 SSE 路径。
 
-本文档按 `backend.main.create_app()` 当前注册的 Flask 路由整理；它描述公开
-HTTP/WS 面，不把内部 handler 当成 API。工作区数据接口必须带显式、合法的
-`workspace_id`：有的在 query 中，有的在路径 `<ws_id>` 中，具体以路由和请求
-schema 为准。身份模式下还需要有效登录会话或服务凭据。
+本文档以 `backend.main.create_app()` 当前注册的 Flask 路由为准，只描述公开 HTTP 与 WebSocket 面，不把内部 handler 当作 API。工作区数据接口必须携带服务端验证的 `workspace_id`；它可能在 query 或路径 `<ws_id>` 中，具体请求 schema 以对应路由实现为准。identity 模式下还需要有效登录会话或服务凭据。
+
+除健康检查外，调用方应处理结构化错误与资源生命周期，不能从 HTTP 状态码推断写入是否可安全重试。运行时结果以 `AgentResult` 投影及其 `execution_outcome`、`tool_execution_outcome` 为准。
 
 ## Service, authentication and agent
 

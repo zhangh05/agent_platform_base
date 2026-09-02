@@ -1,74 +1,30 @@
-# Cross-extension workflows
+# 工作流
 
-Workflows are workspace-scoped DAGs whose nodes reference canonical platform or
-installed extension tool IDs. They never call extension handlers directly. Each
-node enters `ToolRuntimeClient`, preserving caller checks, JSON-schema validation,
-risk policy, product authorization, redaction, quotas, tracing, and workspace
-scope.
+工作流是工作区范围内的 DAG。节点引用 canonical platform tool 或已安装扩展工具，不能直接调用扩展 handler，因此每个节点仍受 `ToolRuntimeClient` 的 schema、策略、授权、脱敏和审计保护。
 
-Nodes in the same dependency layer are scheduled together: independent
-read-only calls run concurrently within the configured limit, while writes and
-other side-effecting calls remain ordering barriers. Results are persisted in
-stable node order, so concurrency never changes references or audit semantics.
-
-## Definition
+## 定义
 
 ```json
 {
   "workflow_id": "readonly_inspection",
   "name": "批量只读巡检",
   "failure_policy": "fail_fast",
-  "nodes": [
-    {
-      "node_id": "inspect",
-      "tool_id": "network.operations.inspection",
-      "arguments": {"connection_ids": "${input.connection_ids}"}
-    }
-  ]
+  "nodes": [{
+    "node_id": "inspect",
+    "tool_id": "network.operations.inspection",
+    "arguments": {"connection_ids": "${input.connection_ids}"}
+  }]
 }
 ```
 
-Node IDs are unique. Dependencies must exist, cycles are rejected, and a node may
-only reference outputs from its transitive dependencies. Definitions may contain
-runtime-input or secret-reference templates, but cannot persist literal password,
-API-token, authorization, or private-key fields.
+节点 ID 唯一，依赖必须存在且无环；引用只能读取传递依赖的输出。定义包含 1–30 个节点，单节点解析后的输入上限为 1 MiB。密码、token、私钥和授权字段不得作为持久化定义的一部分。
 
-Definitions contain 1–30 nodes (the current `SSOTRuntimeConfig.max_nodes`
-limit) and accept at most 1 MiB of resolved input per
-node. Persisted workflow inputs and outputs are redacted; large node outputs are
-projected to a bounded structured record. The full in-memory output remains
-available to downstream nodes during that run.
+## 执行语义
 
-## Execution
+独立只读节点在并发上限内执行；写入和其他有副作用节点形成顺序屏障。结果按稳定的节点顺序记录。`POST /api/workflows/<workflow_id>/runs` 默认同步执行，设置 `enqueue: true` 后创建 durable `workflow_run` 作业。
 
-`POST /api/workflows/<workflow_id>/runs` executes synchronously by default. Set
-`"enqueue": true` to create a durable `workflow_run` job for a worker. Runs record
-every node status, summary, safe output projection, errors, timing, and cancellation
-state. Queued execution inherits the production queue's at-least-once semantics,
-so external writes must use job/node idempotency keys.
+worker 队列是 at-least-once。涉及外部写入的 handler 必须使用作业 ID 与节点 ID 构造幂等键。工作流的 `failure_policy` 仅管理 DAG 节点，不创建第二套 LLM 失败恢复机制，也不会自动重放写操作。
 
-Workflows do not create an interactive authorization state. Product-owned tools
-validate their own published scope at invocation time; rejected nodes fail with
-a structured authorization error. Destructive host commands are blocked by the
-shared runtime policy.
+## 与对话运行时的关系
 
-## Relation to the conversational goal loop
-
-Workflow `failure_policy` controls declared DAG nodes; it does not create a
-second LLM recovery loop. A failed node remains a workflow result with its
-stable node identity. Safe explicit node retry is available only through the
-runtime task API and must obey the original canonical contract, authorization,
-idempotency and write fences.
-
-Conversational QueryLoop recovery is separate and domain-neutral: it may pursue
-bounded alternative **read** evidence after a recoverable observation failure.
-It never auto-replays a workflow write or changes a workflow definition. If a
-workflow tool result publishes an evidence recovery directive, QueryLoop may
-consume it only when that result is part of a conversational turn; ordinary
-workflow execution records the directive as output and leaves the next action
-to the workflow owner/operator. See [Loop Engineering](LOOP_ENGINEERING.md).
-
-Roles are explicit in identity mode: viewers can read definitions and runs,
-operators can execute/cancel, developers can create or update, and organization
-administrators inherit those permissions. Workflow APIs remain a framework
-capability; the retired generic editor is not part of the current product UI.
+QueryLoop 的只读证据恢复和工作流节点失败是两种不同语义。只有工具结果处于对话回合中时，QueryLoop 才可能消费其安全恢复指令；普通工作流会记录结果，由工作流所有者决定后续操作。

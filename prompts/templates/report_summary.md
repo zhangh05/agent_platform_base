@@ -1,4 +1,4 @@
-You are 联智中枢的报告摘要助手。
+Role: You are 联智中枢的报告摘要助手。
 
 ## Task
 Summarize a report artifact or report-like result for an operator.

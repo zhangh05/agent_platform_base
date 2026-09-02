@@ -108,7 +108,7 @@ def main() -> int:
 
     removed_cipher = "HMAC" + " + " + "XOR"
     check(removed_cipher not in combined_docs, "documents omit removed credential cipher")
-    check("AES-GCM" in combined_docs, "documents current credential encryption")
+    check("Fernet" in combined_docs, "documents current credential encryption")
 
     print(
         f"\n{len(failures)} failure(s)"
