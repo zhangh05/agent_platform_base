@@ -147,6 +147,12 @@ def safe_read_recovery_directive(arguments: dict[str, Any], output: dict[str, An
     profile = output.get("device_profile") if isinstance(output.get("device_profile"), dict) else {}
     supported = profile.get("semantic_facts") if isinstance(profile.get("semantic_facts"), list) else []
     documentation = _documentation_fallback(profile, failed_command, fact)
+    goal = {
+        "evidence_kind": "network_semantic_fact" if fact else "network_read_observation",
+        "target": {"connection_id": connection_id},
+        "fact": fact,
+        "description": f"live device evidence for {fact or failed_command}",
+    }
     if not fact or (supported and fact not in {str(item) for item in supported}):
         # We cannot safely invent a device command. Search authoritative vendor
         # documentation automatically, then let the normal loop turn that
@@ -156,6 +162,7 @@ def safe_read_recovery_directive(arguments: dict[str, Any], output: dict[str, An
             "tool_id": str(documentation["tool_id"]),
             "arguments": dict(documentation["arguments"]),
             "summary": "device_cli_syntax_requires_official_docs",
+            "goal": goal,
             "failed_command": failed_command,
             "driver_id": str(profile.get("driver_id") or ""),
         }
@@ -171,11 +178,98 @@ def safe_read_recovery_directive(arguments: dict[str, Any], output: dict[str, An
         "tool_id": _NETWORK_TOOL,
         "arguments": plan.tool_arguments(),
         "summary": "device_cli_syntax_rejection",
+        "goal": goal,
         "fact": fact,
         "connection_id": connection_id,
         "failed_command": failed_command,
         "driver_id": plan.driver_id,
         "documentation_fallback": documentation,
+    }
+
+
+def safe_read_recovery_directives(
+    arguments: dict[str, Any], output: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """Return independent recovery goals for every rejected raw command."""
+    commands = arguments.get("commands")
+    if str(arguments.get("action") or "").lower() != "read" or not isinstance(commands, list):
+        return []
+    directives: list[dict[str, Any]] = []
+    for command in commands:
+        directive = safe_read_recovery_directive(
+            {**arguments, "commands": [str(command)]},
+            output,
+        )
+        if directive:
+            directives.append(directive)
+    return directives
+
+
+def network_evidence_claims(arguments: dict[str, Any], output: dict[str, Any]) -> list[dict[str, Any]]:
+    """Project live device observations into domain-neutral evidence claims."""
+    action = str(arguments.get("action") or "").lower()
+    connection_id = str(arguments.get("connection_id") or "").strip()
+    if not connection_id or action not in {"read", "collect"}:
+        return []
+    claims: list[dict[str, Any]] = []
+    if action == "collect":
+        facts = output.get("facts") if isinstance(output.get("facts"), dict) else {}
+        for fact in arguments.get("facts") or []:
+            value = facts.get(str(fact)) if isinstance(facts, dict) else None
+            status = str((value or {}).get("status") or "unknown").lower() if isinstance(value, dict) else "unknown"
+            claims.append({
+                "evidence_kind": "network_semantic_fact",
+                "target": {"connection_id": connection_id},
+                "fact": str(fact),
+                "status": "collected" if status == "collected" else "unavailable" if status == "unavailable" else "unknown",
+            })
+        return claims
+    for item in output.get("command_results") or []:
+        if not isinstance(item, dict):
+            continue
+        if not item.get("complete") or item.get("error_code") or item.get("truncated"):
+            continue
+        command = str(item.get("command") or "")
+        fact = infer_semantic_fact(command)
+        claims.append({
+            "evidence_kind": "network_semantic_fact" if fact else "network_read_observation",
+            "target": {"connection_id": connection_id},
+            "fact": fact,
+            "status": "collected",
+            "command": command,
+        })
+    return claims
+
+
+def semantic_collect_recovery_directive(
+    arguments: dict[str, Any], output: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Escalate an unavailable vendor template to official documentation."""
+    if str(arguments.get("action") or "").lower() != "collect":
+        return None
+    connection_id = str(arguments.get("connection_id") or "").strip()
+    facts = output.get("facts") if isinstance(output.get("facts"), dict) else {}
+    unavailable = [
+        str(fact) for fact in arguments.get("facts") or []
+        if str((facts.get(str(fact)) or {}).get("status") or "").lower() != "collected"
+    ]
+    if not connection_id or len(unavailable) != 1:
+        return None
+    fact = unavailable[0]
+    profile = output.get("device_profile") if isinstance(output.get("device_profile"), dict) else {}
+    documentation = _documentation_fallback(profile, "", fact)
+    return {
+        "kind": "documentation_read_fallback",
+        "tool_id": str(documentation["tool_id"]),
+        "arguments": dict(documentation["arguments"]),
+        "summary": "semantic_template_requires_official_docs",
+        "goal": {
+            "evidence_kind": "network_semantic_fact",
+            "target": {"connection_id": connection_id},
+            "fact": fact,
+            "description": f"live device evidence for {fact}",
+        },
+        "driver_id": str(profile.get("driver_id") or ""),
     }
 
 

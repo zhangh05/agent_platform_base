@@ -23,6 +23,8 @@ def evaluate_goal_assertions(ctx, tool_results: list[Any]) -> dict[str, Any]:
         kind = str(assertion.get("kind") or "all_required_results_succeeded")
         if kind == "semantic_observation_collected":
             status = _semantic_observation_status(candidates, missing_keys, str(assertion.get("fact") or ""))
+        elif kind == "evidence_claim_satisfied":
+            status = _evidence_claim_status(tool_results, assertion)
         elif missing_keys or not candidates or any(bool(getattr(item, "execution_may_continue", False)) for item in candidates):
             status = "unknown"
         elif all(bool(getattr(item, "ok", False)) for item in candidates):
@@ -35,6 +37,12 @@ def evaluate_goal_assertions(ctx, tool_results: list[Any]) -> dict[str, Any]:
             "status": status,
             "required_call_keys": keys,
             "missing_call_keys": missing_keys,
+            **({
+                "goal_id": str(assertion.get("goal_id") or ""),
+                "evidence_kind": str(assertion.get("evidence_kind") or ""),
+                "target": dict(assertion.get("target") or {}),
+                "fact": str(assertion.get("fact") or ""),
+            } if kind == "evidence_claim_satisfied" else {}),
         })
     statuses = {item["status"] for item in evaluated}
     status = "passed" if statuses == {"passed"} else "unknown" if "unknown" in statuses else "failed"
@@ -58,3 +66,29 @@ def _semantic_observation_status(candidates: list[Any], missing_keys: list[str],
         if str(value.get("status") or "").lower() != "collected":
             return "failed" if str(value.get("status") or "").lower() == "unavailable" else "unknown"
     return "passed"
+
+
+def _evidence_claim_status(tool_results: list[Any], assertion: dict[str, Any]) -> str:
+    """Match evidence by goal identity, independently from one attempt ID."""
+    expected_kind = str(assertion.get("evidence_kind") or "")
+    expected_fact = str(assertion.get("fact") or "")
+    expected_target = assertion.get("target") if isinstance(assertion.get("target"), dict) else {}
+    matched: list[dict[str, Any]] = []
+    for result in tool_results:
+        output = getattr(result, "output", {})
+        if not isinstance(output, dict):
+            continue
+        for claim in output.get("evidence_claims") or []:
+            if not isinstance(claim, dict) or str(claim.get("evidence_kind") or "") != expected_kind:
+                continue
+            if expected_fact and str(claim.get("fact") or "") != expected_fact:
+                continue
+            target = claim.get("target") if isinstance(claim.get("target"), dict) else {}
+            if any(target.get(key) != value for key, value in expected_target.items()):
+                continue
+            matched.append(claim)
+    if any(str(item.get("status") or "").lower() in {"satisfied", "collected", "observed"} for item in matched):
+        return "passed"
+    if any(str(item.get("status") or "").lower() in {"failed", "unavailable", "rejected"} for item in matched):
+        return "failed"
+    return "unknown"

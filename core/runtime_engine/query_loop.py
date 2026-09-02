@@ -1443,11 +1443,13 @@ class StreamingToolExecutor:
     def _has_safe_read_recovery(node: ExecutionNode, result: ToolResult) -> bool:
         """Recognise a registered handler's typed, read-only fallback."""
         payload = result.data if isinstance(result.data, dict) else {}
-        directive = payload.get("runtime_recovery")
-        return bool(
+        published = payload.get("runtime_recoveries")
+        directives = published if isinstance(published, list) else [payload.get("runtime_recovery")]
+        return any(
             isinstance(directive, dict)
             and directive.get("kind") in {"safe_read_fallback", "documentation_read_fallback"}
             and isinstance(directive.get("arguments"), dict)
+            for directive in directives
         )
 
     @staticmethod
@@ -1757,6 +1759,8 @@ class QueryLoop:
                 "safe_read_recovery_events": list(
                     ctx.extras.get("safe_read_recovery_events") or []
                 ),
+                "recovery_goals": list(ctx.extras.get("recovery_goals") or []),
+                "recovery_goal_events": list(ctx.extras.get("recovery_goal_events") or []),
                 "task_state_execution_manifest": list(
                     ctx.extras.get("task_state_execution_manifest") or []
                 )[-128:],
@@ -2289,6 +2293,21 @@ class QueryLoop:
                         error="duplicate_mutation_call",
                     )
                 if repeated_calls and len(repeated_calls) == len(tool_calls):
+                    recovery_goals = [
+                        item for item in ctx.extras.get("recovery_goals") or []
+                        if isinstance(item, dict) and item.get("status") != "passed"
+                    ]
+                    duplicate_replans = int(ctx.extras.get("recovery_duplicate_replans") or 0)
+                    if recovery_goals and duplicate_replans < 2:
+                        ctx.extras["recovery_duplicate_replans"] = duplicate_replans + 1
+                        messages = self._append_turn_nudge(
+                            messages,
+                            "[RUNTIME RECOVERY NOVELTY] The proposed read is identical to an already attempted "
+                            "call and was not executed. Recovery goals remain open. Choose a materially different "
+                            "safe read using collected device profile or official documentation evidence; do not "
+                            "repeat the rejected call.",
+                        )
+                        continue
                     return finish(
                         final_response=self._build_tool_result_fallback(ctx, all_results),
                         error="duplicate_tool_call",
@@ -2467,7 +2486,15 @@ class QueryLoop:
                         "现在请仅选择与该目标相关的只读 read-back/reconcile 工具调用来核验实际状态；"
                         "若证据仍不足或设备不可达，请基于已有证据向用户说明不确定性和下一步。"
                     )
-                failed_results = [result for result in results if not result.ok]
+                recovered_source_ids = {
+                    str(item.get("source_call_id") or "")
+                    for item in ctx.extras.get("safe_read_recovery_events") or []
+                    if isinstance(item, dict) and item.get("status") == "recovered"
+                }
+                failed_results = [
+                    result for result in results
+                    if not result.ok and result.call_id not in recovered_source_ids
+                ]
                 if failed_results:
                     if ctx.extras.get("orchestration_stop_requested"):
                         recovery_nudge = (
@@ -2614,7 +2641,28 @@ class QueryLoop:
 
                 continue
 
-            # No tool calls → final response
+            # No tool calls is only a proposed final response. Runtime-owned
+            # recovery goals are evidence predicates, so the model cannot end
+            # the turn while a safe, bounded replan is still available.
+            from .recovery_goals import recovery_final_gate
+
+            recovery_gate = recovery_final_gate(ctx, all_results)
+            if recovery_gate.should_continue and iterations < max_iterations:
+                messages = [
+                    *messages,
+                    LLMMessage(role="assistant", content=str(response.content or "").strip()),
+                    LLMMessage(role="user", content=recovery_gate.nudge),
+                ]
+                ctx.extras.setdefault("recovery_goal_events", []).append({
+                    "type": "premature_final_rejected",
+                    "iteration": iterations,
+                    "unresolved_goal_ids": [
+                        str(item.get("goal_id") or "") for item in recovery_gate.unresolved
+                    ],
+                })
+                continue
+
+            # No tool calls and no recoverable evidence gap → final response
             if response_stage_started_at is None:
                 response_stage_started_at = model_started_at
                 self._emit_stage(
@@ -3311,38 +3359,51 @@ class QueryLoop:
         checkpoint,
     ) -> tuple[list[LLMToolCall], list[StreamingToolResult]]:
         """Execute bounded registered safe-read fallbacks through QueryLoop."""
+        recovery_depth = int(ctx.extras.get("safe_read_recovery_depth") or 0)
+        if recovery_depth >= 2:
+            return [], []
         attempted = set(ctx.extras.get("safe_read_recovery_attempted") or [])
-        directives: list[tuple[LLMToolCall, dict[str, Any]]] = []
+        directives: list[tuple[LLMToolCall, dict[str, Any], str]] = []
         for call, result in zip(tool_calls, results):
             output = result.output if isinstance(result.output, dict) else {}
-            directive = output.get("runtime_recovery")
-            if (
-                call.id in attempted
-                or not isinstance(directive, dict)
-                or directive.get("kind") not in {"safe_read_fallback", "documentation_read_fallback"}
-                or not isinstance(directive.get("tool_id"), str)
-                or not isinstance(directive.get("arguments"), dict)
-            ):
-                continue
-            directives.append((call, directive))
+            published = output.get("runtime_recoveries")
+            candidates = published if isinstance(published, list) else [output.get("runtime_recovery")]
+            for directive in candidates:
+                if (
+                    not isinstance(directive, dict)
+                    or directive.get("kind") not in {"safe_read_fallback", "documentation_read_fallback"}
+                    or not isinstance(directive.get("tool_id"), str)
+                    or not isinstance(directive.get("arguments"), dict)
+                ):
+                    continue
+                directive_key = hashlib.sha256(json.dumps({
+                    "source_call_id": call.id,
+                    "kind": directive.get("kind"),
+                    "tool_id": directive.get("tool_id"),
+                    "arguments": directive.get("arguments"),
+                }, sort_keys=True, ensure_ascii=False, default=str).encode("utf-8")).hexdigest()
+                if directive_key in attempted:
+                    continue
+                directives.append((call, directive, directive_key))
         if not directives:
             return [], []
-        directives = directives[:2]
         recovery_calls = [
             LLMToolCall(
-                id=f"safe-read-recovery-{call.id[:72]}",
+                id=f"safe-read-recovery-{call.id[:64]}-{index}",
                 name=str(directive["tool_id"]),
                 arguments=dict(directive["arguments"]),
             )
-            for call, directive in directives
+            for index, (call, directive, _key) in enumerate(directives)
         ]
-        attempted.update(call.id for call, _directive in directives)
+        attempted.update(key for _call, _directive, key in directives)
         ctx.extras["safe_read_recovery_attempted"] = sorted(attempted)
         events = ctx.extras.setdefault("safe_read_recovery_events", [])
         if not isinstance(events, list):
             events = []
             ctx.extras["safe_read_recovery_events"] = events
-        for call, directive in directives:
+        from .recovery_goals import install_recovery_goal
+
+        for call, directive, _key in directives:
             events.append({
                 "kind": str(directive["kind"]),
                 "source_tool": call.name.replace("__", "."),
@@ -3351,23 +3412,7 @@ class QueryLoop:
                 "summary": str(directive.get("summary") or "safe_read_fallback"),
                 "status": "planned",
             })
-        assertions = ctx.extras.setdefault("goal_assertions", [])
-        if not isinstance(assertions, list):
-            assertions = []
-            ctx.extras["goal_assertions"] = assertions
-        for recovery_call, (_source_call, directive) in zip(recovery_calls, directives):
-            fact = str(directive.get("fact") or "").strip()
-            if not fact:
-                continue
-            assertion_id = f"semantic_observation:{recovery_call.id}:{fact}"
-            if any(isinstance(item, dict) and item.get("assertion_id") == assertion_id for item in assertions):
-                continue
-            assertions.append({
-                "assertion_id": assertion_id,
-                "kind": "semantic_observation_collected",
-                "required_call_keys": [recovery_call.id],
-                "fact": fact,
-            })
+            install_recovery_goal(ctx, directive, source_call_id=call.id)
 
         if budget.remaining_execution_seconds() <= 0:
             for event in events[-len(directives):]:
@@ -3418,7 +3463,22 @@ class QueryLoop:
                 "recovery_call_id": result.call_id,
                 "error": str(result.error or "")[:240],
             })
-        return recovery_calls, recovery_results
+        # A recovery tool may itself publish the next bounded strategy (for
+        # example, a vendor template can escalate to official documentation).
+        # Consume that directive through this same executor, never through an
+        # extension-local dispatch path.
+        ctx.extras["safe_read_recovery_depth"] = recovery_depth + 1
+        try:
+            follow_calls, follow_results = await self._execute_safe_read_recovery(
+                ctx,
+                recovery_calls,
+                recovery_results,
+                budget=budget,
+                checkpoint=checkpoint,
+            )
+        finally:
+            ctx.extras["safe_read_recovery_depth"] = recovery_depth
+        return [*recovery_calls, *follow_calls], [*recovery_results, *follow_results]
 
     @staticmethod
     def _build_safe_read_recovery_nudge(ctx: StatelessContext) -> str:
