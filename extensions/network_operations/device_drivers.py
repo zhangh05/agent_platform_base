@@ -30,8 +30,6 @@ SEMANTIC_FACTS = (
     "resource_usage",
 )
 
-DEFAULT_PROMPT_SETTLE_SECONDS = 0.12
-
 
 @dataclass(frozen=True)
 class PagerRule:
@@ -56,7 +54,7 @@ class DeviceDriver:
     # Quiet window after a prompt before the CLI boundary is accepted.  This
     # belongs to the driver timing profile because console/syslog behaviour
     # varies by platform and transport environment.
-    prompt_settle_seconds: float = DEFAULT_PROMPT_SETTLE_SECONDS
+    prompt_settle_seconds: float = 0.12
 
     def supports(self, fact: str) -> bool:
         return fact in self.semantic_commands

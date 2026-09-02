@@ -14,8 +14,6 @@ from dataclasses import dataclass
 from typing import Any
 
 
-DEFAULT_MAX_RECOVERY_FINAL_REPLANS = 3
-
 @dataclass(frozen=True)
 class RecoveryFinalGate:
     should_continue: bool
@@ -81,12 +79,7 @@ def install_recovery_goal(ctx, directive: dict[str, Any], *, source_call_id: str
     return record
 
 
-def recovery_final_gate(
-    ctx,
-    tool_results: list[Any],
-    *,
-    max_replans: int = DEFAULT_MAX_RECOVERY_FINAL_REPLANS,
-) -> RecoveryFinalGate:
+def recovery_final_gate(ctx, tool_results: list[Any], *, max_replans: int = 3) -> RecoveryFinalGate:
     """Reject premature final prose while recoverable evidence goals are open."""
     from .goal_assertions import evaluate_goal_assertions
 

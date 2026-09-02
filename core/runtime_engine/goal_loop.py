@@ -31,13 +31,7 @@ _TARGET_KEYS = (
     "job_id", "subtask_id", "host", "address", "query",
 )
 
-# Public, code-owned values mirrored by docs/LOOP_ENGINEERING.md.  Keep these
-# constants here so the runtime, durable projection and documentation verifier
-# share one definition instead of relying on duplicated prose literals.
-DEFAULT_MAX_RECOVERY_ATTEMPTS = 3
-MAX_RECOVERY_TARGET_TEXT = 240
-MAX_GOAL_LOOP_OBSERVATIONS = 256
-GOAL_LOOP_STATUSES = ("not_required", "pending", "passed", "blocked")
+_MAX_TARGET_TEXT = 240
 
 
 def observe_tool_round(
@@ -73,7 +67,7 @@ def observe_tool_round(
             "goal_ids": list(getattr(call, "goal_ids", None) or []),
         }
         observations.append(observation)
-        del observations[:-MAX_GOAL_LOOP_OBSERVATIONS]
+        del observations[:-256]
 
         if bool(getattr(result, "ok", False)):
             if observation["read_only"] and not observation["execution_may_continue"]:
@@ -206,7 +200,7 @@ def _install_generic_goal(ctx, call: Any, observation: dict[str, Any]) -> None:
             "strategy_candidates": DEFAULT_RECOVERY_STRATEGIES.candidates(observation["failure_class"]),
             "status": "pending",
             "attempts": 1,
-            "max_attempts": DEFAULT_MAX_RECOVERY_ATTEMPTS,
+            "max_attempts": 3,
             "attempt_call_ids": [source_call_id],
         })
         assertions = ctx.extras.setdefault("goal_assertions", [])
@@ -248,7 +242,7 @@ def _mark_explicit_goals_blocked(ctx, call: Any, observation: dict[str, Any]) ->
         attempts = int(goal.get("attempts") or 1) + 1
         goal["attempts"] = attempts
         goal.setdefault("attempt_call_ids", []).append(observation["call_id"])
-        if attempts >= int(goal.get("max_attempts") or DEFAULT_MAX_RECOVERY_ATTEMPTS):
+        if attempts >= int(goal.get("max_attempts") or 3):
             goal["status"] = "blocked"
             goal["blocked_reason"] = observation["failure_class"] or "recovery_attempts_exhausted"
             _event(ctx, "goal_blocked", str(goal["goal_id"]), observation["call_id"], str(goal["blocked_reason"]))
@@ -285,7 +279,7 @@ def _target_from_arguments(arguments: dict[str, Any]) -> dict[str, Any]:
     for key in _TARGET_KEYS:
         value = arguments.get(key)
         if isinstance(value, (str, int, float, bool)) and str(value).strip():
-            target[key] = value if isinstance(value, (int, float, bool)) else value[:MAX_RECOVERY_TARGET_TEXT]
+            target[key] = value if isinstance(value, (int, float, bool)) else value[:_MAX_TARGET_TEXT]
     return target or {"scope": "current_turn"}
 
 
@@ -326,4 +320,4 @@ def _event(ctx, event_type: str, goal_id: str, call_id: str, reason: str) -> Non
         "call_id": call_id,
         "reason": reason,
     })
-    del events[:-MAX_GOAL_LOOP_OBSERVATIONS]
+    del events[:-256]

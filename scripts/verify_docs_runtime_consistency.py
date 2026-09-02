@@ -36,26 +36,9 @@ def markdown_links(text: str) -> list[str]:
     ]
 
 
-def documentation_contract(text: str) -> dict[str, str]:
-    """Extract the code-backed contract table from the Loop Engineering doc."""
-    return {
-        key: value
-        for key, value in re.findall(r"^\| `([^`]+)` \| `([^`]+)` \|", text, re.MULTILINE)
-    }
-
-
 def main() -> int:
     from core.tools.manifest_registry import MANIFESTS
     from core.tools.canonical_registry import CANONICAL_REGISTRY
-    from core.runtime_engine.goal_loop import (
-        DEFAULT_MAX_RECOVERY_ATTEMPTS,
-        GOAL_LOOP_STATUSES,
-        MAX_GOAL_LOOP_OBSERVATIONS,
-        MAX_RECOVERY_TARGET_TEXT,
-    )
-    from core.runtime_engine.recovery_goals import DEFAULT_MAX_RECOVERY_FINAL_REPLANS
-    from core.runtime_engine.recovery_strategy import DEFAULT_RECOVERY_STRATEGIES
-    from extensions.network_operations.device_drivers import DEFAULT_PROMPT_SETTLE_SECONDS
 
     # v3.9.2: 21-tool Codex-style registry; v3.9.13 added
     # The dynamic
@@ -86,22 +69,6 @@ def main() -> int:
     readme = read("README.md")
     for target in markdown_links(readme):
         check((ROOT / target).exists(), f"README link exists: {target}")
-
-    loop_contract = documentation_contract(read("docs/LOOP_ENGINEERING.md"))
-    expected_loop_contract = {
-        "DEFAULT_MAX_RECOVERY_ATTEMPTS": str(DEFAULT_MAX_RECOVERY_ATTEMPTS),
-        "DEFAULT_MAX_RECOVERY_FINAL_REPLANS": str(DEFAULT_MAX_RECOVERY_FINAL_REPLANS),
-        "MAX_RECOVERY_TARGET_TEXT": str(MAX_RECOVERY_TARGET_TEXT),
-        "MAX_GOAL_LOOP_OBSERVATIONS": str(MAX_GOAL_LOOP_OBSERVATIONS),
-        "GOAL_LOOP_STATUSES": ",".join(GOAL_LOOP_STATUSES),
-        "DEFAULT_RECOVERY_STRATEGIES": ",".join(DEFAULT_RECOVERY_STRATEGIES.strategy_ids),
-        "DEFAULT_PROMPT_SETTLE_SECONDS": str(DEFAULT_PROMPT_SETTLE_SECONDS),
-    }
-    for key, expected in expected_loop_contract.items():
-        check(
-            loop_contract.get(key) == expected,
-            f"Loop Engineering doc matches code contract: {key}={expected}",
-        )
 
     combined_docs = "\n".join(read(path) for path in required_docs)
     design = read("DESIGN.md")

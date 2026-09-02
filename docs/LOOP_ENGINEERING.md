@@ -12,22 +12,6 @@ The loop never grants a tool, changes a Skill scope, weakens risk policy, or
 replays an external write. Canonical tool contracts, authorization and write
 fences remain authoritative on every replacement call.
 
-## Executable documentation contract
-
-The following values are read from runtime code by
-`scripts/verify_docs_runtime_consistency.py`. A code change that alters one of
-them without updating this table fails the documentation gate.
-
-| Contract key | Code value | Meaning |
-| --- | --- | --- |
-| `DEFAULT_MAX_RECOVERY_ATTEMPTS` | `3` | Generic `tool_recovery` attempts, including the source failure. |
-| `DEFAULT_MAX_RECOVERY_FINAL_REPLANS` | `3` | Additional final-answer replans allowed for handler-declared evidence goals. |
-| `MAX_RECOVERY_TARGET_TEXT` | `240` | Maximum persisted text length for one recovery target value. |
-| `MAX_GOAL_LOOP_OBSERVATIONS` | `256` | Maximum retained goal-loop observations and events per turn. |
-| `GOAL_LOOP_STATUSES` | `not_required,pending,passed,blocked` | Summary lifecycle values emitted by the runtime. |
-| `DEFAULT_RECOVERY_STRATEGIES` | `correct_arguments,narrow_scope,alternate_capability,authoritative_reference_then_retry,bounded_blocker` | Registered generic planning strategies. |
-| `DEFAULT_PROMPT_SETTLE_SECONDS` | `0.12` | Network CLI driver profile default after a prompt is observed. |
-
 ## Runtime lifecycle
 
 ```text
@@ -75,11 +59,9 @@ when it is the sole unambiguous pending goal.
 
 ## Evidence, attempts and terminal meaning
 
-Each generic goal starts with one failed attempt. Linked failed replacements
-increment its counter. When its code-owned attempt limit is reached, the goal is
-`blocked`; the runtime stops replanning that goal rather than looping forever.
-Handler-declared evidence goals use the separately documented final-replan
-budget above. A successful read linked by
+Each goal starts with one failed attempt. Linked failed replacements increment
+its counter. After three attempts the goal is `blocked`; the runtime stops
+replanning that goal rather than looping forever. A successful read linked by
 `plan_goal_ids`, or an unambiguous corrected same-capability read, marks it
 `passed`. A side-effecting success can never satisfy a read recovery goal.
 

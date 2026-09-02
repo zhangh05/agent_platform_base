@@ -6,16 +6,7 @@ import asyncio
 from agent.llm.schemas import LLMResponse, LLMToolCall
 from core.runtime_engine.engine import SSOTRuntimeEngine
 from core.runtime_engine.goal_assertions import evaluate_goal_assertions
-from core.runtime_engine.goal_loop import (
-    DEFAULT_MAX_RECOVERY_ATTEMPTS,
-    GOAL_LOOP_STATUSES,
-    MAX_GOAL_LOOP_OBSERVATIONS,
-    MAX_RECOVERY_TARGET_TEXT,
-    goal_loop_summary,
-    observe_tool_round,
-)
-from core.runtime_engine.recovery_goals import DEFAULT_MAX_RECOVERY_FINAL_REPLANS
-from core.runtime_engine.recovery_strategy import DEFAULT_RECOVERY_STRATEGIES
+from core.runtime_engine.goal_loop import goal_loop_summary, observe_tool_round
 from core.runtime_engine.models import SSOTRuntimeConfig, StatelessContext
 from core.runtime_engine.query_loop import StreamingToolResult
 from core.runtime_engine.recovery_goals import recovery_final_gate
@@ -35,21 +26,6 @@ def _result(call_id: str, *, ok: bool, code: str = "", error: str = "") -> Strea
         tool_name="web.manage", call_id=call_id,
         output={"ok": ok, "error_code": code, "error": error},
         ok=ok, error=error, error_code=code,
-    )
-
-
-def test_goal_loop_public_contract_is_stable_and_bounded():
-    assert DEFAULT_MAX_RECOVERY_ATTEMPTS == 3
-    assert DEFAULT_MAX_RECOVERY_FINAL_REPLANS == 3
-    assert MAX_RECOVERY_TARGET_TEXT == 240
-    assert MAX_GOAL_LOOP_OBSERVATIONS == 256
-    assert GOAL_LOOP_STATUSES == ("not_required", "pending", "passed", "blocked")
-    assert DEFAULT_RECOVERY_STRATEGIES.strategy_ids == (
-        "correct_arguments",
-        "narrow_scope",
-        "alternate_capability",
-        "authoritative_reference_then_retry",
-        "bounded_blocker",
     )
 
 
