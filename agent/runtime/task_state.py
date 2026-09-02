@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from agent.runtime.task_relation_policy import classify_task_relation
+from core.runtime_engine.goal_loop import DEFAULT_MAX_RECOVERY_ATTEMPTS
 from storage.atomic_io import atomic_write_json
 from storage.locking import FileLock
 from storage.records import append_jsonl_once, read_jsonl, workspace_record_dir, workspace_record_file
@@ -491,7 +492,7 @@ def _contract_from_state(
                 "target": _bounded_goal_target(item.get("target")),
                 "source_tool_id": _bounded_text(item.get("source_tool_id") or "", 160),
                 "attempts": int(item.get("attempts") or 0),
-                "max_attempts": int(item.get("max_attempts") or 3),
+                "max_attempts": int(item.get("max_attempts") or DEFAULT_MAX_RECOVERY_ATTEMPTS),
             }
             for item in _as_list(task.get("recovery_goals"))[:24]
             if isinstance(item, dict)

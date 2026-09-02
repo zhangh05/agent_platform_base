@@ -33,6 +33,11 @@ class RecoveryStrategyRegistry:
             if failure_class in item.failure_classes or "*" in item.failure_classes
         ]
 
+    @property
+    def strategy_ids(self) -> tuple[str, ...]:
+        """Stable identifiers for documentation and contract verification."""
+        return tuple(item.strategy_id for item in self._strategies)
+
 
 DEFAULT_RECOVERY_STRATEGIES = RecoveryStrategyRegistry((
     RecoveryStrategy(
