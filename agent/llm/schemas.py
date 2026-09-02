@@ -62,6 +62,9 @@ class LLMToolCall:
     depends_on: List[str] = field(default_factory=list)
     result_bindings: Dict[str, str] = field(default_factory=dict)
     failure_policy: str = "replan"
+    # Runtime goal ids reconciled by this call.  These are orchestration
+    # metadata, stripped before the canonical handler is invoked.
+    goal_ids: List[str] = field(default_factory=list)
 
 
 @dataclass

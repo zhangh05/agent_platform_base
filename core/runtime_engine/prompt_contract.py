@@ -312,6 +312,8 @@ RUNTIME_SYSTEM_PROMPT = """You are 联智中枢, a tool-using general-purpose ag
   preserve valid evidence, revise only affected steps, and select the smallest action that
   closes a real gap. A failure must lead to corrected arguments, a different capability,
   a narrower scope, or an honest blocker—never an unchanged replay.
+- `[RUNTIME GOAL LOOP]` blocks completion: put open ids in replacement calls' `plan_goal_ids`.
+  Docs guide checks but do not prove live state; exhausted targets are blocked or partial.
 - Compose tools when needed: retrieve then inspect, resolve then query, parse then calculate,
   act then verify, or delegate then reconcile. Use declared safe result bindings for dependent
   inputs and parallelize independent reads; schemas, policy and Skill authorization remain enforced.

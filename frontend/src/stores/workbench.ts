@@ -542,6 +542,18 @@ export const useWorkbenchStore = create<WorkbenchState>()(
                   (metadata.tool_recovery_events as AgentResult["metadata"]["tool_recovery_events"])
                   || (runtimeMetadata.tool_recovery_events as AgentResult["metadata"]["tool_recovery_events"])
                   || [],
+                recovery_goals:
+                  (metadata.recovery_goals as AgentResult["metadata"]["recovery_goals"])
+                  || (runtimeMetadata.recovery_goals as AgentResult["metadata"]["recovery_goals"])
+                  || [],
+                recovery_goal_events:
+                  (metadata.recovery_goal_events as AgentResult["metadata"]["recovery_goal_events"])
+                  || (runtimeMetadata.recovery_goal_events as AgentResult["metadata"]["recovery_goal_events"])
+                  || [],
+                goal_loop:
+                  (metadata.goal_loop as AgentResult["metadata"]["goal_loop"])
+                  || (runtimeMetadata.goal_loop as AgentResult["metadata"]["goal_loop"])
+                  || undefined,
                 context_compacted: Boolean(metadata.context_compacted ?? runtimeMetadata.context_compacted),
                 context_estimated_tokens: Number(
                   metadata.context_estimated_tokens ?? runtimeMetadata.context_estimated_tokens ?? 0,

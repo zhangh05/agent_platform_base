@@ -302,7 +302,7 @@ def device_manage(invocation):
             if action == "collect":
                 directive = semantic_collect_recovery_directive(args, response)
                 if directive:
-                    response["runtime_recovery"] = directive
+                    response["runtime_recoveries"] = [directive]
         # The extension owns device-specific recovery classification. Core
         # QueryLoop receives only this typed, read-only contract and still
         # validates/executes it through the normal registered runtime path.

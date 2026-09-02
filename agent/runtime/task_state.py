@@ -27,7 +27,7 @@ _GENERIC_CONTINUATION_RE = re.compile(
     r"^(?:请)?\s*(?:继续|接着|下一步|然后|继续完成|继续处理|恢复|再查|再验证|再分析|再试)\b",
     re.IGNORECASE,
 )
-_TASK_RESUMABLE = frozenset({"active", "completed", "replan_required", "waiting_user", "interrupted"})
+_TASK_RESUMABLE = frozenset({"active", "completed", "partial", "replan_required", "waiting_user", "interrupted"})
 _MAX_CONSECUTIVE_REPLAN_ATTEMPTS = 2
 
 
@@ -311,6 +311,19 @@ def _bounded_key_list(value: Any) -> list[str]:
     ))[-96:]
 
 
+def _bounded_goal_target(value: Any) -> dict[str, Any]:
+    """Keep durable recovery identity useful without persisting raw payloads."""
+    if not isinstance(value, dict):
+        return {}
+    bounded: dict[str, Any] = {}
+    for raw_key, raw_value in list(value.items())[:24]:
+        key = _bounded_text(raw_key, 80)
+        if not key or not isinstance(raw_value, (str, int, float, bool)):
+            continue
+        bounded[key] = raw_value if isinstance(raw_value, (int, float, bool)) else _bounded_text(raw_value, 240)
+    return bounded
+
+
 def reconcile_active_task_states(
     workspace_id: str,
     *,
@@ -467,6 +480,22 @@ def _contract_from_state(
         "completed_mutation_keys": _completed_mutation_keys(task),
         "failed_replan_call_keys": _failed_replan_call_keys(task),
         "pending_mutation_keys": _bounded_key_list(task.get("pending_mutation_keys")),
+        "recovery_goals": [
+            {
+                "goal_id": _bounded_text(item.get("goal_id") or "", 96),
+                "status": _bounded_text(item.get("status") or "pending", 32),
+                "description": _bounded_text(item.get("description") or "", 180),
+                "goal_type": _bounded_text(item.get("goal_type") or "", 48),
+                "evidence_kind": _bounded_text(item.get("evidence_kind") or "", 80),
+                "fact": _bounded_text(item.get("fact") or "", 120),
+                "target": _bounded_goal_target(item.get("target")),
+                "source_tool_id": _bounded_text(item.get("source_tool_id") or "", 160),
+                "attempts": int(item.get("attempts") or 0),
+                "max_attempts": int(item.get("max_attempts") or 3),
+            }
+            for item in _as_list(task.get("recovery_goals"))[:24]
+            if isinstance(item, dict)
+        ],
     }
 
 
@@ -483,6 +512,7 @@ def _new_task(run_id: str, user_input: str) -> dict[str, Any]:
         "evidence_refs": [],
         "unknowns": [],
         "assertions": {},
+        "recovery_goals": [],
         "failure": {},
         "created_at": now,
     }
@@ -526,6 +556,15 @@ def render_task_state_guidance(contract: dict[str, Any]) -> str:
     if failed_replan_keys:
         lines.append(f"failed_replan_step_count={len(failed_replan_keys)}")
         lines.append("The server rejects an identical replay of a prior failed replan step; select a materially different, policy-valid recovery step.")
+    recovery_goals = _as_list(contract.get("recovery_goals"))
+    if recovery_goals:
+        pending_goal_ids = [
+            str(item.get("goal_id") or "") for item in recovery_goals
+            if isinstance(item, dict) and str(item.get("status") or "") != "passed"
+        ]
+        if pending_goal_ids:
+            lines.append("open_recovery_goal_ids=" + ",".join(pending_goal_ids[:24]))
+            lines.append("Replacement calls should include the matching ids in plan_goal_ids so the runtime can reconcile the evidence.")
     prior_status = str(contract.get("status") or "")
     recovery_status = str(contract.get("recovery_status") or "")
     if prior_status == "replan_required" or recovery_status == "replan_required":
@@ -637,6 +676,11 @@ def _evolve_task(
     task["evidence_refs"] = _merge_evidence(_as_list(task.get("evidence_refs")), metadata.get("evidence"), tool_calls)
     task["unknowns"] = _unknowns_from_metadata(metadata)
     task["assertions"] = _assertions_from_metadata(metadata)
+    task["recovery_goals"] = [
+        {**dict(item), "target": _bounded_goal_target(item.get("target"))}
+        for item in _as_list(metadata.get("recovery_goals"))[-64:]
+        if isinstance(item, dict)
+    ]
     task["failure"] = _failure_from_metadata(metadata, run_ok, tool_calls)
     if _replan_requested(task, metadata):
         prior_attempts = int(previous_task.get("replan_attempts") or 0) if previous_task else 0
@@ -765,6 +809,9 @@ def _derive_status(task: dict[str, Any], metadata: dict[str, Any], run_ok: bool)
         return "replan_required", "propose_alternative_plan"
     if not run_ok:
         return "failed", "task_failed"
+    goal_loop = metadata.get("goal_loop") if isinstance(metadata.get("goal_loop"), dict) else {}
+    if str(metadata.get("execution_outcome") or "") == "partial" and goal_loop.get("status") == "blocked":
+        return "partial", "review_blocked_recovery_goals"
     if bool(assertions.get("required")) and str(assertions.get("status") or "") != "passed":
         return "replan_required", "satisfy_goal_assertions"
     return "completed", "await_user_or_continuation"
@@ -783,6 +830,7 @@ def _event_from_transition(
     status = str(task.get("status") or "")
     event_type = {
         "completed": "task_completed",
+        "partial": "task_partially_completed",
         "replan_required": "replan_required",
         "waiting_user": "task_waiting_user",
         "failed": "task_failed",

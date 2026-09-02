@@ -58,6 +58,7 @@ class ExecutionNode:
     depends_on: list[str] = field(default_factory=list)
     result_bindings: dict[str, str] = field(default_factory=dict)
     failure_policy: str = "replan"
+    goal_ids: list[str] = field(default_factory=list)
 
     @property
     def is_ready(self) -> bool:

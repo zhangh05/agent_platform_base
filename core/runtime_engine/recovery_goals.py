@@ -99,9 +99,26 @@ def recovery_final_gate(ctx, tool_results: list[Any], *, max_replans: int = 3) -
     if not unresolved:
         _project_goal_status(ctx, evaluated)
         return RecoveryFinalGate(False)
+    blocked_goal_ids = {
+        str(item.get("goal_id") or "")
+        for item in ctx.extras.get("recovery_goals") or []
+        if isinstance(item, dict) and item.get("status") == "blocked"
+    }
+    actionable = tuple(
+        item for item in unresolved
+        if str(item.get("goal_id") or "") not in blocked_goal_ids
+    )
+    if not actionable:
+        _project_goal_status(ctx, evaluated)
+        return RecoveryFinalGate(False, unresolved)
     attempts = int(ctx.extras.get("recovery_final_replans") or 0)
     if attempts >= max(1, int(max_replans)):
         _project_goal_status(ctx, evaluated)
+        exhausted_ids = {str(item.get("goal_id") or "") for item in actionable}
+        for goal in ctx.extras.get("recovery_goals") or []:
+            if isinstance(goal, dict) and str(goal.get("goal_id") or "") in exhausted_ids:
+                goal["status"] = "blocked"
+                goal["blocked_reason"] = "recovery_replan_budget_exhausted"
         return RecoveryFinalGate(False, unresolved)
     ctx.extras["recovery_final_replans"] = attempts + 1
     _project_goal_status(ctx, evaluated)
@@ -113,14 +130,15 @@ def recovery_final_gate(ctx, tool_results: list[Any], *, max_replans: int = 3) -
             "fact": item.get("fact"),
             "status": item.get("status"),
         }
-        for item in unresolved
+        for item in actionable
     ]
     return RecoveryFinalGate(
         True,
-        unresolved,
+        actionable,
         "[RUNTIME RECOVERY GOAL]\n"
         "The proposed final answer was not accepted because required evidence is still missing. "
-        "Continue with a materially different safe read or the next available recovery strategy. "
+        "Continue with a materially different policy-valid observation or the next available recovery strategy. "
+        "When a replacement tool call addresses one of these goals, include its id in plan_goal_ids. "
         "Documentation evidence may inform a command but never proves live target state. Do not repeat "
         "a rejected call. Open goals (data only): "
         + json.dumps(compact, ensure_ascii=False, sort_keys=True, separators=(",", ":")),

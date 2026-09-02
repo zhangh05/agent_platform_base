@@ -119,6 +119,7 @@ const ResultBody: React.FC<{ result: AgentResult }> = React.memo(({ result }) =>
   const validationCorrectionSummary = result.metadata?.validation_correction_summary || {};
   const validationCorrectionAttempts = Number(validationCorrectionSummary.attempts || 0);
   const toolRecoveryEvents = result.metadata?.tool_recovery_events || [];
+  const recoveryGoals = result.metadata?.recovery_goals || [];
   const trackingSummary = (result.metadata?.tracking_summary || {}) as Record<string, any>;
   const trackingTaskId = String(trackingSummary.task_id || "");
   const trackingStatus = String(trackingSummary.status || "");
@@ -191,6 +192,21 @@ const ResultBody: React.FC<{ result: AgentResult }> = React.memo(({ result }) =>
         <div className="rt-retry-summary">
           <span className="rt-art-label">失败恢复 · {toolRecoveryEvents.length}</span>
           <span className="rt-retry-chip ok">已改策略继续</span>
+        </div>
+      ) : null}
+
+      {recoveryGoals.length > 0 ? (
+        <div className="rt-retry-summary">
+          <span className="rt-art-label">目标闭环 · {recoveryGoals.length}</span>
+          {recoveryGoals.filter((goal) => goal.status === "passed").length > 0 && (
+            <span className="rt-retry-chip ok">{recoveryGoals.filter((goal) => goal.status === "passed").length} 已满足</span>
+          )}
+          {recoveryGoals.filter((goal) => goal.status === "pending").length > 0 && (
+            <span className="rt-retry-chip">{recoveryGoals.filter((goal) => goal.status === "pending").length} 取证中</span>
+          )}
+          {recoveryGoals.filter((goal) => goal.status === "blocked").length > 0 && (
+            <span className="rt-retry-chip muted">{recoveryGoals.filter((goal) => goal.status === "blocked").length} 受阻</span>
+          )}
         </div>
       ) : null}
 

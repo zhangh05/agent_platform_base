@@ -6,6 +6,7 @@ STOP_COMPLETED = "stop_completed"
 STOP_NEEDS_USER_INPUT = "stop_needs_user_input"
 STOP_UNKNOWN_OUTCOME = "stop_unknown_outcome"
 STOP_FAILED = "stop_failed"
+STOP_PARTIAL = "stop_partial"
 CONTINUE_REPLAN = "continue_replan"
 
 @dataclass(frozen=True)
@@ -41,6 +42,8 @@ def decide_next_action(
     if assertions.get("required") and assertions.get("status") != "passed":
         if assertions.get("status") == "unknown":
             return CognitiveDecision(STOP_NEEDS_USER_INPUT, ("goal_assertion_unknown",), "关键完成条件尚无法确认，需要补充信息或受控核对。", True)
+        if str(execution_outcome or "").lower() == "partial":
+            return CognitiveDecision(STOP_PARTIAL, ("goal_assertion_partial",), "已保留成功证据，但部分目标受阻，当前结果为部分完成。", True)
         return CognitiveDecision(STOP_FAILED, ("goal_assertion_failed",), "关键完成条件未满足，不能标记为完成。", True)
     if terminal_error == "replan_repeated_failed_call":
         return CognitiveDecision(

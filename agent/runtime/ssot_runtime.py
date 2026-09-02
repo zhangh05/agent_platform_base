@@ -496,6 +496,15 @@ def run_ssot_turn(
             "tool_recovery_events": list(
                 (runtime_result.metadata or {}).get("tool_recovery_events") or []
             ),
+            "recovery_goals": list(
+                (runtime_result.metadata or {}).get("recovery_goals") or []
+            ),
+            "recovery_goal_events": list(
+                (runtime_result.metadata or {}).get("recovery_goal_events") or []
+            ),
+            "goal_loop": dict(
+                (runtime_result.metadata or {}).get("goal_loop") or {}
+            ),
             "orchestration_batches": list(
                 (runtime_result.metadata or {}).get("orchestration_batches") or []
             ),
@@ -753,6 +762,9 @@ def _task_state_runtime_metadata(result_metadata: dict[str, Any] | None) -> dict
         "tool_execution_outcome",
         "unknown_outcome",
         "goal_assertions",
+        "recovery_goals",
+        "recovery_goal_events",
+        "goal_loop",
         "evidence",
         "cognitive",
         "cognitive_events",

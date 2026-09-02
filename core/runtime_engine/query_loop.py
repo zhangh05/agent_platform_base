@@ -818,6 +818,7 @@ class StreamingToolExecutor:
                     step_id=step_id, depends_on=list(tc.depends_on),
                     result_bindings=dict(tc.result_bindings),
                     failure_policy=tc.failure_policy,
+                    goal_ids=list(tc.goal_ids),
                 ))
 
             if stop_requested and runnable:
@@ -1672,6 +1673,8 @@ class QueryLoop:
         durable_failed_replan_call_keys: set[str] = set()
         legacy_failed_replan_call_keys: set[str] = set()
         if isinstance(trusted_task_state, dict):
+            from .goal_loop import hydrate_goal_loop
+            hydrate_goal_loop(ctx, trusted_task_state)
             for item in (trusted_task_state.get("completed_mutation_keys") or []):
                 value = str(item or "").strip()
                 if not value:
@@ -1761,6 +1764,7 @@ class QueryLoop:
                 ),
                 "recovery_goals": list(ctx.extras.get("recovery_goals") or []),
                 "recovery_goal_events": list(ctx.extras.get("recovery_goal_events") or []),
+                "goal_loop_observations": list(ctx.extras.get("goal_loop_observations") or [])[-256:],
                 "task_state_execution_manifest": list(
                     ctx.extras.get("task_state_execution_manifest") or []
                 )[-128:],
@@ -1777,8 +1781,16 @@ class QueryLoop:
             from .goal_assertions import evaluate_goal_assertions
             assertion_result = evaluate_goal_assertions(ctx, all_results)
             projected_metrics["goal_assertions"] = assertion_result
+            from .goal_loop import goal_loop_summary
+            projected_metrics["goal_loop"] = goal_loop_summary(ctx)
             if assertion_result["required"] and assertion_result["status"] != "passed":
-                values.setdefault("error", "goal_assertion_not_satisfied")
+                if assertion_result["status"] == "unknown" or not any(
+                    bool(getattr(item, "ok", False)) for item in all_results
+                ):
+                    values.setdefault("error", "goal_assertion_not_satisfied")
+                else:
+                    ctx.extras["response_outcome"] = "partial"
+                    projected_metrics["response_outcome"] = "partial"
             from .turn_outcome import (
                 derive_execution_outcome,
                 derive_tool_execution_outcome,
@@ -2396,6 +2408,13 @@ class QueryLoop:
                         tool_calls = [*tool_calls, *recovery_calls]
                         results = [*results, *recovery_results]
                         all_results.extend(recovery_results)
+                    from .goal_loop import observe_tool_round
+                    observe_tool_round(
+                        ctx,
+                        tool_calls,
+                        results,
+                        is_read_only_call=self._executor._is_read_only_call,
+                    )
                     for tc, result in zip(tool_calls, results):
                         ctx.extras.setdefault("tool_call_history", []).append({
                             "tool": tc.name.replace("__", "."),
@@ -2418,6 +2437,30 @@ class QueryLoop:
                 if polled_results:
                     all_results.extend(polled_results)
                     results = results + polled_results
+                    source_calls = {call.id: call for call in tool_calls}
+                    tracking_calls: list[LLMToolCall] = []
+                    tracking_results: list[StreamingToolResult] = []
+                    for polled in polled_results:
+                        source_id = str((polled.output or {}).get("tracking_source_call_id") or "")
+                        source_call = source_calls.get(source_id)
+                        if source_call is None:
+                            continue
+                        tracking_calls.append(LLMToolCall(
+                            id=polled.call_id,
+                            name=source_call.name,
+                            arguments=dict(source_call.arguments or {}),
+                            failure_policy=source_call.failure_policy,
+                            goal_ids=list(source_call.goal_ids),
+                        ))
+                        tracking_results.append(polled)
+                    if tracking_calls:
+                        from .goal_loop import observe_tool_round
+                        observe_tool_round(
+                            ctx,
+                            tracking_calls,
+                            tracking_results,
+                            is_read_only_call=self._executor._is_read_only_call,
+                        )
 
                 self._emit_stage(
                     EXECUTION_COMPLETED, t_start, stage_started_at=execution_started,
@@ -2513,6 +2556,10 @@ class QueryLoop:
                 safe_recovery_nudge = self._build_safe_read_recovery_nudge(ctx)
                 if safe_recovery_nudge:
                     messages = self._append_turn_nudge(messages, safe_recovery_nudge)
+                from .goal_loop import goal_loop_nudge
+                generic_goal_nudge = goal_loop_nudge(ctx)
+                if generic_goal_nudge:
+                    messages = self._append_turn_nudge(messages, generic_goal_nudge)
                 if self._has_complete_analysis_artifact(results):
                     messages = self._append_turn_nudge(
                         messages,
@@ -2841,6 +2888,7 @@ class QueryLoop:
                 depends_on=list(tc.depends_on),
                 result_bindings=dict(tc.result_bindings),
                 failure_policy=tc.failure_policy,
+                goal_ids=list(tc.goal_ids),
             ))
         return result
 
@@ -3279,7 +3327,7 @@ class QueryLoop:
             if not tid:
                 tid = f"call_{len(result)}"
             from .orchestration import extract_orchestration
-            args, step_id, depends_on, bindings, failure_policy = extract_orchestration(
+            args, step_id, depends_on, bindings, failure_policy, goal_ids = extract_orchestration(
                 args, str(tid),
             )
             if not isinstance(tc, dict):
@@ -3287,6 +3335,7 @@ class QueryLoop:
                 depends_on = list(getattr(tc, "depends_on", None) or depends_on)
                 bindings = dict(getattr(tc, "result_bindings", None) or bindings)
                 failure_policy = str(getattr(tc, "failure_policy", "") or failure_policy)
+                goal_ids = list(getattr(tc, "goal_ids", None) or goal_ids)
             
             result.append(LLMToolCall(
                 id=str(tid),
@@ -3296,6 +3345,7 @@ class QueryLoop:
                 depends_on=depends_on,
                 result_bindings=bindings,
                 failure_policy=failure_policy,
+                goal_ids=goal_ids,
             ))
         return result
 
@@ -3392,6 +3442,7 @@ class QueryLoop:
                 id=f"safe-read-recovery-{call.id[:64]}-{index}",
                 name=str(directive["tool_id"]),
                 arguments=dict(directive["arguments"]),
+                goal_ids=list(call.goal_ids),
             )
             for index, (call, directive, _key) in enumerate(directives)
         ]
@@ -3637,6 +3688,7 @@ class QueryLoop:
             depends_on=list(n.depends_on),
             result_bindings=dict(n.result_bindings),
             failure_policy=n.failure_policy,
+            goal_ids=list(getattr(n, "goal_ids", None) or []),
         ) for n in nodes]
         return {
             "ok": True,
@@ -3734,6 +3786,7 @@ class QueryLoop:
                 depends_on=list(tc.depends_on),
                 result_bindings=dict(tc.result_bindings),
                 failure_policy=tc.failure_policy,
+                goal_ids=list(tc.goal_ids),
             ))
         return nodes
 
@@ -4109,6 +4162,7 @@ class QueryLoop:
             latest = latest_by_source.get(source_call_id)
             if latest and isinstance(latest.output, dict):
                 latest.output.setdefault("tracking_poll_count", int(state["poll_index"]))
+                latest.output.setdefault("tracking_source_call_id", source_call_id)
         return list(latest_by_source.values())
 
     async def _sleep_until_poll_or_cancel(

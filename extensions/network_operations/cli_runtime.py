@@ -17,7 +17,6 @@ MAX_PAGER_ADVANCES = 500
 # A device can emit a console/syslog notice immediately after returning its
 # prompt.  Waiting for a brief quiet period prevents that late notice from
 # leaking into the next command's buffer while keeping normal CLI latency low.
-PROMPT_SETTLE_SECONDS = 0.12
 INTERACTION_PROMPT = re.compile(
     r"(?:\[\s*(?:y/n|yes/no|confirm)\s*\]|\(\s*(?:y/n|yes/no)\s*\)|"
     r"(?:password|continue|confirm|filename)\s*[:?])\s*[:：]?\s*$", re.IGNORECASE,
@@ -379,7 +378,9 @@ class InteractiveCLISession:
                     observed_prompt, observed_notices = prompt, notices
                     prompt_observed_at = time.monotonic()
             else:
-                if observed_prompt and time.monotonic() - prompt_observed_at >= PROMPT_SETTLE_SECONDS:
+                if observed_prompt and time.monotonic() - prompt_observed_at >= max(
+                    0.02, float(self.driver.prompt_settle_seconds),
+                ):
                     text = _remove_pagers(normalize_terminal_text(
                         decode_terminal_bytes(bytes(raw), self.driver.encodings)[0]
                     ), self.driver)

@@ -66,7 +66,7 @@ def tool_spec_to_openai_function(tool: dict) -> dict:
     # Optional incremental-orchestration controls are available on every
     # canonical function. They describe relationships between calls; the
     # QueryLoop strips them before invoking handlers. A normal single call can
-    # omit all four fields.
+    # omit all five fields.
     params_def["properties"].update({
         "plan_step_id": {
             "type": "string",
@@ -97,6 +97,15 @@ def tool_spec_to_openai_function(tool: dict) -> dict:
                 "Failure policy: replan corrects or replaces the failed step, "
                 "continue runs only independent branches, and stop ends tool execution. "
                 "Runtime still enforces safety."
+            ),
+        },
+        "plan_goal_ids": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": (
+                "Runtime goal ids addressed by this corrected or alternative call. "
+                "Copy ids exactly from a RUNTIME GOAL LOOP message so cross-tool "
+                "recovery evidence can be reconciled."
             ),
         },
     })

@@ -16,36 +16,6 @@ from typing import Any
 _NETWORK_TOOL = "network.operations.device.manage"
 _SYNTAX_ERROR_CODES = {"device_command_rejected"}
 
-# Specific terms intentionally win over broad terms such as ``route`` and
-# ``interface``.  The catalogue only contains observations implemented by all
-# supported vendor drivers.
-_FACT_HINTS: tuple[tuple[str, str], ...] = (
-    ("vpnv4", "vpnv4_routes"),
-    ("mpls ldp", "ldp_neighbors"),
-    (" ldp", "ldp_neighbors"),
-    ("mpls lsp", "mpls_lsp"),
-    ("ospf", "ospf_neighbors"),
-    ("isis", "isis_neighbors"),
-    ("bgp", "bgp_peers"),
-    ("routing-table", "routing_table"),
-    ("routing table", "routing_table"),
-    (" ip route", "routing_table"),
-    ("current-configuration", "current_config"),
-    ("current configuration", "current_config"),
-    ("running-config", "current_config"),
-    ("running configuration", "current_config"),
-    ("arp", "arp_table"),
-    ("mac-address", "mac_table"),
-    ("mac address", "mac_table"),
-    ("logbuffer", "system_logs"),
-    (" logging", "system_logs"),
-    (" cpu", "resource_usage"),
-    (" memory", "resource_usage"),
-    ("interface", "interface_status"),
-    (" ethernet", "interface_status"),
-    ("gigabitethernet", "interface_status"),
-)
-
 
 @dataclass(frozen=True)
 class ReadRecoveryPlan:
@@ -275,11 +245,9 @@ def semantic_collect_recovery_directive(
 
 def infer_semantic_fact(command: str) -> str:
     """Map a rejected inspection intent to a driver-owned fact, or nothing."""
-    normalized = " " + " ".join(str(command or "").lower().replace("_", "-").split()) + " "
-    for hint, fact in _FACT_HINTS:
-        if hint in normalized:
-            return fact
-    return ""
+    from .semantic_facts import infer_fact_from_command
+
+    return infer_fact_from_command(command)
 
 
 def _rejected_command_result(output: dict[str, Any], expected_command: str) -> dict[str, Any] | None:

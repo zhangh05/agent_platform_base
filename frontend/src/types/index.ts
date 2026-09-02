@@ -224,6 +224,27 @@ export interface AgentResult {
       failed_tools?: string[];
       errors?: string[];
     }>;
+    /** Runtime-owned goals that keep the loop active after a recoverable failure. */
+    recovery_goals?: Array<{
+      goal_id?: string;
+      goal_type?: string;
+      description?: string;
+      source_tool_id?: string;
+      status?: "pending" | "passed" | "blocked";
+      failure_class?: string;
+      attempts?: number;
+      max_attempts?: number;
+    }>;
+    recovery_goal_events?: Array<{
+      type?: string;
+      goal_id?: string;
+      call_id?: string;
+      reason?: string;
+    }>;
+    goal_loop?: {
+      status?: "not_required" | "pending" | "passed" | "blocked";
+      counts?: Record<string, number>;
+    };
     /** Background task tracking surfaced from SSOT Runtime. Distinct from retry. */
     tracking_summary?: {
       kind?: string;

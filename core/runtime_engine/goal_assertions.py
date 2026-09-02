@@ -25,6 +25,8 @@ def evaluate_goal_assertions(ctx, tool_results: list[Any]) -> dict[str, Any]:
             status = _semantic_observation_status(candidates, missing_keys, str(assertion.get("fact") or ""))
         elif kind == "evidence_claim_satisfied":
             status = _evidence_claim_status(tool_results, assertion)
+        elif kind == "runtime_goal_satisfied":
+            status = _runtime_goal_status(ctx, assertion)
         elif missing_keys or not candidates or any(bool(getattr(item, "execution_may_continue", False)) for item in candidates):
             status = "unknown"
         elif all(bool(getattr(item, "ok", False)) for item in candidates):
@@ -39,6 +41,9 @@ def evaluate_goal_assertions(ctx, tool_results: list[Any]) -> dict[str, Any]:
             "missing_call_keys": missing_keys,
             **({
                 "goal_id": str(assertion.get("goal_id") or ""),
+            } if kind == "runtime_goal_satisfied" else {}),
+            **({
+                "goal_id": str(assertion.get("goal_id") or ""),
                 "evidence_kind": str(assertion.get("evidence_kind") or ""),
                 "target": dict(assertion.get("target") or {}),
                 "fact": str(assertion.get("fact") or ""),
@@ -47,6 +52,22 @@ def evaluate_goal_assertions(ctx, tool_results: list[Any]) -> dict[str, Any]:
     statuses = {item["status"] for item in evaluated}
     status = "passed" if statuses == {"passed"} else "unknown" if "unknown" in statuses else "failed"
     return {"required": True, "status": status, "assertions": evaluated}
+
+
+def _runtime_goal_status(ctx, assertion: dict[str, Any]) -> str:
+    goal_id = str(assertion.get("goal_id") or "")
+    goal = next((
+        item for item in (getattr(ctx, "extras", {}) or {}).get("recovery_goals") or []
+        if isinstance(item, dict) and str(item.get("goal_id") or "") == goal_id
+    ), None)
+    if not isinstance(goal, dict):
+        return "unknown"
+    status = str(goal.get("status") or "pending").lower()
+    if status == "passed":
+        return "passed"
+    if status == "blocked":
+        return "failed"
+    return "unknown"
 
 
 def _semantic_observation_status(candidates: list[Any], missing_keys: list[str], fact: str) -> str:

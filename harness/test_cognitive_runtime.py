@@ -5,6 +5,7 @@ from core.runtime_engine.cognitive_events import COGNITIVE_DECISION_MADE, build_
 from core.runtime_engine.cognitive_gate import (
     CONTINUE_REPLAN,
     STOP_COMPLETED,
+    STOP_PARTIAL,
     STOP_UNKNOWN_OUTCOME,
     decide_next_action,
 )
@@ -62,6 +63,16 @@ def test_cognitive_gate_replans_failed_observations():
 def test_cognitive_gate_completes_only_without_runtime_blockers():
     decision = decide_next_action(tool_results=[SimpleNamespace(ok=True, execution_may_continue=False)], execution_outcome="success", goal_assertions={"required": True, "status": "passed"})
     assert decision.outcome == STOP_COMPLETED
+    assert decision.terminal is True
+
+
+def test_cognitive_gate_preserves_partial_success_when_a_required_goal_is_blocked():
+    decision = decide_next_action(
+        tool_results=[SimpleNamespace(ok=True, execution_may_continue=False)],
+        execution_outcome="partial",
+        goal_assertions={"required": True, "status": "failed"},
+    )
+    assert decision.outcome == STOP_PARTIAL
     assert decision.terminal is True
 
 

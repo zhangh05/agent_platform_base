@@ -44,6 +44,7 @@ def test_queryloop_extracts_plan_metadata_without_leaking_it_to_handler_args():
             "plan_depends_on": ["extract"],
             "plan_bindings": {"rows": "steps.extract.output.rows"},
             "plan_failure": "continue",
+            "plan_goal_ids": ["tool-goal-1"],
         },
     }])[0]
     assert parsed.name == "data.manage"
@@ -51,7 +52,9 @@ def test_queryloop_extracts_plan_metadata_without_leaking_it_to_handler_args():
     assert parsed.depends_on == ["extract"]
     assert parsed.result_bindings == {"rows": "steps.extract.output.rows"}
     assert parsed.failure_policy == "continue"
+    assert parsed.goal_ids == ["tool-goal-1"]
     assert "plan_step_id" not in parsed.arguments
+    assert "plan_goal_ids" not in parsed.arguments
 
 
 def test_incremental_graph_resolves_prior_result_into_analysis_input():

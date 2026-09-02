@@ -51,6 +51,10 @@ class DeviceDriver:
     semantic_commands: dict[str, tuple[str, ...]] = field(default_factory=dict)
     error_patterns: tuple[re.Pattern[str], ...] = ()
     encodings: tuple[str, ...] = ("utf-8", "gb18030")
+    # Quiet window after a prompt before the CLI boundary is accepted.  This
+    # belongs to the driver timing profile because console/syslog behaviour
+    # varies by platform and transport environment.
+    prompt_settle_seconds: float = 0.12
 
     def supports(self, fact: str) -> bool:
         return fact in self.semantic_commands
@@ -93,6 +97,7 @@ class DeviceDriver:
             "pagination_managed": bool(self.pager_rules),
             "disable_paging_supported": bool(self.disable_paging_command),
             "encodings": list(self.encodings),
+            "prompt_settle_seconds": float(self.prompt_settle_seconds),
         }
 
     def parse_facts(

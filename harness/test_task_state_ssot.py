@@ -262,6 +262,33 @@ def test_retryable_tool_failure_marks_replan_required(monkeypatch, tmp_path):
     assert list_task_events("ws-replan", "session-replan")[-1]["event_type"] == "replan_required"
 
 
+def test_exhausted_goal_loop_persists_partial_instead_of_global_failure(monkeypatch, tmp_path):
+    monkeypatch.setenv("LZCORE_WORKSPACE_ROOT", str(tmp_path))
+    from agent.runtime.task_state import commit_task_state, list_task_events
+
+    metadata = _metadata(
+        execution_outcome="partial", assertion_status="failed", decision="stop_partial",
+    )
+    metadata["goal_loop"] = {"status": "blocked", "counts": {"blocked": 1}}
+    metadata["recovery_goals"] = [{
+        "goal_id": "tool-goal-1", "goal_type": "tool_recovery",
+        "status": "blocked", "description": "one target unavailable",
+        "attempts": 3, "max_attempts": 3,
+    }]
+    snapshot = commit_task_state(
+        workspace_id="ws-partial-goal", session_id="session-partial-goal",
+        run_id="run-one", user_input="检查两个目标。",
+        final_response="一个目标完成，一个目标不可达。", run_ok=True,
+        runtime_metadata=metadata,
+        tool_calls=[_tool(call_id="ok"), _tool(call_id="blocked", ok=False)],
+    )
+
+    assert snapshot is not None
+    assert snapshot["task"]["status"] == "partial"
+    assert snapshot["task"]["next_action"] == "review_blocked_recovery_goals"
+    assert list_task_events("ws-partial-goal", "session-partial-goal")[-1]["event_type"] == "task_partially_completed"
+
+
 
 def test_completed_cognitive_decision_does_not_replan_from_retryable_tool_failure(monkeypatch, tmp_path):
     """A recovered non-critical failure must not split UI completion from TaskState SSOT."""

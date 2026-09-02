@@ -95,6 +95,10 @@ export const ResultInline = memo(function ResultInline({
   const retry = retryStats(result);
   const validationCorrection = validationCorrectionStats(result);
   const toolRecoveryEvents = result?.metadata?.tool_recovery_events || [];
+  const recoveryGoals = result?.metadata?.recovery_goals || [];
+  const pendingGoals = recoveryGoals.filter((goal) => goal.status === "pending").length;
+  const passedGoals = recoveryGoals.filter((goal) => goal.status === "passed").length;
+  const blockedGoals = recoveryGoals.filter((goal) => goal.status === "blocked").length;
   const tracking = trackingStats(result);
   const toolCalls = result?.tool_calls ?? [];
   const actionCount = toolCalls.length;
@@ -106,7 +110,7 @@ export const ResultInline = memo(function ResultInline({
   const executionOutcome = result?.metadata?.execution_outcome;
   const isUnknownOutcome = executionOutcome === "unknown";
   const unknownOutcome = result?.metadata?.unknown_outcome;
-  const showActionTrace = !!result && (actionCount > 0 || retry.events.length > 0 || validationCorrection.attempts > 0 || toolRecoveryEvents.length > 0 || tracking.taskId || isFailed || isUnknownOutcome);
+  const showActionTrace = !!result && (actionCount > 0 || retry.events.length > 0 || validationCorrection.attempts > 0 || toolRecoveryEvents.length > 0 || recoveryGoals.length > 0 || tracking.taskId || isFailed || isUnknownOutcome);
 
   // Nothing to show — no result and no fallback text
   if (!result && !fallbackText) return null;
@@ -277,6 +281,9 @@ export const ResultInline = memo(function ResultInline({
               </span>
             )}
             {toolRecoveryEvents.length > 0 && <span className="action-trace-pill ok">{toolRecoveryEvents.length} 次改策略继续</span>}
+            {passedGoals > 0 && <span className="action-trace-pill ok">{passedGoals} 个恢复目标已满足</span>}
+            {pendingGoals > 0 && <span className="action-trace-pill warn">{pendingGoals} 个目标待取证</span>}
+            {blockedGoals > 0 && <span className="action-trace-pill danger">{blockedGoals} 个目标受阻</span>}
             {retry.blocked > 0 && <span className="action-trace-pill muted">{retry.blocked} 次未重试</span>}
           </div>
           {retry.events.length > 0 ? (
@@ -314,6 +321,20 @@ export const ResultInline = memo(function ResultInline({
           {toolRecoveryEvents.length > 0 && (
             <div className="action-trace-note">
               原调用未被盲目重复，模型已收到失败证据并继续选择安全替代方案。
+            </div>
+          )}
+          {recoveryGoals.length > 0 && (
+            <div className="action-retry-list" data-testid="goal-loop-summary">
+              {recoveryGoals.slice(0, 8).map((goal) => (
+                <div className="action-retry-row" key={goal.goal_id || goal.description}>
+                  <span className={`action-retry-dot ${goal.status === "passed" ? "ok" : goal.status === "blocked" ? "muted" : "warn"}`} />
+                  <span className="action-retry-main">
+                    <b>{goal.status === "passed" ? "目标已满足" : goal.status === "blocked" ? "目标受阻" : "正在补充证据"}</b>
+                    {` ${goal.source_tool_id ? `${toolLabel(goal.source_tool_id)}失败后的替代取证` : goal.description || goal.goal_id || "恢复目标"}`}
+                  </span>
+                  <span className="action-retry-meta">{Number(goal.attempts || 0)}/{Number(goal.max_attempts || 3)}</span>
+                </div>
+              ))}
             </div>
           )}
           {tracking.taskId && (

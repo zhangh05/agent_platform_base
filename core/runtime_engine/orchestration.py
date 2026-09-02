@@ -35,13 +35,14 @@ class StepEvidence:
     action: str = ""
 
 
-def extract_orchestration(arguments: dict[str, Any], fallback_step_id: str) -> tuple[dict[str, Any], str, list[str], dict[str, str], str]:
+def extract_orchestration(arguments: dict[str, Any], fallback_step_id: str) -> tuple[dict[str, Any], str, list[str], dict[str, str], str, list[str]]:
     """Remove runtime-only plan fields from handler arguments."""
     cleaned = dict(arguments or {})
     raw_step_id = cleaned.pop("plan_step_id", "")
     raw_depends = cleaned.pop("plan_depends_on", [])
     raw_bindings = cleaned.pop("plan_bindings", {})
     raw_failure = cleaned.pop("plan_failure", "replan")
+    raw_goal_ids = cleaned.pop("plan_goal_ids", [])
 
     if raw_step_id:
         step_id = str(raw_step_id).strip()
@@ -56,7 +57,12 @@ def extract_orchestration(arguments: dict[str, Any], fallback_step_id: str) -> t
         if isinstance(raw_bindings, dict) else {}
     )
     failure_policy = str(raw_failure or "replan").strip().lower()
-    return cleaned, step_id, depends_on, bindings, failure_policy
+    goal_ids = (
+        [str(item).strip() for item in raw_goal_ids if str(item).strip()]
+        if isinstance(raw_goal_ids, list)
+        else [str(raw_goal_ids).strip()] if str(raw_goal_ids).strip() else []
+    )
+    return cleaned, step_id, depends_on, bindings, failure_policy, goal_ids
 
 
 BindingTargetValidator = Callable[[str, str, str], bool]
