@@ -3,14 +3,17 @@
 This folder contains current architecture notes only. The authoritative runtime chain is:
 
 ```text
-AgentApp → AgentThread (core/thread.py) → run_ssot_turn (ssot_runtime.py)
+AgentApp → AgentThread (agent/core/thread.py) → run_ssot_turn (agent/runtime/ssot_runtime.py)
        → SSOTRuntimeEngine → QueryLoop → goal-driven evidence recovery
        → ToolRuntimeClient.invoke → ToolExecutor → canonical handlers
 ```
 
-**Memory** runs in parallel:
-- Auto-inject per turn start: `MemoryHitsFragment` → `UnifiedRetriever`
-- Generate per turn end: `llm_memory.py` → `MemoryWriteGate`
+**Memory** is governed around the turn:
+- `agent/runtime/ssot_runtime.py` retrieves bounded `memory_hits` through
+  `core/context/unified_retriever.py` and projects them as data-only context.
+- The same runtime appends experience through
+  `agent/runtime/memory_write/event_log.py`; consolidation writes only through
+  `storage/memory_governance.MemoryWriteGate`.
 
 Current anchors:
 

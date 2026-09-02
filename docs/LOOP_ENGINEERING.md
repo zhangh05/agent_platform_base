@@ -59,9 +59,12 @@ when it is the sole unambiguous pending goal.
 
 ## Evidence, attempts and terminal meaning
 
-Each goal starts with one failed attempt. Linked failed replacements increment
-its counter. After three attempts the goal is `blocked`; the runtime stops
-replanning that goal rather than looping forever. A successful read linked by
+Generic `tool_recovery` goals start with one failed attempt. Linked failed
+replacements increment that goal's counter; its current default maximum is
+three attempts including the source failure. Handler-declared evidence goals
+use the final-gate replan budget instead. When a bound is exhausted the goal is
+`blocked`; the runtime stops replanning it rather than looping forever. A
+successful read linked by
 `plan_goal_ids`, or an unambiguous corrected same-capability read, marks it
 `passed`. A side-effecting success can never satisfy a read recovery goal.
 

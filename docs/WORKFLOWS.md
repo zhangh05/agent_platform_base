@@ -33,7 +33,8 @@ only reference outputs from its transitive dependencies. Definitions may contain
 runtime-input or secret-reference templates, but cannot persist literal password,
 API-token, authorization, or private-key fields.
 
-Definitions contain 1–50 nodes and accept at most 1 MiB of resolved input per
+Definitions contain 1–30 nodes (the current `SSOTRuntimeConfig.max_nodes`
+limit) and accept at most 1 MiB of resolved input per
 node. Persisted workflow inputs and outputs are redacted; large node outputs are
 projected to a bounded structured record. The full in-memory output remains
 available to downstream nodes during that run.

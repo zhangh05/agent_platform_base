@@ -51,4 +51,4 @@ HTTP / WebSocket / SSE / Job entry
 
 `core/runtime_engine/goal_loop.py` 将每一轮 canonical ToolResult 规范为观察。可恢复的只读失败生成服务端拥有的恢复目标，目标未被真实读取证据满足时，最终门禁止模型提前结束。模型可修正参数、缩小范围或调用其他已授权读取能力；跨工具恢复必须在 `plan_goal_ids` 中显式引用目标 ID，避免同一 workspace 或设备内的无关调用错误结案。
 
-目标与断言通过 TaskState 以有界标识持久化，并在受信任的续跑合同中恢复。已关联失败最多三次，之后状态为 `blocked`；有已验证覆盖时任务投影为 `partial`。授权、策略、取消、凭据和未知外部写入不进入自动恢复。`runtime_recoveries` 是扩展向 QueryLoop 发布领域恢复计划的唯一字段，完整契约见 [Loop Engineering](LOOP_ENGINEERING.md)。
+目标与断言通过 TaskState 以有界标识持久化，并在受信任的续跑合同中恢复。通用目标的当前最大尝试数为三（含原始失败）；领域证据目标使用独立的最终重规划预算。预算耗尽后状态为 `blocked`；有已验证覆盖时任务投影为 `partial`。授权、策略、取消、凭据和未知外部写入不进入自动恢复。新扩展通过 `runtime_recoveries` 列表发布领域恢复计划；QueryLoop 仍读取旧的单数 `runtime_recovery` 作为兼容输入，但新代码不得再产生它。完整契约见 [Loop Engineering](LOOP_ENGINEERING.md)。
