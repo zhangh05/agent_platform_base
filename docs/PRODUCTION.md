@@ -61,6 +61,19 @@ docker compose -f deployment/compose.server.yml ps
 服务器更新必须使用上述脚本。它会统一重建 backend、worker 和 frontend，校验
 backend/worker 使用同一镜像，并在返回成功前检查前后端就绪接口；不要只更新部分服务。
 
+发布完成后至少验证同一提交、容器状态、后端健康和前端代理；涉及 QueryLoop、工具或恢复合同的发布还要在 backend 容器中运行对应 focused harness。示例：
+
+```bash
+git rev-parse HEAD
+docker compose -f deployment/compose.server.yml ps
+curl -fsS http://127.0.0.1:8011/api/health
+curl -fsSI http://127.0.0.1:5273/
+docker compose -f deployment/compose.server.yml exec -T backend \
+  python -m pytest -q harness/test_goal_loop.py harness/test_network_read_recovery.py
+```
+
+检查公开入口时还应通过前端代理访问 `/api/health`，不能只依据容器内 liveness 宣称实际页面已可用。
+
 Do not run `start.sh` or retain screen-managed backend/frontend processes on
 the same ports while this Compose project is active.
 

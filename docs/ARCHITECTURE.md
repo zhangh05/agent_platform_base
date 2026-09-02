@@ -8,7 +8,7 @@ HTTP / WebSocket / SSE / Job entry
   -> AgentThread + SessionManager
   -> run_ssot_turn
   -> QueryLoop
-  -> typed evidence ledger + LLM function calling + bounded tool loop
+  -> typed evidence ledger + goal-driven recovery + LLM function calling + bounded tool loop
   -> ToolRuntimeClient.invoke / ToolRuntime.invoke_raw
   -> canonical handlers
   -> AgentResult + RuntimeEvent timeline
@@ -46,3 +46,9 @@ HTTP / WebSocket / SSE / Job entry
 `core/runtime_engine/prompt_contract.py` 是生产 QueryLoop 的系统提示词源。历史、记忆、知识和制品摘要都放入明确边界的 data-only 区块；当前用户请求单独隔离。
 
 `core/runtime_engine/evidence.py` 定义请求级证据协议与消费账本。canonical 工具只输出 `evidence_parts` 引用，QueryLoop 负责登记和交付，模型适配器仅在单次调用边界解析图片字节。`core/runtime_engine/batch_compiler.py` 根据工具声明的批处理契约优化独立标量调用，不包含具体工具分支，也不改变依赖图语义。
+
+## Goal-driven recovery boundary
+
+`core/runtime_engine/goal_loop.py` 将每一轮 canonical ToolResult 规范为观察。可恢复的只读失败生成服务端拥有的恢复目标，目标未被真实读取证据满足时，最终门禁止模型提前结束。模型可修正参数、缩小范围或调用其他已授权读取能力；跨工具恢复必须在 `plan_goal_ids` 中显式引用目标 ID，避免同一 workspace 或设备内的无关调用错误结案。
+
+目标与断言通过 TaskState 以有界标识持久化，并在受信任的续跑合同中恢复。已关联失败最多三次，之后状态为 `blocked`；有已验证覆盖时任务投影为 `partial`。授权、策略、取消、凭据和未知外部写入不进入自动恢复。`runtime_recoveries` 是扩展向 QueryLoop 发布领域恢复计划的唯一字段，完整契约见 [Loop Engineering](LOOP_ENGINEERING.md)。

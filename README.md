@@ -56,7 +56,7 @@ bash stop.sh
 | `frontend/` | React/Vite 工作台、会话、运行记录、数据中心、记忆、知识库、诊断、设置 |
 | `agent/app/` | AgentApp 门面、SessionManager、AgentThread |
 | `agent/runtime/` | SSOT Runtime 适配、结果投影、任务跟踪、记忆写入 |
-| `core/runtime_engine/` | QueryLoop、工具调用循环、提示词边界、重试与最终答复 |
+| `core/runtime_engine/` | QueryLoop、目标驱动恢复循环、工具调用、提示词边界与最终答复 |
 | `core/tools/` | 17 个通用 canonical tools、manifest、policy、executor、脱敏 |
 | `storage/` | 工作区、会话、运行记录、FileStore、记忆、运行状态 |
 | `artifacts/` | 制品生命周期、来源关系和当前证据投影 |
@@ -80,7 +80,13 @@ bash stop.sh
 4. 在“应用编排”中把平台与扩展工具连接成工作区级流程。
 5. 增加聚焦兼容性测试，确认工具面、API 面、权限和实际前端入口一致。
 
-详细说明见 [扩展开发](docs/EXTENSIONS.md)、[流程编排](docs/WORKFLOWS.md)、[组织隔离](docs/TENANCY.md) 和 [生产运维](docs/PRODUCTION.md)。
+详细说明见 [目标驱动 Loop Engineering](docs/LOOP_ENGINEERING.md)、[扩展开发](docs/EXTENSIONS.md)、[流程编排](docs/WORKFLOWS.md)、[组织隔离](docs/TENANCY.md) 和 [生产运维](docs/PRODUCTION.md)。
+
+## 工具失败与任务结果
+
+一次只读工具失败不会直接结束用户任务。QueryLoop 会记录失败观察、建立有界恢复目标，并要求模型通过纠正参数、缩小范围或切换已授权的只读能力取得真实证据。跨工具恢复必须显式关联目标；三次安全替代仍无法取得证据时，系统收敛为明确的 `partial` 或 `blocked`，不会无限重试。
+
+工具尝试状态与用户任务结果分别记录为 `tool_execution_outcome` 和 `execution_outcome`。因此，已由替代证据完成的任务可以是 `complete`，而写操作结果未知仍必须保持 `unknown` 并执行 read-back/reconcile。完整契约见 [Loop Engineering](docs/LOOP_ENGINEERING.md)。
 
 ## 产品能力接入原则
 

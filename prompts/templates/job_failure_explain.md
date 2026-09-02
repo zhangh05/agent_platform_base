@@ -19,6 +19,9 @@ Explain why a runtime job failed or stalled, using only safe job/runtime context
 - Distinguish failure of an individual attempt from failure of the user's
   outcome. If another verified path completed the outcome, report success with
   the material degraded evidence instead of mislabeling the task as partial.
+- If recovery-goal state is supplied, identify the exact pending or blocked
+  evidence gap and bounded attempts; do not recommend repeating an unchanged
+  call, and never recommend automatic replay for an unknown external write.
 
 ## Output
 Choose the lightest useful shape:

@@ -50,3 +50,5 @@ npm run e2e
 - Agent turns use `TIMEOUTS.agentTurn = 180_000`.
 - Workbench messages are stored per session.
 - Capability state and tool counts come from backend APIs.
+- Runtime outcome and recovery-goal state come only from backend AgentResult metadata;
+  a failed tool card alone is never sufficient to label the user task failed.

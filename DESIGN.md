@@ -32,7 +32,8 @@ sequenceDiagram
   SSOT Runtime->>Tools: execute dependency layers through canonical tools
   Tools->>Tools: manifest/caller/policy/redaction/audit
   Tools-->>SSOT Runtime: ToolResult
-  SSOT Runtime->>LLM: same QueryLoop produces the evidence-based response
+  SSOT Runtime->>SSOT Runtime: normalize observations and reconcile bounded recovery goals
+  SSOT Runtime->>LLM: same QueryLoop produces the evidence-based response or a recovery replan
   SSOT Runtime->>Store: messages, events, trace, run projection
   SSOT Runtime-->>API: AgentResult
   API-->>UI: stream/final/timeline
@@ -46,6 +47,8 @@ sequenceDiagram
 - `RuntimeStep`：context、model、tool、final 等阶段步骤。
 - `RuntimeEvent`：前端时间线和审计事件来源。
 - `RuntimeCheckpoint`：取消、中断和失败恢复的快照。
+
+`TaskState` 同时保存服务端生成、经过长度限制的未完成恢复目标。后续回合只能从该可信合同恢复目标和断言；浏览器、历史消息或工具输出都不能伪造、扩展或解除目标。
 
 SSOT Runtime 主链将执行结果投影为 `AgentResult`、message、run 和 trace；长任务类能力仍使用 durable task/checkpoint API 管理自己的可取消状态。
 
@@ -77,13 +80,21 @@ QueryLoop 不要求模型预先猜测完整工作流。模型可发起普通单�
 
 工具可以在 canonical 定义中声明批处理契约。QueryLoop 可把同一资源的连续范围，或同一动作下不同标量参数的连续集合，编译为有上限的批量动作；有依赖、结果绑定或不连续的任务图节点保持原样。每轮模型计划还受独立节点上限和整轮剩余预算约束，超限计划在任何 handler 执行前退回模型重新分区，不生成虚假的失败调用。子 Agent 的 `max_steps` 约束推理轮次，`max_tool_nodes` 独立约束累计执行节点，不能通过单轮大批量绕过节点预算。批量优化属于运行时通用能力，不在提示词里为某个工具写固定流程。
 
+### 目标驱动恢复循环
+
+每轮 canonical 工具结果先成为标准化观察。可恢复的只读失败在没有领域恢复指令时创建通用 `tool_recovery` 目标；领域扩展可发布 `runtime_recoveries` 列表创建更具体的证据目标。目标带来源调用、工具、动作、有限的资源标识、失败类别、候选策略和尝试上限，运行时断言在目标未关闭时阻止模型提前给出最终答复。
+
+模型必须采用实质不同的安全策略：修正 schema 参数、缩小观察范围、调用其他已注册只读能力，或先查权威资料再做新的实时观察。跨工具调用需通过 `plan_goal_ids` 明确关联相应目标；共享 workspace、设备或连接标识不构成证据关联。三次已关联的失败替代后目标变为 `blocked`，而不是无限重放。写入、权限/策略拒绝、取消和写入结果未知不属于自动恢复入口。
+
+成功的只读观察会满足已关联目标；有副作用的成功调用不得满足读取目标。网络扩展的命令意图恢复只是这一合同的一个实现：驱动层 collect 和权威文档可帮助模型纠正后续读取，但文档本身不能声明设备实时状态。完整字段和测试要求见 [Loop Engineering](docs/LOOP_ENGINEERING.md)。
+
 ## 证据总线
 
 工具通过统一的 `evidence_parts` 输出文本、图片、文件或结构化证据。每个证据包含类型、强类型引用、消费方、来源调用和覆盖范围；二进制内容不进入消息历史、运行记录或 trace。QueryLoop 是证据账本的唯一所有者，负责校验、去重、登记、把待消费证据交给下一次模型调用，并在模型适配器确认实际交付后标记为已交付。
 
 原始上传图片和工具派生图片走同一条证据链：原图只在需要的首轮交付一次，工具派生图片在产生后的下一轮交付，不再由 `planner`、`continuation` 等阶段名决定。模型适配器只在单次请求边界把托管文件引用解析成多模态内容。工具参数中的托管文件编号和工作区路径由 canonical 执行契约区分，类型不匹配会在执行前返回可修正的结构化错误。
 
-运行结果用两个正交字段描述：`execution_outcome` 表示用户任务是否完成，`tool_execution_outcome` 表示工具尝试是否全部成功。工具调用有失败并不自动意味着任务只完成了一部分；只要模型通过其他真实证据完成了用户目标，任务仍可为 `complete`，但失败尝试必须保留在动作跟踪中。最终答复只经过确定性的完整性守卫，核对运行时可机械证明的矛盾（例如已经向模型交付图片后仍声称图片不可见）、敏感信息、伪造引用和服务器生成的续写合同。语言风格、领域术语、表格布局、业务正确性和语义覆盖由提示词、工具证据契约与模型判断负责，不在本地维护领域正则评分器。
+运行结果用两个正交字段描述：`execution_outcome` 表示用户任务是否完成，`tool_execution_outcome` 表示工具尝试是否全部成功。工具调用有失败并不自动意味着任务只完成了一部分；只要模型通过其他真实证据完成了用户目标，任务仍可为 `complete`，但失败尝试必须保留在动作跟踪中。恢复目标耗尽且仍保留部分已验证覆盖时，任务为 `partial`；外部写入结果未知始终为 `unknown`，不得伪装为失败后重试或完成。最终答复只经过确定性的完整性守卫，核对运行时可机械证明的矛盾（例如已经向模型交付图片后仍声称图片不可见）、敏感信息、伪造引用和服务器生成的续写合同。语言风格、领域术语、表格布局、业务正确性和语义覆盖由提示词、工具证据契约与模型判断负责，不在本地维护领域正则评分器。
 
 ## Capability Catalog
 

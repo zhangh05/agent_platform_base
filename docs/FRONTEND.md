@@ -27,6 +27,16 @@ user sends message
 
 后端持久消息是事实来源；前端乐观消息只是临时状态，最终必须合并而不是重复追加。
 
+## Recovery visibility
+
+工作台的工具卡、结果内联区和运行时间线必须保留失败尝试，同时展示服务端投影的
+`execution_outcome`、`tool_execution_outcome`、`recovery_goals` 和 `goal_loop`。UI 不得把
+单个失败工具卡直接渲染为“任务失败”：当替代证据满足目标时，显示任务完成及已恢复的尝试；当
+目标耗尽时，显示 `partial`、已验证覆盖与确切 blocker；当写入结果未知时，显示 `unknown` 和
+read-back/reconcile 要求。
+
+这些字段只从 AgentResult、会话持久化结果或 runtime 事件合并，不由浏览器推导、修改或构造。
+
 ## Workspace Contract
 
 所有触碰用户数据的 API helper 都必须传 `currentWorkspaceId`。空工作区 ID 要在 UI 上显示错误，不得静默调用后端。

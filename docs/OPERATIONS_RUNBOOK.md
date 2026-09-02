@@ -18,7 +18,9 @@
 
 1. 从运行 trace 检查 canonical tool ID、action、参数校验、权限和外部依赖。
 2. Python 强隔离失败时确认固定镜像摘要和 Docker daemon；不得自动降级为本地执行。
-3. 仅重试结构化标记为可恢复且没有不可逆副作用的调用。
+3. 查看 `goal_loop`、`recovery_goals` 和 `recovery_goal_events`：`pending` 表示运行时仍在等待另一条安全观察，`passed` 表示替代证据已闭环，`blocked` 表示有界策略已耗尽。
+4. 仅让 QueryLoop 对结构化标记为可恢复、无不可逆副作用的读取做实质不同的替代观察；不要人工或脚本化重放同一失败调用。
+5. 若结果为 `partial`，交接已验证覆盖和每个 blocked goal 的缺失证据；若为 `unknown`，按操作账本执行 read-back/reconcile，不把它改判为失败或成功。
 
 ## 作业失败
 

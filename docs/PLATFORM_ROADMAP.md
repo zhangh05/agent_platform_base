@@ -5,6 +5,11 @@ single domain application. The existing `SSOTRuntimeEngine`, tool governance,
 workspace boundaries, durable tasks, product authorization, memory gate and local
 filesystem mode remain the runtime kernel.
 
+The kernel also includes domain-neutral goal-driven recovery: a recoverable
+read failure becomes a bounded evidence goal inside QueryLoop, not an extension
+specific retry worker. This keeps cross-capability recovery governed by the same
+tool, authorization and audit boundaries. See [Loop Engineering](LOOP_ENGINEERING.md).
+
 ## Stage 1: extension contract
 
 The `extensions` package defines a declarative manifest with version, tools,

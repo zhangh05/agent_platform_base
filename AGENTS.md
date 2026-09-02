@@ -31,7 +31,7 @@ Frontend
      └─ QueryLoop iterative LLM + incremental task-graph loop
         ├─ optional step dependencies and safe result bindings
         ├─ bounded parallel reads with write barriers
-        └─ evidence-driven replanning and final synthesis
+        └─ goal-driven evidence recovery, bounded replanning and final synthesis
   -> ToolRuntime.invoke_raw() → registered canonical handlers
   -> durable state, artifacts, memory, trace
 ```
@@ -55,6 +55,9 @@ Product projects can add domain tools later, but they must be added through:
 Before committing:
 
 - Confirm QueryLoop is the only active tool-capable runtime path.
+- For failed-read recovery changes, verify the goal loop remains domain-neutral:
+  `runtime_recoveries` is a list, cross-tool recovery uses `plan_goal_ids`, writes
+  never auto-replay, and blocked goals converge to explicit partial/unknown semantics.
 - Verify tool name normalisation: `__` → `.` on parse, `.` → `__` on append.
 - Check registry, namespace, manifest, and contracts expose the same canonical IDs.
 - Run focused tests for the changed layer.

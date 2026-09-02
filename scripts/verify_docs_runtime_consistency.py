@@ -59,6 +59,7 @@ def main() -> int:
         "docs/API.md",
         "docs/ARCHITECTURE.md",
         "docs/FRONTEND.md",
+        "docs/LOOP_ENGINEERING.md",
         "docs/backend/API_CONTRACT.md",
         "docs/storage/STORAGE_BOUNDARIES.md",
     ]
@@ -85,6 +86,9 @@ def main() -> int:
         # to appear in docs any more.
         "manifest_registry.py",
         "workspace_id",
+        "goal_loop",
+        "runtime_recoveries",
+        "plan_goal_ids",
     ]
     for reference in required_current_refs:
         check(reference in combined_docs, f"documents current surface: {reference}")

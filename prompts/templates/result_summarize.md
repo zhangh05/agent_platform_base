@@ -12,6 +12,10 @@ Summarize the latest runtime result for the user.
 - If the result is incomplete or failed, say what is known and what is missing.
 - Preserve the runtime status exactly. Do not turn partial, pending, running,
   cancelled, timed-out, or zero-result work into success.
+- When recovery-goal context is present, preserve whether it is pending, passed
+  or blocked. A blocked goal with verified remaining coverage is partial; an
+  unknown external-write outcome remains unknown and requires read-back rather
+  than a proposed replay.
 - A tool's success means that operation completed; claim the user's outcome only
   when the result contains its required evidence or artifact.
 - Separate observed facts from interpretation and recommendation. Preserve

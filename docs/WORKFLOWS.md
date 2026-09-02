@@ -51,6 +51,22 @@ validate their own published scope at invocation time; rejected nodes fail with
 a structured authorization error. Destructive host commands are blocked by the
 shared runtime policy.
 
+## Relation to the conversational goal loop
+
+Workflow `failure_policy` controls declared DAG nodes; it does not create a
+second LLM recovery loop. A failed node remains a workflow result with its
+stable node identity. Safe explicit node retry is available only through the
+runtime task API and must obey the original canonical contract, authorization,
+idempotency and write fences.
+
+Conversational QueryLoop recovery is separate and domain-neutral: it may pursue
+bounded alternative **read** evidence after a recoverable observation failure.
+It never auto-replays a workflow write or changes a workflow definition. If a
+workflow tool result publishes an evidence recovery directive, QueryLoop may
+consume it only when that result is part of a conversational turn; ordinary
+workflow execution records the directive as output and leaves the next action
+to the workflow owner/operator. See [Loop Engineering](LOOP_ENGINEERING.md).
+
 Roles are explicit in identity mode: viewers can read definitions and runs,
 operators can execute/cancel, developers can create or update, and organization
 administrators inherit those permissions. Workflow APIs remain a framework

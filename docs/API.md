@@ -27,6 +27,20 @@ Base URL: `http://localhost:8011`
 | `POST` | `/api/runtime/tasks/<task_id>/resume?workspace_id=<ws>` | 恢复任务 |
 | `POST` | `/api/runtime/tasks/<task_id>/steps/<step_id>/retry?workspace_id=<ws>` | 重试安全失败步骤 |
 
+### Runtime result lifecycle
+
+Agent、SSE、WebSocket 和任务详情投影可携带下列运行时 metadata。它们由服务端生成，客户端只读展示：
+
+| Field | Meaning |
+| --- | --- |
+| `execution_outcome` | `complete`、`partial`、`failed` 或 `unknown` 的用户任务结果。 |
+| `tool_execution_outcome` | 工具尝试维度的 `complete`、`partial`、`failed` 或 `unknown`。 |
+| `recovery_goals` | 当前/本回合的目标驱动恢复生命周期。 |
+| `recovery_goal_events` | 安装、满足、阻断和拒绝过早结束等事件。 |
+| `goal_loop` | `not_required`、`pending`、`passed` 或 `blocked` 摘要及数量。 |
+
+`partial` 表示已有部分真实覆盖，但仍有明确受阻目标；`unknown` 表示外部写入或长任务结果尚未可确认。工具调用失败本身不决定用户任务失败。客户端不得伪造上述字段，也不得把 `unknown` 显示为成功。
+
 ## Tools And Capabilities
 
 | Method | Path | Purpose |

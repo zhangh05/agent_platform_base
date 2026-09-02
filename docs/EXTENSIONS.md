@@ -52,6 +52,28 @@ work should add a deterministic data contract, trusted workbench projection,
 evidence references, UI actions, and focused tests rather than merely adding
 another catch-all tool.
 
+## Recovery integration
+
+Extensions never run their own LLM/tool retry loop. A canonical handler returns
+one structured result to QueryLoop. If it can deterministically identify a
+safe, read-only way to recover a failed observation, it publishes a
+`runtime_recoveries` **list** in that result. QueryLoop owns execution,
+attempt budgets, evidence reconciliation, TaskState persistence and the final
+outcome.
+
+Each directive must describe evidence rather than executable privilege: target,
+fact, evidence kind and a bounded safe next observation. It cannot authorize a
+new tool, device, connection, credential, write action or host command. A
+successful reference lookup is not a substitute for required live evidence.
+Extensions must not use the retired singular `runtime_recovery` field for new
+work; it remains a QueryLoop read compatibility input only.
+
+For `network.operations`, command-intent aliases live in
+`extensions/network_operations/semantic_facts.py`, while vendors own concrete
+`collect` templates in their drivers. A rejected raw read can therefore recover
+through a canonical fact without putting vendor CLI commands into the base
+runtime. See [Loop Engineering](LOOP_ENGINEERING.md) for the base contract.
+
 ## Signed packages and private distribution
 
 Extension packages use the `.apx` format. Every file is indexed with SHA-256 and

@@ -32,7 +32,7 @@ lzcore/
 │   ├── llm/                    # LLMProvider registry/config
 │   ├── reports/                # Report renderers
 │   ├── runtime/                # Diagnostics/Selfcheck/Retention
-│   ├── runtime_engine/         # SSOT QueryLoop runtime, budgets, tracking, audit
+│   ├── runtime_engine/         # SSOT QueryLoop, goal loop, evidence, budgets, tracking, audit
 │   ├── time/
 │   ├── tools/                  # Canonical platform tools, manifest, policy, executor
 │   └── workspaces/             # Workspace abstractions
@@ -50,6 +50,9 @@ lzcore/
 - User-visible workbench state belongs to `frontend/src/stores/`.
 - Persistent local user data belongs under `workspaces/`, `config/providers/`, or `logs/` and must stay out of Git.
 - `workspaces/_runtime/` contains application-level runtime records not owned by one workspace.
+- Domain-neutral failed-read recovery belongs to `core/runtime_engine/goal_loop.py` and
+  `recovery_strategy.py`; extension semantic vocabularies and deterministic recovery
+  directives remain inside their extension.
 
 ## Removed Concepts
 
