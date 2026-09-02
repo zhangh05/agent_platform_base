@@ -144,12 +144,21 @@ def safe_read_recovery_directive(arguments: dict[str, Any], output: dict[str, An
         return None
     failed_command = str(command_result.get("command") or commands[0]).strip()
     fact = infer_semantic_fact(failed_command)
-    if not fact:
-        return None
     profile = output.get("device_profile") if isinstance(output.get("device_profile"), dict) else {}
     supported = profile.get("semantic_facts") if isinstance(profile.get("semantic_facts"), list) else []
-    if supported and fact not in {str(item) for item in supported}:
-        return None
+    documentation = _documentation_fallback(profile, failed_command, fact)
+    if not fact or (supported and fact not in {str(item) for item in supported}):
+        # We cannot safely invent a device command. Search authoritative vendor
+        # documentation automatically, then let the normal loop turn that
+        # evidence into a materially different read.
+        return {
+            "kind": "documentation_read_fallback",
+            "tool_id": str(documentation["tool_id"]),
+            "arguments": dict(documentation["arguments"]),
+            "summary": "device_cli_syntax_requires_official_docs",
+            "failed_command": failed_command,
+            "driver_id": str(profile.get("driver_id") or ""),
+        }
     plan = ReadRecoveryPlan(
         original_call_id="",
         connection_id=connection_id,
@@ -166,10 +175,7 @@ def safe_read_recovery_directive(arguments: dict[str, Any], output: dict[str, An
         "connection_id": connection_id,
         "failed_command": failed_command,
         "driver_id": plan.driver_id,
-        "documentation_fallback": {
-            "source": "docs",
-            "authority_profile": "network_vendor",
-        },
+        "documentation_fallback": documentation,
     }
 
 
@@ -192,3 +198,19 @@ def _rejected_command_result(output: dict[str, Any], expected_command: str) -> d
         if str(item.get("error_code") or "").lower() in _SYNTAX_ERROR_CODES:
             return item
     return None
+
+
+def _documentation_fallback(profile: dict[str, Any], failed_command: str, fact: str) -> dict[str, Any]:
+    vendor = str(profile.get("vendor") or profile.get("driver_id") or "network device").replace(".", " ")
+    intent = fact.replace("_", " ") if fact else "CLI command syntax"
+    return {
+        "tool_id": "web.manage",
+        "arguments": {
+            "action": "deep_search",
+            "query": f"{vendor} {intent} CLI command syntax {failed_command}",
+            "source": "docs",
+            "authority_profile": "network_vendor",
+            "top_k": 3,
+            "max_results": 5,
+        },
+    }

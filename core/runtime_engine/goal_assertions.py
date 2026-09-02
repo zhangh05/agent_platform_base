@@ -20,7 +20,10 @@ def evaluate_goal_assertions(ctx, tool_results: list[Any]) -> dict[str, Any]:
         # Assertions with exact call IDs must never pass when a durable result
         # is absent.
         candidates = [results[key] for key in keys if key in results] if keys else list(results.values())
-        if missing_keys or not candidates or any(bool(getattr(item, "execution_may_continue", False)) for item in candidates):
+        kind = str(assertion.get("kind") or "all_required_results_succeeded")
+        if kind == "semantic_observation_collected":
+            status = _semantic_observation_status(candidates, missing_keys, str(assertion.get("fact") or ""))
+        elif missing_keys or not candidates or any(bool(getattr(item, "execution_may_continue", False)) for item in candidates):
             status = "unknown"
         elif all(bool(getattr(item, "ok", False)) for item in candidates):
             status = "passed"
@@ -28,7 +31,7 @@ def evaluate_goal_assertions(ctx, tool_results: list[Any]) -> dict[str, Any]:
             status = "failed"
         evaluated.append({
             "assertion_id": str(assertion.get("assertion_id") or "goal_assertion"),
-            "kind": str(assertion.get("kind") or "all_required_results_succeeded"),
+            "kind": kind,
             "status": status,
             "required_call_keys": keys,
             "missing_call_keys": missing_keys,
@@ -36,3 +39,22 @@ def evaluate_goal_assertions(ctx, tool_results: list[Any]) -> dict[str, Any]:
     statuses = {item["status"] for item in evaluated}
     status = "passed" if statuses == {"passed"} else "unknown" if "unknown" in statuses else "failed"
     return {"required": True, "status": status, "assertions": evaluated}
+
+
+def _semantic_observation_status(candidates: list[Any], missing_keys: list[str], fact: str) -> str:
+    """Require literal device evidence, not just a transport-success response."""
+    if missing_keys or not candidates or not fact:
+        return "unknown"
+    if any(bool(getattr(item, "execution_may_continue", False)) for item in candidates):
+        return "unknown"
+    for item in candidates:
+        if not bool(getattr(item, "ok", False)):
+            return "failed"
+        output = getattr(item, "output", {})
+        facts = output.get("facts") if isinstance(output, dict) else None
+        value = facts.get(fact) if isinstance(facts, dict) else None
+        if not isinstance(value, dict):
+            return "unknown"
+        if str(value.get("status") or "").lower() != "collected":
+            return "failed" if str(value.get("status") or "").lower() == "unavailable" else "unknown"
+    return "passed"

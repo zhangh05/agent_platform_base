@@ -1446,7 +1446,7 @@ class StreamingToolExecutor:
         directive = payload.get("runtime_recovery")
         return bool(
             isinstance(directive, dict)
-            and directive.get("kind") == "safe_read_fallback"
+            and directive.get("kind") in {"safe_read_fallback", "documentation_read_fallback"}
             and isinstance(directive.get("arguments"), dict)
         )
 
@@ -3319,7 +3319,7 @@ class QueryLoop:
             if (
                 call.id in attempted
                 or not isinstance(directive, dict)
-                or directive.get("kind") != "safe_read_fallback"
+                or directive.get("kind") not in {"safe_read_fallback", "documentation_read_fallback"}
                 or not isinstance(directive.get("tool_id"), str)
                 or not isinstance(directive.get("arguments"), dict)
             ):
@@ -3344,12 +3344,29 @@ class QueryLoop:
             ctx.extras["safe_read_recovery_events"] = events
         for call, directive in directives:
             events.append({
-                "kind": "safe_read_fallback",
+                "kind": str(directive["kind"]),
                 "source_tool": call.name.replace("__", "."),
                 "source_call_id": call.id,
                 "recovery_tool": str(directive["tool_id"]),
                 "summary": str(directive.get("summary") or "safe_read_fallback"),
                 "status": "planned",
+            })
+        assertions = ctx.extras.setdefault("goal_assertions", [])
+        if not isinstance(assertions, list):
+            assertions = []
+            ctx.extras["goal_assertions"] = assertions
+        for recovery_call, (_source_call, directive) in zip(recovery_calls, directives):
+            fact = str(directive.get("fact") or "").strip()
+            if not fact:
+                continue
+            assertion_id = f"semantic_observation:{recovery_call.id}:{fact}"
+            if any(isinstance(item, dict) and item.get("assertion_id") == assertion_id for item in assertions):
+                continue
+            assertions.append({
+                "assertion_id": assertion_id,
+                "kind": "semantic_observation_collected",
+                "required_call_keys": [recovery_call.id],
+                "fact": fact,
             })
 
         if budget.remaining_execution_seconds() <= 0:
