@@ -7,13 +7,13 @@
   --console-border-soft: var(--line-2);
   --console-ink: var(--text);
   --console-muted-ink: var(--text-3);
-  --console-action: var(--accent);
-  --console-action-strong: var(--accent-2);
-  --console-action-soft: var(--accent-soft);
+  --console-action: var(--lz-primary, var(--accent));
+  --console-action-strong: var(--lz-primary-hover, var(--accent-2));
+  --console-action-soft: var(--lz-primary-soft, var(--accent-soft));
   --r-4: 4px;
   --r-6: 6px;
   --r-8: 8px;
-  --shadow-card: none;
+  --shadow-card: var(--lz-shadow-ambient, none);
 }
 
 :root[data-theme="dark"] {
@@ -24,9 +24,9 @@
   --console-border-soft: var(--line-2);
   --console-ink: var(--text);
   --console-muted-ink: var(--text-3);
-  --console-action: var(--accent);
-  --console-action-strong: var(--accent-2);
-  --console-action-soft: var(--accent-soft);
+  --console-action: var(--lz-primary, var(--accent));
+  --console-action-strong: var(--lz-primary-hover, var(--accent-2));
+  --console-action-soft: var(--lz-primary-soft, var(--accent-soft));
 }
 
 .page { background: var(--console-canvas); }
@@ -36,7 +36,8 @@
   padding: 14px 24px 12px;
   gap: 16px;
   background: var(--console-surface);
-  border-bottom-color: var(--console-border-soft);
+  border-bottom: 1px solid var(--console-border-soft);
+  box-shadow: var(--lz-shadow-ambient);
 }
 .page-header h1 {
   margin-bottom: 2px;
@@ -52,32 +53,42 @@
 
 .btn {
   height: 34px;
-  padding: 0 11px;
+  padding: 0 12px;
   color: var(--text-2);
   background: var(--console-surface);
   border-color: var(--console-border);
   border-radius: var(--r-6);
-  box-shadow: none;
+  box-shadow: var(--lz-shadow-ambient);
   font-size: 12px;
   font-weight: 650;
+  transition:
+    color 140ms ease,
+    background 140ms ease,
+    border-color 140ms ease,
+    box-shadow 140ms ease,
+    transform 140ms ease;
 }
 .btn:hover:not(:disabled) {
   color: var(--console-ink);
   background: var(--console-muted);
   border-color: var(--text-4);
+  transform: translateY(-0.5px);
 }
 .btn.primary {
   color: #fff;
   background: var(--console-action);
   border-color: var(--console-action);
+  box-shadow: 0 2px 8px var(--lz-primary-glow, rgba(16, 104, 235, 0.16));
 }
 .btn.primary:hover:not(:disabled) {
   background: var(--console-action-strong);
   border-color: var(--console-action-strong);
+  transform: translateY(-1px);
 }
 .btn.ghost {
   border-color: transparent;
   background: transparent;
+  box-shadow: none;
 }
 .btn.sm { height: 28px; border-radius: var(--r-4); }
 
@@ -90,6 +101,7 @@ select.input {
   border-color: var(--console-border);
   border-radius: var(--r-6);
   box-shadow: none;
+  transition: border-color 140ms ease, box-shadow 140ms ease;
 }
 .input:hover,
 textarea.input:hover,
@@ -97,8 +109,8 @@ select.input:hover { border-color: var(--text-4); }
 .input:focus-visible,
 textarea.input:focus-visible,
 select.input:focus-visible {
-  border-color: var(--focus-ring);
-  box-shadow: 0 0 0 3px var(--focus-ring-shadow);
+  border-color: var(--lz-primary, var(--focus-ring));
+  box-shadow: 0 0 0 3px var(--lz-primary-glow, var(--focus-ring-shadow));
 }
 
 .ui-filter-bar {
@@ -112,7 +124,8 @@ select.input:focus-visible {
 .data-table-scroll {
   background: var(--console-surface);
   border: 1px solid var(--console-border-soft);
-  border-radius: var(--r-6);
+  border-radius: var(--r-8);
+  box-shadow: var(--lz-shadow-ambient);
 }
 .tbl { background: var(--console-surface); }
 .tbl th {

@@ -28,6 +28,8 @@ Zustand store + route state
 
 前端显示服务端给出的 `execution_outcome`、`tool_execution_outcome`、恢复目标和结构化错误。单个工具失败不能被渲染为整个任务失败；外部写入未知应明确呈现为待 read-back/reconcile，不能提供重放原操作的按钮。浏览器不能自行补全 `workspace_id`、设备权限、Skill 范围或恢复目标。
 
+工作台页面由 `AgentWorkbench.tsx` 组织数据与发送生命周期，`WorkbenchHeader`、`WorkbenchComposer`、`WorkbenchEmptyState`、`TaskProgressPanel`、`ResultInline` 和 `ThinkingBlock` 分别承担会话栏、输入、空状态、实时进度、结果投影和推理内容展示。组件拆分不能复制服务端状态判定；交互控件使用独立原生按钮，异步操作只有在真实成功后才显示成功反馈。
+
 ## 验证
 
 ```bash

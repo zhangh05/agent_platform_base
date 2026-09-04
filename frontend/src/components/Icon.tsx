@@ -19,6 +19,7 @@ export {
   ChatCircleDots as IconChat,
   Check as IconCheck,
   Clock as IconClock,
+  Copy as IconCopy,
   Cube as IconBox,
   FileText as IconDocument,
   GearSix as IconSettings,

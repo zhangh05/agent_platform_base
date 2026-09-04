@@ -61,6 +61,20 @@ body,
   --message-user-border: #d2e3dc;
   --shadow-composer: 0 10px 28px rgba(28, 48, 48, 0.06);
 
+  /* ── Design Tokens 2.0: Nebula Tech (Modern Enterprise) ── */
+  --lz-primary: #1068eb;
+  --lz-primary-hover: #0b54c4;
+  --lz-primary-soft: #edf4fe;
+  --lz-primary-glow: rgba(16, 104, 235, 0.16);
+  --lz-surface-glass: rgba(255, 255, 255, 0.82);
+  --lz-surface-glass-border: rgba(255, 255, 255, 0.65);
+  --lz-surface-dock: #ffffff;
+  --lz-shadow-ambient: 0 4px 20px -2px rgba(15, 23, 42, 0.06), 0 2px 6px -1px rgba(15, 23, 42, 0.04);
+  --lz-shadow-dock: 0 16px 36px -4px rgba(15, 23, 42, 0.12), 0 6px 16px -2px rgba(15, 23, 42, 0.06);
+  --lz-glow-ok: rgba(20, 122, 85, 0.18);
+  --lz-glow-warn: rgba(161, 98, 7, 0.18);
+  --lz-glow-err: rgba(189, 48, 64, 0.18);
+
   --font-sans: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", "Helvetica Neue", Arial, sans-serif;
   --font-mono: "SF Mono", "JetBrains Mono", Menlo, Consolas, ui-monospace, monospace;
   --font-display: var(--font-sans);
@@ -190,6 +204,20 @@ body,
   --region-purple-soft: #3b1f52;
   --region-amber: #e2ad4d;
   --region-amber-soft: #372913;
+
+  /* ── Design Tokens 2.0: Nebula Tech (Dark Mode) ── */
+  --lz-primary: #3b82f6;
+  --lz-primary-hover: #60a5fa;
+  --lz-primary-soft: rgba(59, 130, 246, 0.15);
+  --lz-primary-glow: rgba(59, 130, 246, 0.28);
+  --lz-surface-glass: rgba(20, 27, 36, 0.85);
+  --lz-surface-glass-border: rgba(255, 255, 255, 0.08);
+  --lz-surface-dock: #141b24;
+  --lz-shadow-ambient: 0 4px 20px -2px rgba(0, 0, 0, 0.45);
+  --lz-shadow-dock: 0 16px 36px -4px rgba(0, 0, 0, 0.65), 0 0 0 1px rgba(255, 255, 255, 0.07);
+  --lz-glow-ok: rgba(119, 202, 156, 0.25);
+  --lz-glow-warn: rgba(226, 173, 77, 0.25);
+  --lz-glow-err: rgba(239, 113, 128, 0.25);
 }
 
 body {
@@ -994,6 +1022,18 @@ pre code {
 .session-item {
   gap: 6px;
   padding-right: 5px;
+  border-radius: 7px;
+  transition: color 140ms ease, background 140ms ease;
+}
+
+.session-item.active {
+  background: var(--lz-primary-soft, var(--surface-selected));
+  color: var(--text);
+  font-weight: 600;
+}
+
+.session-item:hover:not(.active) {
+  background: var(--surface-hover);
 }
 
 .session-item-main {
@@ -5349,6 +5389,7 @@ summary:focus-visible,
   background: linear-gradient(180deg, var(--surface), var(--surface-2));
   border: 1px solid var(--line-2);
   border-radius: var(--r-10);
+  box-shadow: var(--lz-shadow-ambient);
 }
 .diag-summary-icon {
   flex: 0 0 auto;
@@ -5362,9 +5403,11 @@ summary:focus-visible,
   color: #fff;
   border-radius: 50%;
   background: var(--ok, #2e7d32);
+  box-shadow: 0 0 14px var(--lz-glow-ok);
 }
 .diag-summary-icon[data-healthy="false"] {
   background: var(--warn, #ed6c02);
+  box-shadow: 0 0 14px var(--lz-glow-warn);
 }
 .diag-summary-text { flex: 1; min-width: 0; }
 .diag-summary-text h2 {

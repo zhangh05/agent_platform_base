@@ -1,5 +1,6 @@
 import { useState } from "react";
 import type { InlineToolCall } from "../../../types";
+import { IconCheck, IconAlert, IconChevronDown, IconChevronRight, IconClock, IconDocument } from "../../../components/Icon";
 
 interface InlineToolCallCardProps {
   toolCall: InlineToolCall;
@@ -17,13 +18,35 @@ export function InlineToolCallCard({ toolCall, seq }: InlineToolCallCardProps) {
   const orchestrationDependsOn = Array.isArray(orchestration?.depends_on)
     ? orchestration.depends_on.filter((item): item is string => typeof item === "string")
     : [];
+
   return (
-    <div className={`tool-call-card ${toolCall.ok ? "ok" : "fail"}`} onClick={() => setOpen(!open)}>
+    <div
+      className={`tool-call-card ${toolCall.ok ? "ok" : "fail"}${open ? " is-open" : ""}`}
+      onClick={() => setOpen(!open)}
+      role="button"
+      tabIndex={0}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          setOpen(!open);
+        }
+      }}
+    >
       <div className="tool-call-card-header">
         <span className="tc-seq">#{seq}</span>
-        <span className="tc-icon">{toolCall.ok ? "✅" : "❌"}</span>
+        <span className={`tc-icon ${toolCall.ok ? "ok" : "fail"}`}>
+          {toolCall.ok ? <IconCheck size={13} weight="bold" /> : <IconAlert size={13} weight="bold" />}
+        </span>
         <span className="tc-name">{toolCall.tool_name}</span>
-        <span className="tc-chev">{open ? "▾" : "▸"}</span>
+        {toolCall.duration_ms != null && (
+          <span className="tc-duration-pill">
+            <IconClock size={11} />
+            {(toolCall.duration_ms / 1000).toFixed(1)}s
+          </span>
+        )}
+        <span className="tc-chev">
+          {open ? <IconChevronDown size={13} /> : <IconChevronRight size={13} />}
+        </span>
       </div>
       {open && (
         <div className="tool-call-card-body">
@@ -45,7 +68,9 @@ export function InlineToolCallCard({ toolCall, seq }: InlineToolCallCardProps) {
           {toolCall.artifacts && toolCall.artifacts.length > 0 && (
             <div className="tc-artifacts">
               {toolCall.artifacts.map((a) => (
-                <span key={a.artifact_id} className="tc-artifact-tag">📄 {a.title || a.artifact_id}</span>
+                <span key={a.artifact_id} className="tc-artifact-tag">
+                  <IconDocument size={12} /> {a.title || a.artifact_id}
+                </span>
               ))}
             </div>
           )}
