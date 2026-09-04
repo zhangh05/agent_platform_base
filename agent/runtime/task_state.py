@@ -492,8 +492,11 @@ def _contract_from_state(
                 "source_tool_id": _bounded_text(item.get("source_tool_id") or "", 160),
                 "attempts": int(item.get("attempts") or 0),
                 "max_attempts": int(item.get("max_attempts") or 3),
+                "final_replan_attempts": int(item.get("final_replan_attempts") or 0),
+                "assertion_status": _bounded_text(item.get("assertion_status") or "", 32),
+                "blocked_reason": _bounded_text(item.get("blocked_reason") or "", 120),
             }
-            for item in _as_list(task.get("recovery_goals"))[:24]
+            for item in _as_list(task.get("recovery_goals"))[-64:]
             if isinstance(item, dict)
         ],
     }
@@ -564,7 +567,10 @@ def render_task_state_guidance(contract: dict[str, Any]) -> str:
         ]
         if pending_goal_ids:
             lines.append("open_recovery_goal_ids=" + ",".join(pending_goal_ids[:24]))
-            lines.append("Replacement calls should include the matching ids in plan_goal_ids so the runtime can reconcile the evidence.")
+            lines.append(
+                "Replacement calls should include matching ids in plan_goal_ids for correlation; "
+                "the runtime still requires compatible targets and successful terminal evidence."
+            )
     prior_status = str(contract.get("status") or "")
     recovery_status = str(contract.get("recovery_status") or "")
     if prior_status == "replan_required" or recovery_status == "replan_required":

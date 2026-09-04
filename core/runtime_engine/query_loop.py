@@ -3414,17 +3414,14 @@ class QueryLoop:
             return [], []
         attempted = set(ctx.extras.get("safe_read_recovery_attempted") or [])
         directives: list[tuple[LLMToolCall, dict[str, Any], str]] = []
+        from .recovery_goals import is_valid_recovery_directive
+
         for call, result in zip(tool_calls, results):
             output = result.output if isinstance(result.output, dict) else {}
             published = output.get("runtime_recoveries")
             candidates = published if isinstance(published, list) else [output.get("runtime_recovery")]
             for directive in candidates:
-                if (
-                    not isinstance(directive, dict)
-                    or directive.get("kind") not in {"safe_read_fallback", "documentation_read_fallback"}
-                    or not isinstance(directive.get("tool_id"), str)
-                    or not isinstance(directive.get("arguments"), dict)
-                ):
+                if not is_valid_recovery_directive(directive):
                     continue
                 directive_key = hashlib.sha256(json.dumps({
                     "source_call_id": call.id,
@@ -3463,7 +3460,10 @@ class QueryLoop:
                 "summary": str(directive.get("summary") or "safe_read_fallback"),
                 "status": "planned",
             })
-            install_recovery_goal(ctx, directive, source_call_id=call.id)
+            installed = install_recovery_goal(ctx, directive, source_call_id=call.id)
+            if installed is None:
+                event = events[-1]
+                event.update({"status": "blocked_invalid_recovery_contract"})
 
         if budget.remaining_execution_seconds() <= 0:
             for event in events[-len(directives):]:

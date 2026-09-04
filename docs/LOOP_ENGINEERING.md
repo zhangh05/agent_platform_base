@@ -31,13 +31,13 @@
 
 ## 目标、证据与预算
 
-每个目标记录来源调用、资源范围、失败类别、可用的安全策略和尝试状态。替代调用以 `plan_goal_ids` 显式关联目标；仅共享设备、工作区或连接标识不构成关联。成功的只读证据按目标的 evidence kind、fact 与 target 关闭目标；参考文档可帮助修正命令，但不等于实时设备证据。
+每个目标记录来源调用、资源范围、失败类别、可用的安全策略和尝试状态。`plan_goal_ids` 只是关联提示，不是完成证据：显式关联仍须通过工具、动作和资源目标兼容性校验；同一能力的隐式恢复也不得跨越 `device_id`、`connection_id`、`resource_id` 等资源身份。成功且已经终止的只读结果才可提交正向 evidence claim，失败、执行中或结果不确定的调用不能关闭目标。领域证据继续按 evidence kind、fact 与 target 匹配；参考文档可帮助修正命令，但不等于实时设备证据。
 
-通用 `tool_recovery` 的尝试预算包含原始失败。领域处理器声明的证据目标使用单独的最终重规划预算。任一预算耗尽都必须收敛为 `partial` 或 `blocked`，禁止无限循环。
+通用 `tool_recovery` 的尝试预算包含原始失败。每个领域证据目标分别维护最终重规划预算，新出现的设备或目标不继承其他目标已经消耗的次数。`passed` 与 `blocked` 是单调终态，断言投影不得将其重新改为待处理。任一目标预算耗尽都必须收敛为 `partial` 或 `blocked`，禁止无限循环。
 
 ## 扩展合同
 
-扩展返回结构化 `ToolResult`。若能确定安全的只读下一步，可在 `runtime_recoveries` 列表中描述 target、fact、evidence kind 与受限观察；不得把它作为新权限、凭据、连接、写命令或执行脚本的载体。QueryLoop 执行、持久化和投影恢复过程，扩展不得维护第二个 LLM retry loop。
+扩展返回结构化 `ToolResult`。若能确定安全的只读下一步，可在 `runtime_recoveries` 列表中描述 kind、tool、arguments，以及包含 target、fact、evidence kind 的目标；完整合同通过校验后才会抑制通用恢复。无效或不完整的指令不会吞掉原始失败的通用恢复路径。恢复指令不得作为新权限、凭据、连接、写命令或执行脚本的载体。QueryLoop 执行、持久化和投影恢复过程，扩展不得维护第二个 LLM retry loop。
 
 ## 对外结果
 

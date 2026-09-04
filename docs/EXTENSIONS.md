@@ -17,7 +17,7 @@ python3 scripts/extension_cli.py validate plugins/acme_insights
 
 ## 业务对象与网络扩展
 
-业务扩展不仅是工具面板，还要拥有对象模型和完整生命周期。bundled `network.operations` 管理区域、设备、加密的 SSH/Telnet 连接与已发布 Skill。工作台选择只传达候选 Skill；服务端每次调用重新解析 Skill 的设备、连接、工具和 `configuration_write` 范围，选择本身不建立网络连接，也不扩大权限。
+业务扩展不仅是工具面板，还要拥有对象模型和完整生命周期。bundled `network.operations` 管理区域、设备、加密的 SSH/Telnet 连接与已发布 Skill。工作台选择只传达候选 Skill；服务端每次调用重新解析 Skill 的设备、连接、工具和 `configuration_write` 范围。读取设备清单、读取 Skill、列出或操作巡检任务同样受当前资源范围约束，不能用已允许的工具 ID 访问另一个 Skill 的对象。选择本身不建立网络连接，也不扩大权限。
 
 模型可以选择 Skill 内的一部分设备。单台连接失败必须以该设备的工具结果返回，不能阻断其他独立设备。读操作是基础能力；网络写操作仅在当前 Skill 明确允许后执行。没有审批弹窗、等待状态或后台批准续跑。
 

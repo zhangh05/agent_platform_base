@@ -95,6 +95,7 @@ def _evidence_claim_status(tool_results: list[Any], assertion: dict[str, Any]) -
     expected_fact = str(assertion.get("fact") or "")
     expected_target = assertion.get("target") if isinstance(assertion.get("target"), dict) else {}
     matched: list[dict[str, Any]] = []
+    positive_matched: list[dict[str, Any]] = []
     for result in tool_results:
         output = getattr(result, "output", {})
         if not isinstance(output, dict):
@@ -108,7 +109,9 @@ def _evidence_claim_status(tool_results: list[Any], assertion: dict[str, Any]) -
             if any(target.get(key) != value for key, value in expected_target.items()):
                 continue
             matched.append(claim)
-    if any(str(item.get("status") or "").lower() in {"satisfied", "collected", "observed"} for item in matched):
+            if bool(getattr(result, "ok", False)) and not bool(getattr(result, "execution_may_continue", False)):
+                positive_matched.append(claim)
+    if any(str(item.get("status") or "").lower() in {"satisfied", "collected", "observed"} for item in positive_matched):
         return "passed"
     if any(str(item.get("status") or "").lower() in {"failed", "unavailable", "rejected"} for item in matched):
         return "failed"

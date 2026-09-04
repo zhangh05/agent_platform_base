@@ -16,6 +16,6 @@ runtime identity and invariants
 
 ## 网络 Skill
 
-工作台仅选择已发布 Skill；服务端在每次调用前重新读取其启用状态、设备、连接、允许工具与 `configuration_write`。未选 Skill 时不注入网络设备专用上下文。选择 Skill 不预连设备；模型在需要时连接目标，连接过期时由驱动恢复。
+工作台仅选择已发布 Skill；服务端在每次调用前重新读取其启用状态、设备、连接、允许工具与 `configuration_write`。工具允许范围和资源允许范围分别校验：设备/连接列表只返回当前选择的资源，Skill 查询不能越过当前 Skill，巡检的 list/get/retry/cancel 也必须重新核对任务内设备和连接。未选 Skill 时不注入网络设备专用上下文。选择 Skill 不预连设备；模型在需要时连接目标，连接过期时由驱动恢复。
 
 被拒绝的单命令只读 CLI 查询可被扩展映射为 canonical fact，并通过 `runtime_recoveries` 让 QueryLoop 尝试受限的替代读取。文档检索只用于改正后续命令，不是实时设备事实。写入未知只允许 read-back/reconcile，不能作为循环重放入口。

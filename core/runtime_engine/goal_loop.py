@@ -12,7 +12,8 @@ from __future__ import annotations
 
 import hashlib
 import json
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 
 _TERMINAL_FAILURE_CODES = frozenset({
@@ -32,6 +33,19 @@ _TARGET_KEYS = (
 )
 
 _MAX_TARGET_TEXT = 240
+
+# These fields identify the object being observed.  Recovery may correct a
+# query, command or other request detail, but it must never cross one of these
+# server-visible resource boundaries implicitly.
+_RESOURCE_TARGET_KEYS = frozenset({
+    "workspace_id", "device_id", "connection_id", "resource_id", "artifact_id",
+    "document_id", "file_id", "task_id", "job_id", "subtask_id", "host", "address",
+})
+_CROSS_CAPABILITY_TARGET_KEYS = frozenset({
+    "device_id", "connection_id", "resource_id", "artifact_id", "document_id",
+    "file_id", "task_id", "job_id", "subtask_id", "host", "address", "path",
+    "url", "location",
+})
 
 
 def observe_tool_round(
@@ -70,7 +84,11 @@ def observe_tool_round(
         del observations[:-256]
 
         if bool(getattr(result, "ok", False)):
-            if observation["read_only"] and not observation["execution_may_continue"]:
+            if (
+                observation["read_only"]
+                and not observation["execution_may_continue"]
+                and _is_conclusive_success(output)
+            ):
                 _resolve_goals_from_success(ctx, call, observation)
             continue
         if _has_domain_recovery(output):
@@ -220,7 +238,11 @@ def _resolve_goals_from_success(ctx, call: Any, observation: dict[str, Any]) -> 
     goals = [item for item in ctx.extras.get("recovery_goals") or [] if isinstance(item, dict)]
     pending = [item for item in goals if item.get("goal_type") == "tool_recovery" and item.get("status") == "pending"]
     explicit = {str(item) for item in (getattr(call, "goal_ids", None) or []) if str(item)}
-    matches = [goal for goal in pending if str(goal.get("goal_id")) in explicit]
+    matches = [
+        goal for goal in pending
+        if str(goal.get("goal_id")) in explicit
+        and _explicit_observation_compatible(goal, observation)
+    ]
     if not matches:
         compatible = [goal for goal in pending if _compatible_observation(goal, observation)]
         if len(compatible) == 1:
@@ -256,7 +278,43 @@ def _compatible_observation(goal: dict[str, Any], observation: dict[str, Any]) -
     return (
         str(goal.get("source_tool_id") or "") == observation["tool_id"]
         and str(goal.get("fact") or "") == observation["action"]
+        and _resource_targets_compatible(goal.get("target"), observation.get("target"))
     )
+
+
+def _explicit_observation_compatible(goal: dict[str, Any], observation: dict[str, Any]) -> bool:
+    """Treat a goal id as a correlation hint, never as evidence by itself."""
+    same_capability = (
+        str(goal.get("source_tool_id") or "") == observation["tool_id"]
+        and str(goal.get("fact") or "") == observation["action"]
+    )
+    if same_capability:
+        return _resource_targets_compatible(goal.get("target"), observation.get("target"))
+    # Cross-capability recovery is permitted only when both observations name
+    # at least one identical concrete target (for example the same URL).  Rich
+    # domain recovery should use evidence_claims instead of this generic path.
+    expected = goal.get("target") if isinstance(goal.get("target"), dict) else {}
+    actual = observation.get("target") if isinstance(observation.get("target"), dict) else {}
+    shared = set(expected).intersection(actual).intersection(_CROSS_CAPABILITY_TARGET_KEYS)
+    return bool(shared) and all(expected[key] == actual[key] for key in shared)
+
+
+def _resource_targets_compatible(expected: Any, actual: Any) -> bool:
+    expected_map = expected if isinstance(expected, dict) else {}
+    actual_map = actual if isinstance(actual, dict) else {}
+    required = _RESOURCE_TARGET_KEYS.intersection(expected_map)
+    return all(key in actual_map and actual_map[key] == expected_map[key] for key in required)
+
+
+def _is_conclusive_success(output: dict[str, Any]) -> bool:
+    """Reject transport-success envelopes that explicitly lack an observation."""
+    status = str(output.get("status") or "").strip().lower()
+    coverage = str(output.get("coverage_status") or "").strip().lower()
+    if output.get("connection_ok") is False:
+        return False
+    if status in {"unknown", "unavailable", "pending", "failed", "error"}:
+        return False
+    return coverage not in {"unknown", "pending", "failed"}
 
 
 def _should_install_goal(call: Any, observation: dict[str, Any], output: dict[str, Any]) -> bool:
@@ -268,10 +326,12 @@ def _should_install_goal(call: Any, observation: dict[str, Any], output: dict[st
 
 
 def _has_domain_recovery(output: dict[str, Any]) -> bool:
+    from .recovery_goals import is_valid_recovery_directive
+
     published = output.get("runtime_recoveries")
-    if isinstance(published, list) and any(isinstance(item, dict) for item in published):
+    if isinstance(published, list) and any(is_valid_recovery_directive(item) for item in published):
         return True
-    return isinstance(output.get("runtime_recovery"), dict)
+    return is_valid_recovery_directive(output.get("runtime_recovery"))
 
 
 def _target_from_arguments(arguments: dict[str, Any]) -> dict[str, Any]:

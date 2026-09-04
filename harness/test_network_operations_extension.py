@@ -7,7 +7,12 @@ from types import SimpleNamespace
 import pytest
 
 from extensions.network_operations import service
-from extensions.network_operations.backend import devices_read, device_manage, inspection, skills_read
+from extensions.network_operations.backend import (
+    device_manage,
+    devices_read,
+    inspection,
+    skills_read,
+)
 from extensions.network_operations.device_tools import (
     MAX_READ_ONLY_COMMANDS,
     is_read_only_command as device_is_read_only_command,
@@ -364,6 +369,57 @@ def test_workbench_selected_connection_boundary_is_enforced(monkeypatch, tmp_pat
     )
 
     assert device_manage(invocation) == {"ok": False, "error": "connection_not_selected_in_workbench"}
+
+
+def test_workbench_skill_scope_filters_inventory_skills_and_inspection_lifecycle(monkeypatch, tmp_path):
+    _setup(monkeypatch, tmp_path)
+    first = service.save_device("default", {"name": "R1", "host": "10.0.0.1"})
+    second = service.save_device("default", {"name": "R2", "host": "10.0.0.2"})
+    monkeypatch.setattr(service, "probe_target", lambda *_args, **_kwargs: {"ok": True, "duration_ms": 1})
+    first_connection = service.save_connection("default", {
+        "device_id": first["device_id"], "protocol": "telnet", "auth_method": "none",
+    })
+    second_connection = service.save_connection("default", {
+        "device_id": second["device_id"], "protocol": "telnet", "auth_method": "none",
+    })
+    selected_skill = service.save_skill("default", {
+        "name": "Selected", "device_ids": [first["device_id"], second["device_id"]],
+        "connection_ids": [first_connection["connection_id"], second_connection["connection_id"]],
+    })
+    foreign_skill = service.save_skill("default", {
+        "name": "Foreign", "device_ids": [second["device_id"]],
+        "connection_ids": [second_connection["connection_id"]],
+    })
+    invocation = SimpleNamespace(
+        workspace_id="default", skill=selected_skill["skill_id"],
+        skill_connection_ids=(first_connection["connection_id"],), arguments={},
+    )
+
+    inventory = devices_read(invocation)
+    assert [item["device_id"] for item in inventory["devices"]] == [first["device_id"]]
+    assert inventory["connection_ids"] == [first_connection["connection_id"]]
+    invocation.arguments = {"device_id": second["device_id"]}
+    assert devices_read(invocation)["error"] == "device_not_allowed_by_skill"
+    invocation.arguments = {"skill_id": foreign_skill["skill_id"]}
+    assert skills_read(invocation)["error"] == "skill_not_selected_in_workbench"
+
+    foreign_task = {
+        "task_id": "inspection_foreign", "status": "failed",
+        "connection_ids": [second_connection["connection_id"]],
+        "total": 1, "completed": 1, "failed": 1, "results": {},
+    }
+    monkeypatch.setattr(service, "get_inspection", lambda *_args: foreign_task)
+    monkeypatch.setattr(service, "list_inspections", lambda *_args: [foreign_task])
+    retry_calls = []
+    cancel_calls = []
+    monkeypatch.setattr(service, "retry_inspection", lambda *_args: retry_calls.append(_args))
+    monkeypatch.setattr(service, "cancel_inspection", lambda *_args: cancel_calls.append(_args))
+    for action in ("get", "retry", "cancel"):
+        invocation.arguments = {"action": action, "task_id": foreign_task["task_id"]}
+        assert inspection(invocation)["error"] == "inspection_not_allowed_by_skill"
+    invocation.arguments = {"action": "list"}
+    assert inspection(invocation)["inspections"] == []
+    assert retry_calls == [] and cancel_calls == []
 
 
 def test_probe_requires_and_then_saves_host_key(monkeypatch, tmp_path):

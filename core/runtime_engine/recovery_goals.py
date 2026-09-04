@@ -21,6 +21,23 @@ class RecoveryFinalGate:
     nudge: str = ""
 
 
+def is_valid_recovery_directive(directive: Any) -> bool:
+    """Validate the complete handler-to-runtime recovery contract."""
+    if not isinstance(directive, dict):
+        return False
+    if directive.get("kind") not in {"safe_read_fallback", "documentation_read_fallback"}:
+        return False
+    if not str(directive.get("tool_id") or "").strip() or not isinstance(directive.get("arguments"), dict):
+        return False
+    goal = directive.get("goal")
+    return bool(
+        isinstance(goal, dict)
+        and str(goal.get("evidence_kind") or "").strip()
+        and isinstance(goal.get("target"), dict)
+        and goal.get("target")
+    )
+
+
 def install_recovery_goal(ctx, directive: dict[str, Any], *, source_call_id: str) -> dict[str, Any] | None:
     """Persist one handler-declared evidence goal and its generic assertion."""
     goal = directive.get("goal")
@@ -99,6 +116,7 @@ def recovery_final_gate(ctx, tool_results: list[Any], *, max_replans: int = 3) -
     if not unresolved:
         _project_goal_status(ctx, evaluated)
         return RecoveryFinalGate(False)
+    _project_goal_status(ctx, evaluated)
     blocked_goal_ids = {
         str(item.get("goal_id") or "")
         for item in ctx.extras.get("recovery_goals") or []
@@ -109,19 +127,28 @@ def recovery_final_gate(ctx, tool_results: list[Any], *, max_replans: int = 3) -
         if str(item.get("goal_id") or "") not in blocked_goal_ids
     )
     if not actionable:
-        _project_goal_status(ctx, evaluated)
         return RecoveryFinalGate(False, unresolved)
-    attempts = int(ctx.extras.get("recovery_final_replans") or 0)
-    if attempts >= max(1, int(max_replans)):
-        _project_goal_status(ctx, evaluated)
-        exhausted_ids = {str(item.get("goal_id") or "") for item in actionable}
-        for goal in ctx.extras.get("recovery_goals") or []:
-            if isinstance(goal, dict) and str(goal.get("goal_id") or "") in exhausted_ids:
-                goal["status"] = "blocked"
-                goal["blocked_reason"] = "recovery_replan_budget_exhausted"
+    limit = max(1, int(max_replans))
+    goals_by_id = {
+        str(item.get("goal_id") or ""): item
+        for item in ctx.extras.get("recovery_goals") or []
+        if isinstance(item, dict)
+    }
+    permitted: list[dict[str, Any]] = []
+    for assertion in actionable:
+        goal = goals_by_id.get(str(assertion.get("goal_id") or ""))
+        if not goal:
+            continue
+        attempts = int(goal.get("final_replan_attempts") or 0)
+        if attempts >= limit:
+            goal["status"] = "blocked"
+            goal["blocked_reason"] = "recovery_replan_budget_exhausted"
+            continue
+        goal["final_replan_attempts"] = attempts + 1
+        permitted.append(assertion)
+    if not permitted:
         return RecoveryFinalGate(False, unresolved)
-    ctx.extras["recovery_final_replans"] = attempts + 1
-    _project_goal_status(ctx, evaluated)
+    ctx.extras["recovery_final_replans"] = int(ctx.extras.get("recovery_final_replans") or 0) + 1
     compact = [
         {
             "goal_id": item.get("goal_id"),
@@ -130,11 +157,11 @@ def recovery_final_gate(ctx, tool_results: list[Any], *, max_replans: int = 3) -
             "fact": item.get("fact"),
             "status": item.get("status"),
         }
-        for item in actionable
+        for item in permitted
     ]
     return RecoveryFinalGate(
         True,
-        actionable,
+        tuple(permitted),
         "[RUNTIME RECOVERY GOAL]\n"
         "The proposed final answer was not accepted because required evidence is still missing. "
         "Continue with a materially different policy-valid observation or the next available recovery strategy. "
@@ -153,4 +180,8 @@ def _project_goal_status(ctx, evaluated: dict[str, Any]) -> None:
     }
     for goal in ctx.extras.get("recovery_goals") or []:
         if isinstance(goal, dict) and str(goal.get("goal_id") or "") in statuses:
-            goal["status"] = statuses[str(goal["goal_id"])]
+            if goal.get("status") in {"passed", "blocked"}:
+                continue
+            assertion_status = statuses[str(goal["goal_id"])]
+            goal["assertion_status"] = assertion_status
+            goal["status"] = "passed" if assertion_status == "passed" else "pending"

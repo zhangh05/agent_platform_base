@@ -210,12 +210,37 @@ def register_routes(app):
 def devices_read(invocation):
     if not _skill_allows(invocation, "network.operations.devices_read"):
         return {"ok": False, "error": "tool_not_allowed_by_skill"}
+    scope = _selected_skill_scope(invocation)
     device_id = str((invocation.arguments or {}).get("device_id") or "").strip()
     if device_id:
+        if scope is not None and device_id not in scope["device_ids"]:
+            return {"ok": False, "error": "device_not_allowed_by_skill", "device_id": device_id}
         device = service.get_device(invocation.workspace_id, device_id)
         if not device:
             return {"ok": False, "error": "device_not_found", "device_id": device_id}
-        return {"ok": True, "device": device, "connections": service.list_connections(invocation.workspace_id, device_id=device_id)}
+        connections = service.list_connections(invocation.workspace_id, device_id=device_id)
+        if scope is not None:
+            connections = [item for item in connections if item.get("connection_id") in scope["connection_ids"]]
+        return {"ok": True, "device": device, "connections": connections}
+    if scope is not None:
+        devices = [
+            item for item in (service.get_device(invocation.workspace_id, item) for item in scope["ordered_device_ids"])
+            if item
+        ]
+        connections = [
+            item for item in service.list_connections(invocation.workspace_id)
+            if item.get("connection_id") in scope["connection_ids"]
+        ]
+        region_ids = {str(item.get("region_id") or "") for item in devices if item.get("region_id")}
+        regions = [item for item in service.list_regions(invocation.workspace_id) if item.get("region_id") in region_ids]
+        return {
+            "ok": True,
+            "devices": devices,
+            "connections": connections,
+            "connection_ids": [str(item.get("connection_id") or "") for item in connections],
+            "ready_connection_ids": [str(item.get("connection_id") or "") for item in connections if item.get("verified")],
+            "regions": regions,
+        }
     connections = service.list_connections(invocation.workspace_id)
     return {
         "ok": True,
@@ -230,10 +255,15 @@ def devices_read(invocation):
 def skills_read(invocation):
     if not _skill_allows(invocation, "network.operations.skills_read"):
         return {"ok": False, "error": "tool_not_allowed_by_skill"}
+    scope = _selected_skill_scope(invocation)
     skill_id = str((invocation.arguments or {}).get("skill_id") or getattr(invocation, "skill", None) or "").strip()
     if skill_id:
+        if scope is not None and skill_id != scope["skill_id"]:
+            return {"ok": False, "error": "skill_not_selected_in_workbench"}
         skill = service.get_skill(invocation.workspace_id, skill_id)
         return {"ok": bool(skill), "skill": skill, "error": "" if skill else "skill_not_found"}
+    if scope is not None:
+        return {"ok": True, "skills": [scope["skill"]]}
     return {"ok": True, "skills": service.list_skills(invocation.workspace_id, enabled_only=True)}
 
 
@@ -338,15 +368,14 @@ def inspection(invocation):
         return {"ok": False, "error": "tool_not_allowed_by_skill"}
     args = invocation.arguments or {}
     action = str(args.get("action") or "list")
+    scope = _selected_skill_scope(invocation)
     if action == "run":
         connection_ids = args.get("connection_ids")
-        if getattr(invocation, "skill", None):
-            skill = service.get_skill(invocation.workspace_id, str(invocation.skill))
-            allowed = set((skill or {}).get("connection_ids") or [])
-            selected = set(getattr(invocation, "skill_connection_ids", ()) or ())
-            effective_allowed = allowed.intersection(selected) if selected else allowed
-            if not isinstance(connection_ids, list) or not set(connection_ids).issubset(effective_allowed):
-                return {"ok": False, "error": "inspection_connections_not_allowed_by_skill"}
+        if scope is not None and (
+            not isinstance(connection_ids, list)
+            or not set(connection_ids).issubset(scope["connection_ids"])
+        ):
+            return {"ok": False, "error": "inspection_connections_not_allowed_by_skill"}
         enqueue_options = {
             "script_id": str(args.get("script_id") or ""),
             "created_by": "llm",
@@ -364,14 +393,33 @@ def inspection(invocation):
         task = service.get_inspection(invocation.workspace_id, task_id)
         if not task:
             return {"ok": False, "error": "inspection_not_found", "task_id": task_id}
+        if not _inspection_in_scope(task, scope):
+            return {"ok": False, "error": "inspection_not_allowed_by_skill", "task_id": task_id}
         return _inspection_result(task)
     if action == "cancel":
-        return {"ok": service.cancel_inspection(invocation.workspace_id, str(args.get("task_id") or ""))}
+        task_id = str(args.get("task_id") or "")
+        if scope is not None:
+            task = service.get_inspection(invocation.workspace_id, task_id)
+            if not task:
+                return {"ok": False, "error": "inspection_not_found", "task_id": task_id}
+            if not _inspection_in_scope(task, scope):
+                return {"ok": False, "error": "inspection_not_allowed_by_skill", "task_id": task_id}
+        return {"ok": service.cancel_inspection(invocation.workspace_id, task_id)}
     if action == "retry":
+        task_id = str(args.get("task_id") or "")
+        if scope is not None:
+            task = service.get_inspection(invocation.workspace_id, task_id)
+            if not task:
+                return {"ok": False, "error": "inspection_not_found", "task_id": task_id}
+            if not _inspection_in_scope(task, scope):
+                return {"ok": False, "error": "inspection_not_allowed_by_skill", "task_id": task_id}
         return _inspection_result(service.retry_inspection(
-            invocation.workspace_id, str(args.get("task_id") or "")
+            invocation.workspace_id, task_id
         ))
-    return {"ok": True, "inspections": service.list_inspections(invocation.workspace_id)}
+    tasks = service.list_inspections(invocation.workspace_id)
+    if scope is not None:
+        tasks = [task for task in tasks if _inspection_in_scope(task, scope)]
+    return {"ok": True, "inspections": tasks}
 
 
 def _inspection_result(task: dict[str, Any]) -> dict[str, Any]:
@@ -509,6 +557,49 @@ def _skill_allows(invocation, tool_id: str) -> bool:
         return True
     skill = service.get_skill(invocation.workspace_id, skill_id)
     return bool(skill and skill.get("enabled", True) and tool_id in set(skill.get("allowed_tool_ids") or []))
+
+
+def _selected_skill_scope(invocation) -> dict[str, Any] | None:
+    """Resolve the current Skill's effective device and connection boundary."""
+    skill_id = str(getattr(invocation, "skill", None) or "").strip()
+    if not skill_id:
+        return None
+    skill = service.get_skill(invocation.workspace_id, skill_id)
+    if not skill or not skill.get("enabled", True):
+        return {
+            "skill_id": skill_id, "skill": {}, "device_ids": set(),
+            "ordered_device_ids": [], "connection_ids": set(),
+        }
+    allowed_connections = {str(item) for item in skill.get("connection_ids") or []}
+    selected_connections = {str(item) for item in getattr(invocation, "skill_connection_ids", ()) or ()}
+    if selected_connections:
+        allowed_connections.intersection_update(selected_connections)
+    connections = [service.get_connection(invocation.workspace_id, connection_id) for connection_id in (
+        str(item) for item in skill.get("connection_ids") or []
+        if str(item) in allowed_connections
+    )]
+    ordered_device_ids = list(dict.fromkeys(
+        str(item.get("device_id") or "")
+        for item in connections
+        if isinstance(item, dict) and item.get("device_id")
+    ))
+    return {
+        "skill_id": skill_id,
+        "skill": skill,
+        "device_ids": set(ordered_device_ids),
+        "ordered_device_ids": ordered_device_ids,
+        "connection_ids": allowed_connections,
+    }
+
+
+def _inspection_in_scope(task: dict[str, Any], scope: dict[str, Any] | None) -> bool:
+    if scope is None:
+        return True
+    connection_ids = {str(item) for item in task.get("connection_ids") or [] if str(item)}
+    if connection_ids:
+        return connection_ids.issubset(scope["connection_ids"])
+    device_ids = {str(item) for item in task.get("device_ids") or [] if str(item)}
+    return bool(device_ids) and device_ids.issubset(scope["device_ids"])
 
 
 def register():

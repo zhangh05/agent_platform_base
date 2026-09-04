@@ -207,6 +207,9 @@ export interface AgentResult {
     validation_correction_summary?: {
       attempts?: number;
       max_attempts?: number;
+      final_replan_attempts?: number;
+      assertion_status?: "passed" | "failed" | "unknown";
+      blocked_reason?: string;
       exhausted?: boolean;
     };
     validation_correction_events?: Array<{

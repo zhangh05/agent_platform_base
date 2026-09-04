@@ -9,8 +9,10 @@ from core.runtime_engine.goal_assertions import evaluate_goal_assertions
 from core.runtime_engine.goal_loop import goal_loop_summary, observe_tool_round
 from core.runtime_engine.models import SSOTRuntimeConfig, StatelessContext
 from core.runtime_engine.query_loop import StreamingToolResult
-from core.runtime_engine.recovery_goals import recovery_final_gate
-from core.runtime_engine.recovery_goals import install_recovery_goal
+from core.runtime_engine.recovery_goals import (
+    install_recovery_goal,
+    recovery_final_gate,
+)
 from core.runtime_engine.tool_runtime import ToolRuntime
 
 
@@ -100,6 +102,70 @@ def test_cross_tool_success_with_shared_scope_does_not_implicitly_close_goal():
     assert goal_loop_summary(ctx)["status"] == "pending"
 
 
+def test_same_capability_success_on_different_resource_cannot_close_goal():
+    ctx = _ctx()
+    failed = LLMToolCall(
+        id="device-a", name="network.operations.device.manage",
+        arguments={"action": "read", "connection_id": "connection-a", "commands": ["bad"]},
+    )
+    observe_tool_round(
+        ctx, [failed], [_result("device-a", ok=False, error="command rejected")],
+        is_read_only_call=lambda _call: True,
+    )
+    unrelated = LLMToolCall(
+        id="device-b", name="network.operations.device.manage",
+        arguments={"action": "read", "connection_id": "connection-b", "commands": ["good"]},
+    )
+    observe_tool_round(
+        ctx, [unrelated], [_result("device-b", ok=True)],
+        is_read_only_call=lambda _call: True,
+    )
+    assert goal_loop_summary(ctx)["status"] == "pending"
+
+
+def test_explicit_goal_link_cannot_make_unrelated_tool_success_into_evidence():
+    ctx = _ctx()
+    failed = LLMToolCall(
+        id="device", name="network.operations.device.manage",
+        arguments={"action": "read", "connection_id": "connection-a", "commands": ["bad"]},
+    )
+    observe_tool_round(
+        ctx, [failed], [_result("device", ok=False, error="command rejected")],
+        is_read_only_call=lambda _call: True,
+    )
+    goal_id = ctx.extras["recovery_goals"][0]["goal_id"]
+    unrelated = LLMToolCall(
+        id="weather", name="web.manage",
+        arguments={"action": "search", "query": "weather"}, goal_ids=[goal_id],
+    )
+    observe_tool_round(
+        ctx, [unrelated], [_result("weather", ok=True)],
+        is_read_only_call=lambda _call: True,
+    )
+    assert goal_loop_summary(ctx)["status"] == "pending"
+
+
+def test_success_envelope_without_observation_cannot_close_goal():
+    ctx = _ctx()
+    failed = LLMToolCall(
+        id="failed", name="network.operations.device.manage",
+        arguments={"action": "read", "connection_id": "connection-a", "commands": ["bad"]},
+    )
+    observe_tool_round(
+        ctx, [failed], [_result("failed", ok=False, error="command rejected")],
+        is_read_only_call=lambda _call: True,
+    )
+    unavailable = LLMToolCall(
+        id="unavailable", name="network.operations.device.manage",
+        arguments={"action": "read", "connection_id": "connection-a", "commands": ["different"]},
+    )
+    observe_tool_round(ctx, [unavailable], [StreamingToolResult(
+        tool_name=unavailable.name, call_id=unavailable.id,
+        output={"ok": True, "status": "unavailable", "connection_ok": False}, ok=True,
+    )], is_read_only_call=lambda _call: True)
+    assert goal_loop_summary(ctx)["status"] == "pending"
+
+
 def test_goal_target_text_is_bounded_before_runtime_persistence():
     ctx = _ctx()
     call = LLMToolCall(
@@ -162,6 +228,70 @@ def test_typed_evidence_goal_becomes_blocked_when_replan_budget_is_exhausted():
     assert recovery_final_gate(ctx, [unavailable], max_replans=1).should_continue is False
     assert ctx.extras["recovery_goals"][0]["status"] == "blocked"
     assert goal_loop_summary(ctx)["status"] == "blocked"
+
+
+def test_blocked_typed_goal_is_terminal_and_does_not_reopen():
+    ctx = _ctx()
+    install_recovery_goal(ctx, {
+        "goal": {"evidence_kind": "live_fact", "target": {"resource_id": "r1"}, "fact": "status"},
+    }, source_call_id="source")
+    goal = ctx.extras["recovery_goals"][0]
+    goal["status"] = "blocked"
+
+    assert recovery_final_gate(ctx, []).should_continue is False
+    assert goal["status"] == "blocked"
+    assert recovery_final_gate(ctx, []).should_continue is False
+    assert goal["status"] == "blocked"
+
+
+def test_replan_budget_is_independent_for_new_recovery_goals():
+    ctx = _ctx()
+    install_recovery_goal(ctx, {
+        "goal": {"goal_id": "g1", "evidence_kind": "live_fact", "target": {"resource_id": "r1"}, "fact": "status"},
+    }, source_call_id="source-1")
+    assert recovery_final_gate(ctx, [], max_replans=1).should_continue is True
+    proof = StreamingToolResult(
+        tool_name="system.manage", call_id="proof", output={"evidence_claims": [{
+            "evidence_kind": "live_fact", "target": {"resource_id": "r1"},
+            "fact": "status", "status": "collected",
+        }]}, ok=True,
+    )
+    install_recovery_goal(ctx, {
+        "goal": {"goal_id": "g2", "evidence_kind": "live_fact", "target": {"resource_id": "r2"}, "fact": "status"},
+    }, source_call_id="source-2")
+
+    gate = recovery_final_gate(ctx, [proof], max_replans=1)
+    assert gate.should_continue is True
+    assert [item["goal_id"] for item in gate.unresolved] == ["g2"]
+
+
+def test_failed_result_cannot_publish_satisfied_evidence():
+    ctx = _ctx()
+    install_recovery_goal(ctx, {
+        "goal": {"evidence_kind": "live_fact", "target": {"resource_id": "r1"}, "fact": "status"},
+    }, source_call_id="source")
+    failed = StreamingToolResult(
+        tool_name="system.manage", call_id="failed", output={"evidence_claims": [{
+            "evidence_kind": "live_fact", "target": {"resource_id": "r1"},
+            "fact": "status", "status": "satisfied",
+        }]}, ok=False, error="handler failed",
+    )
+    assert evaluate_goal_assertions(ctx, [failed])["status"] == "unknown"
+    assert ctx.extras["recovery_goals"][0]["status"] == "pending"
+
+
+def test_malformed_domain_recovery_does_not_suppress_generic_goal():
+    ctx = _ctx()
+    call = LLMToolCall(
+        id="bad", name="web.manage", arguments={"action": "search", "query": "bad"},
+    )
+    result = StreamingToolResult(
+        tool_name=call.name, call_id=call.id,
+        output={"ok": False, "runtime_recoveries": [{"kind": "safe_read_fallback"}]},
+        ok=False, error="provider rejected query",
+    )
+    observe_tool_round(ctx, [call], [result], is_read_only_call=lambda _call: True)
+    assert goal_loop_summary(ctx)["status"] == "pending"
 
 
 def test_query_loop_rejects_premature_final_and_accepts_corrected_web_read():
