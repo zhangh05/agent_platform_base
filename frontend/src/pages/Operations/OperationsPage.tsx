@@ -13,7 +13,7 @@ import { useSessionStore } from "../../stores/session";
 import { APP_EVENTS } from "../../utils/appEvents";
 import { useToastStore } from "../../stores/toast";
 import { Badge, StatusDot, EmptyState, LoadingState, CodeBlock } from "../../components/common";
-import { PageHeader, DetailPanel, Button } from "../../components/ui";
+import { PageHeader, DetailPanel, Button, FilterBar, Input, Select } from "../../components/ui";
 import { IconRefresh, IconDocument, IconHistory, IconBolt, IconAlert, IconTrash } from "../../components/Icon";
 import { TraceDetailPanel } from "../../components/TraceDetailPanel";
 import { deriveRunTraceStats } from "../../utils/runTraceStats";
@@ -150,6 +150,8 @@ export function OperationsPage() {
   const [jobs, setJobs] = useState<JobItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [jobQuery, setJobQuery] = useState("");
+  const [jobStatus, setJobStatus] = useState("all");
 
   const [selectedJob, setSelectedJob] = useState<JobItem | null>(null);
   const [jobTab, setJobTab] = useState<"overview" | "stats" | "summary">("overview");
@@ -363,6 +365,20 @@ export function OperationsPage() {
     [selectedJob],
   );
 
+  const visibleJobs = useMemo(() => {
+    const query = jobQuery.trim().toLowerCase();
+    return jobs.filter((job) => {
+      const status = String(job.status || "").toLowerCase();
+      const matchesStatus = jobStatus === "all"
+        || (jobStatus === "active" && TRANSIENT_JOB_STATUS.has(status))
+        || (jobStatus === "completed" && ["succeeded", "completed", "ok", "success"].includes(status))
+        || (jobStatus === "failed" && ["failed", "error", "cancelled", "timeout"].includes(status));
+      if (!matchesStatus) return false;
+      if (!query) return true;
+      return `${job.title || ""} ${job.job_id || ""} ${JOB_TYPE_LABELS[job.job_type] || job.job_type}`.toLowerCase().includes(query);
+    });
+  }, [jobQuery, jobStatus, jobs]);
+
   // ── Cancel / Retry / Restore ──
   const handleRetry = async (job_id: string) => {
     try { await jobsApi.retry(job_id, wsId); toast({ kind: "success", title: "已重试" }); loadJobs(); }
@@ -425,9 +441,20 @@ export function OperationsPage() {
     <div className="page operations-page">
       <OperationsPageHeader count={jobs.length} onRefresh={loadJobs} />
 
+      <FilterBar className="operations-filterbar">
+        <Input aria-label="搜索任务" placeholder="搜索任务名称、类型或 ID" value={jobQuery} onChange={(event) => setJobQuery(event.target.value)} />
+        <Select aria-label="筛选任务状态" value={jobStatus} onChange={(event) => setJobStatus(event.target.value)}>
+          <option value="all">全部状态</option>
+          <option value="active">执行中</option>
+          <option value="completed">已完成</option>
+          <option value="failed">失败或取消</option>
+        </Select>
+        <span className="operations-filter-count">显示 {visibleJobs.length} / {jobs.length} 项</span>
+      </FilterBar>
+
       {error && (
         <div className="operations-alert">
-          ⚠ {error}
+          <IconAlert size={16} aria-hidden="true" /> {error}
         </div>
       )}
 
@@ -437,7 +464,7 @@ export function OperationsPage() {
         <div className="split-shell operations-split">
           {/* ══════ 左侧 作业列表 ══════ */}
           <aside className="list-scroll jobs-list operations-pane-scroll">
-            {jobs.map((job) => {
+            {visibleJobs.map((job) => {
               const meta = sMeta(job.status);
               const active = selectedJob?.job_id === job.job_id;
               const TypeIcon = JOB_TYPE_ICONS[job.job_type] || IconBolt;
@@ -496,6 +523,7 @@ export function OperationsPage() {
                 </article>
               );
             })}
+            {visibleJobs.length === 0 && <div className="operations-list-empty">没有符合筛选条件的任务</div>}
           </aside>
 
           {/* ══════ 右侧 详情 / run trace ══════ */}

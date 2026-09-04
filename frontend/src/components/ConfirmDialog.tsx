@@ -60,7 +60,7 @@ export function ConfirmHost() {
   if (!state) return null;
 
   return (
-    <PortalModal open onClose={onClose} testId="confirm-dialog">
+    <PortalModal open onClose={onClose} testId="confirm-dialog" ariaLabel={state.title}>
       <div className="confirm-dialog">
         <h3 className="confirm-dialog-title">{state.title}</h3>
         {state.body && <div className="confirm-dialog-body">{state.body}</div>}

@@ -5,6 +5,10 @@ import { ErrorBoundary } from "./components/ErrorBoundary";
 import "./styles/global.css";
 import "./styles/product-shell.css";
 import "./styles/console-system.css";
+// The workbench owns a dense, two-column composition. Keep its route-specific
+// rules after the shared system so legacy compatibility selectors cannot alter
+// the grid lifecycle when the route chunk is loaded or reloaded.
+import "./pages/AgentWorkbench/AgentWorkbench.css";
 
 // Theme initialization — read from Zustand persist store (lzcore_ui) or
 // fall back to prefers-color-scheme. We do this BEFORE React mounts so

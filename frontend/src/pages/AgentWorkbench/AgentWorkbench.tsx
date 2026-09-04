@@ -8,7 +8,6 @@ import { humanFailure } from "../../utils/humanizeError";
 import "./WorkbenchHighlight";
 import { IconAlert, IconChevronDown, IconRefresh } from "../../components/Icon";
 import "../../components/RuntimeEventTimeline.css";
-import "./AgentWorkbench.css";
 import { formatFileSize } from "../../utils/format";
 import { MessageRow } from "./components/MessageRow";
 import { scopedLocalStorageKey } from "../../utils/userScope";

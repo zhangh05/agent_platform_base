@@ -1,4 +1,5 @@
 import { Component, type ReactNode } from "react";
+import { IconAlert } from "./Icon";
 
 interface Props {
   children: ReactNode;
@@ -28,7 +29,7 @@ export class ErrorBoundary extends Component<Props, State> {
     if (this.state.hasError) {
       return (
         <div className="error-boundary">
-          <div className="error-boundary-icon">⚠</div>
+          <div className="error-boundary-icon"><IconAlert size={24} aria-hidden="true" /></div>
           <h1 className="error-boundary-title">应用发生错误</h1>
           <p className="error-boundary-message">
             请强制刷新页面重试。如持续出现，请检查系统设置中的模型配置，然后清除浏览器缓存数据。

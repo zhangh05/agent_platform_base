@@ -28,7 +28,7 @@ interface KnowledgeChunkDetail {
 interface KnowledgeSourceDetail extends KnowledgeSource {
   chunks?: KnowledgeChunkDetail[];
 }
-import { IconBook, IconDocument, IconPlus, IconRefresh, IconSearch } from "../../components/Icon";
+import { IconBook, IconClose, IconDocument, IconPlus, IconRefresh, IconSearch } from "../../components/Icon";
 import { shortId } from "../../utils/displayText";
 
 export function KnowledgeLibrary() {
@@ -279,7 +279,7 @@ export function KnowledgeLibrary() {
               autoFocus
             />
             <button className="btn sm kl-rename-save" onClick={() => void saveRename(s.source_id)} type="button">保存</button>
-            <button className="btn sm ghost kl-rename-cancel" onClick={cancelRename} type="button">×</button>
+            <button className="btn sm ghost kl-rename-cancel" aria-label="取消重命名" onClick={cancelRename} type="button"><IconClose size={13} aria-hidden="true" /></button>
           </div>
         ) : (
           <>
@@ -393,7 +393,7 @@ export function KnowledgeLibrary() {
 
       <div className="page-body">
         <details className="kl-help-details">
-          <summary className="kl-help-summary">💡 使用帮助</summary>
+          <summary className="kl-help-summary">使用帮助</summary>
           <div className="kl-help-content">
             <strong>搜索</strong> — 输入关键词检索已导入的文档和知识片段；<br />
             <strong>上传</strong> — 支持 TXT / PDF / Markdown / JSON，也可从数据管理导入已有任务产出；<br />
@@ -649,7 +649,7 @@ function SearchResults({
   if (results.length === 0) {
     return (
       <div className="empty">
-        <div className="empty-icon"><span className="kl-search-icon">○</span></div>
+        <div className="empty-icon"><span className="kl-search-icon"><IconSearch size={18} aria-hidden="true" /></span></div>
         <div className="empty-text">无命中</div>
         <div className="empty-hint">尝试调整 scope 或关键词</div>
       </div>

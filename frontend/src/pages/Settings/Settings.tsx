@@ -16,6 +16,7 @@ import { isApiError } from "../../types";
 import type { ProviderConfig, LlmTestResult } from "../../types";
 import { sanitizeAssistantText } from "../../utils/displayText";
 import { formatDate } from "../../utils/format";
+import { IconAlert, IconBolt, IconBrain, IconCheck, IconClock, IconProbe, IconSave, IconTrash } from "../../components/Icon";
 
 /* ──────────────────────── Provider Presets ──────────────────────── */
 
@@ -358,7 +359,7 @@ export function Settings() {
       <PageHeader activeId={activeId} />
       <div className="page-body no-pad">
         <details className="settings-help">
-          <summary>💡 使用帮助</summary>
+          <summary>使用帮助</summary>
           <div className="settings-help-body">
             左侧选择模型服务商 → 填写访问密钥和参数 → 保存生效。支持 DeepSeek、OpenAI、Anthropic 等。
           </div>
@@ -386,7 +387,7 @@ export function Settings() {
                   <div className="provider-card-hint">{preset.hint}</div>
                   <div className="provider-card-meta">
                     {prov?.key_configured ? (
-                      <span className="success-text text-xs">✓ 密钥已配置</span>
+                      <span className="success-text text-xs"><IconCheck size={12} aria-hidden="true" /> 密钥已配置</span>
                     ) : (
                       <span className="muted text-xs">未配置密钥</span>
                     )}
@@ -476,7 +477,7 @@ export function Settings() {
                     data-testid="test-result"
                   >
                     <div className="mb-1">
-                      <strong>{testResult.llm_used ? "✓ 模型服务可用" : "✗ 模型服务不可用"}</strong>
+                      <strong className="settings-result-heading">{testResult.llm_used ? <IconCheck size={14} aria-hidden="true" /> : <IconAlert size={14} aria-hidden="true" />}{testResult.llm_used ? "模型服务可用" : "模型服务不可用"}</strong>
                       <span className="muted ml-2">
                         服务商：{testResult.provider ?? "未知"} · 模型：{testResult.model ?? "未知"} · 配置来源：{testResult.config_source}
                       </span>
@@ -500,13 +501,13 @@ export function Settings() {
                 {/* Actions */}
                 <div className="settings-actions">
                   <Button type="button" onClick={onTest} disabled={isBusy} data-testid="btn-test-llm">
-                    {testing ? "测试中…" : "🧪 测试连接"}
+                    <IconProbe size={15} aria-hidden="true" />{testing ? "测试中…" : "测试连接"}
                   </Button>
                   <Button type="button" onClick={onSave} disabled={isBusy} data-testid="btn-save-llm">
-                    {saving ? "保存中…" : "💾 保存"}
+                    <IconSave size={15} aria-hidden="true" />{saving ? "保存中…" : "保存"}
                   </Button>
                   <Button type="button" variant="primary" onClick={onApply} disabled={isBusy} data-testid="btn-apply-llm">
-                    {applying ? "应用中…" : "⚡ 应用"}
+                    <IconBolt size={15} aria-hidden="true" />{applying ? "应用中…" : "应用"}
                   </Button>
                   <span className="spacer" />
                   {draft.updated_at && (
@@ -518,7 +519,7 @@ export function Settings() {
                     type="button" variant="danger-ghost" onClick={onReset}
                     disabled={isBusy} title="重置为默认值" data-testid="btn-reset-llm"
                   >
-                    🗑 重置
+                    <IconTrash size={15} aria-hidden="true" />重置
                   </Button>
                 </div>
               </div>
@@ -635,7 +636,7 @@ function ApiKeyField({
         </Button>
       </div>
       <div className="row-flex-sm mt-1">
-        {configured ? <span className="success-text text-xs">✓ 已配置</span> : <span className="muted text-xs">未配置</span>}
+        {configured ? <span className="success-text text-xs"><IconCheck size={12} aria-hidden="true" /> 已配置</span> : <span className="muted text-xs">未配置</span>}
         {configured && (
           <label className="row-flex-xs">
             <input type="checkbox" checked={clearRequested} onChange={(e) => onClearToggle(e.target.checked)} data-testid="cb-clear-key" />
@@ -686,7 +687,7 @@ function LongTermMemoryCard({
       {loaded && (
         <div className={"memory-gating-box " + (enabled ? "ok" : "default")}>
           <div className="memory-gating-title">
-            <span className="mr-1">{enabled ? "🧠" : "⏸"}</span>
+            <span className="mr-1">{enabled ? <IconBrain size={15} aria-hidden="true" /> : <IconClock size={15} aria-hidden="true" />}</span>
             当前：{enabled ? "自动长期记忆已启用" : "自动长期记忆已关闭"}
           </div>
           <div className="memory-gating-body">
@@ -696,7 +697,7 @@ function LongTermMemoryCard({
             发现值得记忆的内容后，模型会提出新增、更新、忽略、过期或冲突处理建议；规则会拦截密钥、无效内容和冲突风险。
           </div>
           <div className="memory-gating-footer">
-            <span className="opacity-60">⏱</span>
+            <span className="opacity-60"><IconClock size={14} aria-hidden="true" /></span>
             {enabled ? "用户可在记忆页查看、确认、编辑或删除结果" : "关闭后仍可手动新建记忆"}
           </div>
         </div>

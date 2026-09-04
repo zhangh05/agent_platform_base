@@ -132,6 +132,7 @@ export function AppLayout({ children, navigationItems, settingsNavigationItems }
       <a className="skip-link" href="#main">跳到主内容</a>
       <aside
         ref={drawerRef}
+        id="layout-left"
         className={"app-sidebar" + (sidebarOpen ? "" : " collapsed")}
         data-testid="layout-left"
         aria-label="侧栏"

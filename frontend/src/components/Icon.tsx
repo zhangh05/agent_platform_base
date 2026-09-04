@@ -22,6 +22,7 @@ export {
   Copy as IconCopy,
   Cube as IconBox,
   FileText as IconDocument,
+  FloppyDisk as IconSave,
   GearSix as IconSettings,
   HardDrives as IconServer,
   Key as IconKey,

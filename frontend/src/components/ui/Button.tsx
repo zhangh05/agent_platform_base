@@ -24,6 +24,9 @@ export function Button({
   const variantClass = variant === "default" ? "" : variant;
   const sizeClass = size === "default" ? "" : size;
   const iconOnlyClass = iconOnly ? "icon-only" : "";
+  if (import.meta.env.DEV && iconOnly && !rest["aria-label"] && !rest["aria-labelledby"]) {
+    console.warn("Icon-only buttons require aria-label or aria-labelledby.");
+  }
 
   return (
     <button

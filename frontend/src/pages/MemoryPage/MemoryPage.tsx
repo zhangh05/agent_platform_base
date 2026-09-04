@@ -2,7 +2,7 @@ import { useEffect, useState, useCallback, useMemo, useRef } from "react";
 import { memoryApi } from "../../api";
 import { useSessionStore } from "../../stores/session";
 import { Badge, StatusDot } from "../../components/common";
-import { IconSearch, IconPlus, IconRefresh, IconClose, IconCheck, IconTrash } from "../../components/Icon";
+import { IconAlert, IconSearch, IconPlus, IconRefresh, IconClose, IconCheck, IconTrash } from "../../components/Icon";
 import { PageHeader, FilterBar } from "../../components/ui";
 
 interface MemEntry {
@@ -257,7 +257,7 @@ export function MemoryPage() {
         {err && (
           <div className="card memory-error-card">
             <div className="memory-error-row">
-              <span className="memory-error-icon">⚠</span>
+              <span className="memory-error-icon"><IconAlert size={16} aria-hidden="true" /></span>
               <span className="memory-error-text">{err}</span>
             </div>
           </div>

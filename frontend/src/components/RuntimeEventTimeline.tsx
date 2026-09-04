@@ -16,6 +16,7 @@ import type { ChatMsg } from "../stores/workbench";
 import { useWorkbenchStore } from "../stores/workbench";
 import { useSessionStore } from "../stores/session";
 import { shortId } from "../utils/displayText";
+import { IconCheck, IconClose } from "./Icon";
 
 /* ── helpers ── */
 
@@ -68,7 +69,7 @@ const ToolChip: React.FC<{ tc: ToolCallResult }> = React.memo(({ tc }) => {
       <span className="rt-dot rt-dot-warn" />
       <div className="rt-step-body">
         <div className={`rt-step-head ${hasBody ? "rt-step-head--interactive" : ""}`} onClick={() => hasBody && setOpen(!open)}>
-          <span className="rt-step-ok">{tc.ok ? "✓" : "✗"}</span>
+          <span className="rt-step-ok">{tc.ok ? <IconCheck size={12} aria-hidden="true" /> : <IconClose size={12} aria-hidden="true" />}</span>
           <code className="rt-step-name">{toolLabel(tc.tool_id)}</code>
           <span className="rt-tag">{tc.ok ? "完成" : "失败"}</span>
           {tc.duration_ms != null && <span className="rt-dur">{formatMs(tc.duration_ms)}</span>}

@@ -7,7 +7,7 @@ import { useMemo, useState } from "react";
 import { capabilitiesApi, toolsApi } from "../../api";
 import { useAsync, AsyncView, Badge, InlineCode } from "../../components/common";
 import type { BusinessCapability, RiskLevel, ToolCatalogCategory, ToolCatalogItem, ToolGovernanceStatus } from "../../types";
-import { IconBolt, IconShield } from "../../components/Icon";
+import { IconAlert, IconBolt, IconShield } from "../../components/Icon";
 
 const R_KIND: Record<RiskLevel, "ok" | "info" | "warn" | "err"> = { low: "ok", medium: "info", high: "warn", critical: "err", forbidden: "err" };
 const R_LABEL: Record<RiskLevel, string> = { low: "低", medium: "中", high: "高", critical: "严重", forbidden: "禁止" };
@@ -26,6 +26,7 @@ const CAP_TITLES: Record<string, string> = { knowledge: "知识问答", knowledg
 export function CapabilityCenter() {
   const [tq, setTq] = useState("");
   const [tf, setTf] = useState<ToolFilter>("all");
+  const [selectedCapabilityId, setSelectedCapabilityId] = useState("");
   const list = useAsync<{ capabilities: BusinessCapability[] }>((s) => capabilitiesApi.manifest(s));
   const catalog = useAsync((s) => toolsApi.catalog(s));
 
@@ -52,20 +53,40 @@ export function CapabilityCenter() {
       </div>
 
       <div className="page-body">
-        {/* Capability cards */}
+        {/* Capability directory */}
         <AsyncView state={list.state} onRetry={list.reload} emptyText="无业务能力" emptyHint="agent.capabilities.catalog 未返回能力">
-          {(d) => (
-            <div className="card cc-card-mb">
-              <div className="card-title">
-                能力概览
-                <span className="count">{d.capabilities?.length ?? 0} 类</span>
-              </div>
-              <p className="cc-section-hint">面向使用者的能力分类：告诉你系统适合做什么，以及哪些结果需要人工确认。</p>
-              <div className="capability-grid" data-testid="capability-list">
-                {(d.capabilities ?? []).map((cap) => <CapCard key={cap.capability_id} cap={cap} />)}
-              </div>
-            </div>
-          )}
+          {(d) => {
+            const capabilities = d.capabilities ?? [];
+            const selected = capabilities.find((cap) => cap.capability_id === selectedCapabilityId) ?? capabilities[0];
+            return (
+              <section className="capability-directory cc-card-mb" data-testid="capability-list">
+                <aside className="capability-directory-list" aria-label="能力目录">
+                  <div className="capability-directory-head">
+                    <div><strong>能力概览</strong><span>{capabilities.length} 类</span></div>
+                    <p>选择能力查看使用边界和技术信息</p>
+                  </div>
+                  {capabilities.map((cap) => {
+                    const active = cap.capability_id === selected?.capability_id;
+                    return (
+                      <button
+                        key={cap.capability_id}
+                        type="button"
+                        className={`capability-directory-row${active ? " selected" : ""}`}
+                        onClick={() => setSelectedCapabilityId(cap.capability_id)}
+                        aria-pressed={active}
+                      >
+                        <span><b>{CAP_TITLES[cap.capability_id] || cap.description?.split(/[.。]/)[0] || cap.capability_id}</b><small>{cap.description || cap.intent}</small></span>
+                        <Badge kind={R_KIND[cap.risk_level]}>{R_LABEL[cap.risk_level]}</Badge>
+                      </button>
+                    );
+                  })}
+                </aside>
+                <div className="capability-directory-detail">
+                  {selected ? <CapCard cap={selected} /> : null}
+                </div>
+              </section>
+            );
+          }}
         </AsyncView>
 
         {/* Tool Catalog */}
@@ -205,7 +226,7 @@ function TRow({ tool }: { tool: ToolCatalogItem }) {
         {/* 限制说明 */}
         {tool.not_for && (
           <div className="tool-restriction">
-            <span className="tool-info-label">⚠ 使用限制</span>
+            <span className="tool-info-label"><IconAlert size={14} aria-hidden="true" />使用限制</span>
             <span>{tool.not_for}</span>
           </div>
         )}

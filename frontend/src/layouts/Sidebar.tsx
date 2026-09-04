@@ -7,7 +7,7 @@ import { useToastStore } from "../stores/toast";
 import { isApiError, AgentResult } from "../types";
 import type { ToolCallResult, RuntimeEvent } from "../types";
 import type { Session } from "../types";
-import { IconArchive, IconBolt, IconChat, IconEdit, IconMore, IconPlus, IconTrash, IconWorkspace } from "../components/Icon";
+import { IconArchive, IconBolt, IconChat, IconClose, IconEdit, IconMore, IconPlus, IconTrash } from "../components/Icon";
 import { APP_EVENTS } from "../utils/appEvents";
 import { formatDate } from "../utils/format";
 
@@ -260,7 +260,7 @@ export function Sidebar() {
 
   async function onDeleteSession(sess: Session) {
     if (!currentWorkspaceId) return;
-    if (!confirm(`⚠️ 永久删除会话「${sess.title || sess.session_id}」？\n\n此操作不可撤销！消息和记录将被彻底清除。`)) return;
+    if (!confirm(`永久删除会话「${sess.title || sess.session_id}」？\n\n此操作不可撤销，消息和记录将被彻底清除。`)) return;
     try {
       await sessionsApi.delete(sess.session_id, currentWorkspaceId);
       if (currentSessionId === sess.session_id) { setCurrentSession(null); switchWbSession(null); }
@@ -290,9 +290,8 @@ export function Sidebar() {
   return (
     <div data-testid="sidebar" className="sidebar-content">
       <div className="sidebar-shortcuts" aria-label="工作台快捷操作">
-        <div className="sidebar-shortcut active"><IconWorkspace size={17} /><span>工作台</span></div>
         <button
-          className="sidebar-shortcut"
+          className="sidebar-shortcut sidebar-new-session"
           onClick={onNewSession}
           disabled={!currentWorkspaceId}
           data-testid="btn-new-session"
@@ -361,7 +360,7 @@ export function Sidebar() {
                   {editingSessId === sess.session_id ? (
                     <div className="row-flex-xs">
                       <button className="btn sm btn-xs" onClick={(e) => { e.stopPropagation(); void onRenameSession(sess.session_id); }} type="button">保存</button>
-                      <button className="btn sm ghost btn-xs-compact" onClick={(e) => { e.stopPropagation(); cancelEditSession(); }} type="button">×</button>
+                      <button className="btn sm ghost btn-xs-compact" aria-label="取消重命名" onClick={(e) => { e.stopPropagation(); cancelEditSession(); }} type="button"><IconClose size={13} aria-hidden="true" /></button>
                     </div>
                   ) : (
                     <details className="session-menu">

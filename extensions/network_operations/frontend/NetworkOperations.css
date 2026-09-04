@@ -1,24 +1,31 @@
 .network-admin {
   height: 100%; min-height: 0; overflow-y: auto; overscroll-behavior: contain;
   background: var(--bg, #f6f8f8); color: var(--text, #183039);
+  --border: var(--line);
+  --input-border: var(--line-3);
+  --primary: var(--accent);
+  --surface-subtle: var(--surface-2);
+  --text-muted: var(--text-3);
 }
-.network-tabs { display: flex; gap: 6px; padding: 20px 24px 0; border-bottom: 1px solid var(--border, #dce5e6); }
-.network-tabs button { padding: 12px 16px; border: 0; border-bottom: 3px solid transparent; background: transparent; color: var(--text-muted); font-weight: 650; cursor: pointer; }
+.network-tabs { display: flex; gap: 6px; padding: 12px 24px 0; border-bottom: 1px solid var(--border, #dce5e6); }
+.network-tabs button { min-height: 42px; padding: 0 16px; border: 0; border-bottom: 2px solid transparent; background: transparent; color: var(--text-muted); font-size: 13px; font-weight: 650; cursor: pointer; }
 .network-tabs button.active { color: var(--primary, #087a80); border-bottom-color: var(--primary, #087a80); }
 .network-tabs button span { margin-left: 8px; font-size: 12px; opacity: .7; }
-.network-toolbar { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 20px 24px 0; }
+.network-toolbar { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 16px 24px 0; }
 .network-filters { display: flex; gap: 10px; min-width: 0; }
 .network-filters input { width: 280px; }
 .network-notice { margin: 14px 24px 0; padding: 12px 16px; border-radius: 8px; background: #fff7d8; color: #775b00; }
-.network-grid { padding: 16px 24px 28px; min-width: 0; }
-.network-panel { background: var(--surface, #fff); border: 1px solid var(--border, #dce5e6); border-radius: 12px; padding: 20px; min-width: 0; }
+.network-grid { width: min(100%, var(--w-page-max, 1440px)); margin: 0 auto; padding: 16px 24px 28px; min-width: 0; }
+.network-panel { background: var(--surface, #fff); border: 1px solid var(--border, #dce5e6); border-radius: 12px; padding: 0; min-width: 0; overflow: hidden; }
 .network-panel h2 { margin: 0 0 6px; font-size: 18px; }
-.network-panel p { margin: 0 0 18px; color: var(--text-muted, #70838b); font-size: 13px; line-height: 1.6; }
-.network-admin .panel-heading { display: flex; justify-content: space-between; gap: 12px; align-items: center; margin-bottom: 12px; }
+.network-panel p { margin: 0; color: var(--text-muted, #70838b); font-size: 13px; line-height: 1.6; }
+.network-admin .panel-heading { display: flex; justify-content: space-between; gap: 12px; align-items: center; margin: 0; padding: 18px 20px; border-bottom: 1px solid var(--border, #dce5e6); }
 .network-admin .record-count { font-size: 12px; color: var(--text-muted); white-space: nowrap; }
-.network-admin .device-list, .network-admin .skill-list { display: grid; gap: 12px; }
-.network-admin .device-card, .network-admin .skill-card { border: 1px solid var(--border, #dce5e6); border-radius: 9px; overflow: hidden; }
-.network-admin .device-card-header, .network-admin .skill-card-header { display: flex; justify-content: space-between; align-items: center; gap: 16px; padding: 14px 16px; background: var(--surface-subtle, #f7f9f9); }
+.network-admin .device-list, .network-admin .skill-list { display: grid; gap: 0; }
+.network-admin .device-card, .network-admin .skill-card { border: 0; border-bottom: 1px solid var(--border, #dce5e6); border-radius: 0; overflow: hidden; }
+.network-admin .device-card:last-child, .network-admin .skill-card:last-child { border-bottom: 0; }
+.network-admin .device-card-header, .network-admin .skill-card-header { display: flex; justify-content: space-between; align-items: center; gap: 16px; padding: 14px 16px; background: var(--surface, #fff); }
+.network-admin .device-card:hover .device-card-header, .network-admin .skill-card:hover .skill-card-header { background: var(--surface-hover); }
 .network-admin .device-identity { display: grid; gap: 5px; min-width: 0; }
 .network-admin .device-identity strong, .network-admin .skill-title strong { font-size: 15px; overflow-wrap: anywhere; }
 .network-admin .device-identity span { color: var(--text-muted); font-size: 12px; overflow-wrap: anywhere; }

@@ -14,7 +14,7 @@ import {
 import type { OperationLedgerSummary } from "../../api";
 import { useSessionStore } from "../../stores/session";
 import { LoadingState } from "../../components/common";
-import { IconRefresh } from "../../components/Icon";
+import { IconCheck, IconRefresh } from "../../components/Icon";
 import { formatDate } from "../../utils/format";
 import { PageHeader, DataTable } from "../../components/ui";
 import { scopedLocalStorageKey } from "../../utils/userScope";
@@ -478,7 +478,7 @@ export function Diagnostics() {
                       );
                     })}
                   </div>
-                ) : <Dim>✓ 未发现问题</Dim>
+                ) : <Dim><IconCheck size={14} aria-hidden="true" /> 未发现问题</Dim>
               ) : <Dim>无数据</Dim>}
             </Section>
 

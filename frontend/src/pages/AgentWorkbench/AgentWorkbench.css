@@ -1,6 +1,6 @@
 .wb-shell {
   display: grid !important;
-  grid-template-columns: minmax(0, 1fr) clamp(300px, 20vw, 340px);
+  grid-template-columns: minmax(0, 1fr) var(--w-progress);
   grid-template-rows: minmax(0, 1fr);
   height: 100%;
   min-height: 0;
@@ -10,7 +10,7 @@
 
 .wb-conversation-column {
   display: grid;
-  grid-template-rows: 60px minmax(0, 1fr) auto auto;
+  grid-template-rows: 56px minmax(0, 1fr) auto auto;
   min-width: 0;
   min-height: 0;
   overflow: hidden;
@@ -24,7 +24,7 @@
   justify-content: space-between;
   gap: 20px;
   min-width: 0;
-  padding: 0 26px;
+  padding: 0 var(--space-6);
   background: var(--surface);
   border-bottom: 1px solid var(--line-2);
 }
@@ -37,7 +37,7 @@
   display: block;
   margin-bottom: 3px;
   color: var(--text-4);
-  font-size: 10px;
+  font-size: var(--fs-11);
   font-weight: 760;
   letter-spacing: 0.08em;
 }
@@ -67,7 +67,7 @@
   margin-right: 8px;
   overflow: hidden;
   color: var(--text-3);
-  font-size: 11px;
+  font-size: var(--fs-12);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -93,8 +93,8 @@
   color: var(--text-3);
   background: transparent;
   border: 1px solid transparent;
-  border-radius: 7px;
-  font-size: 12px;
+  border-radius: var(--r-8);
+  font-size: var(--fs-12);
   font-weight: 650;
 }
 
@@ -118,7 +118,7 @@
 .wb-chat-list {
   height: 100%;
   min-height: 0;
-  padding: 24px 14px 20px;
+  padding: var(--space-6) var(--space-4) var(--space-8);
   overflow-y: auto;
   scroll-behavior: auto;
 }
@@ -204,6 +204,8 @@
 }
 
 .message-row {
+  width: min(100%, 880px);
+  margin-inline: auto;
   gap: 12px;
   margin-bottom: 30px;
 }
@@ -214,8 +216,8 @@
 
 .message-stack,
 .message-row.assistant .message-stack {
-  width: min(760px, calc(100% - 44px));
-  max-width: min(760px, calc(100% - 44px));
+  width: min(var(--w-reading), calc(100% - 44px));
+  max-width: min(var(--w-reading), calc(100% - 44px));
 }
 
 .message-row.user .message-stack {
@@ -258,7 +260,7 @@
   /* User input gets the only tinted conversation plane. */
   background: var(--message-user);
   border: 1px solid var(--message-user-border);
-  border-radius: 14px 14px 5px 14px;
+  border-radius: var(--r-12) var(--r-12) var(--r-8) var(--r-12);
   box-shadow: none;
   font-size: 14px;
   font-weight: 620;
@@ -349,7 +351,7 @@
 }
 
 .wb-input-bar {
-  padding: 6px 16px 5px;
+  padding: var(--space-2) var(--space-4) var(--space-2);
   min-width: 0;
   background: var(--lz-surface-dock);
   border-top: 1px solid var(--line-2);
@@ -359,7 +361,7 @@
   display: grid;
   grid-template-rows: minmax(32px, auto) 32px;
   width: 100%;
-  max-width: none;
+  max-width: 920px;
   min-height: 70px;
   margin: 0 auto;
   padding: 6px 10px 5px;
@@ -367,8 +369,8 @@
   overflow: hidden;
   background: var(--surface);
   border: 1px solid var(--line);
-  border-radius: 12px;
-  box-shadow: var(--lz-shadow-ambient);
+  border-radius: var(--r-12);
+  box-shadow: none;
   transform: none;
   transition:
     border-color 160ms ease,
@@ -485,14 +487,14 @@
   display: flex;
   justify-content: space-between;
   gap: 16px;
-  max-width: none;
+  max-width: 920px;
   margin: 4px auto 0;
   color: var(--text-4);
-  font-size: 10px;
+  font-size: var(--fs-11);
 }
 
 .wb-attachments {
-  max-width: none;
+  max-width: 920px;
   margin: 0 auto 8px;
 }
 
@@ -515,8 +517,8 @@
   align-items: flex-start;
   justify-content: space-between;
   gap: 18px;
-  min-height: 76px;
-  padding: 18px 18px 16px;
+  min-height: 72px;
+  padding: var(--space-4);
   border-bottom: 1px solid var(--line-2);
 }
 
@@ -524,14 +526,14 @@
   display: block;
   margin-bottom: 5px;
   color: var(--accent);
-  font-size: 10px;
+  font-size: var(--fs-11);
   font-weight: 760;
   letter-spacing: 0.08em;
 }
 
 .task-progress-header h2 {
   color: var(--text);
-  font-size: 17px;
+  font-size: var(--fs-16);
   font-weight: 760;
 }
 
@@ -541,7 +543,7 @@
   gap: 7px;
   padding-top: 6px;
   color: var(--text-3);
-  font-size: 11px;
+  font-size: var(--fs-12);
   font-weight: 650;
   justify-content: flex-end;
   max-width: 145px;
@@ -555,7 +557,7 @@
 
 .task-phase-list {
   min-height: 0;
-  padding: 18px 18px 22px;
+  padding: var(--space-4);
   overflow-y: auto;
 }
 
@@ -644,7 +646,7 @@
 .task-phase-content > p {
   margin-top: 6px;
   color: var(--text-3);
-  font-size: 11px;
+  font-size: var(--fs-12);
   line-height: 1.6;
 }
 
@@ -654,7 +656,7 @@
   overflow: hidden;
   background: var(--surface);
   border: 1px solid var(--line);
-  border-radius: 10px;
+  border-radius: var(--r-8);
 }
 
 .task-evidence {
@@ -719,7 +721,7 @@
   padding: 14px 18px 16px;
   color: var(--text-4);
   border-top: 1px solid var(--line-2);
-  font-size: 10px;
+  font-size: var(--fs-11);
 }
 
 .task-progress-footer span {
@@ -736,7 +738,7 @@
 }
 
 @media (max-width: 1180px) {
-  .wb-shell { grid-template-columns: minmax(0, 1fr) 300px; }
+  .wb-shell { grid-template-columns: minmax(0, 1fr) 256px; }
   .wb-header { padding-inline: 18px; }
   .wb-header-status { display: none; }
   .task-progress-header, .task-phase-list, .task-progress-footer { padding-inline: 16px; }
@@ -880,8 +882,9 @@
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 0 0 10px;
-  margin-bottom: 10px;
+  width: min(100%, 920px);
+  padding: 0 0 var(--space-2);
+  margin: 0 auto var(--space-2);
   border-bottom: 1px solid var(--line-2);
 }
 
@@ -915,7 +918,7 @@
   color: var(--text-3);
   background: var(--surface);
   border: 1px solid var(--line-2);
-  border-radius: 999px;
+  border-radius: var(--r-pill);
   font-size: 12px;
 }
 

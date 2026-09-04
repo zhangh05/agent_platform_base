@@ -18,6 +18,7 @@ import type { ArchivedDataItem, Artifact, DataOverview, ManagedFile } from "../.
 import { isApiError } from "../../types";
 import { formatFileSize, formatDate } from "../../utils/format";
 import { shortId } from "../../utils/displayText";
+import { IconPlus } from "../../components/Icon";
 
 type DataTab = "overview" | "files" | "artifacts" | "relations" | "lifecycle";
 type ArtifactView = "" | "current" | "history" | "deliverables";
@@ -441,7 +442,7 @@ function Overview({ overview, files, onImport, onOpenFiles, onOpenLifecycle }: {
             <span><b>{formatFileSize(file.size_bytes)}</b><small>{formatDate(file.created_at, "short")}</small></span>
           </div>)}
         </div> : <div className="data-onboarding-empty">
-          <div className="data-empty-mark">＋</div>
+          <div className="data-empty-mark"><IconPlus size={18} aria-hidden="true" /></div>
           <div><strong>还没有数据</strong><p>导入文件，或运行一次会生成结果文件的任务。</p></div>
           <Button variant="primary" size="sm" onClick={onImport}>导入第一份数据</Button>
         </div>}

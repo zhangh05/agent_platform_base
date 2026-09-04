@@ -64,6 +64,14 @@ export function DataTable<T>({
               key={keyExtractor(row)}
               data-testid={rowDataTestId?.(row)}
               onClick={onRowClick ? () => onRowClick(row) : undefined}
+              onKeyDown={onRowClick ? (event) => {
+                if (event.key === "Enter" || event.key === " ") {
+                  event.preventDefault();
+                  onRowClick(row);
+                }
+              } : undefined}
+              role={onRowClick ? "button" : undefined}
+              tabIndex={onRowClick ? 0 : undefined}
               className={onRowClick ? "cursor-pointer" : undefined}
             >
               {columns.map((col) => (
