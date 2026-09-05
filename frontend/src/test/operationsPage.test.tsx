@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "../router";
 import { OperationsPage } from "../pages/Operations/OperationsPage";
-import { enqueue, getRequests, installMockApi, resetMocks } from "./mockServer";
+import { enqueue, enqueueAsync, getRequests, installMockApi, resetMocks } from "./mockServer";
 import { useSessionStore } from "../stores/session";
 
 describe("OperationsPage", () => {
@@ -91,5 +91,46 @@ describe("OperationsPage", () => {
     expect(await screen.findByText("任务中心")).toBeInTheDocument();
     expect(screen.queryByText("审计视图")).not.toBeInTheDocument();
     expect(screen.queryByText("任务中心 · 执行审计")).not.toBeInTheDocument();
+  });
+
+  it("ignores a late run response from the previously selected job", async () => {
+    let resolveFirst!: (value: { status: number; data: unknown }) => void;
+    enqueue("/jobs", { status: 200, data: { jobs: [
+      { job_id: "job-a", job_type: "agent_run", status: "succeeded", title: "Job A", payload: { session_id: "sess-a" } },
+      { job_id: "job-b", job_type: "agent_run", status: "succeeded", title: "Job B", payload: { session_id: "sess-b" } },
+    ] } });
+    enqueueAsync("/runs/recent", new Promise((resolve) => { resolveFirst = resolve; }));
+    enqueue("/runs/recent", { status: 200, data: { runs: [
+      { run_id: "run-b", session_id: "sess-b", status: "ok", ok: true, user_input_summary: "Current B run" },
+    ] } });
+
+    render(<MemoryRouter initialEntries={["/runs"]}><OperationsPage /></MemoryRouter>);
+    fireEvent.click(await screen.findByText("Job A"));
+    fireEvent.click(screen.getByText("Job B"));
+    expect(await screen.findByText("Current B run")).toBeInTheDocument();
+
+    resolveFirst({ status: 200, data: { runs: [
+      { run_id: "run-a", session_id: "sess-a", status: "ok", ok: true, user_input_summary: "Stale A run" },
+    ] } });
+    await waitFor(() => expect(screen.queryByText("Stale A run")).not.toBeInTheDocument());
+    expect(screen.getByText("Current B run")).toBeInTheDocument();
+  });
+
+  it("keeps a deep-linked job open when the jobs list refreshes", async () => {
+    const job = { job_id: "job-deep", job_type: "agent_run", status: "succeeded", title: "Deep Job", payload: { session_id: "sess-deep" } };
+    enqueue("/jobs", { status: 200, data: { jobs: [job] } });
+    enqueue("/runs/recent", { status: 200, data: { runs: [
+      { run_id: "run-deep", session_id: "sess-deep", status: "ok", ok: true, user_input_summary: "Deep linked run" },
+    ] } });
+    render(<MemoryRouter initialEntries={["/runs?job=job-deep"]}><OperationsPage /></MemoryRouter>);
+    expect(await screen.findByText("Deep linked run")).toBeInTheDocument();
+
+    enqueue("/jobs", { status: 200, data: { jobs: [{ ...job, updated_at: "2026-09-05T00:00:00Z" }] } });
+    enqueue("/runs/recent", { status: 200, data: { runs: [
+      { run_id: "run-deep", session_id: "sess-deep", status: "ok", ok: true, user_input_summary: "Deep linked run" },
+    ] } });
+    window.dispatchEvent(new CustomEvent("lzcore:run-completed"));
+
+    await waitFor(() => expect(screen.getByText("Deep linked run")).toBeInTheDocument());
   });
 });

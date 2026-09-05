@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import io
 import sys
 
 import pytest
@@ -104,6 +105,21 @@ def test_identity_viewer_is_workspace_scoped(monkeypatch, tmp_path):
     assert client.get("/api/workspaces/tenant_b/state", headers=headers).status_code == 403
     assert client.post("/api/workspaces", json={"workspace_id": "blocked"}, headers=headers).status_code == 403
     assert client.post("/api/workspaces/batch-delete", json={"workspace_ids": ["tenant_a"], "confirm": True}, headers=headers).status_code == 403
+    assert client.post(
+        "/api/jobs?workspace_id=tenant_a",
+        json={"workspace_id": "tenant_b", "enqueue": False},
+        headers=headers,
+    ).get_json()["error"] == "workspace_id_conflict"
+    assert client.post(
+        "/api/knowledge/upload",
+        data={
+            "workspace_id": "tenant_b",
+            "file": (io.BytesIO(b"foreign"), "foreign.md"),
+        },
+        content_type="multipart/form-data",
+        headers=headers,
+    ).status_code == 403
+    assert client.post("/api/jobs/worker/run-once", headers=headers).status_code == 403
 
     upsert_user("scoped", "new-password", "operator", "tenant_b", ["tenant_b"])
     assert client.get("/api/workspaces/tenant_b/state", headers=headers).status_code == 200
@@ -159,6 +175,7 @@ def test_admin_exclusively_manages_ordinary_user_access(monkeypatch, tmp_path):
     from backend.ws.agent_ws import _ws_workspace_allowed
     assert _ws_workspace_allowed("alice", "operator", ["team_a"], "team_a", write=True) is True
     assert _ws_workspace_allowed("alice", "operator", ["team_a"], "default", write=False) is False
+    assert _ws_workspace_allowed("api-token", "owner", [], "default", write=True) is True
 
     alice_session = ordinary.post(
         "/api/sessions",
@@ -184,12 +201,14 @@ def test_admin_exclusively_manages_ordinary_user_access(monkeypatch, tmp_path):
     updated = admin.put("/api/identity/users/alice", json={"role": "operator", "organization_id": "default", "workspace_ids": ["team_a"], "enabled": False}, headers=headers)
     assert updated.status_code == 200
     assert updated.get_json()["user"]["enabled"] is False
+    assert _ws_workspace_allowed("alice", "operator", ["team_a"], "team_a", write=False) is False
     ordinary.post("/api/auth/logout", headers=headers)
     assert ordinary.post("/api/auth/login", json={"username": "alice", "password": "user-password"}, headers=headers).status_code == 401
 
     deleted = admin.delete("/api/identity/users/bob", headers=headers)
     assert deleted.status_code == 200
     assert deleted.get_json()["deleted"] is True
+    assert _ws_workspace_allowed("bob", "operator", ["team_a"], "team_a", write=False) is False
     assert "bob" not in {item["username"] for item in admin.get("/api/identity/users", headers=headers).get_json()["users"]}
     bob.post("/api/auth/logout", headers=headers)
     assert bob.post("/api/auth/login", json={"username": "bob", "password": "bob-password"}, headers=headers).status_code == 401

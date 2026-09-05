@@ -47,3 +47,34 @@ def test_running_job_cannot_be_deleted(monkeypatch, tmp_path):
 
     assert response.status_code == 409
     assert get_job("default", record.job_id) is not None
+
+
+def test_job_list_orders_by_record_recency_before_limit(monkeypatch, tmp_path):
+    monkeypatch.setenv("LZCORE_WORKSPACE_ROOT", str(tmp_path / "workspaces"))
+    from jobs.schemas import JobRecord
+    from jobs.store import create_job, list_jobs
+
+    create_job(JobRecord(
+        job_id="job_ffffffff", workspace_id="default", title="older",
+        created_at="2020-01-01T00:00:00Z", updated_at="2020-01-01T00:00:00Z",
+    ))
+    create_job(JobRecord(
+        job_id="job_00000000", workspace_id="default", title="newer",
+        created_at="2026-01-01T00:00:00Z", updated_at="2026-01-01T00:00:00Z",
+    ))
+
+    assert [item["title"] for item in list_jobs("default", limit=1)] == ["newer"]
+
+
+def test_hard_delete_propagates_storage_failure(monkeypatch, tmp_path):
+    monkeypatch.setenv("LZCORE_WORKSPACE_ROOT", str(tmp_path / "workspaces"))
+    from jobs.manager import create_job
+    from jobs.store import delete_job, get_job
+
+    record = create_job("default", "network_inspection", "keep-on-failure", {}, enqueue=False)
+    monkeypatch.setattr("jobs.store.shutil.rmtree", lambda _path: None)
+
+    import pytest
+    with pytest.raises(OSError):
+        delete_job("default", record.job_id, soft=False)
+    assert get_job("default", record.job_id) is not None

@@ -42,7 +42,8 @@ def register_job_routes(app):
     @app.route("/api/jobs", methods=["POST"])
     def api_job_create():
         data = request.get_json(silent=True) or {}
-        workspace_id, err = _validated_ws_id(data.get("workspace_id", ""))
+        from backend.core.auth import request_workspace_id
+        workspace_id, err = _validated_ws_id(request_workspace_id())
         if err:
             return err
         from jobs.manager import create_job
@@ -104,7 +105,8 @@ def register_job_routes(app):
             if rec.status in {"queued", "running"}:
                 return jsonify({"ok": False, "error": "active_job_cannot_be_deleted"}), 409
             from jobs.store import delete_job
-            delete_job(ws, job_id, soft=False)
+            if not delete_job(ws, job_id, soft=False):
+                return jsonify({"ok": False, "error": "job_delete_failed"}), 500
             return jsonify({"ok": True, "job_id": job_id, "deleted": True})
         return jsonify({"ok": True, "job": sanitize_job_record_for_api(rec.as_dict())})
 

@@ -35,6 +35,8 @@ tool id -> manifest -> caller gate -> policy / authorization
 
 `handler_id` 是内部实现，不向模型、前端或 API 暴露。工具 schema 通过 provider 的 function calling `tools` 字段提供，不能通过 prompt 文本伪造工具接口。
 
+调用级 `dry_run` 默认关闭并拒绝执行。只有显式声明并实现无副作用 preview handler 的工具才能启用；普通 handler 不能把 `dry_run=True` 当作可信保护。公开 `/api/tools/dry-run` 只生成策略与调用元数据，不进入工具 handler。
+
 ## 目标驱动恢复
 
 可恢复的只读失败会形成受限的恢复目标。模型可通过 `plan_goal_ids` 关联替代调用，但关联本身不是完成证据；运行时仍校验能力、资源身份以及 evidence kind、fact、target。只有成功且终止的只读观察可关闭目标。通用恢复预算包含原始失败；每个领域证据目标分别维护最终重规划预算，`passed` 与 `blocked` 不会被后续投影重新打开。预算耗尽后系统收敛为 `partial` 或 `blocked`，不会无限重试。
@@ -45,7 +47,7 @@ tool id -> manifest -> caller gate -> policy / authorization
 
 平台没有审批等待状态。网络设备读取、Skill 元数据和巡检任务生命周期均按当前 Skill 的设备/连接选择过滤；网络设备写入还由服务端实时验证已发布 Skill、`configuration_write` 和允许工具范围。策略拒绝和未授权调用以结构化结果返回模型；不创建审批记录或后台续跑。
 
-非幂等外部写入不能因恢复、worker 重启或“失败重试”被自动重放。结果未知时操作账本保留事实，后续只能执行受控 read-back/reconcile。
+非幂等外部写入不能因恢复、worker 重启或“失败重试”被自动重放。结果未知时操作账本保留事实，后续只能执行受控 read-back/reconcile。只有同一连接返回 `connection_ok=true` 且包含 `status=collected` 的完整 evidence claim 才能关闭未知结果；“流程可继续”的不可达结果不构成回读成功。
 
 ## 数据、记忆与提示词
 

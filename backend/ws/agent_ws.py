@@ -277,6 +277,9 @@ def register_ws_routes(app):
                         if _is_auth_enabled() and api_token and not has_valid_token:
                             ws.send(json.dumps({"type": "error", "message": "unauthorized"}))
                             return
+                        if has_valid_token:
+                            authenticated_username = "api-token"
+                            authenticated_role = "owner"
                     else:
                         from flask import session
                         authenticated_username = str(session.get("lzcore_user") or "")
@@ -368,7 +371,9 @@ def register_ws_routes(app):
                 metadata = normalize_metadata(metadata, transport="websocket", stream_mode="live")
                 try:
                     from backend.core.agent_contract import resolve_workbench_metadata
-                    metadata = resolve_workbench_metadata(metadata, workspace_id)
+                    from storage.principal import storage_principal
+                    with storage_principal(authenticated_username):
+                        metadata = resolve_workbench_metadata(metadata, workspace_id)
                 except ValueError as exc:
                     ws.send(json.dumps({"type": "error", "message": str(exc)}, ensure_ascii=True))
                     continue
@@ -468,14 +473,27 @@ def _same_origin_ws_request() -> bool:
 
 def _ws_workspace_allowed(username: str, role: str, allowed: list[str], workspace_id: str, *, write: bool) -> bool:
     """Mirror HTTP workspace RBAC for the WebSocket transport."""
-    if not username:
-        return True  # platform API token
+    if username in {"", "api-token"}:
+        return True  # authentication disabled, or the platform API token
     try:
         from backend.core.identity import can_access_workspace, get_user
         current = get_user(username)
-        if current is None or role == "owner":
+        if current is not None:
+            if not current.get("enabled", True):
+                return False
+            current_role = str(current.get("role") or "viewer")
+            if current_role == "owner":
+                return True
+            return can_access_workspace(
+                current_role,
+                list(current.get("workspace_ids") or []),
+                workspace_id,
+                write=write,
+            )
+        from backend.core.auth import _get_login_username
+        if _get_login_username() and username == _get_login_username() and role in {"admin", "owner"}:
             return True
-        return can_access_workspace(role, allowed, workspace_id, write=write)
+        return False
     except Exception:
         return False
 

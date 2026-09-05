@@ -12,11 +12,18 @@ interface MockResp {
   data: unknown;
 }
 
-const responseQueue = new Map<string, MockResp[]>();
+const responseQueue = new Map<string, Array<MockResp | Promise<MockResp>>>();
 let defaultResp: MockResp = { status: 200, data: { ok: true } };
 const requests: AxiosRequestConfig[] = [];
 
 export function enqueue(url: string, resp: MockResp): void {
+  const key = url.split("?")[0];
+  const arr = responseQueue.get(key) ?? [];
+  arr.push(resp);
+  responseQueue.set(key, arr);
+}
+
+export function enqueueAsync(url: string, resp: Promise<MockResp>): void {
   const key = url.split("?")[0];
   const arr = responseQueue.get(key) ?? [];
   arr.push(resp);
@@ -43,7 +50,7 @@ export function installMockApi(): void {
       requests.push(config);
       const url = (config.url ?? "").toString().split("?")[0];
       const queue = responseQueue.get(url);
-      const next = queue?.shift() ?? defaultResp;
+      const next = await (queue?.shift() ?? defaultResp);
       if (next.status >= 400) {
         const err: { ok: false; code: string; status: number; message: string; timestamp: string } = {
           ok: false,

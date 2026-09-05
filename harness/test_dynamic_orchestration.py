@@ -1039,7 +1039,17 @@ def test_network_unknown_write_is_settled_only_by_same_connection_readback(monke
                     "error_code": "prompt_timeout",
                     "execution_may_continue": True,
                 }
-            return {"ok": True, "command_results": [{"complete": True}]}
+            connection_id = arguments.get("connection_id", "")
+            return {
+                "ok": True,
+                "connection_ok": True,
+                "command_results": [{"complete": True}],
+                "evidence_claims": [{
+                    "evidence_kind": "network_read_observation",
+                    "target": {"connection_id": connection_id},
+                    "status": "collected",
+                }],
+            }
 
     executor = StreamingToolExecutor(Runtime(), SSOTRuntimeConfig(), tool_registry=_registry())
     ctx = _ctx()
@@ -1071,6 +1081,43 @@ def test_network_unknown_write_is_settled_only_by_same_connection_readback(monke
     operation_id = ctx.extras["unknown_outcome"]["operation_id"]
     assert ledger[operation_id]["status"] == "reconciled"
     assert ledger[operation_id]["resolved_by"] == "network_readback"
+
+
+def test_network_unavailable_readback_does_not_settle_unknown_write(monkeypatch, tmp_path):
+    monkeypatch.setenv("LZCORE_WORKSPACE_ROOT", str(tmp_path / "workspaces"))
+
+    class Runtime:
+        def invoke_raw(self, _tool_id, arguments):
+            if arguments["action"] == "configure":
+                return {
+                    "ok": False,
+                    "error": "configuration_outcome_unknown",
+                    "execution_may_continue": True,
+                }
+            return {
+                "ok": True,
+                "connection_ok": False,
+                "status": "unavailable",
+                "decision_required": True,
+            }
+
+    executor = StreamingToolExecutor(Runtime(), SSOTRuntimeConfig(), tool_registry=_registry())
+    ctx = _ctx()
+    results = asyncio.run(executor.execute([
+        LLMToolCall(id="write", name="network.operations.device.manage", arguments={
+            "action": "configure", "connection_id": "conn-a", "commands": ["system-view"],
+        }),
+        LLMToolCall(id="readback", name="network.operations.device.manage", arguments={
+            "action": "read", "connection_id": "conn-a", "commands": ["display current-configuration"],
+        }),
+    ], ctx=ctx))
+
+    assert [item.ok for item in results] == [False, True]
+    assert "unknown_outcome_reconciliation" not in ctx.extras
+    from core.runtime_engine.operation_ledger import list_operations
+    operation_id = ctx.extras["unknown_outcome"]["operation_id"]
+    ledger = {item["operation_id"]: item for item in list_operations("default")}
+    assert ledger[operation_id]["status"] == "unknown"
 
 
 def test_uncertain_read_does_not_install_write_fence(monkeypatch, tmp_path):

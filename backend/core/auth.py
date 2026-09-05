@@ -459,6 +459,16 @@ def register_auth_middleware(app: flask.Flask) -> None:
             logger.warning("csrf_denied: path=%s origin=%s", path, flask.request.headers.get("Origin", ""))
             return _csrf_response()
 
+        if path.startswith("/api/"):
+            try:
+                flask.g.request_workspace_id = _request_workspace_id()
+            except ValueError:
+                return flask.jsonify({
+                    "ok": False,
+                    "error": "workspace_id_conflict",
+                    "message": "workspace_id must be identical in every request source",
+                }), 400
+
         # Re-evaluate env vars each request (for test monkeypatching)
         if _is_login_enabled() or _is_identity_enabled():
             if is_public_path(path):
@@ -534,6 +544,8 @@ def _authorize_identity_request():
         return flask.jsonify({"ok": False, "error": "forbidden"}), 403
     if path.startswith("/api/admin/") and not _role_at_least(role, "admin"):
         return flask.jsonify({"ok": False, "error": "admin_required"}), 403
+    if path.startswith("/api/jobs/worker/") and not _role_at_least(role, "admin"):
+        return flask.jsonify({"ok": False, "error": "admin_required"}), 403
     if path == "/api/workflows" and flask.request.method == "POST" and not _role_at_least(role, "developer"):
         return flask.jsonify({"ok": False, "error": "workflow_developer_required"}), 403
     if path.startswith("/api/workflows/") and flask.request.method in {"PUT", "DELETE"} and not _role_at_least(role, "developer"):
@@ -548,7 +560,7 @@ def _authorize_identity_request():
         extension_denied = _authorize_extension_request(path, role, platform_admin=platform_admin)
         if extension_denied:
             return extension_denied
-    workspace_id = _request_workspace_id()
+    workspace_id = request_workspace_id()
     if not workspace_id:
         return None
     if platform_admin:
@@ -564,17 +576,41 @@ def _authorize_identity_request():
 
 
 def _request_workspace_id() -> str:
+    """Resolve the request workspace once and reject ambiguous boundaries.
+
+    Authorization and route handlers may consume different transport shapes
+    (path, query, JSON, or multipart form).  A request must therefore name at
+    most one workspace value across all of them; source precedence would turn
+    an otherwise harmless duplicate field into an authorization bypass.
+    """
     import re
+    values: list[str] = []
     match = re.match(r"^/api/workspaces/([^/]+)", flask.request.path)
     if match and match.group(1) not in {"batch-delete"}:
-        return match.group(1)
-    value = flask.request.args.get("workspace_id", "")
-    if value:
-        return str(value)
+        values.append(str(match.group(1)).strip())
+    query_value = str(flask.request.args.get("workspace_id", "") or "").strip()
+    if query_value:
+        values.append(query_value)
     if flask.request.is_json:
         data = flask.request.get_json(silent=True) or {}
-        return str(data.get("workspace_id") or "")
-    return ""
+        json_value = str(data.get("workspace_id") or "").strip()
+        if json_value:
+            values.append(json_value)
+    else:
+        form_value = str(flask.request.form.get("workspace_id") or "").strip()
+        if form_value:
+            values.append(form_value)
+    distinct = set(values)
+    if len(distinct) > 1:
+        raise ValueError("workspace_id_conflict")
+    return values[0] if values else ""
+
+
+def request_workspace_id() -> str:
+    """Return the workspace boundary resolved by the request middleware."""
+    if flask.has_request_context() and hasattr(flask.g, "request_workspace_id"):
+        return str(flask.g.request_workspace_id or "")
+    return _request_workspace_id()
 
 
 def _role_at_least(role: str, minimum: str) -> bool:

@@ -533,6 +533,36 @@ class StreamingToolExecutor:
             or metadata.get("execution_may_continue")
         )
 
+    @staticmethod
+    def _is_reliable_network_readback(
+        result: StreamingToolResult,
+        tool_call: LLMToolCall,
+        pending: dict[str, Any],
+    ) -> bool:
+        """Require live, complete evidence before settling an unknown write.
+
+        Domain adapters intentionally return ``ok=True`` for an unavailable
+        device so the LLM can continue with other targets.  That conversational
+        status must never be confused with a successful reconciliation.
+        """
+        if not result.ok:
+            return False
+        output = result.output if isinstance(result.output, dict) else {}
+        if output.get("connection_ok") is not True:
+            return False
+        connection_id = str((tool_call.arguments or {}).get("connection_id") or "")
+        if not connection_id or connection_id != str(pending.get("connection_id") or ""):
+            return False
+        claims = output.get("evidence_claims")
+        if not isinstance(claims, list) or not claims:
+            return False
+        return any(
+            isinstance(claim, dict)
+            and str(claim.get("status") or "").lower() == "collected"
+            and str((claim.get("target") or {}).get("connection_id") or "") == connection_id
+            for claim in claims
+        )
+
     def _mark_unknown_write_outcome(
         self,
         ctx: StatelessContext | None,
@@ -1066,8 +1096,8 @@ class StreamingToolExecutor:
                     result.output = output
                 pending = ctx.extras.get("unknown_outcome") if ctx is not None else None
                 if (
-                    result.ok
-                    and isinstance(pending, dict)
+                    isinstance(pending, dict)
+                    and self._is_reliable_network_readback(result, tc, pending)
                     and str(pending.get("status") or "") == "unknown"
                     and tc.name.replace("__", ".") == str(pending.get("tool_id") or "")
                     # A reachability probe proves neither the command state

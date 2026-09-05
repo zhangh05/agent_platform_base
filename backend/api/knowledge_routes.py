@@ -45,7 +45,8 @@ def register_knowledge_routes(app):
 
     @app.route("/api/knowledge/upload", methods=["POST"])
     def api_knowledge_upload():
-        ws_id = request.form.get("workspace_id", "")
+        from backend.core.auth import request_workspace_id
+        ws_id = request_workspace_id()
         ws_id, err = _validated_ws_id(ws_id)
         if err:
             return err

@@ -147,15 +147,15 @@ def register_runtime_routes(app):
         if not spec:
             return jsonify({"ok": False, "error": "tool not found"}), 404
 
-        if not spec.dry_run_supported:
-            return jsonify({"ok": False, "error": "dry_run not supported for this tool"}), 400
-
         from core.tools.schemas import ToolInvocation
         invocation = ToolInvocation(
             tool_id=requested_tool_id,
             arguments=arguments,
             workspace_id=ws_id,
-            dry_run=True,
+            # This endpoint previews the policy for a future real invocation;
+            # it never passes the invocation to ToolExecutor. Invocation-level
+            # dry_run is a separate, opt-in handler capability.
+            dry_run=False,
             requested_by="rest_api",
         )
         policy_decision = client._policy.check(spec, invocation)
@@ -169,6 +169,7 @@ def register_runtime_routes(app):
             "governance_status": gov.status if gov else "active",
             "risk_level": policy_decision.risk_level or spec.risk_level,
             "policy_decision": policy_decision.__dict__,
+            "handler_will_execute": False,
             "params": list(arguments.keys()),
             "would_do": f"Would invoke {requested_tool_id} with {len(arguments)} argument(s)",
             "note": "This is a preview. The tool will NOT be executed.",

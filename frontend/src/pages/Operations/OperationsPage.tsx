@@ -154,6 +154,8 @@ export function OperationsPage() {
   const [jobStatus, setJobStatus] = useState("all");
 
   const [selectedJob, setSelectedJob] = useState<JobItem | null>(null);
+  const selectedJobRef = useRef(selectedJob);
+  selectedJobRef.current = selectedJob;
   const [jobTab, setJobTab] = useState<"overview" | "stats" | "summary">("overview");
 
   const [runs, setRuns] = useState<RuntimeAuditTurn[] | null>(null);
@@ -194,13 +196,17 @@ export function OperationsPage() {
     if (!selectedJob) return;
     const fresh = jobs.find((job) => job.job_id === selectedJob.job_id);
     if (!fresh) {
+      selectedJobRef.current = null;
       setSelectedJob(null);
       setRuns(null);
       setSelRun(null);
       setTrace(null);
       return;
     }
-    if (fresh !== selectedJob) setSelectedJob(fresh);
+    if (fresh !== selectedJob) {
+      selectedJobRef.current = fresh;
+      setSelectedJob(fresh);
+    }
   }, [jobs, selectedJob]);
 
   // Cross-page linkage: any session lifecycle change (archive / restore / delete / rename)
@@ -217,15 +223,20 @@ export function OperationsPage() {
   // Reload the selected job's runs WITHOUT collapsing the panel (selectJob toggles off
   // when called with the same job and no focusRunId). Kept in a ref so the run-completed
   // listener below always sees the latest selection.
-  const selectedJobRef = useRef(selectedJob);
-  selectedJobRef.current = selectedJob;
+  const jobRunsRequestRef = useRef(0);
+  const runTraceRequestRef = useRef(0);
+  const deepLinkRequestRef = useRef(0);
 
   const openRun = useCallback(async (run: RuntimeAuditTurn) => {
     const rid = runIdentity(run);
     if (!rid) return;
+    const requestId = ++runTraceRequestRef.current;
     setSelRun(run); setTrace(null); setRunTab("overview");
-    try { const d = await runtimeAuditApi.trace(wsId, rid); setTrace(d.events || []); }
-    catch { setTrace(null); }
+    try {
+      const d = await runtimeAuditApi.trace(wsId, rid);
+      if (requestId === runTraceRequestRef.current) setTrace(d.events || []);
+    }
+    catch { if (requestId === runTraceRequestRef.current) setTrace(null); }
   }, [wsId]);
 
   const loadRunsForJob = useCallback(async (job: JobItem): Promise<RuntimeAuditTurn[]> => {
@@ -258,11 +269,15 @@ export function OperationsPage() {
   const reloadJobRuns = useCallback(async () => {
     const job = selectedJobRef.current;
     if (!job) return;
+    const requestId = ++jobRunsRequestRef.current;
     setRunsLoading(true);
     try {
-      setRuns(await loadRunsForJob(job));
+      const list = await loadRunsForJob(job);
+      if (requestId === jobRunsRequestRef.current && selectedJobRef.current?.job_id === job.job_id) {
+        setRuns(list);
+      }
     } catch { /* keep last known runs */ }
-    finally { setRunsLoading(false); }
+    finally { if (requestId === jobRunsRequestRef.current) setRunsLoading(false); }
   }, [loadRunsForJob]);
   const reloadJobRunsRef = useRef(reloadJobRuns);
   reloadJobRunsRef.current = reloadJobRuns;
@@ -297,11 +312,19 @@ export function OperationsPage() {
   }, [hasTransientJob, wsId]);
 
   /** Select a job and load its runs (if it backs a session). */
-  const selectJob = useCallback(async (job: JobItem, focusRunId?: string | null) => {
-    if (selectedJob?.job_id === job.job_id && !focusRunId) {
+  const selectJob = useCallback(async (
+    job: JobItem,
+    focusRunId?: string | null,
+    options: { toggle?: boolean } = {},
+  ) => {
+    const requestId = ++jobRunsRequestRef.current;
+    ++runTraceRequestRef.current;
+    if (options.toggle !== false && selectedJobRef.current?.job_id === job.job_id && !focusRunId) {
+      selectedJobRef.current = null;
       setSelectedJob(null); setRuns(null); setSelRun(null); setTrace(null);
       return;
     }
+    selectedJobRef.current = job;
     setSelectedJob(job);
     setJobTab("overview"); setRuns(null); setSelRun(null); setTrace(null);
 
@@ -309,28 +332,32 @@ export function OperationsPage() {
       setRunsLoading(true);
       try {
         const list = await loadRunsForJob(job);
+        if (requestId !== jobRunsRequestRef.current || selectedJobRef.current?.job_id !== job.job_id) return;
         setRuns(list);
         if (focusRunId) {
           const target = list.find((r) => runIdentity(r) === focusRunId);
           if (target) openRun(target);
         }
-      } catch { setRuns([]); }
-      finally { setRunsLoading(false); }
+      } catch {
+        if (requestId === jobRunsRequestRef.current) setRuns([]);
+      }
+      finally { if (requestId === jobRunsRequestRef.current) setRunsLoading(false); }
     } else {
       setRuns([]);
     }
-  }, [loadRunsForJob, openRun, selectedJob]);
+  }, [loadRunsForJob, openRun]);
 
   const backToJob = useCallback(() => { setSelRun(null); setTrace(null); }, []);
 
   // Deep-link: ?job=<id> and/or ?focus=<run_id>
   useEffect(() => {
     if (jobs.length === 0) return;
+    const deepLinkRequestId = ++deepLinkRequestRef.current;
     const jobId = searchParams.get("job");
     const focus = searchParams.get("focus");
     if (jobId) {
       const j = jobs.find((x) => x.job_id === jobId);
-      if (j) void selectJob(j, focus);
+      if (j) void selectJob(j, focus, { toggle: false });
       return;
     }
     if (focus) {
@@ -338,19 +365,23 @@ export function OperationsPage() {
       const candidates = jobs.filter((j) => j.job_type === "agent_run").slice(0, 12);
       (async () => {
         for (const j of candidates) {
+          if (deepLinkRequestId !== deepLinkRequestRef.current) return;
           const sid = getSessionId(j);
           if (!sid) continue;
           try {
             const d = await workspacesApi.recentRuns(wsId, sid);
             const list = ((d?.runs ?? []) as RuntimeAuditTurn[]).filter((run) => runMatchesJob(run, j));
             const target = list.find((r) => runIdentity(r) === focus);
-            if (target) { setSelectedJob(j); setJobTab("overview"); setRuns(list); await openRun(target); return; }
+            if (target && deepLinkRequestId === deepLinkRequestRef.current) {
+              selectedJobRef.current = j;
+              setSelectedJob(j); setJobTab("overview"); setRuns(list); await openRun(target); return;
+            }
           } catch { /* keep scanning */ }
         }
       })();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [jobs]);
+  }, [jobs, openRun, searchParams, selectJob, wsId]);
 
   // Aggregated stats — runCount 用实际加载的 runs 数量
   const stats = useMemo(() => {

@@ -89,10 +89,7 @@ export function useWorkbenchSend({
       return;
     }
 
-    setInput("");
-    clearDraft();
     const turnMetadata = { ...(metadataOverride || pendingAutoMetadataRef.current || {}) };
-    pendingAutoMetadataRef.current = null;
     const effectiveSessionId = sessionId;
     let fullText = text;
     let displayAttachments: ChatStreamAttachment[] = [];
@@ -101,6 +98,7 @@ export function useWorkbenchSend({
       setAttachments((previous) => previous.map((attachment) => ({ ...attachment, uploading: true })));
       const uploaded: ChatStreamAttachment[] = [];
       const failedNames: string[] = [];
+      const uploadedIds = new Set<string>();
       for (const attachment of pendingAttachments) {
         try {
           const form = new FormData();
@@ -127,13 +125,17 @@ export function useWorkbenchSend({
             previewUrl: attachment.previewUrl,
           };
           uploaded.push(item);
+          uploadedIds.add(attachment.id);
         } catch { failedNames.push(attachment.name); }
       }
-      setAttachments([]);
       if (!uploaded.length) {
+        setAttachments((previous) => previous.map((attachment) => ({ ...attachment, uploading: false })));
         toast({ kind: "error", title: "附件上传失败", body: "未能上传附件，请稍后重试。" });
         return;
       }
+      setAttachments((previous) => previous
+        .filter((attachment) => !uploadedIds.has(attachment.id))
+        .map((attachment) => ({ ...attachment, uploading: false })));
       if (failedNames.length) {
         toast({ kind: "warning", title: "部分附件上传失败", body: failedNames.slice(0, 3).join("、") });
       }
@@ -144,6 +146,9 @@ export function useWorkbenchSend({
       }
     }
 
+    setInput("");
+    clearDraft();
+    pendingAutoMetadataRef.current = null;
     prepareToSend();
     keepAtBottom();
     await sendStream({ text: fullText, attachments: displayAttachments, effectiveSessionId, turnMetadata });

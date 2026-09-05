@@ -2,7 +2,7 @@
 
 服务基地址：`http://127.0.0.1:8011`（本地默认）。生产环境由反向代理提供同源 `/api`、`/ws/agent` 与 SSE 路径。
 
-本文档以 `backend.main.create_app()` 当前注册的 Flask 路由为准，只描述公开 HTTP 与 WebSocket 面，不把内部 handler 当作 API。工作区数据接口必须携带服务端验证的 `workspace_id`；它可能在 query 或路径 `<ws_id>` 中，具体请求 schema 以对应路由实现为准。identity 模式下还需要有效登录会话或服务凭据。
+本文档以 `backend.main.create_app()` 当前注册的 Flask 路由为准，只描述公开 HTTP 与 WebSocket 面，不把内部 handler 当作 API。工作区数据接口必须携带服务端验证的 `workspace_id`；它可能位于 path、query、JSON 或 multipart form，具体请求 schema 以对应路由实现为准。同一请求若在多个位置重复携带该字段，值必须完全一致，否则返回 `workspace_id_conflict`，路由不会执行。identity 模式下还需要有效登录会话或服务凭据。
 
 除健康检查外，调用方应处理结构化错误与资源生命周期，不能从 HTTP 状态码推断写入是否可安全重试。运行时结果以 `AgentResult` 投影及其 `execution_outcome`、`tool_execution_outcome` 为准。
 
@@ -105,8 +105,8 @@ and `POST /retention/apply` routes.
 | `GET/DELETE` | `/api/jobs/<job_id>` | Job detail/hard delete. |
 | `POST` | `/api/jobs/<job_id>/cancel`, `/retry` | Cancel/retry. |
 | `GET` | `/api/jobs/<job_id>/events`, `/logs`, `/artifacts` | Job evidence projections. |
-| `POST` | `/api/jobs/worker/run-once` | Run one worker iteration. |
-| `GET` | `/api/jobs/worker/status` | Worker status. |
+| `POST` | `/api/jobs/worker/run-once` | Run one worker iteration (admin only in identity mode). |
+| `GET` | `/api/jobs/worker/status` | Worker status (admin only in identity mode). |
 
 Job deletion is hard deletion. The JSON body must contain the explicit
 `workspace_id` and `confirmation: "DELETE <job_id>"`. Queued or running jobs
@@ -117,7 +117,7 @@ return conflict; cancel and wait for a terminal state first.
 | Method | Path | Purpose |
 | --- | --- | --- |
 | `GET` | `/api/tools/catalog`, `/api/tools/permissions` | Canonical tool catalog/permission projection. |
-| `POST` | `/api/tools/dry-run` | Tool dry-run metadata. |
+| `POST` | `/api/tools/dry-run` | Side-effect-free policy and invocation metadata preview; it does not call the handler. |
 | `GET` | `/api/capabilities`, `/api/workbench/skills` | Capability catalog and server-projected workbench Skills. |
 | `GET` | `/api/extensions`, `/api/extensions/repository` | Installed extension and repository catalog. |
 | `POST` | `/api/extensions/<extension_id>/enable`, `/disable`, `/migrate`, `/uninstall` | Extension lifecycle. |

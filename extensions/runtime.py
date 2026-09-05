@@ -187,7 +187,7 @@ def _build_tools(manifest: ExtensionManifest, contribution: dict[str, Any]) -> t
             risk_level=risk_level,
             input_schema=dict(item.get("input_schema") or {}),
             timeout_seconds=int(item.get("timeout_seconds") or 30),
-            dry_run_supported=bool(item.get("dry_run_supported", True)),
+            dry_run_supported=bool(item.get("dry_run_supported", False)),
             callable_by_llm=bool(item.get("callable_by_llm", True)),
             permission_action=permission_action,
             metadata={

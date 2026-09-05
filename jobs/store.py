@@ -247,7 +247,7 @@ def list_jobs(ws_id=None, status=None, job_type=None, limit=100) -> list:
         if not wd.is_dir() or wd.name.startswith("."): continue
         jd = wd / "jobs"
         if not jd.is_dir(): continue
-        for f in sorted(jd.glob("*/*.json"), reverse=True):
+        for f in jd.glob("*/*.json"):
             if not f.name.endswith("_meta.json") and "events" not in str(f) and "log" not in str(f):
                 j = get_job(logical_id, f.stem)
                 if not j: continue
@@ -260,8 +260,11 @@ def list_jobs(ws_id=None, status=None, job_type=None, limit=100) -> list:
                     if sid and not _session_exists(logical_id, sid):
                         continue
                 results.append(sanitize_job_record_for_api(j.as_dict()))
-                if len(results) >= limit: break
-    return results
+    results.sort(
+        key=lambda item: str(item.get("updated_at") or item.get("created_at") or ""),
+        reverse=True,
+    )
+    return results[:limit]
 
 
 def delete_job(ws_id, job_id, soft=True) -> bool:
@@ -269,8 +272,13 @@ def delete_job(ws_id, job_id, soft=True) -> bool:
         raise ValueError("job_id is required for delete_job")
     if soft:
         return bool(update_job(ws_id, job_id, {"status": "cancelled", "cancel_requested": True}))
+    target = _job_dir(ws_id, job_id)
+    if not target.is_dir():
+        return False
     with FileLock(_job_lock_path(ws_id, job_id)):
-        shutil.rmtree(_job_dir(ws_id, job_id), ignore_errors=True)
+        shutil.rmtree(target)
+        if target.exists():
+            raise OSError(f"job directory still exists after deletion: {job_id}")
     _remove_from_index(ws_id, job_id)
     _update_workspace_stats(ws_id)
     return True

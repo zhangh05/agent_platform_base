@@ -53,7 +53,9 @@ class ToolSpec:
     input_schema: dict = field(default_factory=dict)     # JSON Schema for arguments
     output_schema: dict = field(default_factory=dict)    # JSON Schema for output
     timeout_seconds: int = 30
-    dry_run_supported: bool = True
+    # Fail closed. A tool may advertise this only when its handler implements
+    # a side-effect-free invocation-level preview contract.
+    dry_run_supported: bool = False
     writes_artifact: bool = False
     reads_artifact: bool = False
     callable_by_llm: bool = True
