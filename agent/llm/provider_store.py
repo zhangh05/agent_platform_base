@@ -107,7 +107,12 @@ def _build_provider_config(provider_id: str, data: Optional[dict] = None) -> dic
                      "safe_mode", "prompt_cache_enabled", "api_key", "secret_ref", "label"):
             if key in data:
                 cfg[key] = data[key]
-        if cfg.get("secret_ref"):
+        # A failed or manually restarted process can be missing the master key
+        # while a user saves a replacement key.  In that case a plaintext
+        # replacement may coexist temporarily with an older encrypted ref.
+        # The replacement is the newer explicit user input and must not be
+        # hidden by an unreadable or stale reference.
+        if cfg.get("secret_ref") and not cfg.get("api_key"):
             from storage.secret_store import get_secret
             cfg["api_key"] = get_secret(cfg["secret_ref"])
         if data.get("updated_at"):
@@ -134,6 +139,13 @@ def _write_json(provider_id: str, data: dict):
         data["secret_ref"] = persisted["secret_ref"]
     elif persisted.get("api_key") and os.environ.get("LZCORE_IDENTITY_ENABLED", "false").lower() in {"1", "true", "yes", "on"}:
         raise RuntimeError("LZCORE_MASTER_KEY is required before saving provider keys in identity mode")
+    elif persisted.get("api_key"):
+        # Non-identity local development supports a plaintext fallback.  It
+        # must replace an old encrypted reference; otherwise later reads try
+        # the unavailable reference first and make a successful draft test
+        # look like a failed applied configuration.
+        persisted.pop("secret_ref", None)
+        data.pop("secret_ref", None)
     write_provider_config(PROVIDERS_DIR, provider_id, persisted)
 
 

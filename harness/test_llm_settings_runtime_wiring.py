@@ -93,6 +93,26 @@ class TestLLMProviderSettings:
         assert cfg["base_url"] == "https://api.minimaxi.com/anthropic/v1"
         assert cfg["api_key"] == "sk-existing-key"
 
+    def test_plaintext_replacement_is_not_hidden_by_an_unavailable_secret_ref(self, monkeypatch, tmp_path):
+        providers = _isolate_provider_store(monkeypatch, tmp_path)
+        monkeypatch.delenv("LZCORE_MASTER_KEY", raising=False)
+        monkeypatch.delenv("LZCORE_MASTER_KEY_FILE", raising=False)
+        monkeypatch.delenv("LZCORE_IDENTITY_ENABLED", raising=False)
+        providers.mkdir(parents=True)
+        (providers / "minimax.json").write_text(json.dumps({
+            "provider": "minimax",
+            "secret_ref": "secret://llm/minimax",
+            "api_key": "",
+        }))
+
+        from agent.llm.provider_store import load_provider_config, save_provider_config
+        saved = save_provider_config("minimax", {"api_key": "sk-replacement-key"})
+        persisted = json.loads((providers / "minimax.json").read_text())
+
+        assert saved["api_key"] == "sk-replacement-key"
+        assert "secret_ref" not in persisted
+        assert load_provider_config("minimax")["api_key"] == "sk-replacement-key"
+
 
 class TestKeyResolverMask:
     def test_key_resolver_mask(self):
