@@ -459,16 +459,6 @@ def register_auth_middleware(app: flask.Flask) -> None:
             logger.warning("csrf_denied: path=%s origin=%s", path, flask.request.headers.get("Origin", ""))
             return _csrf_response()
 
-        if path.startswith("/api/"):
-            try:
-                flask.g.request_workspace_id = _request_workspace_id()
-            except ValueError:
-                return flask.jsonify({
-                    "ok": False,
-                    "error": "workspace_id_conflict",
-                    "message": "workspace_id must be identical in every request source",
-                }), 400
-
         # Re-evaluate env vars each request (for test monkeypatching)
         if _is_login_enabled() or _is_identity_enabled():
             if is_public_path(path):
@@ -476,6 +466,9 @@ def register_auth_middleware(app: flask.Flask) -> None:
             session_authenticated = is_current_session_authenticated()
             api_token_authenticated = _request_has_valid_api_token()
             if session_authenticated or api_token_authenticated:
+                workspace_error = _bind_request_workspace()
+                if workspace_error:
+                    return workspace_error
                 if session_authenticated:
                     from storage.principal import set_storage_principal
                     flask.g._storage_principal_token = set_storage_principal(
@@ -490,6 +483,8 @@ def register_auth_middleware(app: flask.Flask) -> None:
             return _unauthorized_response("Login required")
 
         if not _is_auth_enabled():
+            if path.startswith("/api/"):
+                return _bind_request_workspace()
             return None
 
         # Public endpoints — no auth
@@ -514,6 +509,9 @@ def register_auth_middleware(app: flask.Flask) -> None:
             return _unauthorized_response("Invalid API token")
 
         # Token valid — proceed
+        workspace_error = _bind_request_workspace()
+        if workspace_error:
+            return workspace_error
         from storage.principal import set_storage_principal
         flask.g._storage_principal_token = set_storage_principal("api-token")
         return None
@@ -525,6 +523,19 @@ def register_auth_middleware(app: flask.Flask) -> None:
         if token is not None:
             from storage.principal import reset_storage_principal
             reset_storage_principal(token)
+
+
+def _bind_request_workspace():
+    """Resolve the request data boundary after authentication, before routing."""
+    try:
+        flask.g.request_workspace_id = _request_workspace_id()
+    except ValueError:
+        return flask.jsonify({
+            "ok": False,
+            "error": "workspace_id_conflict",
+            "message": "workspace_id must be identical in every request source",
+        }), 400
+    return None
 
 
 def _authorize_identity_request():

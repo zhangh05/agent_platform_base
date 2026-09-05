@@ -99,6 +99,16 @@ def test_identity_viewer_is_workspace_scoped(monkeypatch, tmp_path):
     from backend.main import create_app
     client = create_app().test_client()
     headers = {"Origin": "http://localhost:8011"}
+    with monkeypatch.context() as request_patch:
+        parsed = []
+        request_patch.setattr(
+            "backend.core.auth._request_workspace_id",
+            lambda: parsed.append(True) or "tenant_a",
+        )
+        assert client.post(
+            "/api/jobs", json={"workspace_id": "tenant_a"}, headers=headers,
+        ).status_code == 401
+        assert parsed == []
     assert client.post("/api/auth/login", json={"username": "scoped", "password": "password"}, headers=headers).status_code == 200
     listed = client.get("/api/workspaces", headers=headers).get_json()["workspaces"]
     assert [item["workspace_id"] for item in listed] == ["tenant_a"]
