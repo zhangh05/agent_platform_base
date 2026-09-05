@@ -2798,11 +2798,12 @@ class QueryLoop:
                 },
             )
 
-        # A planning budget is not a response budget.  A long-running tool can
-        # consume every planning iteration while still leaving the user with
-        # valid, terminal evidence.  Reserve the bounded, tool-free synthesis
-        # path for this exit too: it cannot repeat an external operation and
-        # prevents a transport ledger from becoming the user-facing answer.
+        # A planning budget is not a task outcome.  The loop exists to give the
+        # model evidence, observations and room to correct its own course; it
+        # must not turn a reached planning checkpoint into a declared task
+        # failure.  Reserve a bounded, tool-free final synthesis for this exit:
+        # it cannot repeat an external operation and lets the model turn the
+        # evidence it already collected into the user-facing answer.
         if all_results:
             recovered = await self._recover_final_synthesis(ctx, budget)
             llm_calls = budget.llm_calls
@@ -2814,11 +2815,7 @@ class QueryLoop:
                     iterations=iterations,
                     total_tool_calls=len(all_results),
                     llm_calls=llm_calls,
-                    # Preserve the runtime fact that planning stopped at its
-                    # limit.  The outcome projection may therefore remain
-                    # partial when coverage was incomplete, even though the
-                    # answer itself is useful and evidence-led.
-                    error="max_iterations",
+                    metrics={"planning_checkpoint_reached": True},
                 )
             ctx.extras["response_outcome"] = "deterministic_fallback"
 
@@ -2832,7 +2829,10 @@ class QueryLoop:
             iterations=iterations,
             total_tool_calls=len(all_results),
             llm_calls=llm_calls,
-            error="max_iterations",
+            # The user still receives every fact that was collected.  This is
+            # a synthesis degradation, not a semantic claim that the task or
+            # its external operations failed.
+            metrics={"planning_checkpoint_reached": True},
         )
 
     # ── Private helpers ──────────────────────────────────────────────────
@@ -3057,16 +3057,13 @@ class QueryLoop:
             "evidence_items": 0,
             "ok": False,
             "error": "",
+            "attempts": 0,
+            "attempt_errors": [],
         }
         ctx.extras["synthesis_recovery"] = recovery
         if self._is_cancelled(ctx):
             recovery["error"] = "cancelled_by_user"
             return ""
-        status = budget.check_llm_call()
-        if not status.ok:
-            recovery["error"] = status.exceeded or "llm_budget_exhausted"
-            return ""
-
         manifest = evidence_manifest(ctx.extras) if ctx is not None else []
         recovery["evidence_items"] = len(manifest)
         projected, truncated = self._project_synthesis_manifest(manifest)
@@ -3094,23 +3091,35 @@ class QueryLoop:
                 ),
             ),
         ]
-        response = await self._call_llm(messages, ctx, tools_override=[])
-        if self._is_cancelled(ctx):
-            recovery["error"] = "cancelled_by_user"
-            return ""
-        if response is None:
-            recovery["error"] = "no_response"
-            return ""
-        if response.error:
-            recovery["error"] = str(response.error)
-            return ""
-        text = str(response.content or "").strip()
-        if not text:
-            recovery["error"] = "empty_synthesis_response"
-            return ""
-        recovery["ok"] = True
-        recovery["finish_reason"] = str(response.finish_reason or "")
-        return text
+        # A provider can transiently return an empty or interrupted final
+        # response after the expensive work has completed.  Give the LLM one
+        # additional tool-free chance to synthesize from the exact same typed
+        # evidence.  This is not a deterministic replacement and cannot cause
+        # a duplicate device operation.
+        for _attempt in range(2):
+            status = budget.check_llm_call()
+            if not status.ok:
+                recovery["error"] = status.exceeded or "llm_budget_exhausted"
+                return ""
+            recovery["attempts"] += 1
+            response = await self._call_llm(messages, ctx, tools_override=[])
+            if self._is_cancelled(ctx):
+                recovery["error"] = "cancelled_by_user"
+                return ""
+            if response is None:
+                error = "no_response"
+            elif response.error:
+                error = str(response.error)
+            else:
+                text = str(response.content or "").strip()
+                if text:
+                    recovery["ok"] = True
+                    recovery["finish_reason"] = str(response.finish_reason or "")
+                    return text
+                error = "empty_synthesis_response"
+            recovery["attempt_errors"].append(error)
+            recovery["error"] = error
+        return ""
 
     def _project_synthesis_manifest(
         self,

@@ -108,10 +108,41 @@ def test_max_iteration_exit_reserves_a_tool_free_final_synthesis():
     result = asyncio.run(loop.run(context, BudgetController(config), None))
 
     assert result.final_response == "已采集设备清单；未发现其他已核验结论。"
-    assert result.error == "max_iterations"
+    assert result.error is None
+    assert result.metrics["planning_checkpoint_reached"] is True
     assert len(calls) == 2
     assert calls[-1]["tools"] == []
     assert context.extras["synthesis_recovery"]["ok"] is True
+
+
+def test_final_synthesis_retries_without_repeating_tool_work():
+    responses = [
+        LLMResponse(error="provider_temporarily_unavailable"),
+        LLMResponse(content="已基于已采集的设备证据完成分析。"),
+    ]
+    calls = []
+
+    def llm(**kwargs):
+        calls.append(kwargs)
+        return responses.pop(0)
+
+    config = SSOTRuntimeConfig(max_llm_calls=3)
+    loop = QueryLoop(config, {}, object(), llm_invoke=llm)
+    context = StatelessContext(
+        workspace_id="default", session_id="retry-synthesis", request_id="retry-synthesis",
+        user_input="分析设备", extras={},
+    )
+    register_tool_evidence(context.extras, _six_device_results(), user_input=context.user_input)
+
+    answer = asyncio.run(loop._recover_final_synthesis(context, BudgetController(config)))
+
+    assert answer == "已基于已采集的设备证据完成分析。"
+    assert len(calls) == 2
+    assert all(call["tools"] == [] for call in calls)
+    assert context.extras["synthesis_recovery"]["attempts"] == 2
+    assert context.extras["synthesis_recovery"]["attempt_errors"] == [
+        "llm_provider_error"
+    ]
 
 
 def test_deterministic_fallback_lists_evidence_without_raw_transcript():
