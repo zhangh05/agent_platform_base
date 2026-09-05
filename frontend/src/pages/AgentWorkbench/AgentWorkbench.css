@@ -367,7 +367,7 @@
   /* The composer and running results share the conversation column's
      available width.  Their old caps were set before the 80% density scale
      and made a wide workspace look artificially empty. */
-  max-width: 1040px;
+  max-width: 1200px;
   min-height: 70px;
   margin: 0 auto;
   padding: 6px 10px 5px;
