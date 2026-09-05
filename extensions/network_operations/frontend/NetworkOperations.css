@@ -10,7 +10,7 @@
 .network-filters { display: flex; gap: 10px; min-width: 0; }
 .network-filters input { width: 280px; }
 .network-notice { margin: 14px 24px 0; padding: 12px 16px; border-radius: var(--r-8); background: var(--warn-soft); color: var(--warn); }
-.network-grid { width: min(100%, var(--w-page-max, 1440px)); margin: 0 auto; padding: 16px 24px 28px; min-width: 0; }
+.network-grid { width: 100%; margin: 0; padding: var(--space-4) var(--space-6) var(--space-6); min-width: 0; }
 .network-panel { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-12); padding: 0; min-width: 0; overflow: hidden; }
 .network-panel h2 { margin: 0 0 6px; font-size: var(--fs-18); }
 .network-panel p { margin: 0; color: var(--text-3); font-size: var(--fs-13); line-height: 1.6; }

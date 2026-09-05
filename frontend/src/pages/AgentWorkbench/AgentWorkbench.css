@@ -248,7 +248,7 @@
   padding: var(--space-3) var(--space-4);
   color: var(--text-2);
   /* Assistant content stays neutral; color is reserved for state and action. */
-  background: transparent;
+  background: var(--message-assistant);
   border: 0;
   border-radius: 12px;
   box-shadow: none;

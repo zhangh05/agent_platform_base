@@ -2,9 +2,9 @@
 
 .page {
   width: 100%;
-  max-width: var(--w-page-max);
+  max-width: none;
   min-height: 100%;
-  margin: 0 auto;
+  margin: 0;
   background: var(--console-canvas);
 }
 .page-header,

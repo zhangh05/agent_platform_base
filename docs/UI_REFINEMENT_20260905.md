@@ -77,7 +77,7 @@
 
 ## E. Design System
 
-`global.css` 新增/集中：`--w-reading`、`--h-control`、`--h-control-compact`、`--h-touch`、`--weight-heading`、`--weight-label`、`--focus-width`、`--console-*` 与 `--shadow-card`。Sidebar=176、Rail=192、Header=56、Page max=1440、ui-scale=.8。
+`global.css` 新增/集中：`--w-reading`、`--h-control`、`--h-control-compact`、`--h-touch`、`--weight-heading`、`--weight-label`、`--focus-width`、`--console-*` 与 `--shadow-card`。Sidebar=176、Rail=192、Header=56、ui-scale=.8。`--w-page-max` 保留既有 Token，但不再用于管理页外层宽度约束。
 
 1120px 阅读 Token 用于空状态；既有真实 Conversation、Result 与 Composer 的全宽设计保持。没有 transform:scale() 缩放，没有新 Accent、Icon Library 或 CSS 框架。
 
@@ -124,9 +124,22 @@
 
 ## J. 明确的剩余边界
 
-1. 当前浏览器会话无管理员权限，`/users` 按既有权限跳转，未绕过。用户页由源码与测试检查，不能称已完成管理员实机验收。
+1. 当前浏览器会话无管理员权限，`/users` 按既有权限跳转，未绕过。用户页另外通过隔离 E2E 管理员环境的 Chromium 明暗主题/8 个视口布局验收；未操作生产管理员账户。
 2. 本地 Knowledge / Memory 等真实数据较少；长列表压力、大量附件、长名称极限、所有 loading/error 状态未完整实机覆盖。
 3. 没有新发起真实运维执行，streaming、stop、恢复中任务、unknown write 等依赖现有测试与未变更 contract；本轮未做线上设备写入验证。
 4. Diagnostics 截图为已有缓存检测结果，不代表本轮实时设备或服务检测。
 5. global.css 历史规则和少量已有 fallback 仍存在；本轮渐进合并，未做与目标无关的全量 CSS 重写或 WCAG 全站认证。
 6. 后端仅运行要求的定向/门禁测试，未宣称全量后端 suite 已执行。生产部署与服务证据以交付回复为准。
+
+
+## 用户反馈后的宽屏补验与纠正
+
+首轮验收漏掉了管理页外层居中上限造成的左右留白。“无溢出”不足以证明空间利用正确；这是本轮检查疏漏，不应以最初 Page max 参数解释为通过。
+
+已移除 `.page` 的 1440px max-width 与居中 margin，同时移除网络设备 `.network-grid` 的内部上限。管理页外层与 `#main` 左右边界完全一致，只有正常内容 padding。工作台不受此修正影响。
+
+新增 `frontend/e2e/21-management-width.spec.ts`，在隔离登录/工作区下，用真实 Chromium 逐页断言：实际 viewport、左右边界误差 ≤1px、网络 registry 无额外限宽、无整页横向溢出。覆盖 Runs / Data / Knowledge / Memory / Capabilities / Diagnostics / Settings / Users / Network Operations，1920 / 1600 / 1440 / 1200 / 1024 / 900 / 760 / 390，明暗主题，共144组断言场景。8项 E2E 用例全部通过。
+
+本地真实数据页面另在实际1920px视口逐页核验八个管理路由：main宽约1779px，page同宽，左右额外留白均为0；`corrected-*-1920-*.png` 与 `corrected-widths.json` 为本地补验证据。截图是私有数据，仍不提交。
+
+首轮 CI 的 `20-user-message-tint.spec.ts` 发现助手背景与原有规范不符。恢复 `--message-assistant` 语义背景，保留去边框与排版优化；原 E2E 断言未改动，定向执行已通过。完整 Chromium E2E 随后运行：28 项全部通过；前端158项测试、类型/Token/构建和仓库门禁再次通过。标准 Chromium 截图保存在本地 `output/playwright/`，后续 CI 与生产交付结果以最终回复为准。
