@@ -41,7 +41,9 @@ tool id -> manifest -> caller gate -> policy / authorization
 
 可恢复的只读失败会形成受限的恢复目标。模型可通过 `plan_goal_ids` 关联替代调用，但关联本身不是完成证据；运行时仍校验能力、资源身份以及 evidence kind、fact、target。只有成功且终止的只读观察可关闭目标。通用恢复预算包含原始失败；每个领域证据目标分别维护最终重规划预算，`passed` 与 `blocked` 不会被后续投影重新打开。预算耗尽后系统收敛为 `partial` 或 `blocked`，不会无限重试。
 
-扩展以 `runtime_recoveries` 列表发布只读证据指令。每项必须完整声明 kind、tool、arguments 和证据目标，校验成功后才能替代通用恢复。它不能借此授权新工具、设备、连接、凭据、写操作或主机命令。旧的单数 `runtime_recovery` 仅作为 QueryLoop 输入兼容存在，新代码不得产生它。
+平台仍支持领域无关的 `runtime_recoveries` 只读证据合同；每项必须完整声明 kind、tool、arguments 和证据目标，且不能借此授权新工具、资源、凭据或写操作。网络扩展不使用该合同替模型选择命令：CLI 语法拒绝只产生 `model_recovery_guidance`，下一轮由模型在新命令、显式语义采集、权威文档或报告未知之间自主决定。
+
+`core/runtime_engine/context_contract.py` 只定义领域无关的 Observation 来源/时间/完整性和 Reference 生命周期。Observation 永远只表示某一时点的事实，不能自称“正常”。网络巡检可从完整或部分观察生成 `candidate`；只有完整观察经用户显式确认后才成为当前 `confirmed` Reference，同范围旧 Reference 进入 `superseded`，也可显式 `invalidated`。
 
 ## 授权与外部写入
 

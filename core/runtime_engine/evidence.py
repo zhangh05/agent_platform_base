@@ -398,6 +398,10 @@ def evidence_manifest(
             "coverage": dict(item.get("coverage") or {}),
             "summary": str(item.get("summary") or "")[:500],
             "projection": item.get("projection"),
+            "authority": str(item.get("authority") or "observed"),
+            "observed_at": str(item.get("observed_at") or ""),
+            "completeness": str(item.get("completeness") or "unknown"),
+            "source_ids": list(item.get("source_ids") or []),
         })
         if len(manifest) >= max_items:
             break
@@ -437,6 +441,9 @@ def _normalize_part(
     coverage = raw.get("coverage") or {}
     if not isinstance(coverage, dict):
         return {}, "invalid_evidence_coverage"
+    source_ids = raw.get("source_ids") or []
+    if not isinstance(source_ids, list):
+        return {}, "invalid_evidence_source_ids"
     identity = {
         "kind": kind,
         "reference": reference,
@@ -455,6 +462,10 @@ def _normalize_part(
         "coverage": dict(coverage),
         "summary": str(raw.get("summary") or "")[:500],
         "projection": raw.get("projection"),
+        "authority": str(raw.get("authority") or "observed")[:80],
+        "observed_at": str(raw.get("observed_at") or "")[:80],
+        "completeness": str(raw.get("completeness") or coverage.get("status") or "unknown")[:40],
+        "source_ids": [str(item)[:160] for item in source_ids[:32]],
         "source_tool": source_tool,
         "source_call_id": source_call_id,
         "delivery_status": "delivered" if immediately_delivered else "pending",

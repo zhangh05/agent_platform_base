@@ -1,178 +1,80 @@
-"""Deterministic, read-only recovery for rejected network CLI commands.
+"""Network read feedback for model-directed recovery.
 
-The LLM may use a raw CLI command when investigating a device.  A syntax
-rejection is not a useful terminal result: the device driver already owns a
-small, vendor-specific catalog of equivalent *observations*.  This module
-recognises only that narrow failure class and turns it into one safe semantic
-``collect`` candidate.  It never retries a raw command and never applies to a
-configuration operation, transport failure, timeout, or uncertain outcome.
+Transport mechanics belong to the CLI runtime. A rejected command is a
+semantic observation: the extension describes what happened and which local
+capabilities exist, then QueryLoop gives that evidence back to the model. The
+extension never selects or executes a replacement command, semantic fact, or
+documentation search on the model's behalf.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import Any
 
-_NETWORK_TOOL = "network.operations.device.manage"
+
 _SYNTAX_ERROR_CODES = {"device_command_rejected"}
 
 
-@dataclass(frozen=True)
-class ReadRecoveryPlan:
-    """One server-produced, read-only diagnostic recovery candidate."""
-
-    original_call_id: str
-    connection_id: str
-    fact: str
-    failed_command: str
-    driver_id: str = ""
-
-    @property
-    def call_id(self) -> str:
-        # An original model call id is opaque. Keep the derived id readable for
-        # the trace while avoiding punctuation assumptions made by providers.
-        safe_id = "".join(char if char.isalnum() or char in {"_", "-"} else "_" for char in self.original_call_id)
-        return f"network-recovery-{safe_id[:72]}-{self.fact}"
-
-    def tool_arguments(self) -> dict[str, Any]:
-        return {
-            "action": "collect",
-            "connection_id": self.connection_id,
-            "facts": [self.fact],
-        }
-
-    def event(self) -> dict[str, str]:
-        return {
-            "kind": "network_read_recovery",
-            "original_call_id": self.original_call_id,
-            "connection_id": self.connection_id,
-            "fact": self.fact,
-            "failed_command": self.failed_command,
-            "driver_id": self.driver_id,
-            "strategy": "vendor_semantic_template",
-        }
-
-
-def plan_rejected_read_recoveries(
-    tool_calls: list[Any],
-    results: list[Any],
-    *,
-    attempted_call_ids: set[str] | None = None,
-) -> list[ReadRecoveryPlan]:
-    """Return one safe collect plan for each newly rejected raw read.
-
-    Results may be represented by QueryLoop's ``StreamingToolResult`` or a
-    test double, so this boundary deliberately reads attributes defensively.
-    """
-    attempted = attempted_call_ids or set()
-    plans: list[ReadRecoveryPlan] = []
-    for call, result in zip(tool_calls, results):
-        if str(getattr(call, "id", "") or "") in attempted:
-            continue
-        if str(getattr(call, "name", "") or "").replace("__", ".") != _NETWORK_TOOL:
-            continue
-        arguments = getattr(call, "arguments", {}) or {}
-        if str(arguments.get("action") or "").lower() != "read":
-            continue
-        connection_id = str(arguments.get("connection_id") or "").strip()
-        commands = arguments.get("commands")
-        if not connection_id or not isinstance(commands, list) or len(commands) != 1:
-            continue
-        output = getattr(result, "output", {}) or {}
-        if not isinstance(output, dict) or bool(getattr(result, "execution_may_continue", False)):
-            continue
-        command_result = _rejected_command_result(output, str(commands[0] or ""))
-        if command_result is None:
-            continue
-        failed_command = str(command_result.get("command") or commands[0]).strip()
-        fact = infer_semantic_fact(failed_command)
-        if not fact:
-            continue
-        profile = output.get("device_profile") if isinstance(output.get("device_profile"), dict) else {}
-        supported = profile.get("semantic_facts") if isinstance(profile.get("semantic_facts"), list) else []
-        if supported and fact not in {str(item) for item in supported}:
-            continue
-        plans.append(ReadRecoveryPlan(
-            original_call_id=str(getattr(call, "id", "") or ""),
-            connection_id=connection_id,
-            fact=fact,
-            failed_command=failed_command,
-            driver_id=str(profile.get("driver_id") or ""),
-        ))
-    return plans
-
-
-def safe_read_recovery_directive(arguments: dict[str, Any], output: dict[str, Any]) -> dict[str, Any] | None:
-    """Build the extension-owned recovery contract returned by device.manage."""
-    action = str(arguments.get("action") or "").lower()
+def model_recovery_guidance(arguments: dict[str, Any], output: dict[str, Any]) -> list[dict[str, Any]]:
+    """Describe rejected reads without turning suggestions into tool calls."""
+    if str(arguments.get("action") or "").lower() != "read":
+        return []
     connection_id = str(arguments.get("connection_id") or "").strip()
     commands = arguments.get("commands")
-    if action != "read" or not connection_id or not isinstance(commands, list) or len(commands) != 1:
-        return None
-    command_result = _rejected_command_result(output, str(commands[0] or ""))
-    if command_result is None or bool(output.get("execution_may_continue")):
-        return None
-    failed_command = str(command_result.get("command") or commands[0]).strip()
-    fact = infer_semantic_fact(failed_command)
-    profile = output.get("device_profile") if isinstance(output.get("device_profile"), dict) else {}
-    supported = profile.get("semantic_facts") if isinstance(profile.get("semantic_facts"), list) else []
-    documentation = _documentation_fallback(profile, failed_command, fact)
-    goal = {
-        "evidence_kind": "network_semantic_fact" if fact else "network_read_observation",
-        "target": {"connection_id": connection_id},
-        "fact": fact,
-        "description": f"live device evidence for {fact or failed_command}",
-    }
-    if not fact or (supported and fact not in {str(item) for item in supported}):
-        # We cannot safely invent a device command. Search authoritative vendor
-        # documentation automatically, then let the normal loop turn that
-        # evidence into a materially different read.
-        return {
-            "kind": "documentation_read_fallback",
-            "tool_id": str(documentation["tool_id"]),
-            "arguments": dict(documentation["arguments"]),
-            "summary": "device_cli_syntax_requires_official_docs",
-            "goal": goal,
-            "failed_command": failed_command,
-            "driver_id": str(profile.get("driver_id") or ""),
-        }
-    plan = ReadRecoveryPlan(
-        original_call_id="",
-        connection_id=connection_id,
-        fact=fact,
-        failed_command=failed_command,
-        driver_id=str(profile.get("driver_id") or ""),
-    )
-    return {
-        "kind": "safe_read_fallback",
-        "tool_id": _NETWORK_TOOL,
-        "arguments": plan.tool_arguments(),
-        "summary": "device_cli_syntax_rejection",
-        "goal": goal,
-        "fact": fact,
-        "connection_id": connection_id,
-        "failed_command": failed_command,
-        "driver_id": plan.driver_id,
-        "documentation_fallback": documentation,
-    }
-
-
-def safe_read_recovery_directives(
-    arguments: dict[str, Any], output: dict[str, Any],
-) -> list[dict[str, Any]]:
-    """Return independent recovery goals for every rejected raw command."""
-    commands = arguments.get("commands")
-    if str(arguments.get("action") or "").lower() != "read" or not isinstance(commands, list):
+    if not connection_id or not isinstance(commands, list):
         return []
-    directives: list[dict[str, Any]] = []
+    profile = output.get("device_profile") if isinstance(output.get("device_profile"), dict) else {}
+    supported = {str(item) for item in profile.get("semantic_facts") or []}
+    guidance: list[dict[str, Any]] = []
     for command in commands:
-        directive = safe_read_recovery_directive(
-            {**arguments, "commands": [str(command)]},
-            output,
-        )
-        if directive:
-            directives.append(directive)
-    return directives
+        rejected = _rejected_command_result(output, str(command or ""))
+        if rejected is None:
+            continue
+        failed_command = str(rejected.get("command") or command).strip()
+        fact = infer_semantic_fact(failed_command)
+        vendor = str(profile.get("vendor") or profile.get("driver_id") or "network device")
+        guidance.append({
+            "kind": "model_replan_required",
+            "reason": "device_cli_syntax_rejected",
+            "connection_id": connection_id,
+            "failed_command": failed_command,
+            "device_error": str(rejected.get("device_error") or "")[:300],
+            "driver_id": str(profile.get("driver_id") or ""),
+            "detected_vendor": str(profile.get("vendor") or ""),
+            "candidate_semantic_fact": fact if fact and (not supported or fact in supported) else "",
+            "available_semantic_facts": sorted(supported),
+            "documentation_query_hint": f"{vendor} {(fact or 'CLI command syntax').replace('_', ' ')} {failed_command}"[:500],
+            "decision_owner": "llm",
+            "allowed_next_steps": ["different_read_command", "explicit_semantic_collect", "authoritative_documentation", "report_unknown"],
+        })
+    return guidance
+
+
+def semantic_collect_guidance(arguments: dict[str, Any], output: dict[str, Any]) -> list[dict[str, Any]]:
+    """Expose unavailable templates so the model can choose its next step."""
+    if str(arguments.get("action") or "").lower() != "collect":
+        return []
+    connection_id = str(arguments.get("connection_id") or "").strip()
+    facts = output.get("facts") if isinstance(output.get("facts"), dict) else {}
+    profile = output.get("device_profile") if isinstance(output.get("device_profile"), dict) else {}
+    vendor = str(profile.get("vendor") or profile.get("driver_id") or "network device")
+    result: list[dict[str, Any]] = []
+    for requested in arguments.get("facts") or []:
+        fact = str(requested)
+        state = facts.get(fact) if isinstance(facts.get(fact), dict) else {}
+        if str(state.get("status") or "").lower() == "collected":
+            continue
+        result.append({
+            "kind": "model_replan_required",
+            "reason": "semantic_template_unavailable",
+            "connection_id": connection_id,
+            "candidate_semantic_fact": fact,
+            "driver_id": str(profile.get("driver_id") or ""),
+            "documentation_query_hint": f"{vendor} {fact.replace('_', ' ')} CLI command syntax"[:500],
+            "decision_owner": "llm",
+            "allowed_next_steps": ["different_read_command", "authoritative_documentation", "report_unknown"],
+        })
+    return result
 
 
 def network_evidence_claims(arguments: dict[str, Any], output: dict[str, Any]) -> list[dict[str, Any]]:
@@ -195,9 +97,7 @@ def network_evidence_claims(arguments: dict[str, Any], output: dict[str, Any]) -
             })
         return claims
     for item in output.get("command_results") or []:
-        if not isinstance(item, dict):
-            continue
-        if not item.get("complete") or item.get("error_code") or item.get("truncated"):
+        if not isinstance(item, dict) or not item.get("complete") or item.get("error_code") or item.get("truncated"):
             continue
         command = str(item.get("command") or "")
         fact = infer_semantic_fact(command)
@@ -211,40 +111,7 @@ def network_evidence_claims(arguments: dict[str, Any], output: dict[str, Any]) -
     return claims
 
 
-def semantic_collect_recovery_directive(
-    arguments: dict[str, Any], output: dict[str, Any],
-) -> dict[str, Any] | None:
-    """Escalate an unavailable vendor template to official documentation."""
-    if str(arguments.get("action") or "").lower() != "collect":
-        return None
-    connection_id = str(arguments.get("connection_id") or "").strip()
-    facts = output.get("facts") if isinstance(output.get("facts"), dict) else {}
-    unavailable = [
-        str(fact) for fact in arguments.get("facts") or []
-        if str((facts.get(str(fact)) or {}).get("status") or "").lower() != "collected"
-    ]
-    if not connection_id or len(unavailable) != 1:
-        return None
-    fact = unavailable[0]
-    profile = output.get("device_profile") if isinstance(output.get("device_profile"), dict) else {}
-    documentation = _documentation_fallback(profile, "", fact)
-    return {
-        "kind": "documentation_read_fallback",
-        "tool_id": str(documentation["tool_id"]),
-        "arguments": dict(documentation["arguments"]),
-        "summary": "semantic_template_requires_official_docs",
-        "goal": {
-            "evidence_kind": "network_semantic_fact",
-            "target": {"connection_id": connection_id},
-            "fact": fact,
-            "description": f"live device evidence for {fact}",
-        },
-        "driver_id": str(profile.get("driver_id") or ""),
-    }
-
-
 def infer_semantic_fact(command: str) -> str:
-    """Map a rejected inspection intent to a driver-owned fact, or nothing."""
     from .semantic_facts import infer_fact_from_command
 
     return infer_fact_from_command(command)
@@ -252,6 +119,8 @@ def infer_semantic_fact(command: str) -> str:
 
 def _rejected_command_result(output: dict[str, Any], expected_command: str) -> dict[str, Any] | None:
     """Accept explicit device syntax rejection only, never transport ambiguity."""
+    if bool(output.get("execution_may_continue")):
+        return None
     for item in output.get("command_results") or []:
         if not isinstance(item, dict):
             continue
@@ -260,19 +129,3 @@ def _rejected_command_result(output: dict[str, Any], expected_command: str) -> d
         if str(item.get("error_code") or "").lower() in _SYNTAX_ERROR_CODES:
             return item
     return None
-
-
-def _documentation_fallback(profile: dict[str, Any], failed_command: str, fact: str) -> dict[str, Any]:
-    vendor = str(profile.get("vendor") or profile.get("driver_id") or "network device").replace(".", " ")
-    intent = fact.replace("_", " ") if fact else "CLI command syntax"
-    return {
-        "tool_id": "web.manage",
-        "arguments": {
-            "action": "deep_search",
-            "query": f"{vendor} {intent} CLI command syntax {failed_command}",
-            "source": "docs",
-            "authority_profile": "network_vendor",
-            "top_k": 3,
-            "max_results": 5,
-        },
-    }

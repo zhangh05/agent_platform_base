@@ -10,6 +10,11 @@ type Region = { region_id: string; name: string };
 type Device = { device_id: string; name: string; host: string; vendor: string; device_type: string; region_id: string };
 type Connection = { connection_id: string; device_id: string; name?: string; protocol: "ssh" | "telnet"; port: number; username?: string; source_address?: string; effective_source_address?: string; auth_method?: string; status: string; verified: boolean; credential_configured?: boolean; last_error?: string; last_tested_at?: string; driver_id?: string; detected_vendor?: string; os_family?: string; semantic_facts?: string[]; profile_detected_from?: string };
 type Skill = { skill_id: string; name: string; description: string; instructions?: string; enabled: boolean; device_ids: string[]; connection_ids: string[]; allowed_tool_ids: string[]; capabilities?: string[] };
+type Observation = { observation_id: string; source_id: string; observed_at: string; completeness: string; target_ids: string[]; candidate_reference_id?: string };
+type OperationalReference = { reference_id: string; name: string; state: "candidate" | "confirmed" | "superseded" | "invalidated"; authority: string; current: boolean; completeness: string; target_ids: string[]; updated_at: string };
+type CommandExperience = { experience_id: string; connection_id: string; driver_id: string; command: string; status: "accepted" | "rejected"; observations: number; last_observed_at: string };
+type EvidenceSource = { source_id: string; kind: string; available: boolean; authority: string; advisory_only?: boolean };
+type OperationalContext = { observations: Observation[]; references: OperationalReference[]; command_experience: CommandExperience[]; sources: EvidenceSource[] };
 type DeviceForm = Omit<Device, "device_id"> & { device_id?: string };
 type ConnectionForm = { connection_id?: string; device_id: string; name: string; protocol: "ssh" | "telnet"; port: string; username: string; source_address: string; password: string; private_key: string; passphrase: string; auth_method: string };
 type SkillForm = { capabilities: string[]; skill_id?: string; name: string; description: string; instructions: string; enabled: boolean; device_ids: string[]; connection_ids: string[]; allowed_tool_ids: string[] };
@@ -28,6 +33,19 @@ const emptySkill: SkillForm = { capabilities: [], name: "", description: "", ins
 const friendlyErrors: Record<string, string> = {
   "device name and host already exist": "设备名称与管理地址均相同的设备已存在",
 };
+const sourceLabels: Record<string, string> = {
+  live_cli: "实时设备读取",
+  inspection_history: "巡检历史",
+  confirmed_reference: "已确认运行参考",
+  command_experience: "命令语法反馈",
+};
+const sourceKindLabels: Record<string, string> = {
+  live_observation: "当前时点观察",
+  historical_observation: "历史时点观察",
+  comparison_reference: "预期状态比较",
+  syntax_feedback: "设备语法经验",
+};
+const displayTime = (value: string) => value ? new Date(value).toLocaleString("zh-CN", { hour12: false }) : "时间未知";
 
 export default function NetworkOperations() {
   const workspaceId = useSessionStore((state) => state.currentWorkspaceId);
@@ -36,11 +54,12 @@ export default function NetworkOperations() {
   const [regionFilter, setRegionFilter] = useState("");
   const editorRef = useRef<HTMLDialogElement>(null);
   useEffect(() => { if (editor) editorRef.current?.showModal(); }, [editor]);
-  const [view, setView] = useState<"devices" | "skills">("devices");
+  const [view, setView] = useState<"devices" | "skills" | "context">("devices");
   const [regions, setRegions] = useState<Region[]>([]);
   const [devices, setDevices] = useState<Device[]>([]);
   const [connections, setConnections] = useState<Connection[]>([]);
   const [skills, setSkills] = useState<Skill[]>([]);
+  const [operationalContext, setOperationalContext] = useState<OperationalContext>({ observations: [], references: [], command_experience: [], sources: [] });
   const [deviceForm, setDeviceForm] = useState<DeviceForm>(emptyDevice);
   const [connectionForm, setConnectionForm] = useState<ConnectionForm>(emptyConnection);
   const [skillForm, setSkillForm] = useState<SkillForm>(emptySkill);
@@ -51,16 +70,20 @@ export default function NetworkOperations() {
 
   const load = useCallback(async () => {
     const params = { workspace_id: workspaceId };
-    const [regionResult, deviceResult, connectionResult, skillResult] = await Promise.all([
+    const [regionResult, deviceResult, connectionResult, skillResult, contextResult] = await Promise.all([
       apiRequest<{ regions: Region[] }>({ method: "GET", url: `${base}/regions`, params }),
       apiRequest<{ devices: Device[] }>({ method: "GET", url: `${base}/devices`, params }),
       apiRequest<{ connections: Connection[] }>({ method: "GET", url: `${base}/connections`, params }),
       apiRequest<{ skills: Skill[] }>({ method: "GET", url: `${base}/skills`, params }),
+      apiRequest<OperationalContext>({ method: "GET", url: `${base}/context`, params }).catch(() => ({
+        observations: [], references: [], command_experience: [], sources: [],
+      })),
     ]);
     setRegions(regionResult.regions || []);
     setDevices(deviceResult.devices || []);
     setConnections(connectionResult.connections || []);
     setSkills(skillResult.skills || []);
+    setOperationalContext({ observations: contextResult.observations || [], references: contextResult.references || [], command_experience: contextResult.command_experience || [], sources: contextResult.sources || [] });
   }, [workspaceId]);
 
   useEffect(() => { void load().catch(() => setNotice("数据加载失败，请检查服务。")); }, [load]);
@@ -179,6 +202,19 @@ export default function NetworkOperations() {
     skill.enabled ? "Skill 已停用，工作台不再展示" : "Skill 已启用，可在工作台选择",
   );
 
+  const transitionReference = async (reference: OperationalReference, action: "confirm" | "invalidate") => {
+    const approved = await confirm({
+      title: action === "confirm" ? "确认运行参考" : "使运行参考失效",
+      body: action === "confirm"
+        ? "确认后，这份完整观察将成为同一设备范围的当前预期参考，并替代此前已确认参考。它不会把未来差异自动判定为故障。"
+        : "失效后，这份参考不再参与后续比较；原始观察与证据仍会保留。",
+      confirmLabel: action === "confirm" ? "确认参考" : "标记失效",
+      destructive: action === "invalidate",
+    });
+    if (!approved) return;
+    void run(() => apiRequest({ method: "POST", url: `${base}/references/${reference.reference_id}`, data: { workspace_id: workspaceId, action } }), action === "confirm" ? "运行参考已确认" : "运行参考已失效");
+  };
+
   const editSkill = (skill: Skill) => {
     setSkillForm({
       ...emptySkill,
@@ -207,13 +243,13 @@ export default function NetworkOperations() {
 
   return <div className="network-admin">
     <PageHeader title="网络设备与 Skill" subtitle="集中管理设备连接，按 Skill 授权读取、巡检与配置能力。"><Button icon={<IconRefresh size={14} />} onClick={() => void load().catch(() => setNotice("刷新失败，请检查服务。"))} disabled={busy}>刷新</Button></PageHeader>
-    <div className="network-tabs"><button className={view === "devices" ? "active" : ""} onClick={() => { setView("devices"); setQuery(""); }}>设备与连接 <span>{devices.length}</span></button><button className={view === "skills" ? "active" : ""} onClick={() => { setView("skills"); setQuery(""); }}>Skill 配置 <span>{skills.length}</span></button></div>
+    <div className="network-tabs"><button className={view === "devices" ? "active" : ""} onClick={() => { setView("devices"); setQuery(""); }}>设备与连接 <span>{devices.length}</span></button><button className={view === "skills" ? "active" : ""} onClick={() => { setView("skills"); setQuery(""); }}>Skill 配置 <span>{skills.length}</span></button><button className={view === "context" ? "active" : ""} onClick={() => { setView("context"); setQuery(""); }}>环境与证据 <span>{operationalContext.observations.length}</span></button></div>
     {notice ? <div role="status" className="network-notice">{notice}</div> : null}
-    <div className="network-toolbar">
+    {view !== "context" ? <div className="network-toolbar">
       <div className="network-filters"><input aria-label={view === "devices" ? "搜索设备" : "搜索 Skill"} placeholder={view === "devices" ? "搜索设备名称、管理地址" : "搜索 Skill 名称、说明"} value={query} onChange={(event) => setQuery(event.target.value)} />
       {view === "devices" && <select aria-label="筛选区域" value={regionFilter} onChange={(event) => setRegionFilter(event.target.value)}><option value="">全部区域</option>{regions.map((region) => <option key={region.region_id} value={region.region_id}>{region.name}</option>)}</select>}</div>
       <Button icon={<IconPlus size={14} />} onClick={() => { if (view === "devices") { setDeviceForm(emptyDevice); setEditor("device"); } else { setSkillForm(emptySkill); setEditor("skill"); } }}>{view === "devices" ? "登记设备" : "创建 Skill"}</Button>
-    </div>
+    </div> : null}
     {editor && <dialog ref={editorRef} className="network-editor" aria-label={editor === "skill" ? "Skill 编辑面板" : editor === "device" ? "设备编辑面板" : "连接编辑面板"} onCancel={(event) => { if (busy) event.preventDefault(); else setEditor(null); }}>
       <div className="network-editor-top"><span>{editor === "skill" ? "配置工作台能力" : editor === "device" ? "维护设备与区域" : "配置设备访问方式"}</span><Button disabled={busy} onClick={() => setEditor(null)}>关闭</Button></div>
       {notice && <div role="alert" className="network-notice">{notice}</div>}
@@ -248,7 +284,7 @@ export default function NetworkOperations() {
         <label className="full-field">说明<textarea value={skillForm.description} onChange={(event) => setSkillForm({ ...skillForm, description: event.target.value })} /></label>
         <fieldset><legend>多选设备</legend>{devices.map((device) => <label className="check" key={device.device_id}><input type="checkbox" checked={skillForm.device_ids.includes(device.device_id)} onChange={(event) => setSkillForm({ ...skillForm, device_ids: event.target.checked ? [...skillForm.device_ids, device.device_id] : skillForm.device_ids.filter((id) => id !== device.device_id), connection_ids: event.target.checked ? skillForm.connection_ids : skillForm.connection_ids.filter((id) => connections.find((connection) => connection.connection_id === id)?.device_id !== device.device_id) })} />{device.name} · {device.host}</label>)}</fieldset>
         <fieldset><legend>设备连接</legend>{connections.filter((connection) => connection.credential_configured && skillForm.device_ids.includes(connection.device_id)).map((connection) => <label className="check" key={connection.connection_id}><input type="checkbox" checked={skillForm.connection_ids.includes(connection.connection_id)} onChange={(event) => setSkillForm({ ...skillForm, connection_ids: event.target.checked ? [...skillForm.connection_ids, connection.connection_id] : skillForm.connection_ids.filter((id) => id !== connection.connection_id) })} />{byDevice.get(connection.device_id)?.name} · {connection.protocol.toUpperCase()}:{connection.port} · {connection.verified ? "最近连接成功" : "调用时主动连接"}</label>)}</fieldset>
-        <fieldset className="full-field"><legend>允许的能力</legend>{toolOptions.map((tool) => <label className="check capability-check" key={tool.id}><input type="checkbox" checked={skillForm.allowed_tool_ids.includes(tool.id)} onChange={(event) => setSkillForm({ ...skillForm, allowed_tool_ids: event.target.checked ? [...skillForm.allowed_tool_ids, tool.id] : skillForm.allowed_tool_ids.filter((id) => id !== tool.id) })} /><span><b>{tool.label}</b><small>{tool.description}</small></span></label>)}</fieldset>
+        <fieldset className="full-field"><legend>允许的能力</legend><p className="intrinsic-capabilities">设备实时读取与环境证据读取是 Skill 内置只读能力，不授予配置写入。</p>{toolOptions.map((tool) => <label className="check capability-check" key={tool.id}><input type="checkbox" checked={skillForm.allowed_tool_ids.includes(tool.id)} onChange={(event) => setSkillForm({ ...skillForm, allowed_tool_ids: event.target.checked ? [...skillForm.allowed_tool_ids, tool.id] : skillForm.allowed_tool_ids.filter((id) => id !== tool.id) })} /><span><b>{tool.label}</b><small>{tool.description}</small></span></label>)}</fieldset>
         <fieldset className="full-field write-capability"><legend>配置权限</legend>
           <label className="check capability-check"><input type="checkbox" checked={skillForm.capabilities.includes("configuration_write")} onChange={(event) => setSkillForm({ ...skillForm, capabilities: event.target.checked ? ["configuration_write"] : [] })} /><span><b>允许配置写入</b><small>允许 LLM 自主生成配置命令，仅限所选设备和连接；失败不自动重试。</small></span></label>
           <p>默认只读。开启不会立即连接或修改设备，也不会自动保存配置、确认交互或重启。</p>
@@ -298,7 +334,7 @@ export default function NetworkOperations() {
           </article>;
         }) : <div className="empty">{devices.length ? "没有匹配的设备" : "尚未登记设备，点击右上角登记设备开始"}</div>}</div>
       </section>
-    </div> : <div className="network-grid">
+    </div> : view === "skills" ? <div className="network-grid">
       <section className="network-panel published-skills">
         <div className="panel-heading">
           <div><h2>已发布 Skill</h2><p>维护工作台可选 Skill 的状态、设备、连接与能力边界。</p></div>
@@ -330,6 +366,26 @@ export default function NetworkOperations() {
             </dl>
           </article>;
         }) : <div className="empty">{skills.length ? "没有匹配的 Skill" : "尚未创建 Skill，选择设备并配置能力后发布到工作台"}</div>}</div>
+      </section>
+    </div> : <div className="network-context-layout">
+      <section className="network-panel context-overview">
+        <div className="panel-heading"><div><h2>可用证据环境</h2><p>向模型说明可以使用什么，以及每类信息能够证明什么。</p></div><span className="record-count">{operationalContext.sources.filter((item) => item.available).length} 项可用</span></div>
+        <div className="source-list">{operationalContext.sources.map((source) => <div className="source-row" key={source.source_id}><span className={`source-indicator ${source.available ? "available" : ""}`} aria-hidden="true" /><div><strong>{sourceLabels[source.source_id] || source.source_id}</strong><small>{sourceKindLabels[source.kind] || source.kind} · {source.authority === "user_confirmed" ? "用户确认" : "观测事实"}{source.advisory_only ? " · 仅建议" : ""}</small></div><b>{source.available ? "可用" : "暂无数据"}</b></div>)}</div>
+      </section>
+      <section className="network-panel reference-panel">
+        <div className="panel-heading"><div><h2>运行参考</h2><p>巡检只产生候选参考；只有完整观察经明确确认后才代表预期状态。</p></div><span className="record-count">{operationalContext.references.length} 条</span></div>
+        <div className="reference-list">{operationalContext.references.length ? operationalContext.references.map((reference) => <article className="reference-row" key={reference.reference_id}>
+          <div className="reference-main"><div><strong>{reference.name}</strong><span className={`reference-state ${reference.state}`}>{reference.state === "candidate" ? "候选" : reference.state === "confirmed" ? "已确认" : reference.state === "superseded" ? "已替代" : "已失效"}</span></div><small>{reference.target_ids.length} 个目标 · {reference.completeness === "complete" ? "证据完整" : "证据不完整"} · {displayTime(reference.updated_at)}</small></div>
+          <div className="reference-actions">{reference.state === "candidate" && reference.completeness === "complete" ? <Button size="sm" variant="primary" onClick={() => void transitionReference(reference, "confirm")}>确认参考</Button> : null}{reference.state === "candidate" || reference.state === "confirmed" ? <Button size="sm" variant="danger-ghost" onClick={() => void transitionReference(reference, "invalidate")}>标记失效</Button> : null}</div>
+        </article>) : <div className="empty">完成一次巡检后会出现候选参考，系统不会自动把第一次观察当作正常状态。</div>}</div>
+      </section>
+      <section className="network-panel observation-panel">
+        <div className="panel-heading"><div><h2>最近观察</h2><p>按时间保存的事实快照，可追溯到巡检任务和证据制品。</p></div><span className="record-count">{operationalContext.observations.length} 条</span></div>
+        <div className="observation-list">{operationalContext.observations.length ? operationalContext.observations.map((observation) => <div className="observation-row" key={observation.observation_id}><div><strong>{observation.source_id}</strong><small>{observation.target_ids.length} 个目标 · {displayTime(observation.observed_at)}</small></div><span className={`reference-state ${observation.completeness}`}>{observation.completeness === "complete" ? "完整" : observation.completeness === "partial" ? "部分" : "失败"}</span></div>) : <div className="empty">尚无巡检观察。</div>}</div>
+      </section>
+      <section className="network-panel command-panel">
+        <div className="panel-heading"><div><h2>命令反馈</h2><p>真实设备返回的语法经验，只提供给模型参考，不会自动执行或替代命令。</p></div><span className="record-count">{operationalContext.command_experience.length} 条</span></div>
+        <div className="command-list">{operationalContext.command_experience.length ? operationalContext.command_experience.map((item) => <div className="command-row" key={item.experience_id}><code>{item.command}</code><div><span className={`command-state ${item.status}`}>{item.status === "accepted" ? "已接受" : "已拒绝"}</span><small>{item.driver_id} · {item.observations} 次观察</small></div></div>) : <div className="empty">模型执行只读命令后，这里会积累与设备驱动关联的语法反馈。</div>}</div>
       </section>
     </div>}
   </div>;

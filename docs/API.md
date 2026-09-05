@@ -132,11 +132,16 @@ return conflict; cancel and wait for a terminal state first.
 | `GET/PUT/DELETE` | `/api/extensions/network.operations/regions/<region_id>`, `/devices/<device_id>`, `/connections/<connection_id>`, `/skills/<skill_id>`, `/scripts/<script_id>` |
 | `POST` | `/connections/<connection_id>/test`, `/inspections/<task_id>/cancel`, `/inspections/<task_id>/retry` |
 | `GET` | `/inspections/<task_id>`, `/inspections/<task_id>/evidence` |
+| `GET` | `/context` |
+| `POST` | `/references/<reference_id>` with `action=confirm|invalidate` |
 
 The relative paths in the last table are under
 `/api/extensions/network.operations`. Device, connection and Skill deletion are
 their domain lifecycle operations; Skill selection is only an authorization
-scope and performs no device I/O.
+scope and performs no device I/O. `/context` only returns bounded source-labelled
+history, references and advisory syntax outcomes; it performs no network I/O.
+Inspection completion creates an Observation and may create a candidate
+Reference. Only a complete candidate can be explicitly confirmed.
 
 ## Workflows, identity and administration
 
@@ -187,6 +192,8 @@ GET         /api/extensions/network.operations/inspections/<task_id>
 POST        /api/extensions/network.operations/inspections/<task_id>/cancel
 GET         /api/extensions/network.operations/inspections/<task_id>/evidence
 POST        /api/extensions/network.operations/inspections/<task_id>/retry
+GET         /api/extensions/network.operations/context
+POST        /api/extensions/network.operations/references/<reference_id>
 GET|POST    /api/extensions/network.operations/scripts
 DELETE|GET|PUT /api/extensions/network.operations/scripts/<script_id>
 GET|POST    /api/extensions/network.operations/skills

@@ -298,3 +298,27 @@ def test_large_text_evidence_projection_keeps_query_relevant_sections():
     rendered = str(evidence_manifest(extras)[0]["projection"])
     assert "mpls lsr-id" in rendered
     assert "ipv4-family labeled-unicast" in rendered
+
+
+def test_observation_and_reference_contract_never_promotes_observation_to_normal():
+    import pytest
+
+    from core.runtime_engine.context_contract import (
+        normalize_observation_descriptor,
+        normalize_reference_descriptor,
+    )
+
+    observation = normalize_observation_descriptor({
+        "observation_id": "observation-1", "source_kind": "inspection",
+        "observed_at": "2026-09-06T00:00:00Z", "completeness": "complete",
+    })
+    assert observation["authoritative_for_normal"] is False
+    candidate = normalize_reference_descriptor({
+        "reference_id": "reference-1", "state": "candidate", "authority": "observed",
+        "source_observation_ids": ["observation-1"],
+    })
+    assert candidate["current"] is False
+    with pytest.raises(ValueError, match="confirmed_reference_requires_explicit_authority"):
+        normalize_reference_descriptor({
+            **candidate, "state": "confirmed", "authority": "observed", "current": True,
+        })

@@ -11,6 +11,7 @@
 .network-filters input { width: 280px; }
 .network-notice { margin: 14px 24px 0; padding: 12px 16px; border-radius: var(--r-8); background: var(--warn-soft); color: var(--warn); }
 .network-grid { width: 100%; margin: 0; padding: var(--space-4) var(--space-6) var(--space-6); min-width: 0; }
+.network-context-layout { display: grid; grid-template-columns: minmax(260px, .7fr) minmax(520px, 1.3fr); gap: var(--space-4); width: 100%; padding: var(--space-4) var(--space-6) var(--space-6); }
 .network-panel { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-12); padding: 0; min-width: 0; overflow: hidden; }
 .network-panel h2 { margin: 0 0 6px; font-size: var(--fs-18); }
 .network-panel p { margin: 0; color: var(--text-3); font-size: var(--fs-13); line-height: 1.6; }
@@ -46,6 +47,24 @@
 .network-admin .skill-scope dd { margin: 0; overflow-wrap: anywhere; }
 .network-admin .write-enabled { color: var(--warn); }
 .network-admin .empty { padding: 56px 16px; text-align: center; color: var(--text-3); }
+.network-admin .source-list, .network-admin .reference-list, .network-admin .observation-list, .network-admin .command-list { display: grid; }
+.network-admin .source-row, .network-admin .observation-row, .network-admin .command-row, .network-admin .reference-row { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); min-width: 0; padding: var(--space-3) var(--space-4); border-bottom: 1px solid var(--line); }
+.network-admin .source-row:last-child, .network-admin .observation-row:last-child, .network-admin .command-row:last-child, .network-admin .reference-row:last-child { border-bottom: 0; }
+.network-admin .source-row > div, .network-admin .observation-row > div, .network-admin .reference-main { display: grid; gap: var(--space-1); min-width: 0; }
+.network-admin .source-row > div, .network-admin .observation-row > div { flex: 1; }
+.network-admin .source-row strong, .network-admin .observation-row strong, .network-admin .reference-row strong { font-size: var(--fs-13); overflow-wrap: anywhere; }
+.network-admin .source-row small, .network-admin .observation-row small, .network-admin .reference-row small, .network-admin .command-row small { color: var(--text-3); font-size: var(--fs-12); overflow-wrap: anywhere; }
+.network-admin .source-row > b { color: var(--text-3); font-size: var(--fs-12); font-weight: var(--weight-label); white-space: nowrap; }
+.network-admin .source-indicator { width: 7px; height: 7px; flex: 0 0 auto; border-radius: 50%; background: var(--text-4); }
+.network-admin .source-indicator.available { background: var(--accent); }
+.network-admin .reference-main > div { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
+.network-admin .reference-state, .network-admin .command-state { display: inline-flex; align-items: center; min-height: 22px; padding: 2px 7px; border-radius: var(--r-8); background: var(--surface-2); color: var(--text-3); font-size: var(--fs-12); white-space: nowrap; }
+.network-admin .reference-state.confirmed, .network-admin .reference-state.complete, .network-admin .command-state.accepted { background: var(--ok-soft); color: var(--ok); }
+.network-admin .reference-state.partial, .network-admin .reference-state.candidate { background: var(--warn-soft); color: var(--warn); }
+.network-admin .reference-actions { display: flex; gap: var(--space-2); flex: 0 0 auto; }
+.network-admin .command-row code { min-width: 0; color: var(--text); font-size: var(--fs-12); overflow-wrap: anywhere; }
+.network-admin .command-row > div { display: flex; align-items: center; gap: var(--space-2); flex: 0 0 auto; }
+.network-admin .context-overview, .network-admin .observation-panel { align-self: start; }
 .network-editor {
   position: fixed; inset: 0 0 0 auto; margin: 0; width: min(640px, calc(100vw / var(--ui-scale))); max-width: calc(100vw / var(--ui-scale));
   height: calc(100dvh / var(--ui-scale)); max-height: calc(100dvh / var(--ui-scale)); padding: 0; overflow-y: auto; box-sizing: border-box;
@@ -74,6 +93,7 @@
 .network-editor .capability-check small { font-size: var(--fs-12); font-weight: 400; color: var(--text-3); line-height: 1.6; }
 .network-editor .write-capability { border-color: var(--warn); }
 .network-editor .write-capability p { margin: 4px 0 0; font-size: var(--fs-12); }
+.network-editor .intrinsic-capabilities { margin: 0 0 var(--space-2); color: var(--text-3); font-size: var(--fs-12); }
 .network-editor .inline-form { display: flex; gap: 8px; margin: 18px 0 10px; }
 .network-editor .inline-form input { flex: 1; }
 .network-editor .region-list { display: flex; gap: 8px; flex-wrap: wrap; padding-bottom: 20px; margin-bottom: 20px; border-bottom: 1px solid var(--line); }
@@ -83,6 +103,7 @@
 @media (max-width: 1100px) {
   .network-admin .connection-row { flex-direction: column; align-items: flex-start; }
   .network-admin .skill-card-header { align-items: flex-start; flex-wrap: wrap; }
+  .network-context-layout { grid-template-columns: 1fr; }
 }
 @media (max-width: 700px) {
   .network-tabs { padding: 12px 12px 0; }
@@ -90,9 +111,11 @@
   .network-filters { flex: 1; flex-wrap: wrap; }
   .network-filters input { width: 100%; }
   .network-grid { padding: 12px; }
+  .network-context-layout { padding: 12px; }
   .network-admin .device-card-header { flex-direction: column; align-items: flex-start; }
   .network-editor .form-grid { grid-template-columns: 1fr; }
   .network-editor .network-panel { padding: 18px; }
+  .network-admin .reference-row, .network-admin .command-row { align-items: flex-start; flex-direction: column; }
 }
 
 /* Registry identity and editor controls share the platform density. */

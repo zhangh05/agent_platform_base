@@ -14,7 +14,7 @@
 | 能力中心 | `/capabilities`、扩展路由 | 平台能力、工具目录、设备与 Skill 管理 | 能力目录与详情；管理对象使用紧凑列表 |
 | 系统管理 | `/diagnostics`、`/settings`、`/users` | 系统健康、模型服务、用户权限 | 异常优先状态列表或主从编辑器 |
 
-扩展前端由扩展清单的 `frontend_routes` 注册。例如网络设备与 Skill 管理页由 `extensions/network_operations/extension.json` 声明，并由 `extensions/network_operations/frontend/NetworkOperations.tsx` 实现。扩展页面必须复用平台 Token 与共享组件，不能建立独立配色或重复交互契约。
+扩展前端由扩展清单的 `frontend_routes` 注册。例如网络设备与 Skill 管理页由 `extensions/network_operations/extension.json` 声明，并由 `extensions/network_operations/frontend/NetworkOperations.tsx` 实现。其“环境与证据”视图分别呈现可用来源、时点观察、候选/已确认 Reference 和仅供参考的命令反馈；确认或失效 Reference 必须是显式操作。扩展页面必须复用平台 Token 与共享组件，不能建立独立配色或重复交互契约。
 
 ## 数据与状态边界
 

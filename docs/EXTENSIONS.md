@@ -17,13 +17,13 @@ python3 scripts/extension_cli.py validate plugins/acme_insights
 
 ## 业务对象与网络扩展
 
-业务扩展不仅是工具面板，还要拥有对象模型和完整生命周期。bundled `network.operations` 管理区域、设备、加密的 SSH/Telnet 连接与已发布 Skill。工作台选择只传达候选 Skill；服务端每次调用重新解析 Skill 的设备、连接、工具和 `configuration_write` 范围。读取设备清单、读取 Skill、列出或操作巡检任务同样受当前资源范围约束，不能用已允许的工具 ID 访问另一个 Skill 的对象。选择本身不建立网络连接，也不扩大权限。
+业务扩展不仅是工具面板，还要拥有对象模型和完整生命周期。bundled `network.operations` 管理区域、设备、加密的 SSH/Telnet 连接、已发布 Skill、时点 Observation、Reference 生命周期和命令反馈。工作台选择只传达候选 Skill；服务端每次调用重新解析 Skill 的设备、连接、工具和 `configuration_write` 范围。读取设备清单、环境证据、Skill 或巡检任务同样受当前资源范围约束，不能用已允许的工具 ID 访问另一个 Skill 的对象。选择本身不建立网络连接，也不扩大权限。
 
 模型可以选择 Skill 内的一部分设备。单台连接失败必须以该设备的工具结果返回，不能阻断其他独立设备。读操作是基础能力；网络写操作仅在当前 Skill 明确允许后执行。没有审批弹窗、等待状态或后台批准续跑。
 
 ## 恢复集成
 
-扩展不维护自己的 LLM 循环。安全、只读的恢复意图通过 `runtime_recoveries` 列表交给 QueryLoop；每项只描述证据目标与安全观察，不能授予新特权。`network.operations` 的命令语义映射在扩展内，厂商命令模板在驱动内，平台内核不固化厂商 CLI。
+扩展不维护自己的 LLM 循环。平台可接受经过合同校验的领域无关 `runtime_recoveries`，但 `network.operations` 对厂商 CLI 拒绝只返回模型可读的结构化反馈，不自动选择替代命令、语义模板或文档检索。厂商命令模板和语义映射留在驱动内，平台内核只保存 Observation / Reference 的通用来源与生命周期，不固化网络协议或厂商 CLI。
 
 ## 分发
 

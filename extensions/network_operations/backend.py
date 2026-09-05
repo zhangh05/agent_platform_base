@@ -187,6 +187,23 @@ def register_routes(app):
         except ValueError as exc:
             return jsonify({"ok": False, "error": str(exc)}), 404
 
+    @app.route("/api/extensions/network.operations/context", methods=["GET"])
+    def network_operational_context():
+        ws = _workspace()
+        if not ws:
+            return jsonify({"ok": False, "error": "workspace_id is required"}), 400
+        return jsonify({"ok": True, **service.operational_context(ws)})
+
+    @app.route("/api/extensions/network.operations/references/<reference_id>", methods=["POST"])
+    def network_reference(reference_id):
+        ws = _workspace()
+        if not ws:
+            return jsonify({"ok": False, "error": "workspace_id is required"}), 400
+        try:
+            return jsonify({"ok": True, "reference": service.transition_reference(ws, reference_id, str(_payload().get("action") or ""))})
+        except ValueError as exc:
+            return jsonify({"ok": False, "error": str(exc)}), 400
+
     @app.route("/api/extensions/network.operations/scripts", methods=["GET", "POST"])
     def network_inspection_scripts():
         ws = _workspace()
@@ -267,6 +284,15 @@ def skills_read(invocation):
     return {"ok": True, "skills": service.list_skills(invocation.workspace_id, enabled_only=True)}
 
 
+def context_read(invocation):
+    """Read history and references inside the selected Skill scope."""
+    if not _skill_allows(invocation, "network.operations.context_read"):
+        return {"ok": False, "error": "tool_not_allowed_by_skill"}
+    scope = _selected_skill_scope(invocation)
+    connection_ids = list(scope["connection_ids"]) if scope is not None else None
+    return {"ok": True, **service.operational_context(invocation.workspace_id, connection_ids=connection_ids)}
+
+
 def device_manage(invocation):
     """Probe, read, or execute a Skill-authorized configuration batch on a network device.
 
@@ -323,27 +349,22 @@ def device_manage(invocation):
     if result.get("ok"):
         response = {**result, "connection_ok": True}
         if action in {"read", "collect"}:
-            from extensions.network_operations.read_recovery import (
-                network_evidence_claims,
-                semantic_collect_recovery_directive,
-            )
+            from extensions.network_operations.read_recovery import network_evidence_claims, semantic_collect_guidance
 
             response["evidence_claims"] = network_evidence_claims(args, response)
             if action == "collect":
-                directive = semantic_collect_recovery_directive(args, response)
-                if directive:
-                    response["runtime_recoveries"] = [directive]
-        # The extension owns device-specific recovery classification. Core
-        # QueryLoop receives only this typed, read-only contract and still
-        # validates/executes it through the normal registered runtime path.
+                guidance = semantic_collect_guidance(args, response)
+                if guidance:
+                    response["model_recovery_guidance"] = guidance
         if action == "read":
-            from extensions.network_operations.read_recovery import (
-                safe_read_recovery_directives,
-            )
+            from extensions.network_operations.read_recovery import model_recovery_guidance
 
-            directives = safe_read_recovery_directives(args, response)
-            if directives:
-                response["runtime_recoveries"] = directives
+            response["command_experience"] = service.record_command_experience(
+                invocation.workspace_id, connection_id, response,
+            )
+            guidance = model_recovery_guidance(args, response)
+            if guidance:
+                response["model_recovery_guidance"] = guidance
         return response
     current = result.get("connection") if isinstance(result.get("connection"), dict) else service.get_connection(invocation.workspace_id, connection_id)
     return {
@@ -635,6 +656,16 @@ def register():
                         "skill_id": {"type": "string"},
                     },
                 },
+            },
+            {
+                "tool_id": "network.operations.context_read",
+                "name": "读取网络环境与证据",
+                "description": "读取当前 Skill 范围内的历史观察、显式确认参考和命令语法反馈。数据仅用于辅助判断：首次观察不代表正常，历史连接状态不代表当前状态，命令经验不自动执行；需要当前事实时仍由你选择设备和命令进行实时读取。",
+                "category": "ops",
+                "permission_action": "read",
+                "referenceable_outputs": {"*": ["observations", "references", "command_experience", "sources"]},
+                "handler": context_read,
+                "input_schema": {"type": "object", "properties": {**common}},
             },
             {
                 "tool_id": "network.operations.device.manage",

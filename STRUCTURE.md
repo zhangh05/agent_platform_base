@@ -23,7 +23,7 @@ workflows/      工作流定义、校验与执行
 ## 所有权规则
 
 - `backend/` 只负责传输、认证和 API 适配；任务语义在 runtime。
-- `core/runtime_engine/` 管理模型循环、目标、证据和结果，不保存领域工具实现。
+- `core/runtime_engine/` 管理模型循环、目标、证据、领域无关 Observation / Reference 合同和结果，不保存领域工具实现。
 - `core/tools/` 是唯一公共工具执行边界。
 - `extensions/<id>/` 保存该扩展的对象、工具、路由、驱动和前端贡献。
 - `storage/` 负责持久化边界；业务层不得自行散落读写 workspace 文件。

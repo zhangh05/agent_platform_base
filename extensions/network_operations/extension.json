@@ -1,14 +1,15 @@
 {
   "extension_id": "network.operations",
   "name": "网络设备与 Skill",
-  "version": "2.2.0",
+  "version": "2.3.0",
   "api_version": "1",
   "min_platform_version": "1.1.0",
   "description": "以授权设备连接为基础，提供自主 CLI、只读巡检、Skill 多能力编排及受 Skill 运行配置约束的配置写入。",
-  "capabilities": ["network_devices", "network_connections", "network_skills", "network_cli_runtime", "semantic_collection", "network_inspection", "configuration_write"],
+  "capabilities": ["network_devices", "network_connections", "network_skills", "network_cli_runtime", "semantic_collection", "network_inspection", "operational_context", "confirmed_references", "configuration_write"],
   "tools": [
     "network.operations.devices_read",
     "network.operations.skills_read",
+    "network.operations.context_read",
     "network.operations.device.manage",
     "network.operations.inspection"
   ],
@@ -28,6 +29,8 @@
     "/api/extensions/network.operations/inspections/<task_id>/cancel",
     "/api/extensions/network.operations/inspections/<task_id>/evidence",
     "/api/extensions/network.operations/inspections/<task_id>/retry",
+    "/api/extensions/network.operations/context",
+    "/api/extensions/network.operations/references/<reference_id>",
     "/api/extensions/network.operations/scripts",
     "/api/extensions/network.operations/scripts/<script_id>"
   ],

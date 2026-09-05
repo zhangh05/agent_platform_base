@@ -2,6 +2,7 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import { beforeEach, vi } from "vitest";
 import NetworkOperations from "../../../extensions/network_operations/frontend/NetworkOperations";
 import { apiRequest } from "../api/client";
+import { ConfirmHost } from "../components/ConfirmDialog";
 
 vi.mock("../api/client", () => ({ apiRequest: vi.fn() }));
 const tools = ["network.operations.device.manage"];
@@ -13,6 +14,12 @@ beforeEach(() => {
     if (request.url?.endsWith("/regions")) return { regions: [{ region_id: "r1", name: "测试区域" }] } as never;
     if (request.url?.endsWith("/devices")) return { devices: [{ device_id: "d1", name: "CE_1", host: "127.0.0.1", vendor: "h3c", region_id: "r1" }] } as never;
     if (request.url?.endsWith("/connections")) return { connections: [{ connection_id: "c1", device_id: "d1", protocol: "telnet", port: 30001, credential_configured: true, status: "untested", verified: false }] } as never;
+    if (request.url?.endsWith("/context")) return {
+      observations: [{ observation_id: "o1", source_id: "inspection-1", observed_at: "2026-09-06T00:00:00Z", completeness: "complete", target_ids: ["c1"] }],
+      references: [{ reference_id: "ref1", name: "巡检候选参考", state: "candidate", authority: "observed", current: false, completeness: "complete", target_ids: ["c1"], updated_at: "2026-09-06T00:00:00Z" }],
+      command_experience: [{ experience_id: "e1", connection_id: "c1", driver_id: "h3c.comware", command: "display version", status: "accepted", observations: 1, last_observed_at: "2026-09-06T00:00:00Z" }],
+      sources: [{ source_id: "live_cli", kind: "live_observation", available: true, authority: "observed" }],
+    } as never;
     return { skills: [skill] } as never;
   });
 });
@@ -55,4 +62,29 @@ test("device read checkbox and description are removed; independent write opt-in
   fireEvent.click(screen.getByRole("checkbox", { name: /允许配置写入/ }));
   expect(screen.getByRole("checkbox", { name: /允许配置写入/ })).not.toBeChecked();
   expect(screen.getByRole("checkbox", { name: /允许配置写入/ })).toBeEnabled();
+});
+
+test("operational context separates observations from explicitly confirmed references", async () => {
+  render(<><NetworkOperations /><ConfirmHost /></>);
+  await screen.findByTestId("device-card-d1");
+  fireEvent.click(screen.getByRole("button", { name: /环境与证据/ }));
+  expect(screen.getByText("巡检候选参考")).toBeInTheDocument();
+  expect(screen.getByText(/巡检只产生候选参考/)).toBeInTheDocument();
+  expect(screen.getByText("display version")).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "确认参考" }));
+  fireEvent.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "确认参考" }));
+  await waitFor(() => expect(apiRequest).toHaveBeenCalledWith(expect.objectContaining({
+    method: "POST", url: "/extensions/network.operations/references/ref1", data: expect.objectContaining({ action: "confirm" }),
+  })));
+});
+
+test("context loading failure does not hide device and Skill management", async () => {
+  const original = vi.mocked(apiRequest).getMockImplementation();
+  vi.mocked(apiRequest).mockImplementation(async (request) => {
+    if (request.url?.endsWith("/context")) throw new Error("context unavailable");
+    return original?.(request) as never;
+  });
+  render(<NetworkOperations />);
+  expect(await screen.findByTestId("device-card-d1")).toBeInTheDocument();
+  expect(screen.queryByText("数据加载失败，请检查服务。")).not.toBeInTheDocument();
 });

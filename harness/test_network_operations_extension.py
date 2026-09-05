@@ -312,6 +312,108 @@ def test_workbench_selection_keeps_failed_history_without_claiming_current_failu
     assert "degraded" not in resolved
 
 
+def test_first_inspection_is_observation_and_candidate_not_normal_baseline(monkeypatch, tmp_path):
+    _setup(monkeypatch, tmp_path)
+    connection = _register_connection("default", {
+        "name": "R1", "host": "10.0.0.1", "protocol": "telnet", "vendor": "h3c",
+    })
+    task = _run_inspection(
+        monkeypatch, "default", [connection["connection_id"]], ["display version"],
+        collector=lambda _target, commands: {commands[0]: "Comware Software"},
+    )
+
+    observation = service.list_observations("default")[0]
+    candidate = service.list_references("default")[0]
+    assert task["observation_id"] == observation["observation_id"]
+    assert observation["authoritative_for_normal"] is False
+    assert candidate["state"] == "candidate"
+    assert candidate["authority"] == "observed"
+    assert candidate["current"] is False
+    assert service.list_baselines("default") == []
+
+    confirmed = service.transition_reference("default", candidate["reference_id"], "confirm")
+    assert confirmed["state"] == "confirmed"
+    assert confirmed["authority"] == "user_confirmed"
+    assert confirmed["current"] is True
+    assert service.list_baselines("default")[0]["baseline_id"] == confirmed["reference_id"]
+
+    later = service.record_inspection_observation("default", {
+        "task_id": "inspection_later", "status": "succeeded", "finished_at": "2026-09-07T00:00:00Z",
+        "artifact_id": "artifact-2", "results": {connection["connection_id"]: {"status": "succeeded", "output_hash": "changed"}},
+    })
+    assert service.list_baselines("default")[0]["baseline_id"] == confirmed["reference_id"]
+    replacement = service.transition_reference("default", later["candidate_reference_id"], "confirm")
+    old = next(item for item in service.list_references("default") if item["reference_id"] == confirmed["reference_id"])
+    assert replacement["current"] is True
+    assert old["state"] == "superseded" and old["current"] is False
+
+
+def test_partial_observation_cannot_be_confirmed_as_expected_state(monkeypatch, tmp_path):
+    _setup(monkeypatch, tmp_path)
+    connection = _register_connection("default", {
+        "name": "R1", "host": "10.0.0.1", "protocol": "telnet", "vendor": "h3c",
+    })
+    task = {
+        "task_id": "inspection_partial", "status": "partial", "finished_at": "2026-09-06T00:00:00Z",
+        "artifact_id": "artifact-1", "results": {connection["connection_id"]: {"status": "partial", "output_hash": "hash"}},
+    }
+    observation = service.record_inspection_observation("default", task)
+
+    with pytest.raises(ValueError, match="complete_observation_required_for_confirmation"):
+        service.transition_reference("default", observation["candidate_reference_id"], "confirm")
+
+
+def test_command_experience_is_advisory_and_scoped(monkeypatch, tmp_path):
+    _setup(monkeypatch, tmp_path)
+    connection = _register_connection("default", {
+        "name": "R1", "host": "10.0.0.1", "protocol": "telnet", "vendor": "h3c",
+    })
+    records = service.record_command_experience("default", connection["connection_id"], {
+        "device_profile": {"driver_id": "h3c.comware"},
+        "command_results": [{"command": "display version", "complete": True, "error_code": "", "truncated": False}],
+    })
+    context = service.operational_context("default", connection_ids=[connection["connection_id"]])
+
+    assert records[0]["status"] == "accepted"
+    assert records[0]["advisory_only"] is True
+    assert context["command_experience"][0]["command"] == "display version"
+    assert context["first_observation_rule"] == "never_assume_normal"
+
+    empty_scope = service.operational_context("default", connection_ids=[])
+    assert empty_scope["observations"] == []
+    assert empty_scope["references"] == []
+    assert empty_scope["command_experience"] == []
+
+
+def test_device_manage_syntax_rejection_returns_model_guidance_without_runtime_call(monkeypatch, tmp_path):
+    _setup(monkeypatch, tmp_path)
+    connection = _register_connection("default", {
+        "name": "R1", "host": "10.0.0.1", "protocol": "telnet", "vendor": "h3c",
+    })
+    skill = service.save_skill("default", {
+        "name": "read", "device_ids": [connection["device_id"]],
+        "connection_ids": [connection["connection_id"]],
+    })
+    monkeypatch.setattr(service, "test_connection", lambda *_args, **_kwargs: {
+        "ok": True, "read_ok": False,
+        "device_profile": {"driver_id": "h3c.comware", "vendor": "h3c", "semantic_facts": ["bgp_peers"]},
+        "command_results": [{
+            "command": "display bgp peer vpn4", "complete": True,
+            "error_code": "device_command_rejected", "device_error": "% Unrecognized command",
+        }],
+    })
+    result = device_manage(SimpleNamespace(
+        workspace_id="default", skill=skill["skill_id"],
+        skill_connection_ids=(connection["connection_id"],),
+        arguments={"action": "read", "connection_id": connection["connection_id"], "commands": ["display bgp peer vpn4"]},
+    ))
+
+    assert result["model_recovery_guidance"][0]["decision_owner"] == "llm"
+    assert result["command_experience"][0]["status"] == "rejected"
+    assert "runtime_recoveries" not in result
+    assert "runtime_recovery" not in result
+
+
 def test_device_manage_reconnects_expired_authorized_connection(monkeypatch, tmp_path):
     _setup(monkeypatch, tmp_path)
     device = service.save_device("default", {"name": "R1", "host": "10.0.0.1"})
@@ -733,10 +835,10 @@ def test_legacy_skill_read_capability_is_intrinsic_without_granting_writes(monke
     _setup(monkeypatch, tmp_path)
     conn = _register_connection("default", {"name": "CE", "host": "127.0.0.1", "protocol": "telnet", "vendor": "h3c"})
     skill = service.save_skill("default", {"name": "test", "device_ids": [conn["device_id"]], "connection_ids": [conn["connection_id"]], "allowed_tool_ids": []})
-    assert skill["allowed_tool_ids"] == [service.SKILL_BASE_TOOL_ID]
+    assert skill["allowed_tool_ids"] == [service.SKILL_BASE_TOOL_ID, "network.operations.context_read"]
     service._store("default").save("skills", skill["skill_id"], {**skill, "allowed_tool_ids": []})
     for resolved in [service.get_skill("default", skill["skill_id"]), service.list_skills("default")[0], service.resolve_workbench_selection("default", {"skill_id": skill["skill_id"]})]:
-        assert resolved["allowed_tool_ids"] == [service.SKILL_BASE_TOOL_ID]
+        assert resolved["allowed_tool_ids"] == [service.SKILL_BASE_TOOL_ID, "network.operations.context_read"]
         assert resolved["capabilities"] == []
     inv = SimpleNamespace(workspace_id="default", skill=skill["skill_id"], arguments={"action": "configure", "connection_id": conn["connection_id"], "commands": ["system-view"]})
     assert device_manage(inv)["error"] == "configuration_not_allowed_by_skill"
