@@ -194,15 +194,34 @@ def register_routes(app):
             return jsonify({"ok": False, "error": "workspace_id is required"}), 400
         return jsonify({"ok": True, **service.operational_context(ws)})
 
-    @app.route("/api/extensions/network.operations/references/<reference_id>", methods=["POST"])
+    @app.route("/api/extensions/network.operations/references/<reference_id>", methods=["POST", "DELETE"])
     def network_reference(reference_id):
         ws = _workspace()
         if not ws:
             return jsonify({"ok": False, "error": "workspace_id is required"}), 400
         try:
+            if request.method == "DELETE":
+                return jsonify({"ok": True, "deleted": service.delete_reference(ws, reference_id)})
             return jsonify({"ok": True, "reference": service.transition_reference(ws, reference_id, str(_payload().get("action") or ""))})
         except ValueError as exc:
             return jsonify({"ok": False, "error": str(exc)}), 400
+
+    @app.route("/api/extensions/network.operations/observations/<observation_id>", methods=["DELETE"])
+    def network_observation(observation_id):
+        ws = _workspace()
+        if not ws:
+            return jsonify({"ok": False, "error": "workspace_id is required"}), 400
+        try:
+            return jsonify({"ok": True, **service.delete_observation(ws, observation_id)})
+        except ValueError as exc:
+            return jsonify({"ok": False, "error": str(exc)}), 404
+
+    @app.route("/api/extensions/network.operations/command-experience/<experience_id>", methods=["DELETE"])
+    def network_command_experience(experience_id):
+        ws = _workspace()
+        if not ws:
+            return jsonify({"ok": False, "error": "workspace_id is required"}), 400
+        return jsonify({"ok": True, "deleted": service.delete_command_experience(ws, experience_id)})
 
     @app.route("/api/extensions/network.operations/scripts", methods=["GET", "POST"])
     def network_inspection_scripts():

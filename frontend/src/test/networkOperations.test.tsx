@@ -78,6 +78,22 @@ test("operational context separates observations from explicitly confirmed refer
   })));
 });
 
+test("operational context exposes confirmed hard deletes", async () => {
+  render(<><NetworkOperations /><ConfirmHost /></>);
+  await screen.findByTestId("device-card-d1");
+  fireEvent.click(screen.getByRole("button", { name: /环境与证据/ }));
+  fireEvent.click(screen.getByRole("button", { name: "永久删除观察 inspection-1" }));
+  fireEvent.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "永久删除" }));
+  await waitFor(() => expect(apiRequest).toHaveBeenCalledWith(expect.objectContaining({
+    method: "DELETE", url: "/extensions/network.operations/observations/o1", data: { workspace_id: "default" },
+  })));
+  fireEvent.click(screen.getByRole("button", { name: "永久删除命令反馈 display version" }));
+  fireEvent.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "永久删除" }));
+  await waitFor(() => expect(apiRequest).toHaveBeenCalledWith(expect.objectContaining({
+    method: "DELETE", url: "/extensions/network.operations/command-experience/e1", data: { workspace_id: "default" },
+  })));
+});
+
 test("context loading failure does not hide device and Skill management", async () => {
   const original = vi.mocked(apiRequest).getMockImplementation();
   vi.mocked(apiRequest).mockImplementation(async (request) => {

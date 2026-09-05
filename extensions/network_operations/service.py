@@ -1704,6 +1704,43 @@ def list_references(workspace_id: str, *, limit: int = 200) -> list[dict[str, An
 
 
 @_connection_transaction
+def delete_observation(workspace_id: str, observation_id: str) -> dict[str, Any]:
+    """Hard-delete an observation and every reference that depends on it.
+
+    A reference without its source observation is invalid evidence.  Deleting
+    one therefore removes those dependent reference records in the same
+    workspace transaction; inspection task history and artifacts are retained
+    because they are separate execution/audit records.
+    """
+    store = _store(workspace_id)
+    if not store.get("observations", observation_id):
+        raise ValueError("observation_not_found")
+    deleted_references = 0
+    for reference in list_references(workspace_id, limit=INTERNAL_SCAN_LIMIT):
+        source_ids = {str(item) for item in reference.get("source_observation_ids") or []}
+        if observation_id in source_ids and store.delete("references", str(reference["reference_id"])):
+            deleted_references += 1
+    store.delete("observations", observation_id)
+    return {
+        "deleted": True,
+        "observation_id": observation_id,
+        "deleted_dependent_references": deleted_references,
+    }
+
+
+@_connection_transaction
+def delete_reference(workspace_id: str, reference_id: str) -> bool:
+    """Hard-delete a user-visible operational reference record."""
+    return _store(workspace_id).delete("references", reference_id)
+
+
+@_connection_transaction
+def delete_command_experience(workspace_id: str, experience_id: str) -> bool:
+    """Hard-delete one advisory command-feedback record."""
+    return _store(workspace_id).delete("command_experience", experience_id)
+
+
+@_connection_transaction
 def transition_reference(workspace_id: str, reference_id: str, action: str) -> dict[str, Any]:
     """Confirm or invalidate a candidate through an explicit human action."""
     from core.runtime_engine.context_contract import normalize_reference_descriptor

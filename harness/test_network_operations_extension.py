@@ -385,6 +385,30 @@ def test_command_experience_is_advisory_and_scoped(monkeypatch, tmp_path):
     assert empty_scope["command_experience"] == []
 
 
+def test_hard_delete_context_records_removes_only_model_context(monkeypatch, tmp_path):
+    _setup(monkeypatch, tmp_path)
+    connection = _register_connection("default", {
+        "name": "R1", "host": "10.0.0.1", "protocol": "telnet", "vendor": "h3c",
+    })
+    observation = service.record_inspection_observation("default", {
+        "task_id": "inspection_delete", "status": "succeeded", "finished_at": "2026-09-06T00:00:00Z",
+        "artifact_id": "artifact-delete", "results": {connection["connection_id"]: {"status": "succeeded", "output_hash": "hash"}},
+    })
+    experience = service.record_command_experience("default", connection["connection_id"], {
+        "device_profile": {"driver_id": "h3c.comware"},
+        "command_results": [{"command": "display version", "complete": True, "error_code": "", "truncated": False}],
+    })[0]
+
+    result = service.delete_observation("default", observation["observation_id"])
+
+    assert result["deleted"] is True
+    assert result["deleted_dependent_references"] == 1
+    assert service.list_observations("default") == []
+    assert service.list_references("default") == []
+    assert service.delete_command_experience("default", experience["experience_id"]) is True
+    assert service.list_command_experience("default") == []
+
+
 def test_device_manage_syntax_rejection_returns_model_guidance_without_runtime_call(monkeypatch, tmp_path):
     _setup(monkeypatch, tmp_path)
     connection = _register_connection("default", {
@@ -909,6 +933,18 @@ def test_extension_routes_cover_device_connection_and_skill_flow(monkeypatch, tm
     assert skills.status_code == 200
     assert skills.get_json()["skills"] == []
     assert client.get("/api/extensions/network.operations/devices/device_missing").status_code == 400
+
+    observation = service.record_inspection_observation("default", {
+        "task_id": "inspection_http_delete", "status": "succeeded", "finished_at": "2026-09-06T00:00:00Z",
+        "artifact_id": "artifact-http-delete", "results": {"connection_http": {"status": "succeeded", "output_hash": "hash"}},
+    })
+    deleted = client.delete(
+        f"/api/extensions/network.operations/observations/{observation['observation_id']}",
+        json={"workspace_id": "default"},
+    )
+    assert deleted.status_code == 200
+    assert deleted.get_json()["deleted"] is True
+    assert deleted.get_json()["deleted_dependent_references"] == 1
 
 
 def test_inspection_scripts_are_validated_and_snapshotted(monkeypatch, tmp_path):
