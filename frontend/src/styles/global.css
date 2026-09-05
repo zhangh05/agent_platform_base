@@ -21,6 +21,10 @@ body,
 :root {
   color-scheme: light;
 
+  /* Product-wide density.  Keep this at a single boundary so every page,
+     portal, icon, control and legacy pixel value shares the same scale. */
+  --ui-scale: 0.8;
+
   /* Design System 3.0 — calm, evidence-led operations workspace. */
   --bg: #f6f8f7;
   --surface: #ffffff;
@@ -235,6 +239,10 @@ body,
 }
 
 body {
+  /* `zoom` participates in layout, unlike transform: scale(), so viewport
+     positioning, scrolling and pointer hit areas stay aligned. The browser
+     keeps normal document width; viewport-height shells compensate locally. */
+  zoom: var(--ui-scale);
   min-width: 320px;
   color: var(--text);
   background: var(--bg);
@@ -477,7 +485,9 @@ pre code {
 .app-shell {
   display: grid;
   grid-template-rows: var(--h-header) minmax(0, 1fr);
-  height: 100vh;
+  /* A viewport-sized shell needs the inverse logical height, otherwise a
+     global 80% zoom leaves an empty strip below the application. */
+  height: calc(100vh / var(--ui-scale));
   overflow: hidden;
   background: var(--bg);
 }
