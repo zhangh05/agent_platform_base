@@ -204,7 +204,10 @@
 }
 
 .message-row {
-  width: min(100%, 880px);
+  /* The reading cap belongs to the message stack.  Capping this outer row as
+     well wastes usable space in the workbench after the density scale. */
+  width: 100%;
+  max-width: 1120px;
   margin-inline: auto;
   gap: 12px;
   margin-bottom: 30px;
@@ -361,7 +364,10 @@
   display: grid;
   grid-template-rows: minmax(32px, auto) 32px;
   width: 100%;
-  max-width: 920px;
+  /* The composer and running results share the conversation column's
+     available width.  Their old caps were set before the 80% density scale
+     and made a wide workspace look artificially empty. */
+  max-width: 1040px;
   min-height: 70px;
   margin: 0 auto;
   padding: 6px 10px 5px;
