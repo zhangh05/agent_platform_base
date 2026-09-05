@@ -47,4 +47,23 @@ describe("ResultInline recovered tool failures", () => {
     expect(screen.getByTestId("goal-loop-summary")).toHaveTextContent("目标已满足");
     expect(screen.getByTestId("goal-loop-summary")).toHaveTextContent("外部资料失败后的替代取证");
   });
+
+  it("does not describe a queued tracked task as completed", () => {
+    render(<ResultInline result={{
+      ...baseResult,
+      metadata: {
+        execution_outcome: "partial" as const,
+        tracking_summary: {
+          task_id: "inspection-queued",
+          status: "queued",
+          done: false,
+          progress: { completed: 0, total: 6 },
+        },
+      },
+    }} fallbackText="" />);
+
+    expect(screen.getByText("巡检任务仍在执行：已获取 0 / 6 台设备结果")).toBeInTheDocument();
+    expect(screen.getAllByText("已提交，等待结果")).toHaveLength(2);
+    expect(screen.getByLabelText("执行摘要")).toHaveTextContent("等待设备结果");
+  });
 });

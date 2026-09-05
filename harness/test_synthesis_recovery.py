@@ -12,6 +12,7 @@ from core.runtime_engine.query_loop import (
     _json_compact,
     _model_tool_payload,
 )
+from core.runtime_engine.tool_runtime import ToolRuntime
 
 
 def _six_device_results() -> list[StreamingToolResult]:
@@ -68,6 +69,48 @@ def test_final_synthesis_recovery_is_tool_free_and_uses_all_evidence():
     body = str(captured["messages"][-1].content)
     assert body.count('"evidence_id"') == 6
     assert "device-5" in body
+    assert context.extras["synthesis_recovery"]["ok"] is True
+
+
+def test_max_iteration_exit_reserves_a_tool_free_final_synthesis():
+    """Planning exhaustion must not replace completed evidence with a ledger."""
+    responses = [
+        LLMResponse(tool_calls=[
+            LLMToolCall(
+                id="read-once",
+                name="data.manage",
+                arguments={"action": "parse", "text": "device inventory"},
+            ),
+        ]),
+        LLMResponse(content="已采集设备清单；未发现其他已核验结论。"),
+    ]
+    calls = []
+
+    def llm(**kwargs):
+        calls.append(kwargs)
+        return responses.pop(0)
+
+    config = SSOTRuntimeConfig(max_query_loop_iterations=1, max_llm_calls=3)
+    runtime = ToolRuntime(config)
+    runtime.register("data.manage", lambda _args: {"ok": True, "rows": [{"device": "PE1"}]})
+    registry = {
+        "data.manage": {
+            "description": "read data",
+            "args_schema": {"type": "object", "properties": {"action": {"type": "string"}}},
+        },
+    }
+    loop = QueryLoop(config, registry, runtime, llm_invoke=llm)
+    context = StatelessContext(
+        workspace_id="default", session_id="max-iteration", request_id="max-iteration",
+        user_input="了解设备", extras={},
+    )
+
+    result = asyncio.run(loop.run(context, BudgetController(config), None))
+
+    assert result.final_response == "已采集设备清单；未发现其他已核验结论。"
+    assert result.error == "max_iterations"
+    assert len(calls) == 2
+    assert calls[-1]["tools"] == []
     assert context.extras["synthesis_recovery"]["ok"] is True
 
 

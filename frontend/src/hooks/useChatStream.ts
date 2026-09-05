@@ -557,11 +557,16 @@ export function useChatStream(
       }
       const cleanText = sanitizeAssistantText(wsResult.final_response);
       const cleanResult = { ...wsResult, final_response: sanitizeAssistantText(wsResult.final_response ?? "") };
+      const trackingSummary = cleanResult.metadata?.tracking_summary;
+      const trackingPending = Boolean(
+        trackingSummary?.task_id && !(trackingSummary.done || trackingSummary.terminal),
+      );
       const toolCalls: InlineToolCall[] = (cleanResult.tool_calls ?? []).map((tc) => ({
         call_id: tc.call_id,
         tool_id: tc.tool_id,
         tool_name: toolLabel(tc.tool_id),
         ok: tc.ok,
+        status: trackingPending && tc.ok ? "pending" : tc.ok ? "done" : "fail",
         summary: tc.summary,
         duration_ms: tc.duration_ms ?? undefined,
         errors: tc.errors,
@@ -633,8 +638,13 @@ export function useChatStream(
           useWorkbenchStore.getState().switchSession(resolvedSid);
           onSessionResolved(resolvedSid);
         }
+        const trackingSummary = res.metadata?.tracking_summary;
+        const trackingPending = Boolean(
+          trackingSummary?.task_id && !(trackingSummary.done || trackingSummary.terminal),
+        );
         const tcArray = (res.tool_calls ?? []).map((tc: ToolCallResult) => ({
           call_id: tc.call_id, tool_id: tc.tool_id, tool_name: toolLabel(tc.tool_id), ok: tc.ok,
+          status: trackingPending && tc.ok ? "pending" : tc.ok ? "done" : "fail",
           summary: tc.summary, duration_ms: tc.duration_ms ?? undefined,
           errors: tc.errors, artifacts: tc.artifacts,
           orchestration: (tc.metadata?.orchestration || undefined) as InlineToolCall["orchestration"],

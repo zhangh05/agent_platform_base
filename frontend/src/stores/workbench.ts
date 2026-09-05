@@ -554,6 +554,14 @@ export const useWorkbenchStore = create<WorkbenchState>()(
                   (metadata.goal_loop as AgentResult["metadata"]["goal_loop"])
                   || (runtimeMetadata.goal_loop as AgentResult["metadata"]["goal_loop"])
                   || undefined,
+                tracking_summary:
+                  (metadata.tracking_summary as AgentResult["metadata"]["tracking_summary"])
+                  || (runtimeMetadata.tracking_summary as AgentResult["metadata"]["tracking_summary"])
+                  || undefined,
+                tracking_events:
+                  (metadata.tracking_events as AgentResult["metadata"]["tracking_events"])
+                  || (runtimeMetadata.tracking_events as AgentResult["metadata"]["tracking_events"])
+                  || [],
                 context_compacted: Boolean(metadata.context_compacted ?? runtimeMetadata.context_compacted),
                 context_estimated_tokens: Number(
                   metadata.context_estimated_tokens ?? runtimeMetadata.context_estimated_tokens ?? 0,

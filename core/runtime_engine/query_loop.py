@@ -2798,7 +2798,31 @@ class QueryLoop:
                 },
             )
 
-        # Max iterations exhausted
+        # A planning budget is not a response budget.  A long-running tool can
+        # consume every planning iteration while still leaving the user with
+        # valid, terminal evidence.  Reserve the bounded, tool-free synthesis
+        # path for this exit too: it cannot repeat an external operation and
+        # prevents a transport ledger from becoming the user-facing answer.
+        if all_results:
+            recovered = await self._recover_final_synthesis(ctx, budget)
+            llm_calls = budget.llm_calls
+            if recovered:
+                ctx.extras["response_outcome"] = "recovered"
+                return finish(
+                    final_response=recovered,
+                    tool_results=all_results,
+                    iterations=iterations,
+                    total_tool_calls=len(all_results),
+                    llm_calls=llm_calls,
+                    # Preserve the runtime fact that planning stopped at its
+                    # limit.  The outcome projection may therefore remain
+                    # partial when coverage was incomplete, even though the
+                    # answer itself is useful and evidence-led.
+                    error="max_iterations",
+                )
+            ctx.extras["response_outcome"] = "deterministic_fallback"
+
+        # Max iterations exhausted and no synthesis response is available.
         return finish(
             final_response=(
                 self._build_tool_result_fallback(ctx, all_results)

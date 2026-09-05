@@ -5098,6 +5098,7 @@ details.collapse[open] summary::before {
 }
 .tool-call-card.ok { border-left: 3px solid var(--ok); }
 .tool-call-card.fail { border-left: 3px solid var(--danger); }
+.tool-call-card.pending { border-left: 3px solid var(--warn); }
 .tool-call-card:hover { border-color: var(--accent); }
 
 .tool-call-card-header {
@@ -5107,6 +5108,8 @@ details.collapse[open] summary::before {
 }
 .tc-seq { color: var(--text-4); font-size: 10px; min-width: 18px; }
 .tc-icon { font-size: 12px; }
+.tc-icon.pending, .tc-state { color: var(--warn); }
+.tc-state { font-size: var(--fs-11); white-space: nowrap; }
 .tc-name { color: var(--text-2); font-weight: 500; }
 .tc-chev { color: var(--text-4); margin-left: auto; font-size: 10px; }
 

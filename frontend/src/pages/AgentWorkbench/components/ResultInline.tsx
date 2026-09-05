@@ -66,7 +66,14 @@ function trackingStats(result?: AgentResult) {
   };
 }
 
-function toolCallSummary(calls: ToolCallResult[], taskCompleted: boolean): string {
+function toolCallSummary(calls: ToolCallResult[], taskCompleted: boolean, tracking: ReturnType<typeof trackingStats>): string {
+  if (tracking.taskId && !tracking.done) {
+    const completed = Number(tracking.progress.completed || 0);
+    const total = Number(tracking.progress.total || 0);
+    return total > 0
+      ? `巡检任务仍在执行：已获取 ${completed} / ${total} 台设备结果`
+      : "巡检任务已提交，等待设备返回结果";
+  }
   const failed = calls.filter((tc) => !tc.ok).length;
   const primary = calls.find((tc) => tc.ok) ?? calls[0];
   const label = primary ? toolLabel(primary.tool_id) : "工具调用";
@@ -100,6 +107,7 @@ export const ResultInline = memo(function ResultInline({
   const passedGoals = recoveryGoals.filter((goal) => goal.status === "passed").length;
   const blockedGoals = recoveryGoals.filter((goal) => goal.status === "blocked").length;
   const tracking = trackingStats(result);
+  const trackingPending = Boolean(tracking.taskId && !tracking.done);
   const toolCalls = result?.tool_calls ?? [];
   const actionCount = toolCalls.length;
   const failedToolCount = toolCalls.filter((tc) => !tc.ok).length;
@@ -219,9 +227,9 @@ export const ResultInline = memo(function ResultInline({
           {result ? (
             <section className="result-overview" aria-label="执行摘要">
               <div className="result-overview-main">
-                <span className={`result-overview-status ${isUnknownOutcome ? "unknown" : isFailed ? "failed" : "complete"}`}>
+                <span className={`result-overview-status ${isUnknownOutcome ? "unknown" : trackingPending ? "pending" : isFailed ? "failed" : "complete"}`}>
                   <span className="status-dot-mini" />
-                  {isUnknownOutcome ? "结果未知" : isFailed ? "需要关注" : "本轮完成"}
+                  {isUnknownOutcome ? "结果未知" : trackingPending ? "等待设备结果" : isFailed ? "需要关注" : "本轮完成"}
                 </span>
                 <span className="result-overview-title">
                   {actionCount > 0 ? `已处理 ${actionCount} 个工具调用` : "已生成本轮答复"}
@@ -230,6 +238,8 @@ export const ResultInline = memo(function ResultInline({
               <span className="result-overview-meta">
                 {isUnknownOutcome
                   ? "写入已冻结，等待受控核对"
+                  : trackingPending
+                  ? "任务已提交，尚无可确认的设备执行结果"
                   : failedToolCount > 0 && isFailed
                   ? `${failedToolCount} 项需要跟进`
                   : failedToolCount > 0
@@ -269,15 +279,15 @@ export const ResultInline = memo(function ResultInline({
           {((result?.tool_calls) ?? []).length > 0 && (
             <div className="chat-tool-summary" data-testid="inline-tool-summary">
               <IconBolt size={12} className="inline-icon-accent" />
-              <span>{toolCallSummary(result?.tool_calls ?? [], Boolean(result?.ok && executionOutcome !== "unknown"))}</span>
+              <span>{toolCallSummary(result?.tool_calls ?? [], Boolean(result?.ok && executionOutcome !== "unknown"), tracking)}</span>
               <details className="inline-technical-details">
                 <summary>技术详情</summary>
                 <div className="chat-tool-calls">
                   {(result?.tool_calls ?? []).map((tc: ToolCallResult, idx: number) => (
                     <span key={tc.call_id || `${tc.tool_id}-${idx}`} className="chat-tool-call">
                       <span className="tc-name">{toolLabel(tc.tool_id)}</span>
-                      <span className={"tc-status " + (tc.ok ? "ok" : "err")}>
-                        {tc.ok ? "已完成" : "需关注"}
+                      <span className={"tc-status " + (trackingPending ? "pending" : tc.ok ? "ok" : "err")}>
+                        {trackingPending ? "已提交，等待结果" : tc.ok ? "已完成" : "需关注"}
                       </span>
                     </span>
                   ))}
@@ -294,7 +304,7 @@ export const ResultInline = memo(function ResultInline({
                   <span>动作跟踪</span>
                 </span>
                 <span className="action-trace-pill">{actionCount} 个工具</span>
-                <span className="action-trace-pill ok">{successToolCount} 成功</span>
+                <span className={`action-trace-pill ${trackingPending ? "warn" : "ok"}`}>{trackingPending ? "等待终态" : `${successToolCount} 成功`}</span>
                 {failedToolCount > 0 && <span className={`action-trace-pill ${isFailed ? "danger" : "muted"}`}>{failedToolCount} 失败</span>}
                 {retry.attempts > 0 && <span className="action-trace-pill warn">{retry.attempts} 次自动重试</span>}
                 {validationCorrection.attempts > 0 && (

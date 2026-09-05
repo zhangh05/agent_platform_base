@@ -9,6 +9,9 @@ interface InlineToolCallCardProps {
 
 export function InlineToolCallCard({ toolCall, seq }: InlineToolCallCardProps) {
   const [open, setOpen] = useState(false);
+  const pending = toolCall.status === "pending";
+  const succeeded = toolCall.ok && !pending;
+  const state = pending ? "pending" : succeeded ? "ok" : "fail";
   const errText = toolCall.errors?.join(", ");
   const orchestration = toolCall.orchestration;
   const orchestrationStep = typeof orchestration?.step_id === "string" ? orchestration.step_id : "";
@@ -21,7 +24,7 @@ export function InlineToolCallCard({ toolCall, seq }: InlineToolCallCardProps) {
 
   return (
     <div
-      className={`tool-call-card ${toolCall.ok ? "ok" : "fail"}${open ? " is-open" : ""}`}
+      className={`tool-call-card ${state}${open ? " is-open" : ""}`}
       onClick={() => setOpen(!open)}
       role="button"
       tabIndex={0}
@@ -34,10 +37,11 @@ export function InlineToolCallCard({ toolCall, seq }: InlineToolCallCardProps) {
     >
       <div className="tool-call-card-header">
         <span className="tc-seq">#{seq}</span>
-        <span className={`tc-icon ${toolCall.ok ? "ok" : "fail"}`}>
-          {toolCall.ok ? <IconCheck size={13} weight="bold" /> : <IconAlert size={13} weight="bold" />}
+        <span className={`tc-icon ${state}`}>
+          {succeeded ? <IconCheck size={13} weight="bold" /> : <IconAlert size={13} weight="bold" />}
         </span>
         <span className="tc-name">{toolCall.tool_name}</span>
+        {pending && <span className="tc-state">已提交，等待设备结果</span>}
         {toolCall.duration_ms != null && (
           <span className="tc-duration-pill">
             <IconClock size={11} />
