@@ -204,10 +204,10 @@
 }
 
 .message-row {
-  /* The reading cap belongs to the message stack.  Capping this outer row as
-     well wastes usable space in the workbench after the density scale. */
+  /* Assistant output is an operational surface, not a narrow article.  It
+     must use the middle column so tables and live tool cards stay legible. */
   width: 100%;
-  max-width: 1120px;
+  max-width: none;
   margin-inline: auto;
   gap: 12px;
   margin-bottom: 30px;
@@ -219,8 +219,8 @@
 
 .message-stack,
 .message-row.assistant .message-stack {
-  width: min(var(--w-reading), calc(100% - 44px));
-  max-width: min(var(--w-reading), calc(100% - 44px));
+  width: calc(100% - 44px);
+  max-width: calc(100% - 44px);
 }
 
 .message-row.user .message-stack {
@@ -364,10 +364,8 @@
   display: grid;
   grid-template-rows: minmax(32px, auto) 32px;
   width: 100%;
-  /* The composer and running results share the conversation column's
-     available width.  Their old caps were set before the 80% density scale
-     and made a wide workspace look artificially empty. */
-  max-width: 1200px;
+  /* The composer shares the full middle column with conversation results. */
+  max-width: none;
   min-height: 70px;
   margin: 0 auto;
   padding: 6px 10px 5px;

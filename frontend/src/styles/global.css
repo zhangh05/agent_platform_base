@@ -118,11 +118,10 @@ body,
   --shadow-focus: 0 0 0 3px rgba(29, 92, 131, 0.13);
 
   --h-header: 56px;
-  --w-sidebar: 176px;
+  --w-sidebar: 216px;
   --w-sidebar-collapsed: 0px;
-  --w-progress: 192px;
+  --w-progress: 272px;
   --w-page-max: 1440px;
-  --w-reading: 1120px;
 
   --ease: cubic-bezier(0.2, 0, 0, 1);
   --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
