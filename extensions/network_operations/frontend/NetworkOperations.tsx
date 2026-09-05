@@ -219,14 +219,14 @@ export default function NetworkOperations() {
       {notice && <div role="alert" className="network-notice">{notice}</div>}
       {editor === "device" ? (<section className="network-panel">
         <h2>{deviceForm.device_id ? "编辑设备" : "登记设备"}</h2><p>设备只保存身份与区域，凭据由独立连接安全管理。</p>
-        <form onSubmit={saveRegion} className="inline-form"><input value={regionName} onChange={(event) => setRegionName(event.target.value)} placeholder={editingRegionId ? "修改区域名称" : "新建设备区域"} /><Button type="submit">{editingRegionId ? "保存" : "添加区域"}</Button>{editingRegionId ? <Button type="button" onClick={() => { setEditingRegionId(""); setRegionName(""); }}>取消</Button> : null}</form>
+        <form onSubmit={saveRegion} className="inline-form"><input value={regionName} onChange={(event) => setRegionName(event.target.value)} placeholder={editingRegionId ? "修改区域名称" : "新建设备区域"} /><Button variant="primary" type="submit">{editingRegionId ? "保存" : "添加区域"}</Button>{editingRegionId ? <Button type="button" onClick={() => { setEditingRegionId(""); setRegionName(""); }}>取消</Button> : null}</form>
         {regions.length ? <div className="region-list">{regions.map((region) => <span key={region.region_id}>{region.name}<button type="button" onClick={() => { setEditingRegionId(region.region_id); setRegionName(region.name); }}>编辑</button><button type="button" onClick={() => void removeRegion(region)}>删除</button></span>)}</div> : null}
         <form onSubmit={saveDevice} className="form-grid">
           <label>设备名称<input required value={deviceForm.name} onChange={(event) => setDeviceForm({ ...deviceForm, name: event.target.value })} /></label>
           <label>管理地址<input required value={deviceForm.host} onChange={(event) => setDeviceForm({ ...deviceForm, host: event.target.value })} /></label>
           <label>厂商<select value={deviceForm.vendor} onChange={(event) => setDeviceForm({ ...deviceForm, vendor: event.target.value })}><option value="h3c">H3C</option><option value="huawei">华为</option><option value="cisco">Cisco</option><option value="generic">通用</option></select></label>
           <label>区域<select value={deviceForm.region_id} onChange={(event) => setDeviceForm({ ...deviceForm, region_id: event.target.value })}><option value="">未分区</option>{regions.map((region) => <option key={region.region_id} value={region.region_id}>{region.name}</option>)}</select></label>
-          <div className="form-actions"><Button type="submit" disabled={busy}>{deviceForm.device_id ? "保存设备" : "登记设备"}</Button>{deviceForm.device_id ? <Button type="button" onClick={() => setEditor(null)}>取消</Button> : null}</div>
+          <div className="form-actions"><Button variant="primary" type="submit" disabled={busy}>{deviceForm.device_id ? "保存设备" : "登记设备"}</Button>{deviceForm.device_id ? <Button type="button" onClick={() => setEditor(null)}>取消</Button> : null}</div>
         </form>
       </section>) : editor === "connection" ? (<section className="network-panel">
         <h2>{connectionForm.connection_id ? "编辑连接" : "配置连接"}</h2><p>SSH 必须提供用户名；Telnet 支持无认证，端口均可自定义。</p>
@@ -240,7 +240,7 @@ export default function NetworkOperations() {
           {connectionForm.auth_method !== "none" ? <label>用户名<input required={connectionForm.protocol === "ssh"} value={connectionForm.username} onChange={(event) => setConnectionForm({ ...connectionForm, username: event.target.value })} /></label> : null}
           {connectionForm.auth_method === "password" ? <label>密码<input type="password" value={connectionForm.password} onChange={(event) => setConnectionForm({ ...connectionForm, password: event.target.value })} placeholder={connectionForm.connection_id ? "留空则保留原密码" : ""} /></label> : null}
           {connectionForm.auth_method === "private_key" ? <><label className="full-field">SSH 私钥<textarea value={connectionForm.private_key} onChange={(event) => setConnectionForm({ ...connectionForm, private_key: event.target.value })} placeholder={connectionForm.connection_id ? "留空则保留原私钥" : "粘贴 PEM/OpenSSH 私钥"} /></label><label>私钥口令<input type="password" value={connectionForm.passphrase} onChange={(event) => setConnectionForm({ ...connectionForm, passphrase: event.target.value })} placeholder="无口令可留空" /></label></> : null}
-          <div className="form-actions"><Button type="submit" disabled={busy}>保存并测试</Button>{connectionForm.connection_id ? <Button type="button" onClick={() => setEditor(null)}>取消</Button> : null}</div>
+          <div className="form-actions"><Button variant="primary" type="submit" disabled={busy}>保存并测试</Button>{connectionForm.connection_id ? <Button type="button" onClick={() => setEditor(null)}>取消</Button> : null}</div>
         </form>
       </section>) : (<section className="network-panel"><h2>{skillForm.skill_id ? "编辑 Skill" : "创建 Skill"}</h2><p>Skill 决定工作台可选设备与可信连接，模型在此边界内自主编排工具。</p><form onSubmit={saveSkill} className="form-grid">
         <label>名称<input required value={skillForm.name} onChange={(event) => setSkillForm({ ...skillForm, name: event.target.value })} /></label>
@@ -254,7 +254,7 @@ export default function NetworkOperations() {
           <p>默认只读。开启不会立即连接或修改设备，也不会自动保存配置、确认交互或重启。</p>
         </fieldset>
         <label className="full-field">使用说明<textarea value={skillForm.instructions} onChange={(event) => setSkillForm({ ...skillForm, instructions: event.target.value })} placeholder="描述目标、证据要求和操作边界；模型自行决定工具顺序与并行关系。" /></label>
-        <div className="form-actions"><Button type="submit" disabled={busy || !skillForm.device_ids.length || !skillForm.connection_ids.length || !skillForm.allowed_tool_ids.length}>{skillForm.skill_id ? "保存 Skill" : "发布到工作台"}</Button>{skillForm.skill_id ? <Button type="button" onClick={() => setEditor(null)}>取消</Button> : null}</div>
+        <div className="form-actions"><Button variant="primary" type="submit" disabled={busy || !skillForm.device_ids.length || !skillForm.connection_ids.length || !skillForm.allowed_tool_ids.length}>{skillForm.skill_id ? "保存 Skill" : "发布到工作台"}</Button>{skillForm.skill_id ? <Button type="button" onClick={() => setEditor(null)}>取消</Button> : null}</div>
       </form></section>)}
     </dialog>}
     {view === "devices" ? <div className="network-grid">

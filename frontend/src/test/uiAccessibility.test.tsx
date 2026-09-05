@@ -54,3 +54,18 @@ describe("shared UI accessibility contracts", () => {
     expect(screen.getByRole("button", { name: "打开设置" })).toHaveFocus();
   });
 });
+
+describe("nested data row controls", () => {
+  it("keeps button clicks and Space on an input independent of row activation", () => {
+    const onRowClick = vi.fn();
+    const onAction = vi.fn();
+    render(<DataTable
+      columns={[{ key: "actions", header: "操作", render: () => <><button onClick={onAction}>打开操作</button><input aria-label="选择设备" type="checkbox" /></> }]}
+      rows={[{ id: "device" }]} keyExtractor={(row) => row.id} onRowClick={onRowClick}
+    />);
+    fireEvent.click(screen.getByRole("button", { name: "打开操作" }));
+    fireEvent.keyDown(screen.getByRole("checkbox"), { key: " " });
+    expect(onAction).toHaveBeenCalledOnce();
+    expect(onRowClick).not.toHaveBeenCalled();
+  });
+});

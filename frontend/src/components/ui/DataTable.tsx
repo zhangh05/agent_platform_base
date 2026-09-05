@@ -50,6 +50,7 @@ export function DataTable<T>({
             {columns.map((col) => (
               <th
                 key={col.key}
+                scope="col"
                 className={col.align ? `text-${col.align}` : "text-left"}
                 style={{ width: col.width }}
               >
@@ -63,8 +64,12 @@ export function DataTable<T>({
             <tr
               key={keyExtractor(row)}
               data-testid={rowDataTestId?.(row)}
-              onClick={onRowClick ? () => onRowClick(row) : undefined}
+              onClick={onRowClick ? (event) => {
+                if ((event.target as HTMLElement).closest("button, a, input, select, textarea")) return;
+                onRowClick(row);
+              } : undefined}
               onKeyDown={onRowClick ? (event) => {
+                if (event.target !== event.currentTarget) return;
                 if (event.key === "Enter" || event.key === " ") {
                   event.preventDefault();
                   onRowClick(row);

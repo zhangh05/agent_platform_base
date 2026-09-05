@@ -7,7 +7,7 @@ import { useToastStore } from "../stores/toast";
 import { isApiError, AgentResult } from "../types";
 import type { ToolCallResult, RuntimeEvent } from "../types";
 import type { Session } from "../types";
-import { IconArchive, IconBolt, IconChat, IconClose, IconEdit, IconMore, IconPlus, IconTrash } from "../components/Icon";
+import { IconArchive, IconBolt, IconChat, IconClose, IconEdit, IconMore, IconPlus, IconTrash, IconWorkspace } from "../components/Icon";
 import { APP_EVENTS } from "../utils/appEvents";
 import { formatDate } from "../utils/format";
 
@@ -289,6 +289,10 @@ export function Sidebar() {
 
   return (
     <div data-testid="sidebar" className="sidebar-content">
+      <div className="sidebar-workspace" title={currentWorkspaceId || "未选择工作区"}>
+        <IconWorkspace size={14} aria-hidden="true" />
+        <div><span>当前工作区</span><strong>{currentWorkspaceId || "未选择"}</strong></div>
+      </div>
       <div className="sidebar-shortcuts" aria-label="工作台快捷操作">
         <button
           className="sidebar-shortcut sidebar-new-session"

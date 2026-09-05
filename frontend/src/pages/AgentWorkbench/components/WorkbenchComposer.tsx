@@ -74,53 +74,6 @@ export const WorkbenchComposer = memo(function WorkbenchComposer({
 
   return (
     <div className="wb-input-bar wb-composer-dock" onDragOver={onDragOver} onDrop={onDrop}>
-      {/* Skill 选择栏 */}
-      {currentSessionId && workbenchSkills.length > 0 ? (
-        <div className="wb-skill-picker" data-testid="workbench-skill-picker">
-          <label>
-            <span>Skill</span>
-            <select
-              value={selectedSkillKey}
-              onChange={(event) => onSelectSkillKey(event.target.value)}
-            >
-              <option value="">通用对话</option>
-              {workbenchSkills.map((skill) => (
-                <option key={`${skill.extension_id}:${skill.skill_id}`} value={`${skill.extension_id}:${skill.skill_id}`}>
-                  {skill.name}
-                </option>
-              ))}
-            </select>
-          </label>
-
-          {selectedSkill ? (
-            <div className="wb-skill-devices" aria-label="选择 Skill 资源">
-              {selectedSkill.resources.map((resource) => {
-                const active = selectedResourceIds.includes(resource.resource_id);
-                return (
-                  <button
-                    key={resource.resource_id}
-                    type="button"
-                    className={active ? "active" : ""}
-                    title={resource.description}
-                    onClick={() =>
-                      onSelectResourceIds((items) =>
-                        active
-                          ? items.filter((item) => item !== resource.resource_id)
-                          : selectedSkill.selection_mode === "single"
-                          ? [resource.resource_id]
-                          : [...items, resource.resource_id]
-                      )
-                    }
-                  >
-                    {resource.name}
-                  </button>
-                );
-              })}
-            </div>
-          ) : null}
-        </div>
-      ) : null}
-
       {/* 附件托盘 */}
       {attachments.length > 0 ? (
         <div className="wb-attachments">
@@ -158,9 +111,58 @@ export const WorkbenchComposer = memo(function WorkbenchComposer({
           onKeyDown={handleKeyDown}
           disabled={!currentSessionId || turnRunning}
           rows={1}
+          aria-label="任务描述"
           data-testid="chat-input"
           spellCheck={false}
         />
+
+        {/* Skill 选择栏 */}
+        {currentSessionId && workbenchSkills.length > 0 ? (
+          <div className="wb-skill-picker" data-testid="workbench-skill-picker">
+            <label>
+              <span>Skill</span>
+              <select
+                value={selectedSkillKey}
+                onChange={(event) => onSelectSkillKey(event.target.value)}
+              >
+                <option value="">通用对话</option>
+                {workbenchSkills.map((skill) => (
+                  <option key={`${skill.extension_id}:${skill.skill_id}`} value={`${skill.extension_id}:${skill.skill_id}`}>
+                    {skill.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            {selectedSkill ? (
+              <div className="wb-skill-devices" aria-label="选择 Skill 资源">
+                {selectedSkill.resources.map((resource) => {
+                  const active = selectedResourceIds.includes(resource.resource_id);
+                  return (
+                    <button
+                      key={resource.resource_id}
+                      type="button"
+                      className={active ? "active" : ""}
+                      aria-pressed={active}
+                      title={resource.description}
+                      onClick={() =>
+                        onSelectResourceIds((items) =>
+                          active
+                            ? items.filter((item) => item !== resource.resource_id)
+                            : selectedSkill.selection_mode === "single"
+                            ? [resource.resource_id]
+                            : [...items, resource.resource_id]
+                        )
+                      }
+                    >
+                      {resource.name}
+                    </button>
+                  );
+                })}
+              </div>
+            ) : null}
+          </div>
+        ) : null}
 
         <div className="wb-composer-actions">
           <input

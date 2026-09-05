@@ -74,6 +74,8 @@ export const WorkbenchHeader = memo(function WorkbenchHeader({
           type="button"
           className={`wb-mode-btn ${viewMode === "chat" ? "active" : ""}`}
           onClick={() => onViewModeChange("chat")}
+          aria-label="对话"
+          aria-pressed={viewMode === "chat"}
           data-testid="view-chat"
         >
           <IconChat size={15} />
@@ -83,6 +85,8 @@ export const WorkbenchHeader = memo(function WorkbenchHeader({
           type="button"
           className={`wb-mode-btn ${viewMode === "timeline" ? "active" : ""}`}
           onClick={() => onViewModeChange("timeline")}
+          aria-label="时间线"
+          aria-pressed={viewMode === "timeline"}
           data-testid="view-timeline"
         >
           <IconHistory size={15} />

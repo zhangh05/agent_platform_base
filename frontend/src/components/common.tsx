@@ -47,7 +47,7 @@ export function AsyncView<T>({
   return <div className="empty"><div className="empty-text">未初始化</div></div>;
 }
 
-import { IconAlert } from "./Icon";
+import { IconAlert, IconBox } from "./Icon";
 
 /* ── Error state ── */
 
@@ -91,7 +91,7 @@ export function EmptyState({
   return (
     <div className="empty" data-testid="empty-state">
       <div className="empty-icon">
-        <span>∅</span>
+        <IconBox size={20} aria-hidden="true" />
       </div>
       <div className="empty-text">{text}</div>
       {hint && <div className="empty-hint">{hint}</div>}

@@ -14,7 +14,7 @@ import {
 import type { OperationLedgerSummary } from "../../api";
 import { useSessionStore } from "../../stores/session";
 import { LoadingState } from "../../components/common";
-import { IconCheck, IconRefresh } from "../../components/Icon";
+import { IconAlert, IconCheck, IconRefresh } from "../../components/Icon";
 import { formatDate } from "../../utils/format";
 import { PageHeader, DataTable } from "../../components/ui";
 import { scopedLocalStorageKey } from "../../utils/userScope";
@@ -367,7 +367,7 @@ export function Diagnostics() {
           disabled={detecting}
         >
           {detecting ? (
-            <>⏳ 检测中…</>
+            <><IconRefresh size={12} aria-hidden="true" /> 检测中…</>
           ) : (
             <><IconRefresh size={12} /> {hasData ? "重新检测" : "开始检测"}</>
           )}
@@ -383,7 +383,7 @@ export function Diagnostics() {
           {summaryStats && (
             <div className="diag-summary">
               <div className="diag-summary-icon" data-healthy={String(allOk)}>
-                {allOk ? "✓" : "!"}
+                {allOk ? <IconCheck size={20} aria-hidden="true" /> : <IconAlert size={20} aria-hidden="true" />}
               </div>
               <div className="diag-summary-text">
                 <h2>{allOk ? "系统运行正常" : "需要注意"}</h2>
@@ -415,7 +415,9 @@ export function Diagnostics() {
             }>
               {health ? (
                 <div className="diag-health-grid">
-                  {(health.components ?? []).map((c: HealthComponent) => {
+                  {[...(health.components ?? [])]
+                    .sort((a, b) => Number(a.status === "ok") - Number(b.status === "ok"))
+                    .map((c: HealthComponent) => {
                     const label = COMP_LABELS[c.name] || c.name;
                     const desc = COMP_DESC[c.name] || "";
                     return (

@@ -69,13 +69,18 @@ function highlightCode(html: string): string {
   });
 }
 
-function handleCodeCopyClick(event: React.MouseEvent<HTMLDivElement>) {
+async function handleCodeCopyClick(event: React.MouseEvent<HTMLDivElement>) {
   const target = event.target as HTMLElement | null;
   const button = target?.closest("[data-code-copy]") as HTMLButtonElement | null;
   if (!button) return;
   const code = button.closest(".code-block-wrap")?.querySelector("code")?.textContent || "";
-  void navigator.clipboard?.writeText(code);
-  button.textContent = "已复制";
+  try {
+    if (!navigator.clipboard) throw new Error("clipboard unavailable");
+    await navigator.clipboard.writeText(code);
+    button.textContent = "已复制";
+  } catch {
+    button.textContent = "复制失败";
+  }
   window.setTimeout(() => {
     button.textContent = "复制";
   }, COPY_FEEDBACK_MS);

@@ -1,5 +1,7 @@
 # LZCore Design QA
 
+> 2026-09-05 更新：当前实现与验收范围见 [UI Refinement 报告](docs/UI_REFINEMENT_20260905.md)。下列图片属于上一轮设计记录，不代表本轮明暗主题与响应式验证。
+
 ## Scope and visual truth
 
 - Visual direction: restrained, high-density operations SaaS with a single teal accent, quiet neutral layers, explicit typography hierarchy, and continuous information surfaces instead of a card wall.
@@ -26,8 +28,8 @@
 
 The final implementation preserves the selected direction across every primary surface:
 
-- A 56 px global header and 216 px sidebar provide a stable shell without displacing page content.
-- The workbench uses a bounded reading column, a narrow progress rail, and a composer aligned to the conversation rather than the full viewport.
+- A 56 px global header and 176 px sidebar provide a stable shell without displacing page content.
+- The workbench uses the available conversation width, a 192 px supporting progress rail, and a composer aligned to the conversation. Collapsing the rail expands the conversation.
 - Task center uses a master-detail composition with search and status filters.
 - Data center uses an asymmetric 2:1 content grid and keeps real dataset counts visible without inventing chart data.
 - Capability center uses a directory-detail composition rather than equal-weight capability cards.
@@ -84,6 +86,4 @@ The references contain illustrative records and richer example datasets. The imp
 
 ## Final result
 
-passed
-
-No actionable P0, P1, or P2 visual, interaction, accessibility, or responsive issue remains in the reviewed scope. Remaining pixel-level differences are P3 differences caused by real data and valid application state versus illustrative reference content.
+本轮工程检查通过；实际浏览器证据与未覆盖状态见最新报告。用户管理的管理员会话、真实运行中的取消/恢复、设备写入以及大量数据压力场景未在本轮浏览器验收中执行，不能据此宣称所有状态均无问题。

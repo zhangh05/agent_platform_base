@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { IconClose } from "../Icon";
 import { EmptyState } from "../common";
 
 interface DetailPanelProps {
@@ -39,8 +40,8 @@ export function DetailPanel({
           <div className="ui-detail-panel-actions">
             {actions}
             {onClose && (
-              <button className="btn sm ghost" onClick={onClose} type="button">
-                ×
+              <button className="btn sm ghost" onClick={onClose} type="button" aria-label="关闭详情">
+                <IconClose size={16} aria-hidden="true" />
               </button>
             )}
           </div>

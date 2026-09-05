@@ -1,33 +1,4 @@
 /* Design System 3.0: shared primitives and page compositions. */
-:root {
-  --console-canvas: var(--bg);
-  --console-surface: var(--surface);
-  --console-muted: var(--surface-2);
-  --console-border: var(--line);
-  --console-border-soft: var(--line-2);
-  --console-ink: var(--text);
-  --console-muted-ink: var(--text-3);
-  --console-action: var(--lz-primary, var(--accent));
-  --console-action-strong: var(--lz-primary-hover, var(--accent-2));
-  --console-action-soft: var(--lz-primary-soft, var(--accent-soft));
-  --r-4: 8px;
-  --r-6: 8px;
-  --r-8: 8px;
-  --shadow-card: var(--lz-shadow-ambient, none);
-}
-
-:root[data-theme="dark"] {
-  --console-canvas: var(--bg);
-  --console-surface: var(--surface);
-  --console-muted: var(--surface-2);
-  --console-border: var(--line);
-  --console-border-soft: var(--line-2);
-  --console-ink: var(--text);
-  --console-muted-ink: var(--text-3);
-  --console-action: var(--lz-primary, var(--accent));
-  --console-action-strong: var(--lz-primary-hover, var(--accent-2));
-  --console-action-soft: var(--lz-primary-soft, var(--accent-soft));
-}
 
 .page {
   width: 100%;
@@ -49,7 +20,7 @@
   margin-bottom: 2px;
   color: var(--console-ink);
   font-size: var(--fs-20);
-  font-weight: 740;
+  font-weight: var(--weight-heading);
   letter-spacing: -0.018em;
 }
 .page-header h1 span,
@@ -58,13 +29,13 @@
 .page-body { padding: var(--space-6); }
 
 .btn {
-  height: 34px;
+  height: var(--h-control);
   padding: 0 12px;
   color: var(--text-2);
   background: var(--console-surface);
   border-color: var(--console-border);
   border-radius: var(--r-8);
-  box-shadow: var(--lz-shadow-ambient);
+  box-shadow: none;
   font-size: var(--fs-13);
   font-weight: 650;
   transition:
@@ -81,7 +52,7 @@
   transform: none;
 }
 .btn.primary {
-  color: #fff;
+  color: var(--accent-text);
   background: var(--console-action);
   border-color: var(--console-action);
   box-shadow: none;
@@ -96,12 +67,12 @@
   background: transparent;
   box-shadow: none;
 }
-.btn.sm { height: 28px; border-radius: var(--r-4); }
+.btn.sm { height: var(--h-control-compact); border-radius: var(--r-4); }
 
 .input,
 textarea.input,
 select.input {
-  height: 34px;
+  height: var(--h-control);
   color: var(--console-ink);
   background: var(--console-surface);
   border-color: var(--console-border);
@@ -169,7 +140,7 @@ select.input:focus-visible {
 .empty { min-height: 150px; padding: 28px 18px; }
 .empty-icon {
   width: 34px;
-  height: 34px;
+  height: var(--h-control);
   margin-bottom: 10px;
   color: var(--console-muted-ink);
   background: transparent;
@@ -427,8 +398,8 @@ select.input:focus-visible {
   box-shadow: none;
 }
 .knowledge-library .knowledge-upload-row {
-  min-height: 76px;
-  padding: 12px 14px;
+  min-height: var(--space-16);
+  padding: var(--space-2) var(--space-3);
   background: var(--console-surface);
 }
 .knowledge-library .knowledge-meta-grid,
@@ -439,8 +410,8 @@ select.input:focus-visible {
 }
 .knowledge-library .knowledge-meta-grid > *,
 .knowledge-library .kl-summary-cell {
-  min-height: 60px;
-  padding: 11px 14px;
+  min-height: var(--h-control);
+  padding: var(--space-2) var(--space-3);
   border-color: var(--console-border-soft);
   border-radius: 0;
   background: transparent;
@@ -728,7 +699,7 @@ select.input:focus-visible {
   background: var(--console-muted);
 }
 .settings-page .provider-sidebar-label {
-  min-height: 34px;
+  min-height: var(--h-control);
   padding: 7px 8px;
   color: var(--console-muted-ink);
   border-bottom: 1px solid var(--console-border-soft);
@@ -1177,3 +1148,66 @@ select.input:focus-visible {
   .data-center .data-overview-layout { grid-template-columns: 1fr; }
   .diagnostics-page .diag-health-grid { grid-template-columns: 1fr; }
 }
+
+/* Shared information hierarchy, independent of business outcome. */
+.page-header > div:first-child, .ui-detail-panel-head > div:first-child { min-width: 0; }
+.page-header h1, .ui-detail-panel-title { overflow-wrap: anywhere; }
+.tbl td { font-size: var(--fs-13); }
+.tbl :is(th, td), .mono, .job-card-meta { font-variant-numeric: tabular-nums; }
+.btn { flex-shrink: 0; }
+textarea.input { min-height: var(--space-16); height: auto; line-height: var(--lh-base); }
+.ui-form-label { font-weight: var(--weight-label); font-size: var(--fs-13); color: var(--text-2); }
+.ui-form-hint, .ui-form-error { font-size: var(--fs-12); line-height: var(--lh-base); }
+.data-table-scroll { max-width: 100%; overflow: auto; }
+.data-table-scroll .tbl { min-width: max-content; width: 100%; }
+.operations-page .job-card-head { justify-content: flex-start; text-align: left; gap: var(--space-2); }
+.operations-page .job-card-title { flex: 1; min-width: 0; text-align: left; }
+.operations-page .job-card-meta { font-size: var(--fs-12); }
+.operations-page .operations-filterbar { flex-wrap: wrap; }
+.data-center :is(.data-main-panel, .data-governance-panel) { border: 0; border-radius: var(--r-8); }
+.data-center .data-recent-row > span:last-child { flex-shrink: 0; font-variant-numeric: tabular-nums; }
+.knowledge-library .page-body { align-content: start; }
+.knowledge-library .page-body > .card { padding-block: var(--space-4); margin-block: 0; }
+.knowledge-library .knowledge-meta-grid { gap: var(--space-2); margin-top: var(--space-2); background: transparent; }
+.knowledge-library .knowledge-meta-grid > * { background: var(--field); border: 1px solid var(--line); border-radius: var(--r-8); }
+.knowledge-library .page-body > .card .empty { min-height: 0; padding: var(--space-6); }
+.capability-center :is(.tool-category, .tool-group, .tool-row) { border: 0; border-bottom: 1px solid var(--line-2); border-radius: 0; box-shadow: none; }
+.capability-center .tool-group { background: transparent; padding-left: var(--space-4); }
+.capability-center summary { min-height: var(--h-control); }
+.capability-center .tool-row { background: var(--surface-2); }
+.diagnostics-page .diag-health-grid { gap: 0 var(--space-4); border: 0; }
+.diagnostics-page .diag-health-card { border-radius: 0; border-top: 0; }
+.diagnostics-page .diag-health-ok { border-left: 0; }
+.diagnostics-page .diag-health-warning { border-left-color: var(--warn); }
+.diagnostics-page .diag-health-error { border-left-color: var(--danger); }
+.diagnostics-page .diag-status-tag-ok { background: transparent; color: var(--text-3); }
+.diagnostics-page .diag-comp-detail { color: var(--text-3); font-size: var(--fs-12); overflow-wrap: anywhere; }
+.settings-page .settings-form-header { padding: 0 0 var(--space-4); background: transparent; }
+.settings-page .settings-row { padding: var(--space-3) 0; }
+.settings-page .provider-card-hint { overflow-wrap: anywhere; }
+.user-access-list > button { width: 100%; margin-inline: 0; border: 0; border-bottom: 1px solid var(--line-2); border-radius: 0; }
+.user-access-list > button:hover { transform: none; }
+.user-access-fields label, .user-access-section-title p, .user-access-list small { font-size: var(--fs-12); color: var(--text-3); }
+.user-access-placeholder > svg { margin-inline: auto; }
+@media (max-width: 900px) {
+  .data-center .data-split { grid-template-columns: minmax(0, 1fr); }
+  .ui-page-header-actions { flex-wrap: wrap; }
+}
+@media (max-width: 760px) {
+  .page-body, .data-overview, .data-center > .data-lifecycle-grid, .data-center > .data-relations-grid { padding: var(--space-3); }
+  .page-header { flex-wrap: wrap; }
+  .operations-page .operations-filterbar { padding-inline: var(--space-3); }
+  .operations-page .operations-filterbar .input:first-child { width: 100%; }
+  .btn, .btn.sm, .input, select.input { min-height: var(--h-touch); }
+  .btn.icon-only, .btn.icon-only.sm { min-width: var(--h-touch); }
+  .tbl :is(th, td) { padding: var(--space-2); }
+  .settings-page .settings-actions { flex-wrap: wrap; }
+}
+.diagnostics-page .diag-comp-msg { font-size: var(--fs-12); color: var(--text-3); overflow-wrap: anywhere; }
+.diagnostics-page .diag-summary-icon { color: var(--ok); background: var(--ok-soft); }
+.diagnostics-page .diag-summary-icon[data-healthy="false"] { color: var(--warn); background: var(--warn-soft); }
+.diagnostics-page .diag-status-tag-warning { color: var(--warn); background: var(--warn-soft); }
+.diagnostics-page .diag-status-tag-error { color: var(--danger); background: var(--danger-soft); }
+
+/* Static reading surfaces do not need entrance animation. */
+.page .card, .page .hero { animation: none; }

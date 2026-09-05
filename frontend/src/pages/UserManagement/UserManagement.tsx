@@ -1,3 +1,4 @@
+import { IconUser } from "../../components/Icon";
 import { useCallback, useEffect, useState } from "react";
 import {
   authApi,
@@ -159,7 +160,7 @@ export function UserManagement() {
           </button>) : <div className="user-access-empty"><b>还没有普通用户</b><p>点击“新建用户”添加第一个账户。</p></div>}
         </aside>
         <main className="user-access-editor">
-          {!creating && !selectedUsername ? <div className="user-access-placeholder"><span>👤</span><h2>选择一个用户</h2><p>在左侧选择用户查看和修改权限，或新建普通用户。</p></div> : <>
+          {!creating && !selectedUsername ? <div className="user-access-placeholder"><IconUser size={24} aria-hidden="true" /><h2>选择一个用户</h2><p>在左侧选择用户查看和修改权限，或新建普通用户。</p></div> : <>
             <div className="user-access-editor-head"><div><span>{creating ? "创建普通用户" : "编辑用户权限"}</span><h2>{creating ? "新用户" : draft.username}</h2></div>{!creating ? <label className="user-enabled-switch"><input type="checkbox" checked={draft.enabled} onChange={(event) => setDraft({ ...draft, enabled: event.target.checked })} /><span>{draft.enabled ? "账户已启用" : "账户已停用"}</span></label> : null}</div>
             <section className="user-access-section">
               <div className="user-access-section-title"><h3>账户信息</h3><p>用户名创建后不可修改；编辑时密码留空表示保持原密码。</p></div>

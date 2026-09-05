@@ -9,13 +9,13 @@
 }
 
 .brand {
-  min-width: 172px;
-  max-width: 172px;
+  min-width: calc(var(--w-sidebar) - var(--space-12));
+  max-width: var(--w-sidebar);
 }
 
 .brand-text > span {
   font-size: 18px;
-  font-weight: 780;
+  font-weight: var(--weight-heading);
   letter-spacing: -0.02em;
 }
 
@@ -74,7 +74,7 @@
   padding: 8px;
   border-color: var(--line);
   border-radius: 12px;
-  box-shadow: 0 18px 50px rgba(20, 35, 45, 0.12);
+  box-shadow: var(--shadow-menu);
 }
 
 .app-actions {
@@ -452,6 +452,7 @@
   transform: translateY(0);
 }
 .mobile-nav-advanced {
+  display: none;
   margin-top: 10px;
   padding-top: 10px;
   border-top: 1px solid var(--line-2);
@@ -465,3 +466,19 @@
   letter-spacing: .05em;
   text-transform: uppercase;
 }
+
+/* Workspace navigation hierarchy. */
+.sidebar-panel-title { font-size: var(--fs-12); font-weight: var(--weight-label); }
+.sidebar-content .list-item, .sidebar-new-session { min-height: var(--h-control); }
+.session-item-main { padding-right: var(--space-8); }
+.app-settings-menu > summary, .collapse-btn, .theme-toggle, .nav-toggle { width: var(--h-control); height: var(--h-control); }
+@media (max-width: 900px) {
+  .mobile-nav-advanced { display: block; }
+  .app-settings-menu > summary, .theme-toggle, .nav-toggle, .mobile-nav-item { min-height: var(--h-touch); }
+  .theme-toggle, .nav-toggle { min-width: var(--h-touch); }
+}
+
+.sidebar-workspace { display: flex; align-items: center; gap: var(--space-2); padding: 0 var(--space-2) var(--space-4); color: var(--text-3); }
+.sidebar-workspace > div { display: grid; min-width: 0; gap: var(--space-1); }
+.sidebar-workspace span { font-size: var(--fs-11); }
+.sidebar-workspace strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--fs-12); font-weight: var(--weight-label); color: var(--text-2); }
