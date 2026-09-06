@@ -18,6 +18,15 @@ export type TaskEvidence = {
   summary?: string;
 };
 
+/**
+ * The durable job and the live stream describe one lifecycle from different
+ * transports.  A live turn always wins over a cached message result: a result
+ * can be present while the server is still producing the final answer.
+ */
+export type TaskProgressLifecycle = {
+  turnRunning?: boolean;
+};
+
 const STAGE_INDEX: Record<string, number> = {
   turn_started: 0,
   planner_started: 0,
@@ -98,15 +107,20 @@ function displayToolName(toolId: string): string {
 export function buildTaskProgress(
   message: ChatMsg | undefined,
   snapshot?: ActiveTurnSnapshot,
+  lifecycle: TaskProgressLifecycle = {},
 ): { phases: TaskPhase[]; evidence: TaskEvidence[]; activeIndex: number; status: string } {
   const result = message?.result;
   const events = (snapshot?.events?.length ? snapshot.events : message?.runtimeEvents?.length
     ? message.runtimeEvents
     : result?.events) || [];
   const lastStage = String(snapshot?.stage || [...events].reverse().map(eventType).find(Boolean) || "");
-  const isStreaming = snapshot?.status === "running" || message?.status === "streaming";
-  const failed = snapshot?.status === "failed" || message?.status === "error" || Boolean(result && !result.ok);
-  const completed = snapshot?.status === "succeeded" || Boolean(result && message?.status !== "streaming");
+  // `turnRunning` is intentionally an explicit override.  The page knows both
+  // the WebSocket lifecycle and the durable job lifecycle; neither an earlier
+  // `result` object nor a stale active-turn snapshot may turn that into a
+  // completed UI state.
+  const isStreaming = lifecycle.turnRunning ?? (snapshot?.status === "running" || message?.status === "streaming");
+  const failed = !isStreaming && (snapshot?.status === "failed" || message?.status === "error" || Boolean(result && !result.ok));
+  const completed = !isStreaming && (snapshot?.status === "succeeded" || Boolean(result && message?.status !== "streaming"));
   const activeIndex = completed ? 3 : Math.max(0, STAGE_INDEX[lastStage] ?? (isStreaming ? 0 : 0));
 
   const phases: TaskPhase[] = PHASE_COPY.map(([id, title, description], index) => {

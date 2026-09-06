@@ -51,4 +51,31 @@ describe("task progress projection", () => {
     expect(model.phases.every((phase) => phase.state === "done")).toBe(true);
     expect(model.evidence[0].source).toBe("知识库");
   });
+
+  it("never marks the final answer complete while the current turn is still active", () => {
+    const model = buildTaskProgress(assistant({
+      // This is the race observed in the workbench: a cached/intermediate
+      // result and terminal event are visible before the live turn has ended.
+      status: "ready",
+      result: {
+        ok: true,
+        final_response: "",
+        events: [],
+        trace_id: "trace-1",
+        session_id: "s-1",
+        turn_id: "turn-1",
+        tool_calls: [],
+        warnings: [],
+        errors: [],
+        metadata: {},
+      },
+      runtimeEvents: [{ event_id: "1", event_type: "turn_completed" }],
+    }), {
+      status: "succeeded",
+      stage: "turn_completed",
+    }, { turnRunning: true });
+
+    expect(model.status).toBe("running");
+    expect(model.phases.map((phase) => phase.state)).toEqual(["done", "done", "done", "active"]);
+  });
 });

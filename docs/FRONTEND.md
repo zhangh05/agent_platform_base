@@ -120,7 +120,7 @@ route state + Zustand store
 - `WorkbenchHeader`：当前会话、模型状态、视图切换和导出。
 - `WorkbenchComposer`：Skill、设备、附件和输入发送。
 - `WorkbenchEmptyState`：无会话内容时的起始引导。
-- `TaskProgressPanel`：实时阶段与证据摘要。
+- `TaskProgressPanel`：实时阶段与证据摘要。它以工作台聚合的回合活跃状态（本地流式发送或服务端 durable job 为 `running`）作为终态门槛：已有消息 `result`、缓存事件或旧快照都不能在回合仍活跃时把“形成建议”或整轮状态投影为完成。只有回合不再活跃且服务端/最终结果明确终态时，才显示完成或失败。
 - `ResultInline`：服务端结果与执行详情投影。
 - `ThinkingBlock`：受控推理内容展示。
 

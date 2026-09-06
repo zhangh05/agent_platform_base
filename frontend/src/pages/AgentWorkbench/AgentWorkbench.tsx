@@ -562,6 +562,7 @@ export function TaskWorkbench() {
       <TaskProgressPanel
         latestAssistant={progressAssistant}
         snapshot={durableTurn}
+        turnRunning={turnRunning}
         onShowTimeline={handleShowTimeline}
         collapsed={progressPanelCollapsed}
         onToggleCollapsed={handleToggleProgressPanel}

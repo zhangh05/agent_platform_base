@@ -7,6 +7,7 @@ import { buildTaskProgress } from "../../../utils/taskProgress";
 type Props = {
   latestAssistant?: ChatMsg;
   snapshot?: ActiveTurnSnapshot;
+  turnRunning: boolean;
   onShowTimeline: () => void;
   collapsed: boolean;
   onToggleCollapsed: () => void;
@@ -29,11 +30,12 @@ function EvidenceIcon({ title }: { title: string }) {
 export const TaskProgressPanel = memo(function TaskProgressPanel({
   latestAssistant,
   snapshot,
+  turnRunning,
   onShowTimeline,
   collapsed,
   onToggleCollapsed,
 }: Props) {
-  const model = buildTaskProgress(latestAssistant, snapshot);
+  const model = buildTaskProgress(latestAssistant, snapshot, { turnRunning });
   const visibleEvidence = model.evidence.slice(0, 6);
 
   return (
