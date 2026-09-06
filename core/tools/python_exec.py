@@ -1,5 +1,5 @@
 # core/tools/python_exec.py
-"""AST validation and trusted-local best-effort Python execution.
+"""Trusted-local best-effort Python execution.
 
 This module is not a sandbox. ``execute_python_code`` selects one runner from
 ``core.tools.python_runner``; subprocess execution requires explicit trusted-local
@@ -83,94 +83,10 @@ def _redact_stdout_stderr(stdout: str, stderr: str) -> tuple[str, str]:
     return stdout, stderr
 
 
-# ── Forbidden imports ──
-FORBIDDEN_IMPORTS = {
-    "os", "subprocess", "socket", "requests", "urllib",
-    "shutil", "pathlib", "ctypes", "multiprocessing", "threading",
-}
-
-# ── Forbidden builtin function names ──
-FORBIDDEN_BUILTINS = {
-    "eval", "exec", "compile", "__import__", "open",
-    "input", "globals", "locals", "vars", "dir",
-    "getattr", "setattr", "delattr",
-}
-
-# ── Forbidden attribute names (dunder access) ──
-FORBIDDEN_ATTRS = {
-    "__class__", "__dict__", "__subclasses__", "__import__",
-}
-
-
-class PythonExecSecurityError(Exception):
-    """Raised when AST analysis finds forbidden code."""
-    pass
-
-
 def validate_code(code: str) -> str:
-    """Public-facing AST validation — wrapper for _validate_ast.
-
-    Returns the validated code if safe, raises PythonExecSecurityError otherwise.
-    This is the function that tests import from core.tools.python_exec.
-    """
-    _validate_ast(code)
+    """Validate Python syntax without imposing a content policy."""
+    ast.parse(code, mode="exec")
     return code
-
-
-def _validate_ast(code: str) -> None:
-    try:
-        tree = ast.parse(code, mode="exec")
-    except SyntaxError as e:
-        raise PythonExecSecurityError(f"Syntax error: {e}")
-
-    allowed_imports = {"sys", "math", "json", "re", "datetime", "time",
-                       "collections", "itertools", "functools", "typing",
-                       "string", "textwrap", "hashlib", "base64", "binascii",
-                       "random", "statistics", "decimal", "fractions",
-                       "enum", "dataclasses", "copy", "pprint", "logging",
-                       "csv", "io", "codecs", "struct", "operator"}
-
-    for node in ast.walk(tree):
-        # ── Import statements ──
-        if isinstance(node, ast.Import):
-            for alias in node.names:
-                top_level = alias.name.split(".")[0]
-                if top_level in FORBIDDEN_IMPORTS:
-                    raise PythonExecSecurityError(
-                        f"Forbidden import: '{alias.name}'"
-                    )
-                # Reject unknown imports (not in allowed list and not in stdlib)
-                if top_level not in allowed_imports and top_level not in FORBIDDEN_IMPORTS:
-                    raise PythonExecSecurityError(
-                        f"Import not in allowlist: '{alias.name}'"
-                    )
-
-        if isinstance(node, ast.ImportFrom):
-            if node.module:
-                top_level = node.module.split(".")[0]
-                if top_level in FORBIDDEN_IMPORTS:
-                    raise PythonExecSecurityError(
-                        f"Forbidden import from: '{node.module}'"
-                    )
-                if top_level not in allowed_imports and top_level not in FORBIDDEN_IMPORTS:
-                    raise PythonExecSecurityError(
-                        f"Import from not in allowlist: '{node.module}'"
-                    )
-
-        # ── Call to forbidden builtins ──
-        if isinstance(node, ast.Call):
-            if isinstance(node.func, ast.Name):
-                if node.func.id in FORBIDDEN_BUILTINS:
-                    raise PythonExecSecurityError(
-                        f"Forbidden function call: '{node.func.id}'"
-                    )
-
-        # ── Forbidden attribute access (dunder) ──
-        if isinstance(node, ast.Attribute):
-            if node.attr in FORBIDDEN_ATTRS:
-                raise PythonExecSecurityError(
-                    f"Forbidden attribute access: '{node.attr}'"
-                )
 
 
 def execute_best_effort_python_code(
@@ -180,7 +96,7 @@ def execute_best_effort_python_code(
     timeout: int = 10,
     input_data=None,
 ) -> dict:
-    """Run AST-checked Python in an explicitly trusted local subprocess.
+    """Run Python in an explicitly trusted local subprocess.
 
     This implementation is best effort only; it is not a sandbox.
     """
@@ -195,17 +111,17 @@ def execute_best_effort_python_code(
             "error": "invalid_workspace_id",
         }
 
-    # ── 2. AST safety check ──
+    # ── 2. Syntax check ──
     try:
-        _validate_ast(code)
-    except PythonExecSecurityError as e:
+        validate_code(code)
+    except SyntaxError as e:
         return {
             "ok": False,
             "exit_code": -1,
             "stdout": "",
             "stderr": "",
             "timeout_seconds": timeout,
-            "error": f"Security check failed: {e}",
+            "error": f"Syntax check failed: {e}",
         }
 
     # ── 3. Validate and inject bounded structured input ──
@@ -216,19 +132,12 @@ def execute_best_effort_python_code(
             "ok": False, "exit_code": -1, "stdout": "", "stderr": "",
             "timeout_seconds": timeout, "error": f"input_data is not JSON serializable: {exc}",
         }
-    if len(input_json.encode("utf-8")) > 1_048_576:
-        return {
-            "ok": False, "exit_code": -1, "stdout": "", "stderr": "",
-            "timeout_seconds": timeout, "error": "input_data exceeds 1 MiB",
-        }
-
     # ── 4. Setup temp directory and script path ──
     safe_run_id = re.sub(r"[^a-zA-Z0-9_-]", "_", str(run_id) or "unknown") or "unknown"
     # Add a preamble that sanitizes the environment
     safe_preamble = (
         "# Auto-generated sandbox preamble — best-effort local sandbox, not container isolation\n"
-        "# Safety enforced at AST level (see _validate_ast). No runtime builtin disabling\n"
-        "# needed — stdlib modules such as json, collections, enum use eval() internally.\n"
+        "# The selected runtime executes the model-provided code as written.\n"
         "import json as _runtime_json\n"
         f"input_data = _runtime_json.loads({input_json!r})\n"
     )

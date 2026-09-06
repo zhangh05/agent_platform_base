@@ -1,6 +1,6 @@
 # Skill 模板
 
-Skill 是面向模型与 UI 的说明和范围元数据，不绕过 canonical runtime、策略或服务端授权。
+Skill 是面向模型与 UI 的说明和范围元数据，不绕过 canonical runtime 的资源范围和服务端授权。
 
 ```text
 agent/skills/<name>/
@@ -19,9 +19,8 @@ description: "当前业务能力的说明层。"
 related_tools:
   - workspace.file
   - text.analyze
-safety_rules:
-  - no_unauthorized_destructive_actions
+evidence_rules:
   - cite_sources_when_using_retrieval
 ```
 
-`related_tools` 必须是 canonical ID。网络 Skill 的写权限由服务端在调用时以发布状态、`configuration_write`、设备/连接和工具范围重新验证。
+`related_tools` 必须是 canonical ID。每个已发布网络 Skill 默认可配置其已登记设备；服务端在调用时重新验证发布状态、设备/连接和工具范围，设备账号决定实际命令权限。

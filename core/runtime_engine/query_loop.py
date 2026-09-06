@@ -184,8 +184,6 @@ def _build_cached_tool_definitions(tool_registry: dict) -> list[dict]:
     return tools
 
 
-TOOL_MESSAGE_MAX_CHARS = 50_000    # Per-tool output cap fed to LLM; balances article coverage vs context pressure
-ARTIFACT_ANALYSIS_MAX_CHARS = 100_000
 MAX_VALIDATION_CORRECTION_ROUNDS = 3
 MAX_BATCH_REPLAN_ROUNDS = 2
 
@@ -211,53 +209,12 @@ _BULK_LIST_KEYS = {
 
 
 def _compact_value_for_llm(value: Any, *, depth: int = 0, key_hint: str = "") -> Any:
-    """Compact tool outputs while preserving enough evidence for follow-up."""
-    key = str(key_hint or "").lower()
-    if depth >= 16:
-        text = str(value)
-        if len(text) > 4000:
-            return text[:3000] + f"\n...[truncated nested value, {len(text)} chars total]...\n" + text[-800:]
-        return text
-    if isinstance(value, str):
-        if key in _BULK_TEXT_KEYS:
-            limit = 2400
-        elif key in _LONG_CONTEXT_TEXT_KEYS:
-            limit = 12_000
-        else:
-            limit = 8000
-        if len(value) > limit:
-            tail = min(1000, max(0, limit // 4))
-            head = max(0, limit - tail)
-            return value[:head] + f"\n...[truncated {key or 'text'}, {len(value)} chars total]...\n" + (value[-tail:] if tail else "")
-        return value
-    if isinstance(value, (int, float, bool)) or value is None:
-        return value
-    if isinstance(value, (list, tuple)):
-        limit = 25 if key in _BULK_LIST_KEYS else (120 if depth == 0 else 50)
-        compacted = [
-            _compact_value_for_llm(item, depth=depth + 1, key_hint=key_hint)
-            for item in value[:limit]
-        ]
-        if len(value) > limit:
-            compacted.append({"_omitted_items": len(value) - limit})
-        return compacted
-    if isinstance(value, dict):
-        result: dict[str, Any] = {}
-        seen: set[str] = set()
-        for key in _PRIORITY_OUTPUT_KEYS:
-            if key in value:
-                result[key] = _compact_value_for_llm(value[key], depth=depth + 1, key_hint=key)
-                seen.add(key)
-        for key, val in value.items():
-            if key in seen:
-                continue
-            result[str(key)] = _compact_value_for_llm(val, depth=depth + 1, key_hint=str(key))
-        return result
-    return str(value)
+    """Compatibility helper: model-visible values are passed through intact."""
+    return value
 
 
-def _json_compact(value: Any, *, max_chars: int = TOOL_MESSAGE_MAX_CHARS) -> str:
-    """JSON serialize compacted output with a structure-preserving hard cap.
+def _json_compact(value: Any, **_: Any) -> str:
+    """Serialize an entire model-visible payload without truncation.
 
     Serialized-prefix truncation is deliberately forbidden here.  A prefix can
     retain the first inspected resource while silently removing later ones,
@@ -265,9 +222,8 @@ def _json_compact(value: Any, *, max_chars: int = TOOL_MESSAGE_MAX_CHARS) -> str
     model.  Token projection keeps dictionaries parseable and gives list
     members a fair share of the available budget.
     """
-    compacted = _compact_value_for_llm(value)
-    text = json.dumps(
-        compacted,
+    return json.dumps(
+        value,
         ensure_ascii=False,
         # Dict compaction deliberately inserts control fields first. Preserve
         # that order so task/status/report references survive the final hard
@@ -276,101 +232,18 @@ def _json_compact(value: Any, *, max_chars: int = TOOL_MESSAGE_MAX_CHARS) -> str
         separators=(",", ":"),
         default=str,
     )
-    if len(text) <= max_chars:
-        return text
-    # Shrink long text leaves evenly before reducing structural fields. This
-    # retains all resource identities, configuration signals and table headers
-    # instead of repeatedly dividing one resource's budget at every nesting.
-    low, high = 128, 8000
-    fair_text = ""
-    while low <= high:
-        leaf_cap = (low + high) // 2
-        candidate = json.dumps(
-            _clip_text_leaves(compacted, leaf_cap),
-            ensure_ascii=False, separators=(",", ":"), default=str,
-        )
-        if len(candidate) <= max_chars:
-            fair_text = candidate
-            low = leaf_cap + 1
-        else:
-            high = leaf_cap - 1
-    if fair_text:
-        return fair_text
-
-    # Mixed Chinese/JSON is commonly between one and three characters per
-    # token under the runtime estimator.  Start generously, then reduce until
-    # the exact character contract is met.  Every candidate remains structured.
-    token_budget = max(64, max_chars // 3)
-    best = ""
-    while token_budget >= 64:
-        projected = _project_tool_payload_for_synthesis(compacted, token_budget)
-        if isinstance(projected, dict):
-            projected.setdefault("_projection", {})
-            if isinstance(projected["_projection"], dict):
-                projected["_projection"].update({
-                    "truncated": True,
-                    "original_chars": len(text),
-                    "strategy": "structure_preserving_fair_share",
-                })
-        candidate = json.dumps(
-            projected,
-            ensure_ascii=False,
-            separators=(",", ":"),
-            default=str,
-        )
-        if len(candidate) <= max_chars:
-            best = candidate
-            break
-        token_budget = int(token_budget * 0.8)
-    if best:
-        return best
-    # Extremely small caller-provided caps still receive valid JSON.
-    minimal = json.dumps({"_truncated": True}, separators=(",", ":"))
-    return minimal if len(minimal) <= max_chars else "{}"
 
 
 def _clip_text_leaves(value: Any, limit: int) -> Any:
-    if isinstance(value, str) and len(value) > limit:
-        marker = f"...[truncated {len(value)} chars]..."
-        available = max(0, limit - len(marker))
-        head = available // 2
-        tail = available - head
-        return value[:head] + marker + (value[-tail:] if tail else "")
-    if isinstance(value, dict):
-        return {key: _clip_text_leaves(item, limit) for key, item in value.items()}
-    if isinstance(value, list):
-        return [_clip_text_leaves(item, limit) for item in value]
+    """Compatibility helper: text leaves are passed through intact."""
     return value
 
 
 def _model_tool_payload(result: Any) -> dict[str, Any]:
-    """One evidence projection for model calls and internal tracking alike."""
+    """Return the complete tool result for the next model turn."""
     payload = redact_tool_output(dict(result.output or {}))
-    projection = payload.pop("_evidence_projection", None)
-    digest = str(payload.pop("_evidence_content_digest", "") or "")
-    analysis = payload.get("analysis_projection")
-    if not isinstance(analysis, dict) and isinstance(projection, dict):
-        analysis = projection.get("analysis_projection")
-    if isinstance(analysis, dict):
-        payload = {
-            "ok": bool(result.ok),
-            "status": payload.get("status") or ("succeeded" if result.ok else "failed"),
-            "analysis_projection": analysis,
-            "coverage_status": payload.get("coverage_status"),
-            "tracking": payload.get("tracking"),
-            "artifact_ref": payload.get("artifact_ref") or {},
-            "content_digest": digest,
-        }
-    elif projection is not None and payload.get("content_complete") is not True:
-        payload = {
-            "ok": bool(result.ok),
-            "status": payload.get("status") or ("succeeded" if result.ok else "failed"),
-            "summary": result.summary or payload.get("summary") or "",
-            "evidence_projection": projection,
-            "artifact_ref": payload.get("artifact_ref") or {},
-            "content_digest": digest,
-            "content_projected": True,
-        }
+    payload.pop("_evidence_projection", None)
+    payload.pop("_evidence_content_digest", None)
     if result.error:
         payload["ok"] = False
         errors = list(payload.get("errors") or [])
@@ -445,22 +318,14 @@ def _project_synthesis_resource(value: Any, token_budget: int) -> Any:
     return {**projected_identity, **projected_evidence, **projected_remainder}
 
 
-def _artifact_analysis_content(
-    payload: dict[str, Any],
-    *,
-    max_chars: int = ARTIFACT_ANALYSIS_MAX_CHARS,
-) -> str:
-    """Preserve a bounded complete text artifact for one-pass analysis."""
+def _artifact_analysis_content(payload: dict[str, Any], **_: Any) -> str:
+    """Serialize a complete text artifact without reducing its content."""
     preview = str(payload.get("preview") or "")
-    complete = bool(payload.get("content_complete", False))
-    if len(preview) > max_chars:
-        preview = preview[:max_chars]
-        complete = False
     compacted = _compact_value_for_llm({
         key: value for key, value in payload.items() if key != "preview"
     })
     compacted["preview"] = preview
-    compacted["content_complete"] = complete
+    compacted["content_complete"] = bool(payload.get("content_complete", False))
     compacted["content_returned_chars"] = len(preview)
     return json.dumps(
         compacted,
@@ -602,31 +467,6 @@ class StreamingToolExecutor:
         if self._emitter:
             self._emitter.emit("unknown_outcome", record)
         return record
-
-    @staticmethod
-    def _write_blocked_by_unknown_outcome(
-        tool_call: LLMToolCall,
-        trigger: dict[str, Any],
-    ) -> StreamingToolResult:
-        trigger_call_id = str(trigger.get("call_id") or "unknown")
-        error = (
-            "write execution is blocked because an earlier write has an "
-            f"unknown outcome (call_id={trigger_call_id})"
-        )
-        return StreamingToolResult(
-            tool_name=tool_call.name,
-            call_id=tool_call.id,
-            output={
-                "ok": False,
-                "executed": False,
-                "error_code": "WRITE_BLOCKED_BY_UNKNOWN_OUTCOME",
-                "error": error,
-                "unknown_outcome_trigger": dict(trigger),
-            },
-            ok=False,
-            error=error,
-            error_code="WRITE_BLOCKED_BY_UNKNOWN_OUTCOME",
-        )
 
     async def execute(
         self,
@@ -1028,9 +868,6 @@ class StreamingToolExecutor:
         # barrier. Executing all reads before all writes changes semantics for
         # batches such as [read, write, read].
         result_by_id: dict[str, StreamingToolResult] = {}
-        write_fence = (
-            dict(ctx.extras.get("unknown_outcome") or {}) if ctx is not None else {}
-        )
 
         async def execute_read_group(group: list[LLMToolCall]) -> None:
             if not group:
@@ -1139,9 +976,7 @@ class StreamingToolExecutor:
             if ctx is not None:
                 from .operation_ledger import plan_operation
                 operation = plan_operation(ctx, tc.name.replace("__", "."), tc.id, tc.arguments)
-            if write_fence:
-                result_by_id[tc.id] = self._write_blocked_by_unknown_outcome(tc, write_fence)
-            elif budget is not None and budget.remaining_execution_seconds() <= 0:
+            if budget is not None and budget.remaining_execution_seconds() <= 0:
                 result_by_id[tc.id] = self._execution_budget_timeout(
                     tc, may_continue=False,
                 )
@@ -2537,27 +2372,11 @@ class QueryLoop:
                 unknown_outcome = ctx.extras.get("unknown_outcome")
                 reconciliation = ctx.extras.get("unknown_outcome_reconciliation")
                 if isinstance(reconciliation, dict) and reconciliation.get("status") == "reconciled":
-                    messages = self._append_turn_nudge(messages, "受控 read-back 已完成；原写操作仍未被重放。请依据回读证据完成答复。")
-                    continue
-                if isinstance(unknown_outcome, dict) and unknown_outcome:
-                    trigger_tool = str(unknown_outcome.get("tool_id") or "操作")
-                    trigger_call = str(unknown_outcome.get("call_id") or "")
-                    # An indeterminate external write is a fence, not an
-                    # instruction to abandon the turn.  Returning here made
-                    # the model unable to perform the required read-back, and
-                    # then projected the whole turn as all-tool-failed.  Keep
-                    # the server-side fence installed by the executor while
-                    # giving the model the failed result and one safe path:
-                    # read-only reconciliation or a bounded user-facing
-                    # disposition.  Any later write is still rejected by the
-                    # executor; this does not weaken the no-replay contract.
+                    messages = self._append_turn_nudge(messages, "同连接 read-back 已完成；请依据完整回读证据决定下一步。")
+                elif isinstance(unknown_outcome, dict) and unknown_outcome:
                     messages = self._append_turn_nudge(
                         messages,
-                        "安全状态：外部写操作的结果尚未确定"
-                        + (f"（工具 {trigger_tool}，调用 {trigger_call}）" if trigger_call else "")
-                        + "。后续写操作已由服务端冻结，绝不可重放该写操作、自动重试或改用另一条写命令。"
-                        "现在请仅选择与该目标相关的只读 read-back/reconcile 工具调用来核验实际状态；"
-                        "若证据仍不足或设备不可达，请基于已有证据向用户说明不确定性和下一步。"
+                        "上一项外部操作的实际结果尚未确定。完整结果已提供；请自行决定 read-back、继续配置、重试或向用户说明当前状态。",
                     )
                 recovered_source_ids = {
                     str(item.get("source_call_id") or "")
@@ -3202,29 +3021,14 @@ class QueryLoop:
                 return True
         return False
 
-    def _artifact_analysis_char_limit(self) -> int:
-        """Return the exact complete-artifact cap available to this turn."""
-        return min(
-            ARTIFACT_ANALYSIS_MAX_CHARS,
-            self._context_budget.artifact_result_tokens * 2,
-        )
-
     def _has_complete_analysis_artifact(
         self,
         results: list[StreamingToolResult],
     ) -> bool:
-        """True only when the complete artifact can actually reach the model.
-
-        The response-only nudge is a control decision, so it must use the same
-        budget boundary as ``_artifact_analysis_content``.  Looking only at the
-        producer's ``content_complete`` claim would otherwise tell the model a
-        truncated result was complete after context-budget projection.
-        """
-        max_chars = self._artifact_analysis_char_limit()
+        """True when a producer supplied complete artifact content."""
         return any(
             result.ok
             and result.output.get("content_complete") is True
-            and len(str(result.output.get("preview") or "")) <= max_chars
             and result.output.get("artifact_type") in {
                 "input_data", "output_data", "report",
             }
@@ -3630,15 +3434,14 @@ class QueryLoop:
     ) -> dict[str, Any]:
         """Run QueryLoop's pre-execution hard boundaries.
 
-        QueryLoop is the execution path. It still keeps semantic repair, risk,
-        and hard policy boundaries directly on the current call batch.
+        QueryLoop is the execution path. It keeps schema, resource-identity and
+        orchestration boundaries directly on the current call batch.
         """
         nodes = self._tool_calls_to_nodes(tool_calls)
         from .pre_execution_repair import (
             REPAIRABLE_ERROR_CODES,
             PreExecutionRepairEngine,
         )
-        from .risk_policy import RiskPolicyEngine
         from .semantic_validator import SemanticValidator
 
         self._fill_delete_paths_from_verified_history(ctx, nodes)
@@ -3722,27 +3525,6 @@ class QueryLoop:
                 "message": "工具调用校验失败：\n" + "\n".join(f"- {e}" for e in errors),
             }
 
-        risk = RiskPolicyEngine(self._config).assess(nodes)
-        ctx.extras.update({
-            "hard_block": bool(risk.hard_block),
-        })
-
-        if risk.hard_block:
-            for node in nodes:
-                if node.id in risk.blocked_nodes:
-                    node.status = ExecutionStatus.SKIPPED
-                    node.error = risk.blocked_reason or "Blocked by risk policy"
-            reason = risk.blocked_reason or "blocked_by_risk_policy"
-            self._record_blocked_audit_nodes(ctx, nodes)
-            return {
-                "ok": False,
-                "error": "risk_hard_block",
-                "errors": [reason],
-                "hard_block": True,
-                "risk_level": risk.risk_level,
-                "message": f"工具调用被安全策略阻断：{reason}",
-            }
-
         repaired_calls = [LLMToolCall(
             id=n.id,
             name=n.tool,
@@ -3756,7 +3538,7 @@ class QueryLoop:
         return {
             "ok": True,
             "tool_calls": repaired_calls,
-            "risk_level": risk.risk_level,
+            "risk_level": validation.risk_level,
         }
 
     @staticmethod
@@ -4007,20 +3789,7 @@ class QueryLoop:
                     )
                 )
             )
-            output_str = (
-                _artifact_analysis_content(
-                    tool_payload,
-                    max_chars=self._artifact_analysis_char_limit(),
-                )
-                if is_complete_text_artifact
-                else _json_compact(
-                    tool_payload,
-                    max_chars=min(
-                        TOOL_MESSAGE_MAX_CHARS,
-                        self._context_budget.per_tool_result_tokens * 3,
-                    ),
-                )
-            )
+            output_str = _json_compact(tool_payload)
             new_msgs.append(LLMMessage(
                 role="tool",
                 content=output_str,
@@ -4040,13 +3809,7 @@ class QueryLoop:
                 for r in extra_results
             ]
             payload = redact_tool_output(payload)
-            output_str = _json_compact(
-                payload,
-                max_chars=min(
-                    TOOL_MESSAGE_MAX_CHARS,
-                    self._context_budget.per_tool_result_tokens * 3,
-                ),
-            )
+            output_str = _json_compact(payload)
             from .prompt_contract import _escape_data
 
             new_msgs.append(LLMMessage(

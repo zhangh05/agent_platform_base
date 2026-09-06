@@ -331,8 +331,8 @@ def get_contract(tool_name: str) -> ToolContract | None:
     if contract is not None:
         return contract
     # Extension ToolSpecs are the public source of truth.  Load their
-    # contracts lazily so direct RiskPolicy use has the exact same boundary as
-    # QueryLoop, without creating an import-time core/extension cycle.
+    # contracts lazily so direct callers share the same boundary as QueryLoop,
+    # without creating an import-time core/extension cycle.
     try:
         from extensions.runtime import get_extension_tool_specs
         get_extension_tool_specs()

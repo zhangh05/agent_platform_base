@@ -179,10 +179,9 @@ def test_extension_action_requirements_remain_with_the_extension():
     assert device.metadata["bindable_inputs"]["probe"] == ("connection_id",)
 
 
-def test_extension_action_semantics_are_declared_once_and_shared_by_catalog_and_risk():
-    """Extension actions must not rely on base-tool heuristics for safety UI."""
+def test_extension_action_semantics_are_declared_once_and_shared_by_catalog():
+    """Extension actions must not rely on base-tool heuristics."""
     from core.runtime_engine.contracts import get_contract, is_read_only_call
-    from core.runtime_engine.risk_policy import RiskPolicyEngine
     from core.tools.catalog_snapshot import build_catalog_snapshot
 
     inspection_contract = get_contract("network.operations.inspection")
@@ -201,15 +200,6 @@ def test_extension_action_semantics_are_declared_once_and_shared_by_catalog_and_
     }
     assert profiles["run"]["read_only"] is False
     assert profiles["get"]["read_only"] is True
-
-    decision = RiskPolicyEngine().assess([
-        ExecutionNode(
-            id="inspect", tool="network.operations.inspection",
-            args={"action": "run", "connection_ids": ["connection-1"]},
-        ),
-    ])
-    assert decision.hard_block is False
-    assert decision.risk_level == "medium"
 
     from core.tools.canonical_registry import to_tool_specs
     from core.tools.policy import ToolPolicy

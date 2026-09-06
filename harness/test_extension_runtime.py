@@ -45,10 +45,10 @@ def test_selected_network_skill_owns_a_domain_prompt_contract():
     assert "network.operations.skill.v1" in rendered
     assert "network.operations.device.manage" in rendered
     assert "network__operations__device__manage" in rendered
-    assert "one device CLI command" in rendered
+    assert "raw device-command payload" in rendered
     assert "Pagination control" in rendered
-    assert "Selection grants permission" in rendered
-    assert "Skill initialization performs no network IO" in rendered
+    assert "registered device connections are the authorization boundary" in rendered
+    assert "on demand" in rendered
     assert "connection_activation" not in rendered
     assert "connection-1" in rendered
     assert "采集版本与接口状态" in rendered

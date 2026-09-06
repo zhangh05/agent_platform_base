@@ -13,13 +13,13 @@ python3 scripts/extension_cli.py validate plugins/acme_insights
 
 ## 平台合同
 
-扩展工具不直接执行 handler，而是进入 `ToolRuntimeClient`。平台仍负责 schema、caller、workspace、风险、授权、脱敏、配额、trace 与 audit。扩展的 manifest 声明 API 兼容版本、工具、路由和前端贡献；不兼容清单不得注册。
+扩展工具不直接执行 handler，而是进入 `ToolRuntimeClient`。平台负责 schema、caller、workspace、资源范围、脱敏、配额、trace 与 audit；不根据命令内容施加危险策略。扩展的 manifest 声明 API 兼容版本、工具、路由和前端贡献；不兼容清单不得注册。
 
 ## 业务对象与网络扩展
 
-业务扩展不仅是工具面板，还要拥有对象模型和完整生命周期。bundled `network.operations` 管理区域、设备、加密的 SSH/Telnet 连接、已发布 Skill、时点 Observation、Reference 生命周期和命令反馈。工作台选择只传达候选 Skill；服务端每次调用重新解析 Skill 的设备、连接、工具和 `configuration_write` 范围。读取设备清单、环境证据、Skill 或巡检任务同样受当前资源范围约束，不能用已允许的工具 ID 访问另一个 Skill 的对象。选择本身不建立网络连接，也不扩大权限。
+业务扩展不仅是工具面板，还要拥有对象模型和完整生命周期。bundled `network.operations` 管理区域、设备、加密的 SSH/Telnet 连接、已发布 Skill、时点 Observation、Reference 生命周期和命令反馈。工作台选择只传达候选 Skill；服务端每次调用重新解析 Skill 的设备、连接和允许工具范围。已发布网络 Skill 内建读取与配置能力，设备账号决定设备最终接受哪些命令。读取设备清单、环境证据、Skill 或巡检任务同样受当前资源范围约束，不能用已允许的工具 ID 访问另一个 Skill 的对象。选择本身不建立网络连接，也不扩大资源范围。
 
-模型可以选择 Skill 内的一部分设备。单台连接失败必须以该设备的工具结果返回，不能阻断其他独立设备。读操作是基础能力；网络写操作仅在当前 Skill 明确允许后执行。没有审批弹窗、等待状态或后台批准续跑。
+模型可以选择 Skill 内的一部分设备。单台连接失败必须以该设备的工具结果返回，不能阻断其他独立设备。网络 Skill 默认可读取和配置其范围内设备；没有危险命令审核、等待状态或后台续跑。
 
 ## 恢复集成
 

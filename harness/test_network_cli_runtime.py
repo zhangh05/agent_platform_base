@@ -19,18 +19,15 @@ from extensions.network_operations.device_drivers import (
 from extensions.network_operations.skill_prompt import render_network_skill_prompt
 
 
-def test_config_prompt_is_conditional_and_read_contract_is_unchanged():
-    readonly = render_network_skill_prompt({"skill_id": "test"})
-    writer = render_network_skill_prompt({"skill_id": "test", "capabilities": ["configuration_write"]})
-    assert "Configuration write capability is enabled" not in readonly
-    assert "configuration writes and destructive confirmation are not supported" in readonly
-    assert "Configuration write capability is enabled" in writer
-    assert "configuration writes and destructive confirmation are not supported" not in writer
-    assert "configuration_write" in writer and "fresh shell" in writer
+def test_config_prompt_is_builtin_for_every_selected_network_skill():
+    prompt = render_network_skill_prompt({"skill_id": "test"})
+    assert "Device execution contract" in prompt
+    assert "fresh shell" in prompt
+    assert "Configuration write capability is enabled" not in prompt
 
 
-@pytest.mark.parametrize("commands,vendor", [([], "h3c"), (["system-view\nreboot"], "h3c"), (["x\x03"], "cisco"), (["system-view"], "generic"), ([42], "h3c"), (["x"] * 21, "huawei")])
-def test_configuration_rejects_invalid_framing(commands, vendor):
+@pytest.mark.parametrize("commands,vendor", [([], "h3c"), ([42], "h3c")])
+def test_configuration_rejects_only_missing_or_non_string_payloads(commands, vendor):
     from extensions.network_operations.device_tools import normalize_configuration_commands
     with pytest.raises(ValueError):
         normalize_configuration_commands(commands, vendor)
@@ -714,7 +711,7 @@ def test_nonpaging_confirmation_never_receives_an_automatic_answer():
     assert io.sent == [b"display something\r\n"]
 
 
-@pytest.mark.parametrize("failure", ["disconnect", "timeout", "limit", "cancel"])
+@pytest.mark.parametrize("failure", ["disconnect", "timeout", "cancel"])
 def test_incomplete_command_does_not_send_the_next_command(monkeypatch, failure):
     from extensions.network_operations import cli_runtime
     from core.tools.context import bind_runtime_cancel_check, reset_runtime_cancel_check
@@ -722,8 +719,6 @@ def test_incomplete_command_does_not_send_the_next_command(monkeypatch, failure)
     chunks = [b"display version\r\npartial\r\n"]
     if failure == "disconnect":
         chunks.append(b"")
-    if failure == "limit":
-        monkeypatch.setattr(cli_runtime, "MAX_OUTPUT_BYTES", 4)
     io = ScriptedIO(chunks)
     session = InteractiveCLISession(send=io.send, receive=io.receive, driver=driver, initial_text="<CE1>")
     import time

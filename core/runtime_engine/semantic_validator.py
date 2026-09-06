@@ -4,9 +4,7 @@ Semantic validator for normalized QueryLoop tool calls.
 Validates:
   - Tool existence in registry
   - Argument schema conformity (required, type, enum, range)
-  - Path safety (in workspace only)
-  - Command safety (no destructive patterns)
-  - Dangerous operation marking
+  - Path/resource shape validation
 
 Returns structured validation result with risk level.
 """
@@ -19,12 +17,6 @@ from typing import Any
 
 from .contracts import BUILTIN_CONTRACTS, get_contract, get_risk_level
 from .models import ExecutionNode, RiskLevel
-from .command_policy import normalize_command, evaluate_command_policy
-
-
-FORBIDDEN_ARGS: list[str] = [
-    "force_delete", "recursive_delete", "rm_rf",
-]
 
 
 
@@ -101,19 +93,9 @@ class SemanticValidator:
         self._validate_action_specific_required_args(node, result)
         self._validate_reference_kinds(node, result)
 
-        # C. Path safety
+        # C. Path/resource shape
         self._validate_path_safety(node, result)
 
-        # D. Command safety
-        self._validate_command_safety(node, result)
-
-        # E. Dangerous operation
-        if contract and contract.side_effect in ("execute_command", "credential_access"):
-            result.warnings.append(SemanticError(
-                node_id=node.id,
-                code="DANGEROUS_OPERATION",
-                message=f"Node '{node.id}' ({node.tool}) performs '{contract.side_effect}' — risk review required",
-            ))
 
     def _validate_args(
         self,
@@ -345,16 +327,6 @@ class SemanticValidator:
                         },
                     ))
 
-        # Forbidden args
-        for forbidden in FORBIDDEN_ARGS:
-            if forbidden in node.args and node.args[forbidden]:
-                result.errors.append(SemanticError(
-                    node_id=node.id,
-                    code="FORBIDDEN_ARG",
-                    message=f"Node '{node.id}' uses forbidden arg '{forbidden}'",
-                    details={"field": forbidden},
-                ))
-
     def _validate_action_specific_required_args(
         self,
         node: ExecutionNode,
@@ -412,15 +384,9 @@ class SemanticValidator:
         if not path or not isinstance(path, str):
             return
 
-        dangerous_prefixes = ["/etc/", "/System/", "/boot/", "C:\\Windows\\", "C:\\WINDOWS\\",
-                              "/var/run/", "/dev/", "/proc/", "/sys/"]
-        for prefix in dangerous_prefixes:
-            if path.startswith(prefix):
-                result.warnings.append(SemanticError(
-                    node_id=node.id,
-                    code="DANGEROUS_PATH",
-                    message=f"Node '{node.id}' accesses system path '{path}'",
-                ))
+        # Path access is ultimately enforced by the resource-owning handler.
+        # This layer only validates published tool schemas and must not impose
+        # a second command/path risk policy.
 
     def _validate_reference_kinds(
         self,
@@ -460,27 +426,6 @@ class SemanticValidator:
                         "received_kind": "managed_file" if is_managed_file else "workspace_path",
                     },
                 ))
-
-    def _validate_command_safety(
-        self,
-        node: ExecutionNode,
-        result: SemanticValidationResult,
-    ) -> None:
-        """Check command arguments against the canonical command policy."""
-        command = node.args.get("command", "")
-        if not command or not isinstance(command, str):
-            return
-
-        normalized = normalize_command(command)
-        decision = evaluate_command_policy(normalized)
-
-        if not decision.allowed:
-            result.errors.append(SemanticError(
-                node_id=node.id,
-                code=decision.error_code or "FORBIDDEN_COMMAND",
-                message=decision.reason or f"Node '{node.id}' command blocked by policy",
-                details=decision.to_dict(),
-            ))
 
     def _compute_risk_level(
         self,

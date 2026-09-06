@@ -12,7 +12,6 @@ from extensions.network_operations.device_drivers import DeviceDriver, resolve_d
 
 ANSI_ESCAPE = re.compile(r"\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1b\\))")
 CONTROL_EXCEPT_LAYOUT = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
-MAX_OUTPUT_BYTES = 200_000
 MAX_PAGER_ADVANCES = 500
 # A device can emit a console/syslog notice immediately after returning its
 # prompt.  Waiting for a brief quiet period prevents that late notice from
@@ -327,10 +326,6 @@ class InteractiveCLISession:
                 break
             if chunk:
                 raw.extend(chunk)
-                if len(raw) > MAX_OUTPUT_BYTES:
-                    del raw[MAX_OUTPUT_BYTES:]
-                    truncated = True
-                    break
                 decoded, encoding = decode_terminal_bytes(bytes(raw), self.driver.encodings)
                 normalized = normalize_terminal_text(decoded)
                 for rule in self.driver.pager_rules:

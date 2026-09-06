@@ -26,29 +26,24 @@ def _setup(monkeypatch, tmp_path):
     monkeypatch.setenv("LZCORE_MASTER_KEY", "test-extension-master-key")
 
 
-def test_configuration_capability_is_opt_in_validated_and_revocable(monkeypatch, tmp_path):
+def test_published_skill_has_configuration_capability_by_default(monkeypatch, tmp_path):
     _setup(monkeypatch, tmp_path)
     conn = _register_connection("default", {"name": "CE", "host": "127.0.0.1", "protocol": "telnet", "vendor": "h3c"})
     payload = {"name": "test", "device_ids": [conn["device_id"]], "connection_ids": [conn["connection_id"]]}
     skill = service.save_skill("default", payload)
-    assert skill["capabilities"] == []
+    assert "capabilities" not in skill
     inv = SimpleNamespace(workspace_id="default", skill=skill["skill_id"], skill_connection_ids=(conn["connection_id"],),
                           arguments={"action": "configure", "connection_id": conn["connection_id"], "commands": ["system-view", "return"]})
     calls = []
     monkeypatch.setattr(service, "probe_target", lambda *a, **kw: calls.append(kw) or {"ok": True, "configuration_ok": True})
-    assert device_manage(inv)["error"] == "configuration_not_allowed_by_skill"
-    assert not calls
-    skill = service.save_skill("default", {**skill, "capabilities": ["configuration_write"]})
     snapshot = service.resolve_workbench_selection("default", {"skill_id": skill["skill_id"]})
-    assert snapshot["capabilities"] == ["configuration_write"]
+    assert "capabilities" not in snapshot
     assert device_manage(inv)["configuration_ok"]
     assert calls[0]["configure"] is True and "session_key" not in calls[0]
-    service.save_skill("default", {**skill, "capabilities": []})
-    assert device_manage(inv)["error"] == "configuration_not_allowed_by_skill"
-    assert len(calls) == 1
-    for invalid in [True, "configuration_write", ["shell"], [None], [{}]]:
-        with pytest.raises(ValueError, match="unsupported capability"):
-            service.save_skill("default", {**skill, "capabilities": invalid})
+    legacy = service.save_skill("default", {**skill, "capabilities": ["legacy_option"]})
+    assert "capabilities" not in legacy
+    assert device_manage(inv)["configuration_ok"]
+    assert len(calls) == 2
 
 
 def test_configuration_revalidates_authority_at_service_boundary(monkeypatch, tmp_path):
@@ -57,21 +52,21 @@ def test_configuration_revalidates_authority_at_service_boundary(monkeypatch, tm
     monkeypatch.setattr(service, "probe_target", lambda *a, **kw: pytest.fail("must not open a socket"))
     result = service.test_connection("default", conn["connection_id"], commands=["system-view"], configuration_skill_id="deleted")
     assert result["ok"] is False
-    assert result["error"] == "configuration_not_allowed_by_skill"
+    assert result["error"] == "device_execution_not_allowed_by_skill"
 
 
 def test_configuration_failure_retains_unknown_effects(monkeypatch, tmp_path):
     _setup(monkeypatch, tmp_path)
     conn = _register_connection("default", {"name": "CE", "host": "127.0.0.1", "protocol": "telnet", "vendor": "h3c"})
-    skill = service.save_skill("default", {"name": "test", "device_ids": [conn["device_id"]], "connection_ids": [conn["connection_id"]], "capabilities": ["configuration_write"]})
+    skill = service.save_skill("default", {"name": "test", "device_ids": [conn["device_id"]], "connection_ids": [conn["connection_id"]]})
     monkeypatch.setattr(service, "probe_target", lambda *a, **kw: {"ok": False, "status": "unknown", "execution_may_continue": True, "error": "configuration_outcome_unknown"})
     inv = SimpleNamespace(workspace_id="default", skill=skill["skill_id"], arguments={"action": "configure", "connection_id": conn["connection_id"], "commands": ["system-view"]})
     result = device_manage(inv)
     assert result["ok"] is False and result["status"] == "unknown"
-    assert result["execution_may_continue"] and not result["automatic_retry_allowed"]
+    assert result["execution_may_continue"]
 
 
-def test_configuration_contract_is_high_risk_and_cannot_retry():
+def test_configuration_contract_describes_external_execution_without_authorization_gate():
     from extensions.runtime import get_extension_tool_specs
     from core.tools.policy import ToolPolicy
     from core.tools.schemas import ToolInvocation
@@ -80,7 +75,7 @@ def test_configuration_contract_is_high_risk_and_cannot_retry():
     assert contract["side_effects"] == "external_write"
     assert contract["idempotency"] == "unsafe_to_retry" and not contract["read_only"]
     decision = ToolPolicy().check(spec, ToolInvocation(tool_id=spec.tool_id, workspace_id="default", arguments={"action": "configure", "connection_id": "test", "commands": ["system-view"]}))
-    assert decision.allowed and decision.risk_level == "high"
+    assert decision.allowed
 
 
 def _register_connection(workspace_id, payload):
@@ -855,17 +850,18 @@ def test_skill_tool_allowlist_is_validated_and_enforced(monkeypatch, tmp_path):
     assert blocked == {"ok": False, "error": "tool_not_allowed_by_skill"}
 
 
-def test_legacy_skill_read_capability_is_intrinsic_without_granting_writes(monkeypatch, tmp_path):
+def test_skill_base_tools_and_configuration_are_intrinsic(monkeypatch, tmp_path):
     _setup(monkeypatch, tmp_path)
     conn = _register_connection("default", {"name": "CE", "host": "127.0.0.1", "protocol": "telnet", "vendor": "h3c"})
     skill = service.save_skill("default", {"name": "test", "device_ids": [conn["device_id"]], "connection_ids": [conn["connection_id"]], "allowed_tool_ids": []})
+    monkeypatch.setattr(service, "probe_target", lambda *_args, **_kwargs: {"ok": True})
     assert skill["allowed_tool_ids"] == [service.SKILL_BASE_TOOL_ID, "network.operations.context_read"]
     service._store("default").save("skills", skill["skill_id"], {**skill, "allowed_tool_ids": []})
     for resolved in [service.get_skill("default", skill["skill_id"]), service.list_skills("default")[0], service.resolve_workbench_selection("default", {"skill_id": skill["skill_id"]})]:
         assert resolved["allowed_tool_ids"] == [service.SKILL_BASE_TOOL_ID, "network.operations.context_read"]
-        assert resolved["capabilities"] == []
+        assert "capabilities" not in resolved
     inv = SimpleNamespace(workspace_id="default", skill=skill["skill_id"], arguments={"action": "configure", "connection_id": conn["connection_id"], "commands": ["system-view"]})
-    assert device_manage(inv)["error"] == "configuration_not_allowed_by_skill"
+    assert device_manage(inv)["ok"] is True
     service.save_skill("default", {**skill, "enabled": False})
     inv.arguments["action"] = "probe"
     assert device_manage(inv)["error"] == "tool_not_allowed_by_skill"

@@ -533,12 +533,7 @@ def get_extension_tool_specs() -> list[tuple[ToolSpec, Callable[[ToolInvocation]
 
 
 def _sync_runtime_contracts(specs) -> None:
-    """Make installed tools visible to the same safety gate as core tools.
-
-    Tool specs are the extension SSOT.  Without this bridge, extension calls
-    reached QueryLoop but were unknown to RiskPolicyEngine and therefore
-    skipped its common risk accounting entirely.
-    """
+    """Make installed tools visible to the shared schema and catalog contracts."""
     from core.runtime_engine.contracts import ToolContract, register_contract
     from core.tools.catalog_snapshot import build_action_profiles_for_tool
 

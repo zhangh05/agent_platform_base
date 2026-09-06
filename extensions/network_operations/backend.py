@@ -337,7 +337,7 @@ def device_manage(invocation):
     if action == "configure" and not service.configuration_allowed(
         service.get_skill(invocation.workspace_id, str(getattr(invocation, "skill", "") or "")), connection_id
     ):
-        return {"ok": False, "executed": False, "error": "configuration_not_allowed_by_skill"}
+        return {"ok": False, "executed": False, "error": "device_execution_not_allowed_by_skill"}
     if getattr(invocation, "skill", None):
         skill = service.get_skill(invocation.workspace_id, str(invocation.skill))
         if not skill or connection_id not in set(skill.get("connection_ids") or []):
@@ -364,7 +364,7 @@ def device_manage(invocation):
         **({"configuration_skill_id": str(invocation.skill)} if action == "configure" else {}),
     )
     if action == "configure":
-        return {**result, "automatic_retry_allowed": False, "requires_readback": True}
+        return result
     if result.get("ok"):
         response = {**result, "connection_ok": True}
         if action in {"read", "collect"}:
@@ -689,7 +689,7 @@ def register():
             {
                 "tool_id": "network.operations.device.manage",
                 "name": "网络设备命令执行",
-                "description": "自主选择已授权 connection_id 和明确 commands，用 read 读取，不补默认命令。probe 仅测试连通性；collect + facts 是可选预制采集。仅 Skill 启用 configuration_write 时可用 configure 写入：模型提供全部命令和模式切换，独立会话，遇错停止，禁止自动重试，写后需读取验证。不自动保存或确认交互。只读会话按任务复用，过期按需重连，同连接串行、不同连接并行。运行时处理分页、提示符和编码，返回逐命令回显、完整性和错误，单台失败不阻断其他设备。",
+                "description": "在当前已授权 connection_id 上执行模型提供的原始设备命令。read、collect 与 probe 用于观察；configure 用于设备配置，已发布并选中的 Skill 默认可用。运行时只负责连接、分页、提示符和编码，不改写、不审核、不裁剪模型命令或设备输出。设备账号与 Skill 的设备、连接、工具范围是唯一权限边界。",
                 "category": "ops",
                 "risk_level": "medium",
                 "permission_action": "network",
@@ -704,7 +704,7 @@ def register():
                     "probe": ["connection_ok", "connection", "status", "error", "stages", "fingerprint"],
                     "read": ["connection_ok", "connection", "status", "error", "stages", "fingerprint", "output", "command_results", "device_profile", "session", "command_source"],
                     "collect": ["connection_ok", "connection", "status", "error", "stages", "fingerprint", "facts", "output", "command_results", "device_profile", "session", "command_source"],
-                    "configure": ["configuration_ok", "status", "error", "command_results", "unexecuted_commands", "requires_readback"],
+                    "configure": ["configuration_ok", "status", "error", "command_results", "unexecuted_commands"],
                 },
                 "action_requirements": {
                     "all": {"probe": ["connection_id"], "read": ["connection_id", "commands"], "collect": ["connection_id", "facts"], "configure": ["connection_id", "commands"]},
@@ -717,7 +717,7 @@ def register():
                         **common,
                         "action": {"type": "string", "enum": ["probe", "read", "collect", "configure"]},
                         "connection_id": {"type": "string", "minLength": 1},
-                        "commands": {"type": "array", "items": {"type": "string", "minLength": 1}, "minItems": 1, "maxItems": 20},
+                        "commands": {"type": "array", "items": {"type": "string", "minLength": 1}, "minItems": 1},
                         "facts": {"type": "array", "items": {"type": "string", "enum": list(service.SEMANTIC_FACTS)}, "minItems": 1, "maxItems": 10},
                         "timeout": {"type": "integer", "minimum": 1, "maximum": 90},
                     },

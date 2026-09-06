@@ -4,7 +4,7 @@
 
 ## 设计目标
 
-LZCore 将模型推理放在受治理的运行时中：模型可以选择工具和组织证据，但不能改变工具授权、风险策略、数据边界、预算或外部写入保护规则。
+LZCore 将模型推理放在统一运行时中：模型可以选择工具、组织证据和决定下一步；运行时只维护工具 schema、资源身份、Skill 范围、传输生命周期与数据边界。
 
 ## 请求链路
 
@@ -45,11 +45,11 @@ tool id -> manifest -> caller gate -> policy / authorization
 
 `core/runtime_engine/context_contract.py` 只定义领域无关的 Observation 来源/时间/完整性和 Reference 生命周期。Observation 永远只表示某一时点的事实，不能自称“正常”。网络巡检可从完整或部分观察生成 `candidate`；只有完整观察经用户显式确认后才成为当前 `confirmed` Reference，同范围旧 Reference 进入 `superseded`，也可显式 `invalidated`。
 
-## 授权与外部写入
+## 授权与设备执行
 
-平台没有审批等待状态。网络设备读取、Skill 元数据和巡检任务生命周期均按当前 Skill 的设备/连接选择过滤；网络设备写入还由服务端实时验证已发布 Skill、`configuration_write` 和允许工具范围。策略拒绝和未授权调用以结构化结果返回模型；不创建审批记录或后台续跑。
+平台没有危险命令策略或配置写入开关。每个已发布并选中的网络 Skill 都内建设备读取和 `configure` 能力；服务端仅实时验证 Skill 已启用、工具在其允许范围内、目标连接属于该 Skill。设备账号是命令执行权限的最终控制者。范围外调用以结构化结果返回模型；不创建后台续跑。
 
-非幂等外部写入不能因恢复、worker 重启或“失败重试”被自动重放。结果未知时操作账本保留事实，后续只能执行受控 read-back/reconcile。只有同一连接返回 `connection_ok=true` 且包含 `status=collected` 的完整 evidence claim 才能关闭未知结果；“流程可继续”的不可达结果不构成回读成功。
+外部操作账本记录事实，不替模型决定后续动作。结果未知时，完整结果照常返回模型；模型可自行选择 read-back、继续配置、重试或向用户说明状态。运行时不自动重放命令、不冻结后续写入，也不以风险判断替代设备账号权限。
 
 ## 数据、记忆与提示词
 

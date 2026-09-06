@@ -16,9 +16,6 @@ import uuid
 from dataclasses import dataclass
 from typing import Any, Protocol
 
-_MAX_INPUT_BYTES = 1_048_576
-_MAX_CODE_BYTES = 1_048_576
-_MAX_OUTPUT_BYTES = 1_048_576
 _CONTAINER_IMAGE_ENV = "LZCORE_PYTHON_CONTAINER_IMAGE"
 
 
@@ -226,14 +223,12 @@ class DockerStrongIsolationRunner:
             "128m",
             "--cpus",
             "0.5",
-            "--ulimit",
-            "fsize=2097152:2097152",
             "--tmpfs",
             "/tmp:rw,nosuid,nodev,noexec,size=16m",
             self.image,
             "sh",
             "-c",
-            "ulimit -f 2048; python - > /tmp/stdout.txt 2> /tmp/stderr.txt; status=$?; cat /tmp/stdout.txt; cat /tmp/stderr.txt >&2; exit $status",
+            "python - > /tmp/stdout.txt 2> /tmp/stderr.txt; status=$?; cat /tmp/stdout.txt; cat /tmp/stderr.txt >&2; exit $status",
         ]
         try:
             completed = subprocess.run(
@@ -264,12 +259,8 @@ class DockerStrongIsolationRunner:
             )
             result["timed_out"] = True
             return result
-        stdout = (completed.stdout or "")[:_MAX_OUTPUT_BYTES]
-        stderr = (completed.stderr or "")[:_MAX_OUTPUT_BYTES]
-        output_truncated = (
-            len(completed.stdout or "") > _MAX_OUTPUT_BYTES
-            or len(completed.stderr or "") > _MAX_OUTPUT_BYTES
-        )
+        stdout = completed.stdout or ""
+        stderr = completed.stderr or ""
         result = {
             "ok": completed.returncode == 0,
             "exit_code": completed.returncode,
@@ -290,11 +281,8 @@ class DockerStrongIsolationRunner:
                 "memory": "128m",
                 "cpus": "0.5",
                 "pids": 16,
-                "output_bytes": _MAX_OUTPUT_BYTES,
             },
         }
-        if output_truncated:
-            result["output_truncated"] = True
         return result
 
 
@@ -315,22 +303,18 @@ def select_python_runner() -> PythonRunner:
 def _prepare_execution(
     *, code: str, workspace_id: str, run_id: str, input_data: Any, timeout: int
 ) -> str | dict[str, Any]:
-    from core.tools.python_exec import PythonExecSecurityError, validate_code
+    from core.tools.python_exec import validate_code
 
     if not re.fullmatch(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$", workspace_id):
         return _empty_result(
             timeout, "invalid_workspace_id", "strong_container", runner="docker"
         )
-    if len(code.encode("utf-8")) > _MAX_CODE_BYTES:
-        return _empty_result(
-            timeout, "python code exceeds 1 MiB", "strong_container", runner="docker"
-        )
     try:
         validate_code(code)
-    except PythonExecSecurityError as exc:
+    except SyntaxError as exc:
         return _empty_result(
             timeout,
-            f"Security check failed: {exc}",
+            f"Syntax check failed: {exc}",
             "strong_container",
             runner="docker",
         )
@@ -346,10 +330,6 @@ def _prepare_execution(
             f"input_data is not JSON serializable: {exc}",
             "strong_container",
             runner="docker",
-        )
-    if len(input_json.encode("utf-8")) > _MAX_INPUT_BYTES:
-        return _empty_result(
-            timeout, "input_data exceeds 1 MiB", "strong_container", runner="docker"
         )
     del run_id
     preamble = (

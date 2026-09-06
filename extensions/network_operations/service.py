@@ -479,7 +479,7 @@ def test_connection(
                 # Re-read authority after queueing and before opening a socket.
                 skill = get_skill(workspace_id, configuration_skill_id)
                 if not configuration_allowed(skill, connection_id):
-                    raise ValueError("configuration_not_allowed_by_skill")
+                    raise ValueError("device_execution_not_allowed_by_skill")
                 session_options = {"configure": True}
             remaining = timeout - (time.monotonic() - execution_started)
             if remaining <= 0:
@@ -704,11 +704,14 @@ def delete_connection(workspace_id: str, connection_id: str) -> bool:
 
 
 def _with_skill_base_capability(record: dict[str, Any]) -> dict[str, Any]:
-    """Live reads and bounded context are intrinsic; neither grants writes."""
-    return {**record, "allowed_tool_ids": list(dict.fromkeys([
+    """Normalize legacy Skill records to the default device-execution contract."""
+    return {
+        **{key: value for key, value in record.items() if key != "capabilities"},
+        "allowed_tool_ids": list(dict.fromkeys([
         *(record.get("allowed_tool_ids") or []), SKILL_BASE_TOOL_ID,
         "network.operations.context_read",
-    ]))}
+        ])),
+    }
 
 
 def list_skills(workspace_id: str, *, enabled_only: bool = False) -> list[dict[str, Any]]:
@@ -724,7 +727,6 @@ def get_skill(workspace_id: str, skill_id: str) -> dict[str, Any] | None:
 def configuration_allowed(skill: dict[str, Any] | None, connection_id: str) -> bool:
     return bool(
         skill and skill.get("enabled", True)
-        and "configuration_write" in (skill.get("capabilities") or [])
         and "network.operations.device.manage" in (skill.get("allowed_tool_ids") or [])
         and connection_id in (skill.get("connection_ids") or [])
     )
@@ -759,9 +761,6 @@ def save_skill(workspace_id: str, payload: dict[str, Any]) -> dict[str, Any]:
     if any(item not in SKILL_TOOL_IDS for item in allowed_tool_ids):
         raise ValueError("skill contains unsupported tool")
     allowed_tool_ids = _with_skill_base_capability({"allowed_tool_ids": allowed_tool_ids})["allowed_tool_ids"]
-    capabilities = payload.get("capabilities", existing.get("capabilities", []))
-    if not isinstance(capabilities, list) or any(item != "configuration_write" for item in capabilities):
-        raise ValueError("skill contains unsupported capability")
     default_script_id = str(payload.get("default_script_id") or "").strip()
     if default_script_id:
         _resolve_script(workspace_id, default_script_id)
@@ -773,7 +772,6 @@ def save_skill(workspace_id: str, payload: dict[str, Any]) -> dict[str, Any]:
         "device_ids": device_ids,
         "connection_ids": connection_ids,
         "allowed_tool_ids": allowed_tool_ids,
-        "capabilities": list(dict.fromkeys(capabilities)),
         "default_script_id": default_script_id,
         "instructions": str(payload.get("instructions") or "").strip()[:2000],
         "created_at": str(existing.get("created_at") or now_iso()),
@@ -829,7 +827,6 @@ def resolve_workbench_selection(workspace_id: str, selection: dict[str, Any]) ->
     return {
         "skill_id": skill_id,
         "skill_name": str(skill.get("name") or ""),
-        "capabilities": list(skill.get("capabilities") or []),
         "instructions": str(skill.get("instructions") or ""),
         "allowed_tool_ids": list(skill.get("allowed_tool_ids") or []),
         "device_ids": selected,

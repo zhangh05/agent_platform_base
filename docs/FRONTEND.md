@@ -29,8 +29,8 @@ route state + Zustand store
 - 登录态使用 HttpOnly Cookie。受控 token 流只允许从 `sessionStorage` 读取，不得写入 URL、`localStorage`、构建变量或日志。
 - 分离部署时，`VITE_API_BASE` 同时决定 HTTP、WebSocket 和 SSE 的 API origin。
 - 前端显示服务端给出的 `execution_outcome`、`tool_execution_outcome`、恢复目标和结构化错误，不自行推断或改写任务事实。
-- 单个工具失败不能渲染成整个任务失败。外部写入结果未知时，界面必须表达为待 read-back/reconcile，且不能提供重放原写操作的入口。
-- 浏览器不能自行扩大 `workspace_id`、设备范围、连接范围、Skill 工具范围或 `configuration_write` 权限。
+- 单个工具失败不能渲染成整个任务失败。外部操作结果未知时，界面必须如实呈现完整结果与不确定性，不把模型仍在运行的会话误显示为完成。
+- 浏览器不能自行扩大 `workspace_id`、设备范围、连接范围或 Skill 工具范围；网络 Skill 的配置能力由已发布 Skill 的服务端范围决定，不是浏览器可传入的开关。
 - 任务与 trace 等异步详情必须以请求序号和当前资源 ID 双重校验，旧请求不得覆盖后来选择；URL 深链恢复选择是幂等操作，不能复用“再次点击关闭”的交互语义。
 - 附件上传失败时保留输入草稿、自动元数据和失败附件；部分成功只移除已上传附件，允许用户重试剩余项。
 

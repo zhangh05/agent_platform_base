@@ -537,7 +537,7 @@ class SSOTRuntimeEngine:
         if error_key and error_key.startswith("doom_loop"):
             return SSOTRuntimeErrorCode.EXECUTION_TOOL_EXCEPTION
 
-        # Hard block from risk policy
+        # A hard block can only originate from a structural runtime boundary.
         if hard_block:
             return SSOTRuntimeErrorCode.RISK_CRITICAL_DENIED
 

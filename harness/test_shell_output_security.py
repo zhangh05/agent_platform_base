@@ -120,18 +120,16 @@ def test_run_shell_redacts_subprocess_output():
                 os.environ[k] = old
 
 
-def test_run_shell_redacts_before_truncating():
-    """Redaction must happen before max-output truncation so a secret
-    cannot be cut into an unredactable fragment at the boundary.
-    """
+def test_run_shell_redacts_without_truncating_output():
+    """Shell output is redacted but is not length-truncated for the model."""
     import sys
     sys.path.insert(0, str(PROJECT_ROOT))
 
     from core.tools.general_tools import shared
     src = Path(shared.__file__).read_text(encoding="utf-8")
     stdout_redact_idx = src.index('stdout = redact_tool_output(stdout or "")')
-    stdout_truncate_idx = src.index('[:_SHELL_MAX_OUTPUT]', stdout_redact_idx)
-    assert stdout_redact_idx < stdout_truncate_idx
+    assert '[:_SHELL_MAX_OUTPUT]' not in src
+    assert stdout_redact_idx >= 0
 
 
 def test_exec_defaults_to_current_workspace(monkeypatch, tmp_path):

@@ -9,7 +9,7 @@ import "./NetworkOperations.css";
 type Region = { region_id: string; name: string };
 type Device = { device_id: string; name: string; host: string; vendor: string; device_type: string; region_id: string };
 type Connection = { connection_id: string; device_id: string; name?: string; protocol: "ssh" | "telnet"; port: number; username?: string; source_address?: string; effective_source_address?: string; auth_method?: string; status: string; verified: boolean; credential_configured?: boolean; last_error?: string; last_tested_at?: string; driver_id?: string; detected_vendor?: string; os_family?: string; semantic_facts?: string[]; profile_detected_from?: string };
-type Skill = { skill_id: string; name: string; description: string; instructions?: string; enabled: boolean; device_ids: string[]; connection_ids: string[]; allowed_tool_ids: string[]; capabilities?: string[] };
+type Skill = { skill_id: string; name: string; description: string; instructions?: string; enabled: boolean; device_ids: string[]; connection_ids: string[]; allowed_tool_ids: string[] };
 type Observation = { observation_id: string; source_id: string; observed_at: string; completeness: string; target_ids: string[]; candidate_reference_id?: string };
 type OperationalReference = { reference_id: string; name: string; state: "candidate" | "confirmed" | "superseded" | "invalidated"; authority: string; current: boolean; completeness: string; target_ids: string[]; updated_at: string };
 type CommandExperience = { experience_id: string; connection_id: string; driver_id: string; command: string; status: "accepted" | "rejected"; observations: number; last_observed_at: string };
@@ -17,7 +17,7 @@ type EvidenceSource = { source_id: string; kind: string; available: boolean; aut
 type OperationalContext = { observations: Observation[]; references: OperationalReference[]; command_experience: CommandExperience[]; sources: EvidenceSource[] };
 type DeviceForm = Omit<Device, "device_id"> & { device_id?: string };
 type ConnectionForm = { connection_id?: string; device_id: string; name: string; protocol: "ssh" | "telnet"; port: string; username: string; source_address: string; password: string; private_key: string; passphrase: string; auth_method: string };
-type SkillForm = { capabilities: string[]; skill_id?: string; name: string; description: string; instructions: string; enabled: boolean; device_ids: string[]; connection_ids: string[]; allowed_tool_ids: string[] };
+type SkillForm = { skill_id?: string; name: string; description: string; instructions: string; enabled: boolean; device_ids: string[]; connection_ids: string[]; allowed_tool_ids: string[] };
 
 const base = "/extensions/network.operations";
 const toolOptions = [
@@ -29,7 +29,7 @@ const baseToolId = "network.operations.device.manage";
 const allowedToolIds = [baseToolId, ...toolOptions.map((item) => item.id)];
 const emptyDevice: DeviceForm = { name: "", host: "", vendor: "h3c", device_type: "switch", region_id: "" };
 const emptyConnection: ConnectionForm = { device_id: "", name: "", protocol: "ssh", port: "22", username: "", source_address: "", password: "", private_key: "", passphrase: "", auth_method: "password" };
-const emptySkill: SkillForm = { capabilities: [], name: "", description: "", instructions: "", enabled: true, device_ids: [], connection_ids: [], allowed_tool_ids: allowedToolIds };
+const emptySkill: SkillForm = { name: "", description: "", instructions: "", enabled: true, device_ids: [], connection_ids: [], allowed_tool_ids: allowedToolIds };
 const friendlyErrors: Record<string, string> = {
   "device name and host already exist": "设备名称与管理地址均相同的设备已存在",
 };
@@ -203,7 +203,7 @@ export default function NetworkOperations() {
   );
 
   const transitionReference = async (reference: OperationalReference, action: "confirm" | "invalidate") => {
-    const approved = await confirm({
+    const confirmed = await confirm({
       title: action === "confirm" ? "确认运行参考" : "使运行参考失效",
       body: action === "confirm"
         ? "确认后，这份完整观察将成为同一设备范围的当前预期参考，并替代此前已确认参考。它不会把未来差异自动判定为故障。"
@@ -211,7 +211,7 @@ export default function NetworkOperations() {
       confirmLabel: action === "confirm" ? "确认参考" : "标记失效",
       destructive: action === "invalidate",
     });
-    if (!approved) return;
+    if (!confirmed) return;
     void run(() => apiRequest({ method: "POST", url: `${base}/references/${reference.reference_id}`, data: { workspace_id: workspaceId, action } }), action === "confirm" ? "运行参考已确认" : "运行参考已失效");
   };
 
@@ -249,7 +249,6 @@ export default function NetworkOperations() {
     setSkillForm({
       ...emptySkill,
       ...skill,
-      capabilities: skill.capabilities || [],
       instructions: skill.instructions || "",
       allowed_tool_ids: [...new Set([baseToolId, ...(skill.allowed_tool_ids || [])])],
     });
@@ -314,11 +313,7 @@ export default function NetworkOperations() {
         <label className="full-field">说明<textarea value={skillForm.description} onChange={(event) => setSkillForm({ ...skillForm, description: event.target.value })} /></label>
         <fieldset><legend>多选设备</legend>{devices.map((device) => <label className="check" key={device.device_id}><input type="checkbox" checked={skillForm.device_ids.includes(device.device_id)} onChange={(event) => setSkillForm({ ...skillForm, device_ids: event.target.checked ? [...skillForm.device_ids, device.device_id] : skillForm.device_ids.filter((id) => id !== device.device_id), connection_ids: event.target.checked ? skillForm.connection_ids : skillForm.connection_ids.filter((id) => connections.find((connection) => connection.connection_id === id)?.device_id !== device.device_id) })} />{device.name} · {device.host}</label>)}</fieldset>
         <fieldset><legend>设备连接</legend>{connections.filter((connection) => connection.credential_configured && skillForm.device_ids.includes(connection.device_id)).map((connection) => <label className="check" key={connection.connection_id}><input type="checkbox" checked={skillForm.connection_ids.includes(connection.connection_id)} onChange={(event) => setSkillForm({ ...skillForm, connection_ids: event.target.checked ? [...skillForm.connection_ids, connection.connection_id] : skillForm.connection_ids.filter((id) => id !== connection.connection_id) })} />{byDevice.get(connection.device_id)?.name} · {connection.protocol.toUpperCase()}:{connection.port} · {connection.verified ? "最近连接成功" : "调用时主动连接"}</label>)}</fieldset>
-        <fieldset className="full-field"><legend>允许的能力</legend><p className="intrinsic-capabilities">设备实时读取与环境证据读取是 Skill 内置只读能力，不授予配置写入。</p>{toolOptions.map((tool) => <label className="check capability-check" key={tool.id}><input type="checkbox" checked={skillForm.allowed_tool_ids.includes(tool.id)} onChange={(event) => setSkillForm({ ...skillForm, allowed_tool_ids: event.target.checked ? [...skillForm.allowed_tool_ids, tool.id] : skillForm.allowed_tool_ids.filter((id) => id !== tool.id) })} /><span><b>{tool.label}</b><small>{tool.description}</small></span></label>)}</fieldset>
-        <fieldset className="full-field write-capability"><legend>配置权限</legend>
-          <label className="check capability-check"><input type="checkbox" checked={skillForm.capabilities.includes("configuration_write")} onChange={(event) => setSkillForm({ ...skillForm, capabilities: event.target.checked ? ["configuration_write"] : [] })} /><span><b>允许配置写入</b><small>允许 LLM 自主生成配置命令，仅限所选设备和连接；失败不自动重试。</small></span></label>
-          <p>默认只读。开启不会立即连接或修改设备，也不会自动保存配置、确认交互或重启。</p>
-        </fieldset>
+        <fieldset className="full-field"><legend>允许的能力</legend><p className="intrinsic-capabilities">设备读取与配置是已发布 Skill 的内置能力。模型仅能操作此 Skill 所选的设备、连接和工具；设备账号决定设备侧实际权限。</p>{toolOptions.map((tool) => <label className="check capability-check" key={tool.id}><input type="checkbox" checked={skillForm.allowed_tool_ids.includes(tool.id)} onChange={(event) => setSkillForm({ ...skillForm, allowed_tool_ids: event.target.checked ? [...skillForm.allowed_tool_ids, tool.id] : skillForm.allowed_tool_ids.filter((id) => id !== tool.id) })} /><span><b>{tool.label}</b><small>{tool.description}</small></span></label>)}</fieldset>
         <label className="full-field">使用说明<textarea value={skillForm.instructions} onChange={(event) => setSkillForm({ ...skillForm, instructions: event.target.value })} placeholder="描述目标、证据要求和操作边界；模型自行决定工具顺序与并行关系。" /></label>
         <div className="form-actions"><Button variant="primary" type="submit" disabled={busy || !skillForm.device_ids.length || !skillForm.connection_ids.length || !skillForm.allowed_tool_ids.length}>{skillForm.skill_id ? "保存 Skill" : "发布到工作台"}</Button>{skillForm.skill_id ? <Button type="button" onClick={() => setEditor(null)}>取消</Button> : null}</div>
       </form></section>)}
@@ -392,7 +387,7 @@ export default function NetworkOperations() {
             <dl className="skill-scope">
               <div><dt>设备</dt><dd>{skillDevices.length ? skillDevices.join("、") : "无可用设备"}</dd></div>
               <div><dt>连接</dt><dd>{skillConnections.length ? skillConnections.join("、") : "无可用连接"}</dd></div>
-              <div><dt>能力</dt><dd>{skill.allowed_tool_ids.length} 项已授权 · <b className={skill.capabilities?.includes("configuration_write") ? "write-enabled" : ""}>{skill.capabilities?.includes("configuration_write") ? "可配置" : "只读"}</b></dd></div>
+              <div><dt>能力</dt><dd>{skill.allowed_tool_ids.length} 项已授权 · <b className="write-enabled">可执行设备配置</b></dd></div>
             </dl>
           </article>;
         }) : <div className="empty">{skills.length ? "没有匹配的 Skill" : "尚未创建 Skill，选择设备并配置能力后发布到工作台"}</div>}</div>

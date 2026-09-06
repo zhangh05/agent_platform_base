@@ -194,25 +194,16 @@ def _operational_observation(
     command: str,
     output: str,
     *,
-    max_chars: int = 1800,
+    max_chars: int | None = None,
 ) -> dict[str, Any]:
-    """Create a bounded, literal evidence view for any semantic command.
+    """Create a complete, literal evidence view for any semantic command.
 
     Vendor-specific parsers may add normalized fields later, but the runtime
     must always retain enough literal observation for a model to distinguish
     "command completed" from "peer established" or "no data returned".
     """
     cleaned = _meaningful_cli_output(driver, command, output)
-    if len(cleaned) > max_chars:
-        head = int(max_chars * 0.72)
-        tail = max_chars - head
-        excerpt = (
-            cleaned[:head]
-            + f"\n...[observation truncated, {len(cleaned)} chars total]...\n"
-            + cleaned[-tail:]
-        )
-    else:
-        excerpt = cleaned
+    excerpt = cleaned
     return {
         "command": str(command or ""),
         "observation_status": "observed" if cleaned else "empty",

@@ -210,7 +210,7 @@ def test_terminal_tracking_contract_requests_final_synthesis():
     ]) is True
 
 
-def test_tool_message_hard_cap_preserves_all_multi_device_members():
+def test_tool_message_preserves_complete_multi_device_payload():
     payload = {
         "ok": True,
         "analysis_projection": {
@@ -237,14 +237,14 @@ def test_tool_message_hard_cap_preserves_all_multi_device_members():
 
     rendered = _json_compact(payload, max_chars=6000)
 
-    assert len(rendered) <= 6000
+    assert len(rendered) > 6000
     decoded = json.loads(rendered)
     device_names = [item.get("name") for item in decoded["analysis_projection"]["devices"]]
     assert device_names == [f"DEVICE_{index}" for index in range(6)]
-    assert decoded["_projection"]["strategy"] == "structure_preserving_fair_share"
+    assert decoded["analysis_projection"]["devices"][0]["current_config"]["signals"]["padding"] == "x" * 4000
 
 
-def test_tool_round_prefers_synthesis_projection_over_full_long_task_record():
+def test_tool_round_does_not_substitute_evidence_projection_for_raw_result():
     loop = QueryLoop(SSOTRuntimeConfig(), {}, None)
     messages = loop._append_tool_round(
         [],
@@ -269,8 +269,8 @@ def test_tool_round_prefers_synthesis_projection_over_full_long_task_record():
     )
 
     content = str(messages[-1].content)
-    assert "analysis_projection" in content
-    assert "DEVICE_5" in content
+    assert "analysis_projection" not in content
+    assert "DEVICE_5" not in content
     assert "must-not-reach-model" not in content
 
 
@@ -305,8 +305,8 @@ def test_auto_tracking_preserves_every_target_and_literal_evidence():
     assert content.count("Established") == 6
     assert content.count("ISIS is not configured") == 6
     assert "vpn-target 3:3 export-extcommunity" in content
-    assert "DO_NOT_DUPLICATE" not in content
-    assert len(content) < 37000
+    assert "DO_NOT_DUPLICATE" in content
+    assert len(content) > 37000
 
 
 def test_complete_artifact_is_not_replaced_by_bounded_projection():

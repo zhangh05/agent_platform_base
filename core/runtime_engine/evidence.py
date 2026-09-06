@@ -19,7 +19,6 @@ EVIDENCE_KINDS = frozenset({
 })
 REFERENCE_KINDS = frozenset({"managed_file", "artifact", "tool_result"})
 _ARTIFACT_THRESHOLD_CHARS = 8_000
-_PROJECTION_MAX_CHARS = 4_000
 
 
 def managed_image_evidence(
@@ -75,8 +74,8 @@ def register_tool_evidence(
     Producers may publish richer ``evidence_parts``.  A producer that does not
     do so still receives a canonical ``tool_result`` evidence
     record, which prevents task/cognitive/evidence state from disagreeing.
-    Large results are persisted as redacted immutable artifacts and the model
-    receives a bounded projection plus the artifact reference.
+    Large results are also persisted as redacted immutable artifacts. Their
+    complete content remains model-visible in the active turn.
     """
     registered: list[str] = []
     for result in results:
@@ -153,15 +152,14 @@ def _tool_result_evidence_part(
             # failed operation merely because durable projection is unavailable.
             artifact_id = ""
 
-    projection = _bounded_projection(safe_output, query=user_input)
+    projection = safe_output
     reference = (
         {"kind": "artifact", "artifact_id": artifact_id, "digest": digest}
         if artifact_id else
         {"kind": "tool_result", "call_id": call_id, "digest": digest}
     )
-    # QueryLoop uses this producer-neutral projection for the immediate
-    # continuation call.  The complete result remains in the artifact/run
-    # record and is never silently substituted by this bounded view.
+    # The ledger keeps an auditable duplicate; QueryLoop never substitutes it
+    # for a bounded view.
     output["_evidence_projection"] = projection
     output["_evidence_content_digest"] = digest
     return {
@@ -206,51 +204,11 @@ def _tool_result_summary(result: object, output: dict[str, Any]) -> str:
 def _bounded_projection(
     value: Any,
     *,
-    max_chars: int = _PROJECTION_MAX_CHARS,
+    max_chars: int | None = None,
     query: str = "",
 ) -> Any:
-    """Preserve structure while replacing oversized leaves with auditable refs."""
-    if value is None or isinstance(value, (bool, int, float)):
-        return value
-    if isinstance(value, str):
-        if len(value) <= max_chars:
-            return value
-        excerpts = _relevant_text_excerpts(value, query=query, max_chars=max_chars)
-        return {
-            "content_chars": len(value),
-            "sha256": hashlib.sha256(value.encode("utf-8")).hexdigest(),
-            "relevant_excerpts": excerpts,
-            "truncated": True,
-        }
-    if isinstance(value, list):
-        projected_items = [
-            _bounded_projection(
-                item,
-                max_chars=max(400, max_chars // max(1, min(len(value), 8))),
-                query=query,
-            )
-            for item in value[:32]
-        ]
-        if len(value) > 32:
-            projected_items.append({"_omitted_items": len(value) - 32, "truncated": True})
-        return projected_items
-    if isinstance(value, dict):
-        projected: dict[str, Any] = {}
-        child_limit = max(500, max_chars // max(1, min(len(value), 8)))
-        for key, item in list(value.items())[:64]:
-            item_limit = (
-                max_chars
-                if str(key) in {
-                    "analysis_projection", "output", "facts", "command_results",
-                    "data", "result", "content", "preview",
-                }
-                else child_limit
-            )
-            projected[str(key)] = _bounded_projection(item, max_chars=item_limit, query=query)
-        if len(value) > 64:
-            projected["_omitted_fields"] = len(value) - 64
-        return projected
-    return str(value)[:max_chars]
+    """Compatibility helper: evidence is retained verbatim for the LLM."""
+    return value
 
 
 def _relevant_text_excerpts(text: str, *, query: str, max_chars: int) -> str:

@@ -410,20 +410,18 @@ class _ConnectError(RuntimeError):
 
 
 def normalize_configuration_commands(commands, vendor: str) -> list[str]:
-    """Validate framing, not business intent: the authorized model supplies every line.
+    """Pass authorized model commands to the selected device without policy rewriting.
 
-    Only known network CLIs are supported; never reinterpret a network grant as
-    shell access. Repeated lines are meaningful in different configuration views.
+    Device credentials, the selected Skill and its registered connections are
+    the execution boundary.  This function deliberately validates only the
+    transport shape needed to send commands, never command content, vendor,
+    count, encoding or configuration intent.
     """
-    if vendor not in {"h3c", "huawei", "cisco"}:
-        raise ValueError("configuration_requires_supported_network_driver")
-    if not isinstance(commands, list) or not 1 <= len(commands) <= 20:
-        raise ValueError("configuration_requires_1_to_20_commands")
-    if any(not isinstance(command, str) or not command.strip() or len(command) > 1000
-           or any(ord(char) < 32 or ord(char) > 126 for char in command)
-           for command in commands):
-        raise ValueError("configuration_requires_single_line_ascii_commands")
-    return [command.strip() for command in commands]
+    if not isinstance(commands, list) or not commands:
+        raise ValueError("configuration_commands_are_required")
+    if any(not isinstance(command, str) or not command for command in commands):
+        raise ValueError("configuration_commands_must_be_strings")
+    return list(commands)
 
 
 def _execute_commands(connection: _Connection, commands, facts, *, read: bool, configure: bool = False) -> dict:

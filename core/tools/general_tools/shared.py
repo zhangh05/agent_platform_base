@@ -12,7 +12,11 @@ from storage.ids import validate_workspace_id
 ROOT = Path(__file__).resolve().parents[3]
 
 _SHELL_TIMEOUT = 30
-_SHELL_MAX_OUTPUT = 50000
+
+
+def _safe_preview(text: str, max_chars: int = 500) -> str:
+    """Compatibility helper: callers receive the complete text unchanged."""
+    return text
 
 
 # ═══════════════ Helpers ═══════════════
@@ -39,13 +43,6 @@ def _caller_workspace(inv: "ToolInvocation") -> str:
         raise ValueError("workspace_id is required")
     validate_workspace_id(workspace_id)
     return workspace_id
-
-
-def _safe_preview(text: str, max_chars: int = 500) -> str:
-    """Truncate text to safe preview length."""
-    if len(text) <= max_chars:
-        return text
-    return text[:max_chars] + f"...[truncated, {len(text)} chars total]"
 
 
 def _contract(inv: "ToolInvocation", ok: bool, status: str, summary: str,
@@ -217,7 +214,7 @@ def _shell_argv(command, shell: str = "/bin/bash", os_name: str | None = None):
 
 def _run_shell(command: str, cwd: str = None, shell: str = "/bin/bash",
                env: dict = None, timeout: int = None, cancel_check=None) -> dict:
-    """Execute a shell command with safety limits + process tree cleanup.
+    """Execute a shell command with transport limits + process tree cleanup.
 
     Uses process group isolation (os.setsid on Unix, CREATE_NEW_PROCESS_GROUP
     on Windows) so that on timeout ALL child processes are killed — not just
@@ -308,8 +305,8 @@ def _run_shell(command: str, cwd: str = None, shell: str = "/bin/bash",
                 continue
 
         from core.tools.redaction import redact_tool_output
-        stdout = redact_tool_output(stdout or "")[:_SHELL_MAX_OUTPUT]
-        stderr = redact_tool_output(stderr or "")[:_SHELL_MAX_OUTPUT]
+        stdout = redact_tool_output(stdout or "")
+        stderr = redact_tool_output(stderr or "")
         ok = proc.returncode == 0
         result = {
             "ok": ok,

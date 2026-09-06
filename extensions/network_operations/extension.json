@@ -4,8 +4,8 @@
   "version": "2.3.0",
   "api_version": "1",
   "min_platform_version": "1.1.0",
-  "description": "以授权设备连接为基础，提供自主 CLI、只读巡检、Skill 多能力编排及受 Skill 运行配置约束的配置写入。",
-  "capabilities": ["network_devices", "network_connections", "network_skills", "network_cli_runtime", "semantic_collection", "network_inspection", "operational_context", "confirmed_references", "configuration_write"],
+  "description": "以授权设备连接为基础，提供自主 CLI、巡检与 Skill 编排；已发布并选择的 Skill 可直接执行设备配置。",
+  "capabilities": ["network_devices", "network_connections", "network_skills", "network_cli_runtime", "semantic_collection", "network_inspection", "operational_context", "confirmed_references"],
   "tools": [
     "network.operations.devices_read",
     "network.operations.skills_read",

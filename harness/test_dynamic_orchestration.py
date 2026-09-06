@@ -912,7 +912,7 @@ def test_saved_workflow_runs_independent_reads_in_parallel(monkeypatch, tmp_path
     assert all(node["orchestration"]["parallel"] for node in run["nodes"])
 
 
-def test_uncertain_write_fences_later_writes_in_same_batch(monkeypatch, tmp_path):
+def test_uncertain_write_records_fact_without_fencing_later_writes(monkeypatch, tmp_path):
     monkeypatch.setenv("LZCORE_WORKSPACE_ROOT", str(tmp_path / "workspaces"))
     calls_seen = []
 
@@ -944,23 +944,21 @@ def test_uncertain_write_fences_later_writes_in_same_batch(monkeypatch, tmp_path
         StreamingToolExecutor(Runtime(), SSOTRuntimeConfig()).execute(calls, ctx=ctx)
     )
 
-    assert calls_seen == ["a.txt"]
+    assert calls_seen == ["a.txt", "b.txt"]
     assert results[0].execution_may_continue is True
-    assert results[1].output["error_code"] == "WRITE_BLOCKED_BY_UNKNOWN_OUTCOME"
-    assert results[1].output["unknown_outcome_trigger"]["call_id"] == "write-a"
+    assert results[1].execution_may_continue is True
     outcome_key = "unknown" + "_outcome"
     assert ctx.extras[outcome_key]["status"] == "unknown"
     assert ctx.extras[outcome_key]["call_id"] == "write-a"
     from core.runtime_engine.operation_ledger import operation_id
     from storage.records import workspace_record_file
-    blocked_id = operation_id("default", ctx.request_id, "write-b")
-    blocked_path = workspace_record_file("default", "operations", f"{blocked_id}.json")
-    blocked = __import__("json").loads(blocked_path.read_text())
-    assert blocked["status"] == "blocked"
+    second_id = operation_id("default", ctx.request_id, "write-b")
+    second_path = workspace_record_file("default", "operations", f"{second_id}.json")
+    assert second_path.exists()
 
 
-def test_unknown_write_allows_readback_before_terminal_response():
-    """An uncertain write fences writes but must not prevent LLM read-back."""
+def test_unknown_write_returns_fact_and_leaves_next_action_to_model():
+    """An uncertain write is visible to the model without a write fence."""
     from agent.llm.schemas import LLMResponse
     from core.runtime_engine.engine import SSOTRuntimeEngine
     from core.runtime_engine.tool_runtime import ToolRuntime
@@ -1023,7 +1021,7 @@ def test_unknown_write_allows_readback_before_terminal_response():
     assert result.final_response == "已完成只读核验；原写入未被重放。"
     assert result.metadata["execution_outcome"] == "unknown"
     assert result.metadata["unknown_outcome"]["call_id"] == "write-1"
-    assert any("后续写操作已由服务端冻结" in message.content for message in prompts[1])
+    assert any("自行决定 read-back、继续配置、重试" in message.content for message in prompts[1])
 
 
 def test_network_unknown_write_is_settled_only_by_same_connection_readback(monkeypatch, tmp_path):

@@ -4,7 +4,7 @@ import os
 from core.tools.schemas import ToolInvocation
 from storage.ids import validate_workspace_id
 
-from core.tools.general_tools.shared import _caller_workspace, _error_inv, _ok, _result, _run_shell, _unavailable, _SHELL_MAX_OUTPUT
+from core.tools.general_tools.shared import _caller_workspace, _error_inv, _ok, _result, _run_shell, _unavailable
 """Split general tool handlers."""
 
 # ── Environment variable keys blocked from user override ──
@@ -77,20 +77,12 @@ def handle_command_exec(inv: ToolInvocation) -> dict:
     """Run a local shell command through the native platform shell.
 
     Linux/macOS use ``/bin/bash -c``; Windows uses ``cmd.exe /d /s /c``.
-    Safety limits: dangerous command detection, configurable timeout, output truncation.
-    Base risk is medium; destructive patterns are blocked.
+    Transport limits: configurable timeout and output collection.
     """
     # Only accept `command`; alternate identifiers are never executed as shell.
     command = (inv.arguments.get("command") or "").strip()
     if not command:
         return _unavailable(inv, "command is required")
-
-    # ── Safety: dangerous command detection ──
-    from core.tools.general_tools.dangerous_commands import full_check
-    safety = full_check(command)
-    if safety["blocked"]:
-        return {"ok": False, "error": safety["reason"],
-                "warnings": safety["warnings"], "suspicious": safety["suspicious"]}
 
     # v3.7: pass through cwd, env_vars, timeout
     requested_cwd = (inv.arguments.get("working_dir") or "").strip()
@@ -121,8 +113,8 @@ def handle_command_exec(inv: ToolInvocation) -> dict:
     if timeout is not None:
         timeout = int(timeout)
 
-    # Sanitize user-provided env_vars: block dangerous overrides that
-    # could replace the system PATH or inject malicious library paths.
+    # Keep process setup deterministic. This protects the host runtime; it
+    # does not inspect, rewrite, or authorize the model's command payload.
     if isinstance(env_vars, dict):
         env_vars = {
             str(k): str(v) for k, v in env_vars.items()
@@ -138,11 +130,7 @@ def handle_command_exec(inv: ToolInvocation) -> dict:
         cancel_check=getattr(inv, "cancel_check", None),
     )
     result.setdefault("working_dir", requested_cwd or ".")
-    # Attach safety metadata + description to result
-    if safety["warnings"]:
-        result["warnings"] = safety["warnings"]
-    if safety["suspicious"]:
-        result["suspicious"] = safety["suspicious"]
+    # Attach caller-provided description without interpreting command content.
     description = (inv.arguments.get("description") or "").strip()
     if description:
         result["description"] = description
@@ -152,8 +140,7 @@ def handle_powershell_script(inv: ToolInvocation) -> dict:
     """PowerShell script execution on Windows.
 
     Accepts a PowerShell command string, executes via powershell -Command.
-    Safety limits: dangerous command detection, 15s timeout, output truncation.
-    Base risk is medium; destructive patterns are blocked.
+    Transport limits: timeout and output collection.
 
     Security: subprocess uses a minimal safe environment (mirrors
     python_exec's P0-3 model) — no API keys, tokens, or proxy config.
@@ -165,12 +152,6 @@ def handle_powershell_script(inv: ToolInvocation) -> dict:
     if not command:
         return _unavailable(inv, "command is required")
 
-    # ── Safety: dangerous command detection ──
-    from core.tools.general_tools.dangerous_commands import full_check
-    safety = full_check(command)
-    if safety["blocked"]:
-        return {"ok": False, "error": safety["reason"],
-                "warnings": safety["warnings"], "suspicious": safety["suspicious"]}
     import shutil
     import subprocess
     try:
@@ -194,17 +175,13 @@ def handle_powershell_script(inv: ToolInvocation) -> dict:
             env=safe_env,
             cwd=cwd,
         )
-        stdout = (result.stdout or "")[:_SHELL_MAX_OUTPUT]
-        stderr = (result.stderr or "")[:_SHELL_MAX_OUTPUT]
+        stdout = result.stdout or ""
+        stderr = result.stderr or ""
         output = {
             "exit_code": result.returncode,
             "stdout": stdout,
             "stderr": stderr,
         }
-        if safety["warnings"]:
-            output["warnings"] = safety["warnings"]
-        if safety["suspicious"]:
-            output["suspicious"] = safety["suspicious"]
         if result.returncode != 0:
             output["error"] = stderr.strip() or f"PowerShell exited with code {result.returncode}"
         return _result(inv, result.returncode == 0, output)
@@ -236,9 +213,9 @@ def handle_slash_run(inv: ToolInvocation) -> dict:
 def handle_python_exec(inv: ToolInvocation) -> dict:
     """Execute Python data processing through the policy-selected runner.
 
-    Medium-risk execution. Destructive operations are blocked. Code is parsed with AST to reject forbidden imports,
-    builtins, and dunder access before execution. Runs in a subprocess with
-    timeout. Best-effort local execution is explicitly labeled and is not a sandbox.
+    Runs Python in the selected execution environment. The runtime preserves
+    workspace identity and transport limits but does not apply code-content
+    risk or destructive-operation policy.
     """
     workspace_id = _caller_workspace(inv)
     run_id = inv.arguments.get("run_id", "")

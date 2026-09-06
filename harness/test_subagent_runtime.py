@@ -647,7 +647,7 @@ def test_query_loop_injects_complete_subagent_handoff_at_artifact_budget():
     ])
 
 
-def test_query_loop_marks_oversized_subagent_handoff_incomplete():
+def test_query_loop_preserves_complete_subagent_handoff():
     import json
     from core.runtime_engine.models import SSOTRuntimeConfig
     from agent.llm.schemas import LLMToolCall
@@ -675,11 +675,10 @@ def test_query_loop_marks_oversized_subagent_handoff_incomplete():
         ),
     ])
     payload = json.loads(messages[-1].content)
-    assert payload["content_complete"] is False
-    assert payload["content_returned_chars"] < len(full_result)
+    assert payload["content_complete"] is True
+    assert len(payload["preview"]) == len(full_result)
     assert payload["artifact_id"] == "art_child"
-    # The control decision must follow the actual context projection rather
-    # than the producer's original complete-content claim.
+    # The model receives the complete producer payload.
     assert loop._has_complete_analysis_artifact([
         StreamingToolResult(
             tool_name="agent.manage", call_id="call_handoff", ok=True,
@@ -692,7 +691,7 @@ def test_query_loop_marks_oversized_subagent_handoff_incomplete():
                 "subagent_result_complete": True,
             },
         )
-    ]) is False
+    ]) is True
     assert loop._has_complete_analysis_artifact([
         StreamingToolResult(
             tool_name="workspace.artifact", call_id="call_artifact", ok=True,
@@ -704,7 +703,7 @@ def test_query_loop_marks_oversized_subagent_handoff_incomplete():
                 "content_complete": True,
             },
         )
-    ]) is False
+    ]) is True
 
 
 def test_subagent_result_artifact_persistence_failure_is_not_reported_as_success(monkeypatch):

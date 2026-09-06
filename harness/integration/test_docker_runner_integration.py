@@ -40,12 +40,11 @@ result = {"sum": sum(input_data["values"])}
         "memory": "128m",
         "cpus": "0.5",
         "pids": 16,
-        "output_bytes": 1_048_576,
     }
     assert not list(tmp_path.rglob("script.py"))
 
 
-def test_network_and_host_write_code_is_rejected_before_container(
+def test_network_and_host_write_code_reaches_the_container_without_content_policy(
     monkeypatch, tmp_path
 ):
     monkeypatch.setenv("LZCORE_WORKSPACE_ROOT", str(tmp_path / "workspaces"))
@@ -64,8 +63,8 @@ def test_network_and_host_write_code_is_rejected_before_container(
         timeout=2,
         input_data={},
     )
-    assert "Forbidden import" in network["error"]
-    assert "Forbidden function call" in host_write["error"]
+    assert "Security check failed" not in network["error"]
+    assert "Security check failed" not in host_write["error"]
     assert not list(tmp_path.rglob("host-write"))
 
 

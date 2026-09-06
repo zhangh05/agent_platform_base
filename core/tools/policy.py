@@ -1,35 +1,22 @@
 # core/tools/policy.py
-"""ToolPolicy — permission and safety enforcement with risk levels.
-
-v3.9.5: command-level safety check is **destructive-only**.
+"""ToolPolicy — tool availability, schema and transport enforcement.
 
 Checks:
   1. tool_id exists in registry
   2. tool enabled
-  3. risk_level metadata (low/medium/high); risk alone does not block calls
+  3. risk metadata for observability; it never blocks a call
   4. category allowed (v0.2 expanded categories)
   5. not a removed or blocked tool_id (e.g. ssh.exec, nmap.scan)
   6. dry_run support
   7. timeout within limits
-  8. arguments free of destructive command patterns; destructive host
-     commands are blocked directly.
-  9. broad char-blacklist (| && || ; ` $ > <) and sensitive-path
-     substring (/etc/passwd, ../) are gone. Only the destructive
-     command set in ``core.tools.dangerous_patterns`` matters.
 """
 
 from core.tools.schemas import ToolSpec, ToolInvocation, PolicyDecision
-from core.tools.dangerous_patterns import (
-    scan_arguments_for_dangerous,
-    is_destructive_command,
-)
 
-V02_ALLOWED_RISK_LEVELS = {"low", "medium", "high"}
+V02_ALLOWED_RISK_LEVELS = {"low", "medium", "high", "critical"}
 
-# Forbidden tool_ids — blocked at policy level even if registered.
-# v3.9.5: these are tool-level forbids (the tool should not exist
-# in the LLM's namespace). They are independent of command-level
-# danger — see ``dangerous_patterns`` for the command-level check.
+# Forbidden tool ids are unavailable implementation surfaces, not command-risk
+# decisions. Published canonical and Skill-scoped tools remain the model API.
 V02_FORBIDDEN_TOOLS = {
     "ssh.exec", "telnet.exec", "snmp.walk", "nmap.scan", "ping.sweep",
     "command.exec", "device.exec", "config.push",
@@ -55,24 +42,6 @@ V02_FORBIDDEN_PATTERNS = [
     _re.compile(r"^powershell[\._]exec[_\w]*$", _re.IGNORECASE),
 ]
 
-_DESTRUCTIVE_ACTIONS = {
-    "delete", "remove", "purge", "destroy", "drop",
-    "session_rewind", "rewind",
-}
-
-
-def _is_destructive_action(arguments: dict) -> bool:
-    action = str((arguments or {}).get("action", "")).strip().lower()
-    return action in _DESTRUCTIVE_ACTIONS
-
-# Handlers accept arbitrary commands; allowlists removed in favor of
-# command_policy in core.runtime_engine.
-# removed entirely. The new model is destructive-only: anything not
-# matching the dangerous-pattern set is treated as medium or low risk
-# and is surfaced for prompt-level risk awareness, not blocked.
-#
-# v3.10: All policy decisions derived from CapabilityManifest (not ToolSpec).
-
 import logging
 _log = logging.getLogger(__name__)
 
@@ -96,16 +65,12 @@ def is_tool_forbidden(tool_id: str) -> bool:
     return False
 
 
-# ── Public exports. The destructive-command implementation lives in
-# core.tools.dangerous_patterns. ──
 __all__ = [
     "ToolPolicy",
     "V02_ALLOWED_RISK_LEVELS",
     "V02_FORBIDDEN_TOOLS",
     "V02_FORBIDDEN_PATTERNS",
     "is_tool_forbidden",
-    "is_destructive_command",
-    "_check_argument_safety",
 ]
 
 
@@ -197,16 +162,7 @@ class ToolPolicy:
             blocked.append("forbidden_category")
             reason_parts.append(f"Category '{spec.category}' not allowed in v0.2")
 
-        # ── 5. Risk level gate ──
-        if effective_risk not in V02_ALLOWED_RISK_LEVELS:
-            blocked.append("risk_level_not_allowed")
-            reason_parts.append(
-                f"Tool '{spec.tool_id}' risk_level={effective_risk} not allowed"
-            )
-
-        # ── 6. Risk is metadata, not a call blocker ──
-        # High-risk/destructive tools remain visible and callable by the LLM.
-        # Safety enforcement happens on the arguments below.
+        # ── 5. Risk is observability metadata, never an authorization gate. ──
 
         # ── 8. Dry-run support ──
         if invocation.dry_run and not spec.dry_run_supported:
@@ -226,24 +182,6 @@ class ToolPolicy:
                 f"Tool '{spec.tool_id}' timeout {effective_timeout}s > {max_timeout}s limit"
             )
 
-        # ── 10. Argument safety check (v3.9.5: destructive-only) ──
-        # Destructive shell patterns are blocked directly. Shell syntax characters
-        # (|, &&, ||, ;, `, $, >, <), sensitive-path substrings, and
-        # "rm -rf" in user text are no longer treated as unsafe
-        # arguments.
-        arg_risk, arg_reason = _check_argument_safety(
-            invocation.arguments, spec.tool_id
-        )
-        if arg_risk == "high":
-            effective_risk = "high"
-            blocked.append("destructive_command")
-            reason_parts.append(
-                f"Destructive command blocked: {arg_reason}"
-            )
-        # arg_risk in {"medium", "low", "forbidden"} → no escalation.
-        # Note: forbidden command-level is reserved for future use; tool-
-        # level forbids are handled separately in step 3 above.
-
         if blocked:
             return PolicyDecision(
                 allowed=False,
@@ -258,57 +196,6 @@ class ToolPolicy:
             risk_level=effective_risk,
             blocked_rules=[],
         )
-
-
-def _check_argument_safety(
-    arguments: dict, tool_id: str = ""
-) -> tuple[str, str]:
-    """Classify the argument set into a risk level for policy purposes.
-
-    v3.9.5: returns a ``(risk_level, reason)`` tuple. The risk level
-    is one of:
-
-    - ``"high"``  — destructive command pattern detected. The caller
-      blocks the call and reports the policy reason.
-    - ``"medium"`` — command-bearing arguments are present but no
-      destructive pattern was found. The prompt layer surfaces risk
-      awareness; the call proceeds.
-    - ``"low"``   — no command-bearing fields present.
-
-    Earlier versions of this function returned a single string and
-    used a brittle character blacklist. That has been removed: pipe,
-    chaining, redirection, expansion, sensitive-path substrings, and
-    "rm -rf" appearing in non-command text are no longer reasons to
-    block. The only signal is the destructive-pattern scan from
-    ``core.tools.dangerous_patterns``.
-    """
-    if not arguments:
-        return "low", ""
-
-    # Only treat as a "command call" if the arguments contain at least
-    # one command-bearing field. Otherwise this is a regular API call
-    # (e.g. workspace.file) and any dangerous string in user text is
-    # not a command intent.
-    has_command_field = False
-    for key in arguments.keys():
-        key_l = str(key).lower()
-        if any(_re.search(r'\b' + _re.escape(pat) + r'\b', key_l) for pat in ("command", "cmd", "shell", "script", "exec")):
-            has_command_field = True
-            break
-
-    if not has_command_field:
-        return "low", ""
-
-    # Destructive-pattern scan: this is the single source of truth.
-    matched = scan_arguments_for_dangerous(arguments)
-    if matched:
-        return "high", (
-            f"destructive command pattern detected ({matched}); "
-            "blocked by destructive command policy"
-        )
-
-    return "medium", "exec-class tool call (non-destructive)"
-
 
 def validate_tool_id(tool_id: str) -> bool:
     """Validate tool_id naming convention: category.name"""

@@ -854,4 +854,3 @@ def _extract_title(html: str) -> str:
 # ═══════════════ H. Workspace Safe File Tools ═══════════════
 # ═══════════════ I. Shell / PowerShell Tools ═══════════════
 _SHELL_TIMEOUT = 30
-_SHELL_MAX_OUTPUT = 10000

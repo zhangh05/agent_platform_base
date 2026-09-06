@@ -174,12 +174,6 @@ class SSOTRuntimeConfig:
     max_output_tokens: int = 8192
     context_safety_tokens: int = 2048
 
-    # RiskPolicy warning thresholds. QueryLoop budgets enforce hard limits.
-    rp_max_tool_nodes_allow: int = 20
-
-    # Exec.run command count warning threshold.
-    rp_max_exec_allow: int = 5
-
 
 @dataclass
 class SSOTRuntimeResult:
