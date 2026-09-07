@@ -461,11 +461,11 @@ def test_connection(
     *,
     accept_host_key: bool = False,
     read: bool = False,
+    configure: bool = False,
     commands: list[str] | None = None,
     facts: list[str] | None = None,
     timeout: int = 15,
     session_scope: str = "",
-    skill_id: str = "",
 ) -> dict[str, Any]:
     execution_started = time.monotonic()
     with _connection_lock(workspace_id):
@@ -484,8 +484,8 @@ def test_connection(
         if commands is not None and facts:
             raise ValueError("commands_and_facts_are_mutually_exclusive")
         normalized_facts = _normalize_semantic_facts(facts) if facts else []
-        selected = commands if (read or skill_id) and not normalized_facts else []
-        if skill_id:
+        selected = commands if (read or configure) and not normalized_facts else []
+        if configure:
             if read or normalized_facts:
                 raise ValueError("configuration_cannot_use_read_or_templates")
             selected = normalize_configuration_commands(selected, target.vendor)
@@ -504,14 +504,11 @@ def test_connection(
             latest = get_connection(workspace_id, connection_id, include_secret=True)
             if not latest or latest.get("revision") != record.get("revision"):
                 raise ValueError("connection_changed_before_execution")
-            if skill_id:
-                # Re-read only the server-owned resource scope before opening
-                # a socket. A Skill does not grant a separate configure
-                # permission: every selected connection supports raw device
-                # commands and the device account decides their authority.
-                skill = get_skill(workspace_id, skill_id)
-                if not skill_contains_connection(skill, connection_id):
-                    raise ValueError("connection_not_allowed_by_skill")
+            if configure:
+                # Resource authorization is resolved once by device_manage at
+                # the tool boundary. This transport layer receives only the
+                # already-authorized canonical connection and must not invent a
+                # second Skill/configuration gate.
                 session_options = {"configure": True}
             remaining = timeout - (time.monotonic() - execution_started)
             if remaining <= 0:
@@ -547,11 +544,11 @@ def test_connection(
     with _connection_lock(workspace_id):
         current = get_connection(workspace_id, connection_id, include_secret=True)
         if not current:
-            if skill_id:
+            if configure:
                 return {**result, "connection": None, "observation_superseded": True}
             return {"ok": False, "status": "failed", "error": "connection_deleted_during_test", "connection": None}
         if current.get("revision") != record.get("revision"):
-            if skill_id:
+            if configure:
                 return {**result, "connection": _public_connection(current), "observation_superseded": True}
             return {"ok": False, "status": "failed", "error": "connection_changed_during_test", "connection": _public_connection(current)}
         if current.get("probe_id") != probe_id:

@@ -45,11 +45,18 @@ def test_published_skill_has_configuration_capability_by_default(monkeypatch, tm
     assert len(calls) == 2
 
 
-def test_configuration_revalidates_connection_scope_at_service_boundary(monkeypatch, tmp_path):
+def test_configuration_scope_is_checked_once_at_the_tool_boundary(monkeypatch, tmp_path):
     _setup(monkeypatch, tmp_path)
     conn = _register_connection("default", {"name": "CE", "host": "127.0.0.1", "protocol": "telnet", "vendor": "h3c"})
+    other = _register_connection("default", {"name": "PE", "host": "127.0.0.2", "protocol": "telnet", "vendor": "h3c"})
+    skill = service.save_skill("default", {
+        "name": "scope", "device_ids": [conn["device_id"]], "connection_ids": [conn["connection_id"]],
+    })
     monkeypatch.setattr(service, "probe_target", lambda *a, **kw: pytest.fail("must not open a socket"))
-    result = service.test_connection("default", conn["connection_id"], commands=["system-view"], skill_id="deleted")
+    result = device_manage(SimpleNamespace(
+        workspace_id="default", skill=skill["skill_id"], skill_connection_ids=(conn["connection_id"],),
+        arguments={"action": "configure", "connection_id": other["connection_id"], "commands": ["system-view"]},
+    ))
     assert result["ok"] is False
     assert result["error"] == "connection_not_allowed_by_skill"
 

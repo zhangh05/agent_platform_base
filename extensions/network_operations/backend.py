@@ -368,9 +368,9 @@ def device_manage(invocation):
         commands=raw_commands if action in {"read", "configure"} else None,
         facts=requested_facts if action == "collect" else None,
         read=effective_action in {"read", "collect"},
+        configure=effective_action == "configure",
         timeout=int(args.get("timeout") or 15),
         session_scope=str(getattr(invocation, "run_id", None) or getattr(invocation, "task_id", None) or ""),
-        **({"skill_id": str(invocation.skill)} if effective_action == "configure" else {}),
     )
     if effective_action == "configure":
         return result
