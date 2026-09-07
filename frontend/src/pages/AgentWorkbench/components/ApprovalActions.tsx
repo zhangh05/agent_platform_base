@@ -21,10 +21,9 @@ function interruptionIds(result?: AgentResult): string[] {
   return entries.map((item) => String((item as Record<string, unknown>)?.interruption_id || "")).filter(Boolean);
 }
 
-export function ApprovalActions({ result, workspaceId, onResume }: {
+export function ApprovalActions({ result, workspaceId }: {
   result?: AgentResult;
   workspaceId: string;
-  onResume: (operationId: string) => void;
 }) {
   const ids = interruptionIds(result);
   const [operations, setOperations] = useState<Record<string, Operation>>({});
@@ -58,7 +57,9 @@ export function ApprovalActions({ result, workspaceId, onResume }: {
       });
       const next = response.operation;
       setOperations((previous) => ({ ...previous, [operation.operation_id]: next }));
-      if (["executed", "unknown", "rejected", "cancelled", "invalidated"].includes(next.status)) onResume(operation.operation_id);
+      // The server owns continuation.  It resumes the exact persisted loop
+      // once the whole decision set settles; the browser never fabricates a
+      // "continue" user message.
     } finally {
       setBusy("");
     }

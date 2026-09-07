@@ -130,3 +130,29 @@ def test_approval_reject_never_claims_or_executes(monkeypatch, tmp_path):
     assert rejected["status"] == "rejected"
     with pytest.raises(ValueError, match="operation_not_approved"):
         approval.claim_execution("default", record["operation_id"])
+
+
+def test_continuation_waits_for_every_operation_and_preserves_full_checkpoint(monkeypatch, tmp_path):
+    _setup(monkeypatch, tmp_path)
+    _, connection, skill = _connection_and_skill("default", approval_enabled=True)
+    first = approval.prepare_network_operation(_request("default", skill, connection))
+    second_request = _request("default", skill, connection)
+    second_request["call_id"] = "call_second"
+    second_request["arguments"]["commands"] = ["system-view", "interface LoopBack 200"]
+    second = approval.prepare_network_operation(second_request)
+    checkpoint = approval.attach_continuation_checkpoint(
+        "default", session_id="session_approval", run_id="run_approval", request_id="request_approval",
+        user_input="原始请求，不得截断" * 200,
+        messages=[{"role": "user", "content": "完整上下文" * 1000, "tool_call_id": None, "tool_calls": None}],
+        tool_calls=[{"id": "call_exact", "name": "network.operations.device.manage", "arguments": {}}, {"id": "call_second", "name": "network.operations.device.manage", "arguments": {}}],
+        prior_results=[{"call_id": "old", "tool_name": "x", "output": {"full": "evidence" * 1000}, "ok": True}],
+        round_results=[], interruption_ids=[first["operation_id"], second["operation_id"]],
+        workbench_context={"skill_id": skill["skill_id"], "connection_ids": [connection["connection_id"]]},
+    )
+    assert approval.get_continuation("default", checkpoint["checkpoint_id"])["user_input"] == "原始请求，不得截断" * 200
+    approval.decide_operation("default", first["operation_id"], "reject")
+    assert approval.claim_ready_continuation("default", first["operation_id"]) is None
+    approval.decide_operation("default", second["operation_id"], "cancel")
+    claimed = approval.claim_ready_continuation("default", second["operation_id"])
+    assert claimed and claimed["status"] == "resuming"
+    assert approval.claim_ready_continuation("default", second["operation_id"]) is None

@@ -47,6 +47,7 @@ _CALLER_RESERVED_RUNTIME_METADATA_KEYS = frozenset({
     "subtask_id",
     "parent_session_id",
     "workbench_context",
+    "approval_continuation_resume",
     "cancel_check",
 })
 
@@ -66,10 +67,15 @@ def _sanitize_caller_runtime_metadata(metadata: Any) -> dict[str, Any]:
 
 def _apply_runtime_control(metadata: dict[str, Any], runtime_control: Any) -> None:
     """Install only typed, server-created runtime control envelopes."""
-    from core.runtime_engine.models import MainAgentRuntimeControl, SubagentRuntimeControl
+    from core.runtime_engine.models import ApprovalContinuationRuntimeControl, MainAgentRuntimeControl, SubagentRuntimeControl
     if isinstance(runtime_control, MainAgentRuntimeControl):
         if callable(runtime_control.cancel_check):
             metadata["cancel_check"] = runtime_control.cancel_check
+        return
+    if isinstance(runtime_control, ApprovalContinuationRuntimeControl):
+        metadata["approval_continuation_resume"] = dict(runtime_control.checkpoint or {})
+        if runtime_control.workbench_context:
+            metadata["workbench_context"] = dict(runtime_control.workbench_context)
         return
     if not isinstance(runtime_control, SubagentRuntimeControl):
         return
@@ -98,7 +104,7 @@ def _persist_inflight_user_message(session, turn, user_input: str) -> None:
     again, so this is idempotent.  An interrupted process therefore restores a
     safe untrusted context for an explicit later resume.
     """
-    if not user_input or str((getattr(turn.op, "metadata", {}) or {}).get("approval_resume_id") or "").strip():
+    if not user_input or isinstance((getattr(turn.op, "metadata", {}) or {}).get("approval_continuation_resume"), dict):
         return
     from agent.runtime.message_identity import (
         user_message_storage_run_id,
@@ -183,7 +189,6 @@ def run_ssot_turn(
     )
     _apply_runtime_control(metadata_in, getattr(turn.op, "runtime_control", None))
     task_continuation_contract: dict[str, Any] | None = None
-    approval_resume_id = str(metadata_in.get("approval_resume_id") or "").strip()
 
     try:
         from backend.core.chat_attachments import build_attachment_runtime_guidance
@@ -226,32 +231,6 @@ def run_ssot_turn(
                 label=str(workbench_context.get("skill_id") or "selected_skill"),
             )
         )
-
-    # An approval decision is a durable, server-owned fact.  A resume turn
-    # never trusts browser-supplied commands or results; it may only expose a
-    # settled operation bound to this exact workspace and session.
-    if approval_resume_id:
-        try:
-            from extensions.approval.service import get_operation
-            from core.runtime_engine.prompt_contract import trusted_prompt_item
-            operation = get_operation(workspace_id, approval_resume_id)
-            if not operation or str(operation.get("session_id") or "") != str(session_id or ""):
-                raise ValueError("approval_operation_not_found")
-            if str(operation.get("status") or "") not in {"executed", "unknown", "invalidated", "rejected", "cancelled"}:
-                raise ValueError("approval_operation_not_settled")
-            metadata_in.setdefault("trusted_prompt_items", []).append(
-                trusted_prompt_item(
-                    "approval_resume",
-                    "A previously prepared operation is settled. Do not repeat it. "
-                    "Use its complete structured result as evidence and continue the original task.\n"
-                    + json.dumps(operation, ensure_ascii=False, sort_keys=True, default=str),
-                    label=approval_resume_id,
-                )
-            )
-        except Exception as exc:
-            _LOG.warning("approval resume resolution failed", exc_info=True)
-            approval_resume_id = ""
-            metadata_in.pop("approval_resume_id", None)
 
     # Build the full LLM-visible tool registry first. RuntimeContextBudget
     # deducts its schema cost before assigning history/retrieval capacity.
@@ -421,6 +400,9 @@ def run_ssot_turn(
     try:
         if task_state_resolution_error is not None:
             raise _TaskStateResolutionFailure() from task_state_resolution_error
+        # This identifier is server-owned and binds an external interruption
+        # checkpoint to the exact logical turn that created it.
+        metadata_in["run_id"] = turn.turn_id
         _persist_inflight_user_message(session, turn, user_input)
         engine = _build_engine(
             workspace_id=workspace_id,
@@ -678,7 +660,7 @@ def run_ssot_turn(
         session,
         user_input,
         result.final_response,
-        include_user=not bool(approval_resume_id),
+        include_user=not bool(metadata_in.get("approval_continuation_resume")),
         include_assistant=True,
         run_id=turn.turn_id,
         client_request_id=history_exclude_client_request_id,

@@ -21,7 +21,6 @@ interface MessageRowProps {
   total: number;
   lastUserInput: string;
   onRetryOriginal: (text: string) => void;
-  onResumeApproval?: (operationId: string) => void;
 }
 
 /** Parse <think>...</think> and <thinking>...</thinking> blocks from content */
@@ -88,7 +87,7 @@ async function handleCodeCopyClick(event: React.MouseEvent<HTMLDivElement>) {
   }, COPY_FEEDBACK_MS);
 }
 
-export const MessageRow = memo(function MessageRow({ m, idx: _idx, total: _total, lastUserInput, onRetryOriginal, onResumeApproval = () => {} }: MessageRowProps) {
+export const MessageRow = memo(function MessageRow({ m, idx: _idx, total: _total, lastUserInput, onRetryOriginal }: MessageRowProps) {
   const workspaceId = useSessionStore((s) => s.currentWorkspaceId);
   const handleRetry = useCallback(() => {
     if (lastUserInput) onRetryOriginal(lastUserInput);
@@ -191,7 +190,7 @@ export const MessageRow = memo(function MessageRow({ m, idx: _idx, total: _total
               fallbackText={sanitizeAssistantText(m.text)}
               onRetryOriginal={lastUserInput ? handleRetry : undefined}
             />
-            <ApprovalActions result={m.result} workspaceId={workspaceId || ""} onResume={onResumeApproval} />
+            <ApprovalActions result={m.result} workspaceId={workspaceId || ""} />
           </>
         )}
         {m.status === "error" && m.error && (

@@ -28,7 +28,7 @@
 | Skill 范围外调用或取消 | 返回结构化结果；模型据此继续或结束 |
 | 外部写入结果未知 | 作为完整事实返回模型；模型自行决定 read-back、继续配置、重试或说明状态 |
 | 已确认写失败 | 返回完整失败事实；模型自行决定下一步 |
-| 已开启审批的配置调用 | 冻结精确操作并等待外部决定；批准后重新核验范围、执行并回注完整结果 |
+| 已开启审批的配置调用 | 冻结精确操作并释放进程资源；整组决定终态后由服务端恢复原 checkpoint，以原 call id 回注完整结果 |
 
 ## 目标、证据与结构性边界
 
@@ -48,7 +48,7 @@
 
 扩展返回结构化 `ToolResult`。领域无关的安全只读替代仍可通过 `runtime_recoveries` 描述，但必须通过完整合同校验，且不得作为新权限、凭据、资源、写命令或脚本的载体。厂商 CLI 语义差异由网络扩展发布为 `model_recovery_guidance`，不转换为运行时自动调用；模型保留调查路径和命令选择权。QueryLoop 仍是唯一模型循环，扩展不得维护第二个 LLM retry loop。
 
-`execution_interceptor` 是扩展在真实工具执行前的领域无关钩子。它只能返回“继续”或“暂停这一条精确调用”，不能修改模型参数、更换工具或扩大 Skill 范围。暂停状态是 `waiting_external_input`，不是任务成功或失败。`approval` 扩展使用该钩子保存 prepared operation，外部决定后经 `ToolRuntimeClient` 执行原参数，并将完整结果作为受信任事实回注原会话。
+`execution_interceptor` 是扩展在真实工具执行前的领域无关钩子。它只能返回“继续”或“暂停这一条精确调用”，不能修改模型参数、更换工具或扩大 Skill 范围。暂停状态是 `waiting_external_input`，不是任务成功或失败。`approval` 扩展使用该钩子保存 prepared operation 和完整 QueryLoop checkpoint；外部决定后经 `ToolRuntimeClient` 执行原参数，服务端将真实/拒绝/失效结果按原 `call_id` 回填 checkpoint，并自动恢复同一逻辑循环。它不靠前端构造新的“继续”消息。
 
 ## 对外结果
 

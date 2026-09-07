@@ -101,6 +101,17 @@ class MainAgentRuntimeControl:
 
 
 @dataclass(frozen=True)
+class ApprovalContinuationRuntimeControl:
+    """Server-created continuation checkpoint for an external decision.
+
+    It is intentionally typed control rather than request metadata: a browser
+    must not be able to inject a transcript, tool result, or call id.
+    """
+    checkpoint: dict[str, Any] = field(default_factory=dict)
+    workbench_context: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
 class SubagentRuntimeControl:
     """Typed, server-only envelope for a delegated child Agent turn.
 

@@ -256,6 +256,58 @@ class StreamingToolResult:
     summary: str = ""
 
 
+def serialize_loop_message(message: LLMMessage) -> dict[str, Any]:
+    """Losslessly project an LLM message for a durable external pause.
+
+    Approval is allowed to release the active request/LLM connection, but it
+    must never turn the next model turn into a new, contextless conversation.
+    This is deliberately not a prompt summary or a bounded preview.
+    """
+    return {
+        "role": message.role,
+        "content": message.content,
+        "tool_call_id": message.tool_call_id,
+        "tool_calls": message.tool_calls,
+    }
+
+
+def deserialize_loop_message(value: dict[str, Any]) -> LLMMessage:
+    return LLMMessage(
+        role=str(value.get("role") or "user"),
+        content=value.get("content") if isinstance(value.get("content"), list) else str(value.get("content") or ""),
+        tool_call_id=str(value.get("tool_call_id") or "") or None,
+        tool_calls=list(value.get("tool_calls") or []) or None,
+    )
+
+
+def serialize_streaming_tool_result(result: StreamingToolResult) -> dict[str, Any]:
+    return {
+        "tool_name": result.tool_name,
+        "call_id": result.call_id,
+        "output": result.output,
+        "ok": result.ok,
+        "error": result.error,
+        "latency_ms": result.latency_ms,
+        "error_code": result.error_code,
+        "execution_may_continue": result.execution_may_continue,
+        "summary": result.summary,
+    }
+
+
+def deserialize_streaming_tool_result(value: dict[str, Any]) -> StreamingToolResult:
+    return StreamingToolResult(
+        tool_name=str(value.get("tool_name") or ""),
+        call_id=str(value.get("call_id") or ""),
+        output=dict(value.get("output") or {}),
+        ok=bool(value.get("ok")),
+        error=str(value.get("error") or "") or None,
+        latency_ms=float(value.get("latency_ms") or 0),
+        error_code=str(value.get("error_code") or ""),
+        execution_may_continue=bool(value.get("execution_may_continue")),
+        summary=str(value.get("summary") or ""),
+    )
+
+
 class StreamingToolExecutor:
     """Execute tools as they arrive from the LLM stream.
 
@@ -1456,6 +1508,91 @@ class QueryLoop:
 
         # Build initial messages (cacheable prefix)
         messages = self._build_initial(ctx)
+        resume = ctx.extras.get("approval_continuation_resume")
+        if isinstance(resume, dict):
+            try:
+                stored_messages = resume.get("messages") or []
+                stored_calls = resume.get("tool_calls") or []
+                stored_prior = resume.get("prior_results") or []
+                stored_round = resume.get("round_results") or []
+                operations = {
+                    str(item.get("call_id") or ""): item
+                    for item in (resume.get("operations") or [])
+                    if isinstance(item, dict)
+                }
+                messages = [deserialize_loop_message(item) for item in stored_messages if isinstance(item, dict)]
+                model_calls = [LLMToolCall(
+                    id=str(item.get("id") or ""),
+                    name=str(item.get("name") or ""),
+                    arguments=dict(item.get("arguments") or {}),
+                    failure_policy=str(item.get("failure_policy") or "replan"),
+                    goal_ids=list(item.get("goal_ids") or []),
+                ) for item in stored_calls if isinstance(item, dict)]
+                prior_results = [deserialize_streaming_tool_result(item) for item in stored_prior if isinstance(item, dict)]
+                round_results = [deserialize_streaming_tool_result(item) for item in stored_round if isinstance(item, dict)]
+                if not messages or not model_calls:
+                    raise ValueError("approval_checkpoint_incomplete")
+                resolved_round: list[StreamingToolResult] = []
+                for item in round_results:
+                    operation = operations.get(item.call_id)
+                    if operation is None:
+                        resolved_round.append(item)
+                        continue
+                    status = str(operation.get("status") or "")
+                    execution = operation.get("execution") if isinstance(operation.get("execution"), dict) else {}
+                    raw = execution.get("result") if isinstance(execution.get("result"), dict) else {}
+                    if status == "executed":
+                        resolved_round.append(StreamingToolResult(
+                            tool_name=item.tool_name,
+                            call_id=item.call_id,
+                            output=dict(raw),
+                            ok=bool(raw.get("ok")),
+                            error=str(raw.get("error") or "") or None,
+                            error_code=str(raw.get("error_code") or ""),
+                            execution_may_continue=bool(raw.get("execution_may_continue")),
+                        ))
+                    else:
+                        reason = str(operation.get("invalidated_reason") or status or "approval_not_executed")
+                        resolved_round.append(StreamingToolResult(
+                            tool_name=item.tool_name,
+                            call_id=item.call_id,
+                            output={
+                                "ok": False,
+                                "status": status,
+                                "error_code": "approval_" + reason,
+                                "operation_id": operation.get("operation_id"),
+                                "decision": dict(operation.get("decision") or {}),
+                                "execution": execution,
+                            },
+                            ok=False,
+                            error=reason,
+                            error_code="APPROVAL_" + reason.upper(),
+                        ))
+                all_results.extend(prior_results)
+                all_results.extend(resolved_round)
+                register_tool_evidence(ctx.extras, resolved_round,
+                    workspace_id=ctx.workspace_id, session_id=ctx.session_id,
+                    request_id=ctx.request_id, user_input=ctx.user_input)
+                cognitive_state.register_tool_results(resolved_round, evidence=evidence_summary(ctx.extras))
+                cognitive_registered_results = len(all_results)
+                messages = self._append_tool_round(messages, model_calls, resolved_round)
+                messages = self._append_turn_nudge(
+                    messages,
+                    "[EXTERNAL DECISIONS RESOLVED] The exact results for the previously paused tool calls are above. "
+                    "Continue the original task from this evidence. Do not repeat a settled call; decide the next step yourself.",
+                )
+                ctx.extras["approval_continuation_resumed"] = {
+                    "checkpoint_id": str(resume.get("checkpoint_id") or ""),
+                    "operation_ids": [str(item.get("operation_id") or "") for item in operations.values()],
+                }
+            except Exception as exc:
+                # Keep the normal loop available for a structured error
+                # response below; never guess or replay a frozen operation.
+                ctx.extras["approval_resume_error"] = str(exc)
+                messages = self._append_turn_nudge(
+                    self._build_initial(ctx),
+                    "The approval continuation checkpoint is invalid. Do not repeat any prior operation; explain that recovery evidence is unavailable.",
+                )
         max_iterations = int(getattr(self._config, "max_query_loop_iterations", 0) or 0)
 
         def finish(**values) -> QueryLoopResult:
@@ -2106,6 +2243,51 @@ class QueryLoop:
                     ctx.extras["external_interruptions"] = pending_interruptions
                     ctx.extras["response_outcome"] = "waiting_external_input"
                     ctx.extras["execution_outcome"] = "waiting_external_input"
+                    # Persist the exact model boundary before returning the
+                    # HTTP/WebSocket worker.  We intentionally retain every
+                    # message and tool payload: approval is an external wait,
+                    # not permission to truncate the agent's working state.
+                    try:
+                        from extensions.approval.service import attach_continuation_checkpoint
+                        checkpoint = attach_continuation_checkpoint(
+                            ctx.workspace_id,
+                            session_id=ctx.session_id,
+                            run_id=str(ctx.extras.get("run_id") or ""),
+                            request_id=ctx.request_id,
+                            user_input=ctx.user_input,
+                            messages=[serialize_loop_message(item) for item in messages],
+                            tool_calls=[{
+                                "id": call.id,
+                                "name": call.name,
+                                "arguments": dict(call.arguments or {}),
+                                "failure_policy": call.failure_policy,
+                                "goal_ids": list(call.goal_ids or []),
+                            } for call in model_tool_calls],
+                            prior_results=[
+                                serialize_streaming_tool_result(item)
+                                for item in all_results
+                                if item not in results
+                            ],
+                            round_results=[serialize_streaming_tool_result(item) for item in results],
+                            interruption_ids=[str(item.get("interruption_id") or "") for item in pending_interruptions],
+                            workbench_context=dict(ctx.extras.get("workbench_context") or {}),
+                        )
+                        ctx.extras["approval_continuation"] = {
+                            "checkpoint_id": checkpoint["checkpoint_id"],
+                            "operation_ids": checkpoint["operation_ids"],
+                        }
+                    except Exception:
+                        # The operation records remain safely pending.  Do not
+                        # execute an uncheckpointed call, and expose the
+                        # persistence failure as a structured runtime fact.
+                        return finish(
+                            final_response="审批操作的恢复检查点未能保存，操作没有执行。",
+                            tool_results=all_results,
+                            iterations=iterations,
+                            total_tool_calls=len(all_results),
+                            llm_calls=llm_calls,
+                            error="approval_checkpoint_persist_failed",
+                        )
                     return finish(
                         final_response="操作已准备，正在等待外部决定。",
                         tool_results=all_results,

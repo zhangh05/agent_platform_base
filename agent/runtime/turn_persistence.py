@@ -117,7 +117,7 @@ def persist_run_record(session, turn, result, context) -> bool:
             from core.runtime_engine.context_compaction import build_history_state_record
 
             store = SessionMessageStore(session_id=session.session_id, ws_id=ws_id)
-            if user_input and not str(op_metadata.get("approval_resume_id") or "").strip():
+            if user_input and not isinstance(op_metadata.get("approval_continuation_resume"), dict):
                 user_attachments = list((getattr(turn.op, "metadata", {}) or {}).get("attachments") or [])
                 user_message_run_id = user_message_storage_run_id(
                     client_request_id, run_id,

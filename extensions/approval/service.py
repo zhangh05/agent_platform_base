@@ -240,6 +240,107 @@ def settle_execution(workspace_id: str, operation_id: str, result: dict[str, Any
         return record
 
 
+def attach_continuation_checkpoint(
+    workspace_id: str,
+    *,
+    session_id: str,
+    run_id: str,
+    request_id: str,
+    user_input: str,
+    messages: list[dict[str, Any]],
+    tool_calls: list[dict[str, Any]],
+    prior_results: list[dict[str, Any]],
+    round_results: list[dict[str, Any]],
+    interruption_ids: list[str],
+    workbench_context: dict[str, Any],
+) -> dict[str, Any]:
+    """Persist an exact, resumable model boundary for a decision set.
+
+    The checkpoint owns no device session and has no expiry.  It contains the
+    full model-visible transcript through the tool-call boundary, not a model
+    generated summary.  A later decision supplies the missing tool results and
+    resumes this same logical loop.
+    """
+    checkpoint_id = f"apprchk_{uuid.uuid4().hex}"
+    record = {
+        "schema": "lzcore.approval_continuation.v1",
+        "checkpoint_id": checkpoint_id,
+        "workspace_id": workspace_id,
+        "session_id": session_id,
+        "run_id": run_id,
+        "request_id": request_id,
+        "user_input": user_input,
+        "messages": messages,
+        "tool_calls": tool_calls,
+        "prior_results": prior_results,
+        "round_results": round_results,
+        "operation_ids": list(dict.fromkeys(str(value) for value in interruption_ids if str(value))),
+        "workbench_context": dict(workbench_context or {}),
+        "status": "waiting_decisions",
+        "created_at": _now(),
+        "updated_at": _now(),
+    }
+    _store(workspace_id).save("continuations", checkpoint_id, record)
+    for operation_id in record["operation_ids"]:
+        with _record_lock(workspace_id, operation_id):
+            operation = get_operation(workspace_id, operation_id)
+            if operation:
+                operation["continuation"] = {"checkpoint_id": checkpoint_id}
+                operation["updated_at"] = _now()
+                _store(workspace_id).save("operations", operation_id, operation)
+    return record
+
+
+def get_continuation(workspace_id: str, checkpoint_id: str) -> dict[str, Any] | None:
+    return _store(workspace_id).get("continuations", checkpoint_id)
+
+
+def _continuation_lock(workspace_id: str, checkpoint_id: str) -> FileLock:
+    return FileLock(_store(workspace_id).root() / "continuations" / f"{checkpoint_id}.lock")
+
+
+def claim_ready_continuation(workspace_id: str, operation_id: str) -> dict[str, Any] | None:
+    """Claim a decision set once every frozen call has reached a terminal state.
+
+    One approval may be granted while another remains pending.  In that case
+    the original loop stays paused; it never receives a partial fabricated
+    answer.  The checkpoint claim is idempotent and prevents two browser tabs
+    from resuming the same logical turn.
+    """
+    operation = get_operation(workspace_id, operation_id)
+    continuation = operation.get("continuation") if isinstance(operation, dict) else {}
+    checkpoint_id = str((continuation or {}).get("checkpoint_id") or "")
+    if not checkpoint_id:
+        return None
+    with _continuation_lock(workspace_id, checkpoint_id):
+        checkpoint = get_continuation(workspace_id, checkpoint_id)
+        if not checkpoint or checkpoint.get("status") != "waiting_decisions":
+            return None
+        operations = [get_operation(workspace_id, item) for item in checkpoint.get("operation_ids") or []]
+        if not operations or any(not item for item in operations):
+            return None
+        terminal = {"executed", "unknown", "invalidated", "rejected", "cancelled"}
+        if any(str(item.get("status") or "") not in terminal for item in operations):
+            return None
+        checkpoint["status"] = "resuming"
+        checkpoint["updated_at"] = _now()
+        checkpoint["operations"] = operations
+        _store(workspace_id).save("continuations", checkpoint_id, checkpoint)
+        return checkpoint
+
+
+def settle_continuation(workspace_id: str, checkpoint_id: str, *, result: dict[str, Any]) -> None:
+    with _continuation_lock(workspace_id, checkpoint_id):
+        checkpoint = get_continuation(workspace_id, checkpoint_id)
+        if not checkpoint:
+            return
+        checkpoint["status"] = "resumed"
+        checkpoint["resumed_at"] = _now()
+        checkpoint["resume_result"] = dict(result or {})
+        checkpoint["updated_at"] = _now()
+        _store(workspace_id).save("continuations", checkpoint_id, checkpoint)
+
+
 def execution_interceptor(request: dict[str, Any]) -> dict[str, Any] | None:
     record = prepare_network_operation(request)
     if not record:
