@@ -689,16 +689,21 @@ def test_prompt_makes_autonomous_commands_the_default_not_templates():
     "ping -vpn-instance vpn1 10.0.0.1", "tracert 10.0.0.1",
     "ping vrf blue 10.0.0.1 repeat 5",
 ])
-def test_network_diagnostics_follow_the_display_show_only_rule(command):
-    assert not is_read_only_command(command, "h3c" if "vrf " not in command else "cisco")
+def test_ping_is_read_only_but_other_diagnostics_require_approval(command):
+    expected = command.startswith("ping ")
+    assert is_read_only_command(command, "h3c" if "vrf " not in command else "cisco") is expected
 
 
 @pytest.mark.parametrize("command", [
     "ping 10.0.0.1 repeat 999", "ping -c 999 10.0.0.1",
-    "ping -unknown value 10.0.0.1", "ping 10.0.0.1 && reboot",
+    "ping -unknown value 10.0.0.1",
 ])
-def test_unbounded_or_unsafe_network_diagnostics_are_rejected(command):
-    assert not is_read_only_command(command, "h3c")
+def test_ping_arguments_do_not_change_its_read_class(command):
+    assert is_read_only_command(command, "h3c")
+
+
+def test_command_chaining_is_not_a_single_read_command():
+    assert not is_read_only_command("ping 10.0.0.1 && reboot", "h3c")
 
 
 def test_raw_read_without_commands_never_contacts_device(monkeypatch, tmp_path):

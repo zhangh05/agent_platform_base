@@ -153,10 +153,10 @@ def is_read_only_command(command: str, vendor: str = "") -> bool:
     if not value or any(marker in value for marker in ("\n", "\r", ";", "&&", "`", "$(", ">", "<")):
         return False
     # The runtime owns exactly one read/write classifier: a command is read
-    # only when its first verb is display or show.  Every other command is a
+    # only when its first verb is display, show, or ping. Every other command is a
     # device operation and therefore follows the configure/approval path.
     del vendor
-    return bool(re.match(r"^(?:display|show)(?:\s|$)", value, re.IGNORECASE))
+    return bool(re.match(r"^(?:display|show|ping)(?:\s|$)", value, re.IGNORECASE))
 
 
 def normalize_read_only_commands(commands: list[str] | tuple[str, ...] | None, vendor: str = "") -> list[str]:
