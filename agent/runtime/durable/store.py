@@ -24,18 +24,9 @@ from storage.durable_task_store import (
 logger = logging.getLogger(__name__)
 
 def _redact(obj, max_len=256):
-    """Deep-redact durable observations before they cross a persistence boundary."""
-    return _truncate(redact_tool_output(obj), max_len)
+    """Deep-redact durable observations without shortening their content."""
+    return redact_tool_output(obj)
 
-
-def _truncate(obj, max_len):
-    if isinstance(obj, dict):
-        return {key: _truncate(value, max_len) for key, value in obj.items()}
-    if isinstance(obj, list):
-        return [_truncate(value, max_len) for value in obj]
-    if isinstance(obj, str) and len(obj) > max_len:
-        return obj[:max_len] + "..."
-    return obj
 
 # ── Task CRUD ──
 def save_task(task: TaskState):

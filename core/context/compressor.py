@@ -20,7 +20,7 @@ DEDUP_SIMILARITY_THRESHOLD = 0.75
 
 def compress_context_items(items: list, budget: ContextBudget = None,
                            mode: str = "safe_llm", model: str = "") -> tuple:
-    """Compress context items: limit, strip, dedup, enforce budget.
+    """Redact sensitive fields while preserving every context item.
 
     Args:
         items: List of ContextItem objects.
@@ -37,18 +37,9 @@ def compress_context_items(items: list, budget: ContextBudget = None,
 
     warnings = []
 
-    # ── 1. Enforce type limits ──
-    counts = {}
+    # A context budget is accounting, never a right to omit model evidence.
     compressed = []
     for item in items:
-        t = item.item_type
-        lim = _limit_for(t, budget)
-        c = counts.get(t, 0)
-        if c >= lim:
-            warnings.append(f"Limited {t} (max {lim})")
-            continue
-        counts[t] = c + 1
-
         # Strip sensitive keys inside the content payload.  Do not apply the
         # top-level ContextItem whitelist to ``content`` itself: artifact_id,
         # job_id, status and similar business fields are the whole point of
@@ -56,29 +47,10 @@ def compress_context_items(items: list, budget: ContextBudget = None,
         item.content = _strip_sensitive(item.content)
         compressed.append(item)
 
-    # ── 2. Semantic deduplication ──
-    if budget.dedup_enabled and len(compressed) > 1:
-        compressed, dedup_count = _dedup_items(compressed)
-        if dedup_count > 0:
-            warnings.append(f"Deduplicated {dedup_count} similar items")
-
-    # ── 3. Compute real budget ──
+    # Compute usage for telemetry without removing content.
     total_chars = sum(len(json.dumps(i.content, ensure_ascii=False)) + len(i.summary) for i in compressed)
     budget.used_items = len(compressed)
     budget.used_chars = total_chars
-
-    if total_chars > budget.max_chars:
-        budget.truncated = True
-        budget.truncation_reason = f"used {total_chars} > max {budget.max_chars}"
-        # Drop low-priority items to fit
-        while total_chars > budget.max_chars and len(compressed) > 1:
-            dropped = compressed.pop()
-            dropped_chars = len(json.dumps(dropped.content, ensure_ascii=False)) + len(dropped.summary)
-            total_chars -= dropped_chars
-            warnings.append(f"Truncated {dropped.item_type} (char budget)")
-
-        budget.used_items = len(compressed)
-        budget.used_chars = total_chars
 
     return compressed, budget, warnings
 

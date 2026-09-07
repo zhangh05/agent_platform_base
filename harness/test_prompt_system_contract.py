@@ -135,7 +135,7 @@ def test_enabled_prompt_registry_is_latest_only():
         assert not spec.prompt_id.endswith(".v1")
 
 
-def test_registry_context_limits_are_applied_before_rendering():
+def test_registry_context_is_preserved_before_rendering():
     from prompts.loader import render_prompt
 
     hits = []
@@ -156,12 +156,12 @@ def test_registry_context_limits_are_applied_before_rendering():
         "question",
     )
 
-    assert rendered.context_chars <= 6000
-    assert "knowledge_hits_truncated:20->8" in rendered.warnings
-    assert any(warning.startswith("context_truncated_to:") for warning in rendered.warnings)
+    assert rendered.context_chars > 6000
+    assert rendered.warnings == []
+    assert "art_19" in rendered.text
 
 
-def test_extra_context_cannot_bypass_registry_budget():
+def test_extra_context_is_not_cut_by_registry_budget():
     from prompts.loader import render_prompt
 
     rendered = render_prompt(
@@ -184,8 +184,8 @@ def test_extra_context_cannot_bypass_registry_budget():
         },
     )
 
-    assert rendered.context_chars <= 8000
-    assert any(warning.startswith("context_truncated_to:") for warning in rendered.warnings)
+    assert rendered.context_chars > 8000
+    assert rendered.warnings == []
 
 
 def test_tool_result_keeps_runtime_contract_with_response_nudge_marker():

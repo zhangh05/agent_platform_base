@@ -271,8 +271,6 @@ export interface AgentResult {
       tool?: string;
       tracking?: Record<string, unknown>;
     }>;
-    /** Input/output truncation is explicit so partial results are never silent. */
-    context_compacted?: boolean;
     context_estimated_tokens?: number;
     context_budget?: {
       context_window_tokens?: number;
@@ -286,8 +284,6 @@ export interface AgentResult {
       per_tool_result_tokens?: number;
       artifact_result_tokens?: number;
     };
-    output_truncated?: boolean;
-    output_truncation_reason?: string;
     /** Durable runtime terminal projection. Unknown means a write may still run externally. */
     execution_outcome?: "complete" | "partial" | "failed" | "unknown";
     /** Aggregate tool-attempt telemetry; failed attempts may coexist with a completed task. */

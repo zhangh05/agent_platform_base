@@ -142,8 +142,8 @@ def text_file_content(workspace_id: str, file_id: str, *, max_chars: int = 100_0
     return {
         "file_id": file_id,
         "binary": False,
-        "content": content[:max_chars],
-        "truncated": len(content) > max_chars,
+        "content": content,
+        "truncated": False,
     }
 
 

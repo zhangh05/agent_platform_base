@@ -52,7 +52,7 @@ def build_context_bundle(workspace_id: str, user_input: str = "",
     safe = SafeLLMContext(
         workspace_id=workspace_id, intent=intent, user_input=user_input,
         context_ref=ref,
-        artifact_refs=[i.content for i in compressed if i.item_type == "artifact_summary"][:10],
+        artifact_refs=[i.content for i in compressed if i.item_type == "artifact_summary"],
         warnings=list(warnings),
     )
 

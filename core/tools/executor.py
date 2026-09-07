@@ -151,7 +151,7 @@ class ToolExecutor:
             or output.get("_hint")
             or _structured_summary(invocation.tool_id, output, ok)
         )
-        # No per-field truncation — query_loop enforces a single 50K cap on the full payload.
+        # Tool results remain complete for the next model turn.
 
         errors = output.get("errors", [])
         if not ok and not errors:
@@ -177,7 +177,7 @@ class ToolExecutor:
 def _structured_summary(tool_id: str, output: dict, ok: bool) -> str:
     """Produce an evidence-bearing fallback for raw structured handlers."""
     if not ok:
-        return str(output.get("error") or f"Tool {tool_id} failed")[:500]
+        return str(output.get("error") or f"Tool {tool_id} failed")
     for count_key, noun in (
         ("match_count", "match(es)"),
         ("row_count", "row(s)"),

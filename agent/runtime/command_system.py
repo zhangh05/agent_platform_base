@@ -431,7 +431,7 @@ def _cmd_export(args, session_id: Optional[str], context: Optional[dict]) -> str
             role = m.get('role', '?') if isinstance(m, dict) else getattr(m, 'role', '?')
             content = m.get('content', '') if isinstance(m, dict) else getattr(m, 'content', '')
             lines.append(f"## [{i+1}] {role}")
-            lines.append(content[:500])
+            lines.append(content)
             lines.append("")
         export_data = "\n".join(lines)
 
@@ -439,7 +439,7 @@ def _cmd_export(args, session_id: Optional[str], context: Optional[dict]) -> str
         "ok": True, "status": "ok", "command": "export",
         "result": f"Exported {len(messages)} messages in {fmt} format",
         "errors": [], "warnings": [],
-        "metadata": {"source": source, "message_count": len(messages), "format": fmt, "truncated": truncated, "preview": export_data[:1000]},
+        "metadata": {"source": source, "message_count": len(messages), "format": fmt, "truncated": truncated, "preview": export_data},
     })
 
 

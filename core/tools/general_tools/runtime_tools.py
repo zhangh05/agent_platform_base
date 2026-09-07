@@ -372,7 +372,7 @@ def handle_report_render_markdown(inv: ToolInvocation) -> dict:
     # Check for raw config
     if "interface " in content.lower() and "ip address" in content.lower():
         return _error_inv(inv, "raw config detected — use safe summary only")
-    return _ok(inv, "", {"markdown": content[:5000]})
+    return _ok(inv, "", {"markdown": content})
 
 def handle_report_save_artifact(inv: ToolInvocation) -> dict:
     ws = _caller_workspace(inv)

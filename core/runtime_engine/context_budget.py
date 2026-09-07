@@ -1,8 +1,7 @@
-"""Token-aware context budgeting for the SSOT runtime.
+"""Context accounting helpers for the SSOT runtime.
 
-The runtime keeps the complete tool surface visible to the model. This module
-accounts for that fixed cost first, then assigns the remaining input window to
-messages, history, retrieval, and tool evidence.
+The values in this module are telemetry for provider capacity planning. They
+must never remove or shorten model-visible messages, tool results, or evidence.
 """
 
 from __future__ import annotations
@@ -40,26 +39,8 @@ def estimate_json_tokens(value: Any) -> int:
 
 
 def truncate_text_to_tokens(text: str, max_tokens: int) -> tuple[str, bool]:
-    """Keep both ends of text while enforcing the conservative token estimate."""
-    value = str(text or "")
-    limit = max(1, int(max_tokens or 1))
-    if estimate_text_tokens(value) <= limit:
-        return value, False
-
-    marker = "\n...[context truncated by runtime budget]...\n"
-    low, high = 0, len(value)
-    best = marker
-    while low <= high:
-        keep = (low + high) // 2
-        head = int(keep * 0.75)
-        tail = keep - head
-        candidate = value[:head] + marker + (value[-tail:] if tail else "")
-        if estimate_text_tokens(candidate) <= limit:
-            best = candidate
-            low = keep + 1
-        else:
-            high = keep - 1
-    return best, True
+    """Return complete text; ``max_tokens`` is accounting-only."""
+    return str(text or ""), False
 
 
 def project_json_to_tokens(value: Any, max_tokens: int) -> tuple[Any, bool]:
@@ -70,77 +51,7 @@ def project_json_to_tokens(value: Any, max_tokens: int) -> tuple[Any, bool]:
     leaves an explicit marker wherever values or collection members were
     omitted.
     """
-    limit = max(64, int(max_tokens or 64))
-    if estimate_json_tokens(value) <= limit:
-        return copy.deepcopy(value), False
-    projected = _project_json_node(value, limit, depth=0)
-    return projected, True
-
-
-def _project_json_node(value: Any, budget: int, *, depth: int) -> Any:
-    if value is None or isinstance(value, (bool, int, float)):
-        return value
-    if isinstance(value, str):
-        return truncate_text_to_tokens(value, max(8, budget))[0]
-    if depth >= 8:
-        text, _ = truncate_text_to_tokens(
-            json.dumps(value, ensure_ascii=False, default=str),
-            max(8, budget - 8),
-        )
-        return {"_truncated": True, "preview": text}
-
-    if isinstance(value, (list, tuple)):
-        items = list(value)
-        if not items:
-            return []
-        result: list[Any] = []
-        item_budget = max(16, (budget - 24) // min(len(items), 24))
-        for item in items:
-            candidate = _project_json_node(item, item_budget, depth=depth + 1)
-            trial = result + [candidate]
-            if estimate_json_tokens(trial) > max(16, budget - 12):
-                break
-            result.append(candidate)
-        omitted = len(items) - len(result)
-        if omitted:
-            marker = {"_truncated_items": omitted}
-            while result and estimate_json_tokens(result + [marker]) > budget:
-                result.pop()
-                omitted += 1
-                marker = {"_truncated_items": omitted}
-            if estimate_json_tokens(result + [marker]) <= budget:
-                result.append(marker)
-        return result
-
-    if isinstance(value, dict):
-        entries = list(value.items())
-        if not entries:
-            return {}
-        priority = {"ok", "status", "summary", "error", "errors", "warnings", "id", "task_id", "run_id"}
-        entries.sort(key=lambda item: (str(item[0]) not in priority,))
-        result: dict[str, Any] = {}
-        value_budget = max(16, (budget - 32) // min(len(entries), 24))
-        omitted = 0
-        for key, item in entries:
-            key_text = str(key)
-            candidate = _project_json_node(item, value_budget, depth=depth + 1)
-            trial = {**result, key_text: candidate}
-            if estimate_json_tokens(trial) > max(16, budget - 16):
-                omitted += 1
-                continue
-            result[key_text] = candidate
-        omitted = len(entries) - len(result)
-        if omitted:
-            marker: Any = {"fields": omitted}
-            while result and estimate_json_tokens({**result, "_truncated": marker}) > budget:
-                last_key = next(reversed(result))
-                result.pop(last_key)
-                marker["fields"] += 1
-            if estimate_json_tokens({**result, "_truncated": marker}) <= budget:
-                result["_truncated"] = marker
-        return result
-
-    return truncate_text_to_tokens(str(value), max(8, budget))[0]
+    return copy.deepcopy(value), False
 
 
 def resolve_model_context_tokens(model: str, configured: int = 0) -> int:

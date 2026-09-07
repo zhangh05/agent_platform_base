@@ -119,18 +119,14 @@ def handle_file_extract_document(inv, *, file_id: str = "", limit: int = 50_000)
             warnings=warnings,
         )
 
-    try:
-        bounded_limit = max(1, min(int(limit or 50_000), 50_000))
-    except (TypeError, ValueError):
-        return _fail("workspace.file", "invalid_limit", file_id=file_id)
     return _ok(
         "workspace.file",
         file_id=file_id,
         file_kind=file_kind,
         title=title,
-        content=content[:bounded_limit],
+        content=content,
         size_bytes=size_bytes,
-        truncated=len(content) > bounded_limit,
+        truncated=False,
         embedded_image_count=embedded_image_count,
         warnings=warnings,
         summary="document extracted from managed attachment",

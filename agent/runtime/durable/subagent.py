@@ -19,14 +19,14 @@ def _now(): return now_iso()
 # All terminal text crosses this boundary before durable task state, timeline,
 # memory candidates, or the parent tool result can observe it.
 def _redact_terminal_text(value: object, *, limit: int) -> str:
-    return redact_text(str(value or "").replace("\x00", ""))[:max(1, int(limit))]
+    return redact_text(str(value or "").replace("\x00", ""))
 
 
 def _sanitize_terminal_result(result: "SubagentResult") -> None:
     result.summary = _redact_terminal_text(result.summary, limit=4000)
     result.findings = [
         _redact_terminal_text(item, limit=1000)
-        for item in list(result.findings or [])[:20]
+        for item in list(result.findings or [])
     ]
     result.tool_results = [
         {
@@ -34,16 +34,16 @@ def _sanitize_terminal_result(result: "SubagentResult") -> None:
             "ok": bool(item.get("ok", False)),
             "summary": _redact_terminal_text(item.get("summary", ""), limit=200),
         }
-        for item in list(result.tool_results or [])[:20]
+        for item in list(result.tool_results or [])
         if isinstance(item, dict)
     ]
     result.errors = [
         _redact_terminal_text(item, limit=300)
-        for item in list(result.errors or [])[:20]
+        for item in list(result.errors or [])
     ]
     result.warnings = [
         _redact_terminal_text(item, limit=300)
-        for item in list(result.warnings or [])[:20]
+        for item in list(result.warnings or [])
     ]
 def _sid(): return f"sub-{uuid.uuid4().hex[:8]}"
 
@@ -403,7 +403,7 @@ def run_subagent_task(subtask_id: str, ws_id: str) -> dict:
             te_get = te.get if isinstance(te, dict) else lambda key, default=None: getattr(te, key, default)
             tool_id = str(te_get("tool_id", "") or "")
             tools_ok = bool(te_get("ok", False))
-            summary = str(te_get("summary", "") or "")[:200]
+            summary = str(te_get("summary", "") or "")
             result.tool_results.append({
                 "tool_id": tool_id, "ok": tools_ok,
                 "summary": summary,
@@ -417,8 +417,8 @@ def run_subagent_task(subtask_id: str, ws_id: str) -> dict:
             # governed artifact. The parent may receive a compact status
             # summary, but must never lose the source result because of that
             # presentation bound.
-            result.summary = final_resp[:4000]
-            result.findings = [final_resp[:1000]]
+            result.summary = final_resp
+            result.findings = [final_resp]
             result_total_chars = len(final_resp)
             try:
                 from artifacts.store import save_artifact
@@ -476,9 +476,9 @@ def run_subagent_task(subtask_id: str, ws_id: str) -> dict:
             result.summary = "Subagent cancelled by user"
         _sanitize_terminal_result(result)
         task.status = result.status
-        task.summary = result.summary[:4000]
-        task.errors = list(result.errors[:20])
-        task.warnings = list(result.warnings[:20])
+        task.summary = result.summary
+        task.errors = list(result.errors)
+        task.warnings = list(result.warnings)
         task.finished_at = _now()
         _save_task(task)
     result.finished_at = _now()

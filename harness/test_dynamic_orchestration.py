@@ -306,6 +306,38 @@ def test_queryloop_replans_oversized_model_round_before_any_handler_runs():
     assert any("RUNTIME PLAN BOUNDARY" in message.content for message in prompts[1])
 
 
+def test_queryloop_continues_provider_partial_output_before_finalizing():
+    from agent.llm.schemas import LLMResponse
+    from core.runtime_engine.engine import SSOTRuntimeEngine
+    from core.runtime_engine.tool_runtime import ToolRuntime
+
+    responses = [
+        LLMResponse(
+            content="第一部分，",
+            finish_reason="length",
+            metadata={"output_truncated": True, "truncation_reason": "length"},
+        ),
+        LLMResponse(content="第二部分。"),
+    ]
+    prompts = []
+
+    def llm(**kwargs):
+        prompts.append(kwargs["messages"])
+        return responses.pop(0)
+
+    engine = SSOTRuntimeEngine(
+        config=SSOTRuntimeConfig(max_query_loop_iterations=3),
+        llm_invoke=llm,
+        tool_registry={},
+        tool_runtime=ToolRuntime(SSOTRuntimeConfig()),
+    )
+    result = asyncio.run(engine.run("完整回答", workspace_id="default", session_id="session"))
+
+    assert result.final_response == "第二部分。"
+    assert len(prompts) == 2
+    assert any("第一部分，" in str(message.content) for message in prompts[1])
+
+
 def test_read_only_parallel_timeout_is_failed_not_unknown():
     from core.runtime_engine.budget_controller import BudgetController
 
@@ -420,7 +452,7 @@ def test_independent_writes_are_serial_and_not_labelled_parallel():
     assert [result.output["_orchestration"]["parallel"] for result in results] == [False, False]
 
 
-def test_orchestration_evidence_respects_total_budget():
+def test_orchestration_evidence_preserves_complete_tool_output():
     class Runtime:
         def invoke_raw(self, _tool_id, _arguments):
             return {"ok": True, "text": "x" * 20_000}
@@ -436,7 +468,8 @@ def test_orchestration_evidence_respects_total_budget():
     )
     asyncio.run(StreamingToolExecutor(Runtime(), config).execute([call], ctx=ctx))
     projection = ctx.extras["orchestration_evidence"]["source"].output
-    assert projection["_evidence_projection"]["truncated"] is True
+    assert projection["text"] == "x" * 20_000
+    assert "_evidence_projection" not in projection
 
 
 def test_sync_handler_does_not_block_event_loop_and_uncertain_timeout_is_not_retried():

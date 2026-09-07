@@ -412,20 +412,19 @@ def _safe_metadata(value, max_depth: int = 3):
     if isinstance(value, (int, float, bool)) or value is None:
         return value
     if isinstance(value, str):
-        text = redact_text(str(value))
-        return text[:2000] + ("...[truncated]" if len(text) > 2000 else "")
+        return redact_text(str(value))
     if max_depth < 0:
         return [] if isinstance(value, (list, tuple)) else {}
     if isinstance(value, dict):
         out = {}
-        for key, item in list(value.items())[:40]:
+        for key, item in value.items():
             if _is_sensitive_key(str(key)):
                 continue
             out[str(key)] = _safe_metadata(item, max_depth=max_depth - 1)
         return out
     if isinstance(value, (list, tuple)):
-        return [_safe_metadata(item, max_depth=max_depth - 1) for item in list(value)[:30]]
-    return str(value)[:500]
+        return [_safe_metadata(item, max_depth=max_depth - 1) for item in value]
+    return str(value)
 
 
 def _is_sensitive_key(key: str) -> bool:

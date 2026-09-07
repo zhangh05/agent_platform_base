@@ -305,7 +305,8 @@ def test_workspace_read_success_satisfies_its_published_output_contract(monkeypa
 
     assert result["ok"] is True
     assert declared <= set(result)
-    assert result["truncated"] is True
+    assert result["truncated"] is False
+    assert result["preview"] == "x" * 600
 
 
 def test_public_schemas_expose_handler_consumed_arguments():

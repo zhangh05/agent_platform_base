@@ -512,10 +512,6 @@ def run_ssot_turn(
                 (runtime_result.metadata or {}).get("context_estimated_tokens", 0) or 0
             ),
             "context_budget": dict((runtime_result.metadata or {}).get("context_budget") or {}),
-            "output_truncated": bool((runtime_result.metadata or {}).get("output_truncated", False)),
-            "output_truncation_reason": str(
-                (runtime_result.metadata or {}).get("output_truncation_reason") or ""
-            ),
             "execution_outcome": str(
                 (runtime_result.metadata or {}).get("execution_outcome")
                 or ("complete" if runtime_result.success else "failed")
@@ -1536,10 +1532,9 @@ def _build_history_block(
       1. ``SessionMessageStore`` full persisted messages
       2. in-memory ``session.history`` entries not yet flushed
 
-    The block keeps recent messages verbatim, summarizes older turns, and
-    pulls a small retrieved-history section when the current input references
-    earlier conversation. This preserves long-session entities without reviving
-    a second runtime path.
+    The block preserves every persisted conversation turn verbatim. Runtime
+    token accounting is telemetry only and must not decide which prior facts
+    the model may see.
     """
     try:
         messages = _load_context_messages(
@@ -1550,46 +1545,10 @@ def _build_history_block(
         if not messages:
             return ""
 
-        from core.runtime_engine.context_budget import estimate_text_tokens, truncate_text_to_tokens
-
-        recent, older, include_retrieved = _select_history_messages(messages, user_input)
-        if not recent and not older:
-            return ""
-        parts: list[str] = []
-        recent_budget = max(800, int(max_tokens * 0.65))
-        summary_budget = max(300, int(max_tokens * 0.22))
-        reference_budget = max(200, max_tokens - recent_budget - summary_budget)
-        per_message_tokens = max(100, min(600, max_tokens // 10))
-        recent_text = _format_recent_history(
-            recent,
-            max_tokens=recent_budget,
-            per_message_tokens=per_message_tokens,
+        return "RECENT CONVERSATION HISTORY:\n" + "\n".join(
+            f"  [{message['role']}] {message['content']}"
+            for message in messages
         )
-        if older:
-            summary = _summarize_older_messages(older, max_tokens=summary_budget)
-            if summary:
-                parts.append("SESSION SUMMARY:\n" + summary)
-        retrieved = _retrieve_history_references(messages, user_input) if include_retrieved else []
-        if retrieved:
-            retrieved_lines = []
-            for message in retrieved:
-                content, _ = truncate_text_to_tokens(message["content"], per_message_tokens)
-                retrieved_lines.append(f"  [{message['role']}] {content}")
-            retrieved_text, _ = truncate_text_to_tokens("\n".join(retrieved_lines), reference_budget)
-            parts.append("RETRIEVED HISTORY:\n" + retrieved_text)
-        if recent_text:
-            parts.append("RECENT CONVERSATION HISTORY:\n" + recent_text)
-        block = "\n\n".join(parts)
-        if estimate_text_tokens(block) <= max_tokens:
-            return block
-        # Never head-truncate a long block: that discards the newest turns.
-        fallback = "RECENT CONVERSATION HISTORY:\n" + _format_recent_history(
-            recent,
-            max_tokens=max(100, max_tokens - 20),
-            per_message_tokens=per_message_tokens,
-        )
-        fallback, _ = truncate_text_to_tokens(fallback, max_tokens)
-        return fallback
     except Exception:
         _LOG.debug("conversation history block build failed", exc_info=True)
         return ""

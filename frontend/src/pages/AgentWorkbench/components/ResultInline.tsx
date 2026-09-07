@@ -112,9 +112,6 @@ export const ResultInline = memo(function ResultInline({
   const actionCount = toolCalls.length;
   const failedToolCount = toolCalls.filter((tc) => !tc.ok).length;
   const successToolCount = toolCalls.filter((tc) => tc.ok).length;
-  const contextCompacted = Boolean(result?.metadata?.context_compacted);
-  const outputTruncated = Boolean(result?.metadata?.output_truncated);
-  const truncationReason = String(result?.metadata?.output_truncation_reason || "");
   const executionOutcome = result?.metadata?.execution_outcome;
   const isUnknownOutcome = executionOutcome === "unknown";
   const unknownOutcome = result?.metadata?.unknown_outcome;
@@ -260,19 +257,6 @@ export const ResultInline = memo(function ResultInline({
               <span className="cognitive-summary-text">{cognitiveSummary}</span>
               {cognitiveOutcome && <span className="cognitive-summary-outcome">{cognitiveOutcome.replaceAll("_", " ")}</span>}
             </section>
-          )}
-
-          {(contextCompacted || outputTruncated) && (
-            <div
-              className={`context-budget-notice ${outputTruncated ? "warning" : ""}`}
-              data-testid="context-budget-notice"
-            >
-              {outputTruncated
-                ? truncationReason === "timeout"
-                  ? "模型响应超时，当前展示的是已接收内容。"
-                  : "回复达到输出长度上限，当前内容可能不完整。"
-                : "较早的运行上下文已压缩，最近对话和关键任务引用仍被保留。"}
-            </div>
           )}
 
           {((result?.tool_calls) ?? []).length > 0 && (

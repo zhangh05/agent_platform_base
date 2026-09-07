@@ -301,16 +301,8 @@ def _format_action_requirements(tool_id: str, metadata: dict | None = None) -> s
 
 
 def _soft_truncate(text: str, limit: int) -> str:
-    """Truncate without cutting English identifiers in half when practical."""
-    text = " ".join(str(text or "").split())
-    if len(text) <= limit:
-        return text
-    cut = text[:limit].rstrip()
-    for separator in ("。", "；", ";", ".", ",", "，", " "):
-        pos = cut.rfind(separator)
-        if pos >= max(40, limit // 2):
-            return cut[: pos + (0 if separator == " " else 1)].rstrip()
-    return cut.rstrip("_-. ")
+    """Return the complete LLM-visible contract unchanged."""
+    return str(text or "")
 
 
 def _format_action_profiles(action_profiles) -> str:

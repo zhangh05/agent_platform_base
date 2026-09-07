@@ -393,88 +393,21 @@ def compact_messages(
     *,
     max_tokens: int | None = None,
 ) -> tuple[list[LLMMessage], CompactInfo]:
-    """Compact QueryLoop messages without changing trust or tool protocol."""
-    info = CompactInfo()
-    token_limit = max(128, int(max_tokens or DEFAULT_COMPACT_MESSAGE_TOKENS))
-    before_tokens = estimate_message_tokens(messages)
-    # The compacting branch already validates the retained transcript. Validate
-    # the below-budget branch as well so callers never forward an orphaned or
-    # ambiguous tool result merely because the transcript is short.
+    """Validate and return the complete transcript unchanged.
+
+    ``max_tokens`` is retained only for source compatibility.  Runtime code
+    must not turn a provider capacity estimate into permission to remove part
+    of the user's conversation, a tool call, or a tool result.
+    """
     assert_tool_protocol(messages)
-    if before_tokens <= token_limit:
-        return messages, info
-
-    groups = message_groups(messages)
-    leading_system: list[list[LLMMessage]] = []
-    while groups and all(message.role == "system" for message in groups[0]):
-        leading_system.append(groups.pop(0))
-    if not groups:
-        fitted = _within_budget(messages, token_limit)
-        return fitted, CompactInfo(
-            compacted=True, before_chars=estimate_chars(messages), after_chars=estimate_chars(fitted),
-            before_tokens=before_tokens, after_tokens=estimate_message_tokens(fitted),
-            saved_chars=estimate_chars(messages) - estimate_chars(fitted), truncation_reason="context_budget",
-        )
-
-    # A prior compaction record can precede the actual current request after a
-    # long loop. Consolidate it as data; never mistake it for new user intent.
-    request_index = next(
-        (
-            index for index, group in enumerate(groups)
-            if any(message.role == "user" and not _is_compaction_record(message) for message in group)
-        ),
-        0,
+    total_chars = estimate_chars(messages)
+    total_tokens = estimate_message_tokens(messages)
+    return messages, CompactInfo(
+        before_chars=total_chars,
+        after_chars=total_chars,
+        before_tokens=total_tokens,
+        after_tokens=total_tokens,
     )
-    prior_record_groups = groups[:request_index]
-    request_group = groups[request_index:request_index + 1]
-    candidates = groups[request_index + 1:]
-    tail_budget = max(256, int(token_limit * 0.62))
-    tail_groups: list[list[LLMMessage]] = []
-    used = 0
-    for group in reversed(candidates):
-        cost = estimate_message_tokens(group)
-        if cost > tail_budget or used + cost > tail_budget:
-            break
-        tail_groups.append(copy.deepcopy(group))
-        used += cost
-    tail_groups.reverse()
-    omitted_groups = prior_record_groups + candidates[: len(candidates) - len(tail_groups)]
-    omitted = [message for group in omitted_groups for message in group]
-
-    # If only one oversized recent protocol group exists, summarize/omit the
-    # entire group instead of corrupting function arguments to force it in.
-    if not omitted and candidates and estimate_message_tokens(candidates[-1]) > tail_budget:
-        omitted_groups = candidates
-        omitted = [message for group in candidates for message in group]
-        tail_groups = []
-
-    record, tools, stats, hints = _collect_record(omitted)
-    record_message = _record_message(record, max(160, token_limit // 3)) if omitted else None
-    compacted = [message for group in leading_system for message in group]
-    if record_message is not None:
-        compacted.append(record_message)
-    compacted.extend(message for group in request_group for message in group)
-    compacted.extend(message for group in tail_groups for message in group)
-    compacted = _within_budget(compacted, token_limit)
-    assert_tool_protocol(compacted)
-
-    before_chars = estimate_chars(messages)
-    after_chars = estimate_chars(compacted)
-    info = CompactInfo(
-        compacted=True,
-        before_chars=before_chars,
-        after_chars=after_chars,
-        before_tokens=before_tokens,
-        after_tokens=estimate_message_tokens(compacted),
-        removed=len(omitted),
-        saved_chars=before_chars - after_chars,
-        tools_used=tools,
-        tool_stats=stats,
-        key_hints=hints,
-        redaction_applied=bool(omitted),
-        truncation_reason="context_budget",
-    )
-    return compacted, info
 
 
 def assert_tool_protocol(messages: list[LLMMessage]) -> None:

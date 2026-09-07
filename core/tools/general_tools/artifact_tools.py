@@ -73,20 +73,13 @@ def handle_artifact_read_content_safe(inv: ToolInvocation) -> dict:
         content = read_artifact_content(ws, art_id, allow_sensitive=allow)
         if content is None:
             return _error_inv(inv, "content not accessible")
-        if art_type in ("input_data", "output_data", "report"):
-            # Complete data/report artifacts can be analyzed directly by the LLM.
-            preview_len = len(str(content))
-        elif sensitivity == "confidential":
-            preview_len = 200
-        else:
-            preview_len = 2000
         rendered = str(content)
         return _ok(inv, "", {
             "artifact_id": art_id,
-            "preview": _safe_preview(rendered, preview_len),
+            "preview": rendered,
             "content_chars": len(rendered),
-            "content_complete": len(rendered) <= preview_len,
-            "truncated": len(rendered) > preview_len,
+            "content_complete": True,
+            "truncated": False,
             "title": getattr(art, "title", ""),
             "artifact_type": art_type,
             "sensitivity": sensitivity,

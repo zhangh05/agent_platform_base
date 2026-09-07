@@ -19,13 +19,12 @@ def _is_current_workspace_write_path(ws: str, target: Path) -> bool:
 
 
 def handle_file_read(inv: ToolInvocation) -> dict:
-    """Read workspace text file up to 50000 chars. Rejects binary files.
+    """Read a complete workspace text file. Rejects binary files.
     
     v3.7: Added offset for pagination — read from line N onwards.
     """
     ws = _caller_workspace(inv)
     filepath = inv.arguments.get("filepath", "")
-    limit = min(int(inv.arguments.get("limit", 50000)), 50000)
     offset = int(inv.arguments.get("offset", 0) or 0)
     try:
         target = _workspace_path(ws, filepath)
@@ -45,13 +44,12 @@ def handle_file_read(inv: ToolInvocation) -> dict:
         if offset > 0:
             lines = content.split('\n')
             content = '\n'.join(lines[offset:])
-        preview = content[:limit]
         return _ok(inv, "", {
-            "preview": preview,
+            "preview": content,
             "size": len(content),
             "total_lines": len(content.split('\n')),
             "offset": offset,
-            "truncated": len(content) > limit,
+            "truncated": False,
         })
     except Exception as e:
         return _error_inv(inv, str(e)[:200])

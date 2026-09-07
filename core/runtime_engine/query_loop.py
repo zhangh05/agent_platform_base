@@ -3,14 +3,13 @@ QueryLoop — iterative LLM + tool execution engine.
 
 The single tool-capable runtime loop owns reasoning, execution, and response,
 feeds tool results back for iterative refinement, tracks long tasks,
-records retry metadata, and auto-compacts long conversations.
+records retry metadata, and preserves complete model-visible history.
 
 Optimizations:
   1. Prompt Cache — static system+tools prefix never changes
   2. One runtime contract — reasoning and user response share one system prompt
   3. Iterative execution — tool results feed back for dynamic decisions
   4. Streaming tool exec — tools start during LLM output
-  5. Auto-compact — summarise old turns when context grows
 """
 
 from __future__ import annotations
@@ -34,10 +33,6 @@ from core.tools.redaction import redact_tool_output
 from .cognitive_state import initialize_cognitive_state
 from .context_budget import (
     RuntimeContextBudget,
-    estimate_json_tokens,
-)
-from .context_compaction import (
-    compact_messages as _compact_messages,
 )
 from .context_compaction import (
     estimate_chars as _estimate_chars,
@@ -85,10 +80,10 @@ QUERY_LOOP_SYSTEM_PROMPT = RUNTIME_SYSTEM_PROMPT
 SYNTHESIS_CHECKPOINT_MARKER = "[SYNTHESIS_CHECKPOINT]"
 FINAL_SYNTHESIS_CHECKPOINT_MARKER = "[FINAL_SYNTHESIS_CHECKPOINT]"
 
-def _redact_tool_error(error: Any, *, limit: int = 200) -> str:
-    """Return bounded, redacted tool or orchestration error text for model context."""
+def _redact_tool_error(error: Any) -> str:
+    """Return complete, redacted tool or orchestration error text for model context."""
     value = redact_tool_output({"error": str(error or "")}).get("error")
-    return str(value or "tool execution failed")[:limit]
+    return str(value or "tool execution failed")
 
 
 _LOG = logging.getLogger(__name__)
@@ -208,11 +203,6 @@ _BULK_LIST_KEYS = {
 }
 
 
-def _compact_value_for_llm(value: Any, *, depth: int = 0, key_hint: str = "") -> Any:
-    """Compatibility helper: model-visible values are passed through intact."""
-    return value
-
-
 def _json_compact(value: Any, **_: Any) -> str:
     """Serialize an entire model-visible payload without truncation.
 
@@ -234,11 +224,6 @@ def _json_compact(value: Any, **_: Any) -> str:
     )
 
 
-def _clip_text_leaves(value: Any, limit: int) -> Any:
-    """Compatibility helper: text leaves are passed through intact."""
-    return value
-
-
 def _model_tool_payload(result: Any) -> dict[str, Any]:
     """Return the complete tool result for the next model turn."""
     payload = redact_tool_output(dict(result.output or {}))
@@ -252,88 +237,6 @@ def _model_tool_payload(result: Any) -> dict[str, Any]:
             errors.append(error)
         payload["errors"] = errors
     return payload
-
-
-def _project_tool_payload_for_synthesis(value: Any, token_budget: int) -> Any:
-    """Give producer-owned analysis and every target a fair evidence budget."""
-    from .context_budget import project_json_to_tokens
-
-    if not isinstance(value, dict) or not isinstance(value.get("analysis_projection"), dict):
-        return project_json_to_tokens(value, token_budget)[0]
-
-    analysis = dict(value["analysis_projection"])
-    collection_key = next(
-        (
-            key for key in ("devices", "resources", "targets", "items", "results")
-            if isinstance(analysis.get(key), list)
-        ),
-        "",
-    )
-    controls = {key: item for key, item in value.items() if key != "analysis_projection"}
-    projected_controls, _ = project_json_to_tokens(controls, max(96, token_budget // 10))
-    if not collection_key:
-        projected_analysis, _ = project_json_to_tokens(analysis, max(96, token_budget * 8 // 10))
-        return {**projected_controls, "analysis_projection": projected_analysis}
-
-    resources = list(analysis.pop(collection_key) or [])
-    projected_header, _ = project_json_to_tokens(analysis, max(96, token_budget // 10))
-    remaining = max(96, token_budget - estimate_json_tokens(projected_controls) - estimate_json_tokens(projected_header) - 64)
-    per_resource = max(64, remaining // max(1, len(resources)))
-    projected_resources = [
-        _project_synthesis_resource(item, per_resource)
-        for item in resources
-    ]
-    return {
-        **projected_controls,
-        "analysis_projection": {
-            **projected_header,
-            collection_key: projected_resources,
-        },
-    }
-
-
-def _project_synthesis_resource(value: Any, token_budget: int) -> Any:
-    """Preserve resource identity while prioritizing its actual evidence."""
-    from .context_budget import project_json_to_tokens
-
-    if not isinstance(value, dict):
-        return project_json_to_tokens(value, token_budget)[0]
-    identity_keys = {
-        "id", "name", "status", "device_id", "connection_id", "resource_id",
-        "target_id", "host", "failed_commands", "errors", "warnings",
-    }
-    evidence_keys = {
-        "current_config", "fact_evidence", "facts", "observations", "evidence",
-        "signals", "findings", "results",
-    }
-    identity = {key: item for key, item in value.items() if key in identity_keys}
-    evidence = {key: item for key, item in value.items() if key in evidence_keys}
-    remainder = {
-        key: item for key, item in value.items()
-        if key not in identity_keys and key not in evidence_keys
-    }
-    projected_identity, _ = project_json_to_tokens(identity, max(64, token_budget // 8))
-    projected_evidence, _ = project_json_to_tokens(evidence, max(96, token_budget * 3 // 4))
-    projected_remainder, _ = project_json_to_tokens(remainder, max(64, token_budget // 8))
-    return {**projected_identity, **projected_evidence, **projected_remainder}
-
-
-def _artifact_analysis_content(payload: dict[str, Any], **_: Any) -> str:
-    """Serialize a complete text artifact without reducing its content."""
-    preview = str(payload.get("preview") or "")
-    compacted = _compact_value_for_llm({
-        key: value for key, value in payload.items() if key != "preview"
-    })
-    compacted["preview"] = preview
-    compacted["content_complete"] = bool(payload.get("content_complete", False))
-    compacted["content_returned_chars"] = len(preview)
-    return json.dumps(
-        compacted,
-        ensure_ascii=False,
-        sort_keys=True,
-        separators=(",", ":"),
-        default=str,
-    )
 
 
 # ── Auto-Compact ────────────────────────────────────────────────────────────
@@ -476,7 +379,6 @@ class StreamingToolExecutor:
         budget=None,
     ) -> list[StreamingToolResult]:
         """Execute one incremental dependency graph and preserve call order."""
-        from .context_budget import project_json_to_tokens
         from .orchestration import (
             OrchestrationError,
             StepEvidence,
@@ -737,31 +639,7 @@ class StreamingToolExecutor:
                     },
                 }
                 result_by_id[tc.id] = result
-                used_evidence_tokens = sum(
-                    estimate_json_tokens(item.output)
-                    for evidence_step_id, item in evidence.items()
-                    if evidence_step_id != step_id
-                    and isinstance(item, StepEvidence)
-                )
-                remaining_evidence_tokens = max(
-                    0,
-                    int(self._config.max_orchestration_evidence_tokens)
-                    - used_evidence_tokens,
-                )
-                step_token_limit = min(
-                    int(self._config.max_orchestration_step_tokens),
-                    remaining_evidence_tokens,
-                )
-                evidence_output, evidence_truncated = project_json_to_tokens(
-                    dict(result.output or {}), max_tokens=max(1, step_token_limit),
-                )
-                if not isinstance(evidence_output, dict):
-                    evidence_output = {"value": evidence_output}
-                if evidence_truncated or step_token_limit <= 0:
-                    evidence_output["_evidence_projection"] = {
-                        "truncated": True,
-                        "reason": "orchestration_evidence_budget",
-                    }
+                evidence_output = dict(result.output or {})
                 evidence[step_id] = StepEvidence(
                     step_id, tc.id, tc.name, result.ok,
                     evidence_output, result.error or "",
@@ -1537,8 +1415,6 @@ class QueryLoop:
             hydrate_goal_loop(ctx, trusted_task_state)
         used_call_ids: set[str] = set()
         execution_duration_ms = 0.0
-        output_truncated = False
-        output_truncation_reason = ""
         planner_completed_emitted = False
         cognitive_state = initialize_cognitive_state(
             turn_id=ctx.request_id,
@@ -1583,8 +1459,6 @@ class QueryLoop:
                 "batch_compile_events": list(ctx.extras.get("batch_compile_events") or []),
                 "validation_corrections": validation_correction_attempts,
                 "batch_replans": batch_replan_attempts,
-                "output_truncated": output_truncated,
-                "output_truncation_reason": output_truncation_reason,
                 "evidence": evidence_summary(ctx.extras),
                 "response_outcome": str(ctx.extras.get("response_outcome") or "complete"),
                 "synthesis_recovery": dict(ctx.extras.get("synthesis_recovery") or {}),
@@ -1765,15 +1639,6 @@ class QueryLoop:
                     error=budget_status.exceeded or "budget_exceeded",
                 )
 
-            # Auto-compact with context tracking
-            _before_tokens = _estimate_message_tokens(messages)
-            if _before_tokens > self._context_budget.message_tokens:
-                messages, _compact_info = _compact_messages(
-                    messages,
-                    max_tokens=self._context_budget.message_tokens,
-                )
-                if _compact_info.compacted and metrics is not None:
-                    metrics.mark_compacted(_compact_info)
             if metrics is not None:
                 metrics.capture_context_usage(
                     _estimate_chars(messages),
@@ -1830,10 +1695,19 @@ class QueryLoop:
                 )
 
             if response is not None and (response.metadata or {}).get("output_truncated"):
-                output_truncated = True
-                output_truncation_reason = str(
-                    (response.metadata or {}).get("truncation_reason") or response.finish_reason or "unknown"
+                # A partial provider response is evidence, not a terminal
+                # answer. Preserve every received token in the conversation
+                # and ask the same model to continue before any final result
+                # is emitted to the user.
+                if response.content:
+                    messages.append(LLMMessage(role="assistant", content=response.content))
+                messages = self._append_turn_nudge(
+                    messages,
+                    "The preceding model response ended before completion. Continue from its exact final "
+                    "content without repeating prior text; complete the original task and keep the full "
+                    "answer in this conversation.",
                 )
+                continue
 
             if response is None or response.error:
                 final_resp: str
@@ -2476,8 +2350,6 @@ class QueryLoop:
                     "context_budget": self._context_budget.as_dict(),
                     "execution_duration_ms": execution_duration_ms,
                     "max_parallel_width": self._executor.max_parallel_width,
-                    "output_truncated": output_truncated,
-                    "output_truncation_reason": output_truncation_reason,
                 },
             )
 
@@ -2808,28 +2680,8 @@ class QueryLoop:
         self,
         manifest: list[dict[str, Any]],
     ) -> tuple[Any, bool]:
-        """Fit all evidence fairly instead of allowing one result to crowd out peers."""
-        from .context_budget import project_json_to_tokens
-
-        if not manifest:
-            return [], False
-        total_budget = max(
-            2_000,
-            min(
-                self._context_budget.message_tokens // 2,
-                self._context_budget.max_input_tokens
-                - self._context_budget.reserved_output_tokens
-                - self._context_budget.safety_tokens,
-            ),
-        )
-        per_item = max(500, total_budget // len(manifest))
-        projected: list[Any] = []
-        truncated = False
-        for item in manifest:
-            value, item_truncated = project_json_to_tokens(item, per_item)
-            projected.append(value)
-            truncated = truncated or item_truncated
-        return projected, truncated
+        """Return every evidence item exactly as collected for synthesis."""
+        return list(manifest), False
 
     @staticmethod
     def _llm_call_mode(
@@ -2931,25 +2783,14 @@ class QueryLoop:
                     parts[-1] = f"{parts[-1]} (tool_call_id={m.tool_call_id})"  # P2-3: simpler than slice assignment
         return "\n\n".join(parts)
 
-    _TIMEOUT_TRUNCATION_MARKER = "\n\n⚠️ [模型响应超时，以上为已接收的部分内容]"
-    _LENGTH_TRUNCATION_MARKER = "\n\n⚠️ [回复达到输出长度上限，以上内容可能不完整]"
-
     def _coerce_llm_response(self, raw: Any) -> LLMResponse:
         """Coerce injected adapter output into QueryLoop's LLMResponse shape.
         
-        Also strips ``<think>...</think>`` tags that some models (MiniMax-M3)
-        leak into visible output — they confuse final_response_summary truncation
-        and make users think the model is talking to itself.
+        Provider finish metadata is retained verbatim so an incomplete stream
+        can be continued by the QueryLoop rather than emitted as a final reply.
         """
         if isinstance(raw, LLMResponse):
             raw.content = self._strip_think_tags(str(raw.content or ""))
-            reason = str(raw.finish_reason or "").lower()
-            if reason == "stream_truncated" and raw.content:
-                raw.content = raw.content.rstrip() + self._TIMEOUT_TRUNCATION_MARKER
-                raw.metadata = {**(raw.metadata or {}), "output_truncated": True, "truncation_reason": "timeout"}
-            elif reason in {"length", "max_tokens", "content_length"} and raw.content:
-                raw.content = raw.content.rstrip() + self._LENGTH_TRUNCATION_MARKER
-                raw.metadata = {**(raw.metadata or {}), "output_truncated": True, "truncation_reason": "length"}
             return raw
         if raw is None:
             return LLMResponse(error="empty_llm_response")

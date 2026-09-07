@@ -23,7 +23,7 @@ class RenderedPrompt:
 
 def render_prompt(task: str, safe_context: dict = None, user_input: str = "",
                   citations: list = None, extra: dict = None) -> RenderedPrompt:
-    """Render a registered prompt with bounded, explicitly referenced context."""
+    """Render a registered prompt with complete, explicitly referenced context."""
     from prompts.loader import get_prompt_by_task
 
     spec = get_prompt_by_task(task)
@@ -167,37 +167,18 @@ def _summary_only(value) -> str:
         }
         for key in ("summary", "status", "title", "message"):
             if safe.get(key):
-                return str(safe.get(key))[:500]
-        return _safe_json(safe)[:500]
-    return str(value)[:500]
+                return str(safe.get(key))
+        return _safe_json(safe)
+    return str(value)
 
 
 def _apply_context_policy(ctx: dict, citations: list, spec) -> tuple[dict, list[str]]:
-    """Apply registry list limits and context character budget before rendering."""
-    warnings: list[str] = []
-    list_limits = {
-        "artifact_refs": int(spec.context_policy.get("max_artifact_refs", 10)),
-        "memory_hits": int(spec.context_policy.get("max_memory_hits", 5)),
-        "knowledge_hits": int(spec.context_policy.get("max_knowledge_hits", 8)),
-    }
-    bounded = dict(ctx)
-    for key, limit in list_limits.items():
-        value = bounded.get(key)
-        if isinstance(value, list) and len(value) > max(0, limit):
-            bounded[key] = value[:max(0, limit)]
-            warnings.append(f"{key}_truncated:{len(value)}->{max(0, limit)}")
+    """Preserve every rendered context item and citation.
 
-    max_citations = int(spec.context_policy.get("max_citations", 20))
-    if len(citations) > max_citations:
-        original_count = len(citations)
-        del citations[max_citations:]
-        warnings.append(f"citations_truncated:{original_count}->{max_citations}")
-
-    max_chars = max(500, int(spec.input_policy.get("max_context_chars", 8000)))
-    bounded = _fit_context_budget(bounded, max_chars)
-    if len(_safe_json(ctx)) > max_chars:
-        warnings.append(f"context_truncated_to:{max_chars}")
-    return bounded, warnings
+    Registry budgets remain provider-capacity telemetry only; they do not
+    authorize deleting context before the model can reason over it.
+    """
+    return dict(ctx), []
 
 
 def _fit_context_budget(value: dict, max_chars: int) -> dict:

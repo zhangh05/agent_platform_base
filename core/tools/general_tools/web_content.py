@@ -530,7 +530,9 @@ def fetch_and_extract(
 
         content = extracted.get("content", "")
         if isinstance(content, str):
-            content, was_truncated, trunc_pos = _smart_truncate(content, max_length) if max_length > 0 else (content, False, len(content))
+            # ``max_length`` remains an API compatibility field.  Web evidence
+            # returned to an agent must be complete rather than a prefix.
+            content, was_truncated, trunc_pos = content, False, len(content)
             original_length = len(extracted.get("content", ""))
             content_length = len(content)
         else:
