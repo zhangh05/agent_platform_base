@@ -54,6 +54,17 @@ def test_approval_is_absent_when_the_skill_has_not_enabled_it(monkeypatch, tmp_p
     assert approval.prepare_network_operation(_request("default", skill, connection)) is None
 
 
+def test_only_display_and_show_command_batches_bypass_approval(monkeypatch, tmp_path):
+    _setup(monkeypatch, tmp_path)
+    _, connection, skill = _connection_and_skill("default", approval_enabled=True)
+    request = _request("default", skill, connection)
+    request["arguments"]["action"] = "read"
+    request["arguments"]["commands"] = ["display current-configuration", "show interface brief"]
+    assert approval.prepare_network_operation(request) is None
+    request["arguments"]["commands"] = ["display version", "system-view"]
+    assert approval.prepare_network_operation(request) is not None
+
+
 def test_approval_freezes_exact_operation_and_revalidates_current_scope(monkeypatch, tmp_path):
     _setup(monkeypatch, tmp_path)
     device, connection, skill = _connection_and_skill("default", approval_enabled=True)

@@ -65,13 +65,14 @@ def prepare_network_operation(request: dict[str, Any]) -> dict[str, Any] | None:
     if str(request.get("tool_id") or "") != NETWORK_TOOL_ID:
         return None
     arguments = request.get("arguments") if isinstance(request.get("arguments"), dict) else {}
-    if str(arguments.get("action") or "").lower() != "configure":
-        return None
     workspace_id = str(request.get("workspace_id") or "").strip()
     connection_id = str(arguments.get("connection_id") or "").strip()
     skill_id = str(context.get("skill_id") or "").strip()
     commands = arguments.get("commands")
     if not workspace_id or not connection_id or not skill_id or not isinstance(commands, list):
+        return None
+    from extensions.network_operations.device_tools import is_read_only_command
+    if commands and all(is_read_only_command(command) for command in commands):
         return None
 
     from extensions.network_operations import service as network

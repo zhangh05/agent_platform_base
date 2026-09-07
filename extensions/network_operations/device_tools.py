@@ -152,44 +152,11 @@ def is_read_only_command(command: str, vendor: str = "") -> bool:
     value = str(command or "").strip()
     if not value or any(marker in value for marker in ("\n", "\r", ";", "&&", "`", "$(", ">", "<")):
         return False
-    if READ_ONLY_DENY.search(value):
-        return False
-    normalized_vendor = str(vendor or "").strip().lower()
-    network_match = _NETWORK_READ_COMMAND.fullmatch(value)
-    diagnostic_match = _NETWORK_DIAGNOSTIC_COMMAND.fullmatch(value)
-    if diagnostic_match:
-        tokens = value.split()
-        # Bound common packet-count/size/TTL controls. Unknown switches are
-        # rejected instead of turning the CLI into an open-ended traffic tool.
-        options = {"-vpn-instance": None, "-a": None, "vrf": None,
-                   "-c": 10, "repeat": 10, "-s": 2000, "size": 2000,
-                   "-t": 30, "-m": 30, "timeout": 30, "ttl": 30}
-        index, destinations = 1, 0
-        seen = set()
-        while index < len(tokens):
-            token = tokens[index].lower()
-            if token in options:
-                if token in seen or index + 1 >= len(tokens):
-                    return False
-                seen.add(token)
-                value_token = tokens[index + 1]
-                limit = options[token]
-                if value_token.startswith("-") or (limit is not None and (not value_token.isdigit() or not 1 <= int(value_token) <= limit)):
-                    return False
-                index += 2
-            else:
-                if token.startswith("-") or "/" in token:
-                    return False
-                destinations += 1
-                index += 1
-        return destinations == 1 and normalized_vendor in {"h3c", "huawei", "cisco"}
-    if normalized_vendor in {"h3c", "huawei"}:
-        return bool(network_match and value.lower().startswith("display "))
-    if normalized_vendor == "cisco":
-        return bool(network_match and value.lower().startswith("show "))
-    if normalized_vendor == "generic":
-        return any(pattern.fullmatch(value) for pattern in _GENERIC_READ_COMMANDS)
-    return bool(network_match) or any(pattern.fullmatch(value) for pattern in _GENERIC_READ_COMMANDS)
+    # The runtime owns exactly one read/write classifier: a command is read
+    # only when its first verb is display or show.  Every other command is a
+    # device operation and therefore follows the configure/approval path.
+    del vendor
+    return bool(re.match(r"^(?:display|show)(?:\s|$)", value, re.IGNORECASE))
 
 
 def normalize_read_only_commands(commands: list[str] | tuple[str, ...] | None, vendor: str = "") -> list[str]:

@@ -618,9 +618,9 @@ def test_write_commands_are_rejected():
     assert device_is_read_only_command("display version && reboot", "h3c") is False
     assert device_is_read_only_command("display $(reboot)", "h3c") is False
     assert device_is_read_only_command("rm -rf /", "generic") is False
-    assert device_is_read_only_command("show version", "h3c") is False
-    assert device_is_read_only_command("display version", "cisco") is False
-    assert device_is_read_only_command("ip address", "generic") is True
+    assert device_is_read_only_command("show version", "h3c") is True
+    assert device_is_read_only_command("display version", "cisco") is True
+    assert device_is_read_only_command("ip address", "generic") is False
     with pytest.raises(ValueError, match="commands_must_be_read_only"):
         service.commands_for({"vendor": "h3c"}, ["reboot"])
 

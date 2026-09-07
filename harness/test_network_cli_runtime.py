@@ -689,8 +689,8 @@ def test_prompt_makes_autonomous_commands_the_default_not_templates():
     "ping -vpn-instance vpn1 10.0.0.1", "tracert 10.0.0.1",
     "ping vrf blue 10.0.0.1 repeat 5",
 ])
-def test_bounded_network_diagnostics_are_read_only(command):
-    assert is_read_only_command(command, "h3c" if "vrf " not in command else "cisco")
+def test_network_diagnostics_follow_the_display_show_only_rule(command):
+    assert not is_read_only_command(command, "h3c" if "vrf " not in command else "cisco")
 
 
 @pytest.mark.parametrize("command", [

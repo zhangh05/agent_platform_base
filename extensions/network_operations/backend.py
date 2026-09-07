@@ -353,17 +353,28 @@ def device_manage(invocation):
     requested_facts = [str(item) for item in (args.get("facts") or [])]
     if action == "collect" and not requested_facts:
         return {"ok": False, "error": "facts are required for collect"}
+    # The browser/model cannot choose its own approval class. Only display and
+    # show command batches are read operations; every other command batch is
+    # routed as configure, regardless of the supplied action label.
+    effective_action = action
+    if action in {"read", "configure"} and isinstance(raw_commands, list):
+        from extensions.network_operations.device_tools import is_read_only_command
+        effective_action = "read" if all(is_read_only_command(command) for command in raw_commands) else "configure"
+    if effective_action == "configure" and not service.skill_allows_connection(
+        service.get_skill(invocation.workspace_id, str(getattr(invocation, "skill", "") or "")), connection_id
+    ):
+        return {"ok": False, "executed": False, "error": "device_execution_not_allowed_by_skill"}
     result = service.test_connection(
         invocation.workspace_id,
         connection_id,
         commands=raw_commands if action in {"read", "configure"} else None,
         facts=requested_facts if action == "collect" else None,
-        read=action in {"read", "collect"},
+        read=effective_action in {"read", "collect"},
         timeout=int(args.get("timeout") or 15),
         session_scope=str(getattr(invocation, "run_id", None) or getattr(invocation, "task_id", None) or ""),
-        **({"skill_id": str(invocation.skill)} if action == "configure" else {}),
+        **({"skill_id": str(invocation.skill)} if effective_action == "configure" else {}),
     )
-    if action == "configure":
+    if effective_action == "configure":
         return result
     if result.get("ok"):
         response = {**result, "connection_ok": True}
