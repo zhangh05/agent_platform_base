@@ -38,6 +38,12 @@ def test_typed_subagent_runtime_control_projects_bounded_system_prompt_facts():
         max_tool_nodes=7,
         subtask_id="sub-controlled",
         parent_session_id="parent-controlled",
+        workbench_context={
+            "extension_id": "network_operations",
+            "skill_id": "skill-controlled",
+            "allowed_tool_ids": ["network.operations.device.manage"],
+            "connection_ids": ["conn-controlled"],
+        },
         cancel_check=lambda: False,
     ))
 
@@ -48,6 +54,7 @@ def test_typed_subagent_runtime_control_projects_bounded_system_prompt_facts():
     assert "7 executable tool nodes" in prompt
     assert metadata["subtask_id"] == "sub-controlled"
     assert metadata["parent_session_id"] == "parent-controlled"
+    assert metadata["workbench_context"]["skill_id"] == "skill-controlled"
     assert callable(metadata["cancel_check"])
 
 

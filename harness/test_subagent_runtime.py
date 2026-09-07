@@ -17,7 +17,7 @@ class _FakeAgentResult:
 
 def _fake_run_turn(session, turn, **kwargs):
     assert kwargs.get("requested_by") == "subagent"
-    assert kwargs.get("allowed_tool_ids") is not None
+    assert kwargs.get("allowed_tool_ids") is None
     return _FakeAgentResult()
 
 
@@ -27,14 +27,15 @@ class TestSubagentProfiles:
             "research_agent", "file_agent", "data_agent",
         }
 
-    def test_research_agent_is_read_scoped(self):
+    def test_research_agent_profile_is_a_role_hint(self):
         p = get_profile("research_agent")
         assert p.allowed_action_classes == ["read", "network"]
         assert "knowledge.manage" in p.allowed_tools
         assert "web.manage" in p.allowed_tools
         assert "workspace.file" in p.allowed_tools
-        assert not p.can_execute_commands
-        assert not p.can_modify_files
+        # Runtime capability is inherited from the parent; profile fields only
+        # describe the usual assignment shape.
+        assert p.max_runtime_seconds == 0
 
     def test_research_agent_output_is_user_ready(self):
         contract = BUILTIN_PROFILES["research_agent"].output_contract
@@ -43,12 +44,12 @@ class TestSubagentProfiles:
         assert "failed or missing coverage" in contract
         assert "raw provider fields" in contract
 
-    def test_data_agent_is_data_scoped(self):
+    def test_data_agent_has_no_aggregate_runtime_deadline(self):
         p = get_profile("data_agent")
         assert p.allowed_action_classes == ["read", "write"]
         assert "data.manage" in p.allowed_tools
         assert "report.manage" in p.allowed_tools
-        assert not p.can_execute_commands
+        assert p.max_runtime_seconds == 0
 
 
 class TestSubagentTask:
@@ -182,7 +183,7 @@ class TestSubagentRuntime:
         assert r["ok"]
         assert r["status"] in ("succeeded", "failed")
 
-    def test_durable_subagent_uses_typed_runtime_control(self, monkeypatch):
+    def test_durable_subagent_uses_typed_runtime_control_and_inherited_tools(self, monkeypatch):
         from core.runtime_engine.models import SubagentRuntimeControl
 
         captured = {}
@@ -191,7 +192,7 @@ class TestSubagentRuntime:
             captured["control"] = turn.op.runtime_control
             captured["metadata"] = dict(turn.op.metadata)
             assert kwargs["requested_by"] == "subagent"
-            assert kwargs["allowed_tool_ids"] == set(get_profile("research_agent").allowed_tools)
+            assert kwargs["allowed_tool_ids"] is None
             return _FakeAgentResult()
 
         monkeypatch.setattr("agent.runtime.ssot_runtime.run_ssot_turn", fake_run_turn)
@@ -211,16 +212,14 @@ class TestSubagentRuntime:
         assert callable(control.cancel_check)
         assert captured["metadata"] == {}
 
-    def test_profile_registry_is_the_only_child_tool_surface(self):
+    def test_child_registry_inherits_the_parent_runtime_tool_surface(self):
         from agent.runtime.ssot_runtime import _build_ssot_runtime_tool_registry
 
-        profile = get_profile("research_agent")
-        registry = _build_ssot_runtime_tool_registry(profile.allowed_tools)
+        registry = _build_ssot_runtime_tool_registry()
 
         assert registry
-        assert set(registry).issubset(set(profile.allowed_tools))
         assert "knowledge.manage" in registry
-        assert "exec.run" not in registry
+        assert "exec.run" in registry
 
     def test_profile_max_steps_reaches_ssot_config(self, monkeypatch):
         import agent.runtime.ssot_runtime as runtime
@@ -243,16 +242,44 @@ class TestSubagentRuntime:
         assert engine._config.max_nodes == 7
         assert engine._config.max_tool_calls_per_iteration == 7
 
-    def test_timeout_is_failed_not_user_cancelled(self, monkeypatch):
+    def test_subagent_has_no_implicit_parent_side_timeout(self, monkeypatch):
+        from agent.runtime.durable.subagent import _run_ssot_runtime_with_timeout
+
+        seen = {}
+        def run(_session, _turn, **kwargs):
+            seen.update(kwargs)
+            return "completed"
+
+        assert _run_ssot_runtime_with_timeout(
+            run, object(), object(), None, timeout_seconds=0,
+        ) == "completed"
+        assert seen["allowed_tool_ids"] is None
+
+    def test_subagent_revalidates_and_projects_parent_workbench_context(self, monkeypatch):
+        captured = {}
+        def fake_run_turn(session, turn, **kwargs):
+            captured["control"] = turn.op.runtime_control
+            return _FakeAgentResult()
+
+        monkeypatch.setattr("agent.runtime.ssot_runtime.run_ssot_turn", fake_run_turn)
         monkeypatch.setattr(
-            "agent.runtime.durable.subagent._run_ssot_runtime_with_timeout",
-            lambda *args, **kwargs: (_ for _ in ()).throw(TimeoutError("budget expired")),
+            "agent.runtime.durable.subagent._refresh_task_workbench_context",
+            lambda task: dict(task.workbench_context),
         )
-        ws = f"ws_timeout_{uuid.uuid4().hex[:8]}"
-        cr = create_subagent_task("t1", ws, "s1", "research_agent", "Research")
-        result = run_subagent_task(cr["subtask_id"], ws)
-        assert result["status"] == "failed"
-        assert "timed out" in result["summary"].lower()
+        ws = f"ws_skill_{uuid.uuid4().hex[:8]}"
+        context = {
+            "extension_id": "network_operations",
+            "skill_id": "skill-1",
+            "connection_ids": ["conn-1"],
+            "allowed_tool_ids": ["network.operations.device.manage"],
+        }
+        created = create_subagent_task(
+            "t1", ws, "parent-s1", "research_agent", "inspect",
+            workbench_context=context,
+        )
+
+        assert run_subagent_task(created["subtask_id"], ws)["ok"] is True
+        assert captured["control"].workbench_context == context
 
     def test_cross_workspace_run_blocked(self):
         ws_a = f"ws_sa9_{uuid.uuid4().hex[:8]}"
@@ -297,10 +324,14 @@ class TestSubagentRuntime:
 
 
 class TestProfileToolsFilter:
-    def test_research_agent_is_read_only(self):
-        p = get_profile("research_agent")
-        assert "exec.run" not in p.allowed_tools
-        assert not any("delete" in t for t in p.allowed_tools)
+    def test_profile_tool_hints_do_not_restrict_runtime_tools(self):
+        from core.tools.general_tools.agent_tools import handle_agent_list
+        from core.tools.schemas import ToolInvocation
+
+        result = handle_agent_list(ToolInvocation(tool_id="agent.manage", workspace_id="default"))
+        assert result["ok"] is True
+        assert all(item["inherits_parent_tool_surface"] for item in result["profiles"])
+        assert all(item["inherits_selected_skill"] for item in result["profiles"])
 
     def test_background_start_runs_persisted_task(self, monkeypatch):
         import time

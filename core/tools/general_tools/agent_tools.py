@@ -43,11 +43,59 @@ def _inv_session_id(inv: ToolInvocation) -> str:
     return str(args.get("session_id") or getattr(inv, "session_id", "") or "").strip()
 
 
+def _inherit_parent_workbench_context(inv: ToolInvocation, workspace_id: str) -> dict:
+    """Re-resolve a selected Skill before delegating it to a child Agent.
+
+    The parent tool invocation contains only server-populated Skill identity and
+    connection scope. Re-resolving it prevents stale or caller-forged context
+    while preserving the exact device/connection slice visible to the parent.
+    """
+    skill_id = str(getattr(inv, "skill", "") or "").strip()
+    if not skill_id:
+        return {}
+    from extensions.runtime import list_workbench_skills, resolve_workbench_context
+
+    catalog = list_workbench_skills(workspace_id)
+    entry = next((item for item in catalog if str(item.get("skill_id") or "") == skill_id), None)
+    if not entry:
+        raise ValueError("parent_workbench_skill_not_available")
+    context = resolve_workbench_context(workspace_id, {
+        "extension_id": str(entry.get("extension_id") or ""),
+        "skill_id": skill_id,
+    })
+    selected_connection_ids = {
+        str(item) for item in (getattr(inv, "skill_connection_ids", ()) or ()) if str(item)
+    }
+    if not selected_connection_ids:
+        return context
+    connections = [
+        item for item in (context.get("connections") or [])
+        if isinstance(item, dict) and str(item.get("connection_id") or "") in selected_connection_ids
+    ]
+    resolved_connection_ids = {str(item.get("connection_id") or "") for item in connections}
+    if resolved_connection_ids != selected_connection_ids:
+        raise ValueError("parent_workbench_connection_scope_not_available")
+    device_ids = list(dict.fromkeys(
+        str(item.get("device_id") or "") for item in connections if str(item.get("device_id") or "")
+    ))
+    return {
+        **context,
+        "connection_ids": [str(item.get("connection_id") or "") for item in connections],
+        "connections": connections,
+        "device_ids": device_ids,
+        "devices": [
+            item for item in (context.get("devices") or [])
+            if isinstance(item, dict) and str(item.get("device_id") or "") in set(device_ids)
+        ],
+    }
+
+
 def _run_durable_subagent(*, instruction: str, workspace_id: str, session_id: str,
                           parent_task_id: str = "",
                           profile_id: str = "research_agent",
                           max_turns: int | None = None,
-                          background: bool = False) -> dict:
+                          background: bool = False,
+                          workbench_context: dict | None = None) -> dict:
     from agent.runtime.durable.subagent import (
         create_subagent_task,
         start_subagent_task,
@@ -84,6 +132,7 @@ def _run_durable_subagent(*, instruction: str, workspace_id: str, session_id: st
         max_steps=effective_turns,
         operation_id=(runtime_operation[1] if runtime_operation and runtime_operation[0] == workspace_id else ""),
         operation_call_id=(runtime_operation[2] if runtime_operation and runtime_operation[0] == workspace_id else ""),
+        workbench_context=workbench_context,
     )
     if not created.get("ok"):
         return {"ok": False, "error": created.get("error", "failed to create subagent task")}
@@ -168,6 +217,7 @@ def _spawn_agent(inv: ToolInvocation, profile_id: str) -> dict:
 
     try:
         validate_workspace_id(workspace_id)
+        workbench_context = _inherit_parent_workbench_context(inv, workspace_id)
         result = _run_durable_subagent(
             instruction=instruction,
             workspace_id=workspace_id,
@@ -176,6 +226,7 @@ def _spawn_agent(inv: ToolInvocation, profile_id: str) -> dict:
             profile_id=profile_id,
             max_turns=effective_turns,
             background=background,
+            workbench_context=workbench_context,
         )
         return _result(inv, result.get("ok", False), {
             **result,
@@ -209,10 +260,12 @@ def handle_agent_list(inv: ToolInvocation) -> dict:
             "name": p.name,
             "description": p.description,
             "max_steps": p.max_steps,
-            "allowed_tools": p.allowed_tools,
-            "can_modify_files": p.can_modify_files,
-            "can_execute_commands": p.can_execute_commands,
-            "can_call_network": p.can_call_network,
+            "allowed_tools": [],
+            "inherits_parent_tool_surface": True,
+            "inherits_selected_skill": True,
+            "can_modify_files": True,
+            "can_execute_commands": True,
+            "can_call_network": True,
         })
     return _ok(inv, "", {
         "profiles": profiles,

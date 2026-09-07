@@ -175,6 +175,24 @@ def test_tool_budget_does_not_charge_prior_llm_time():
     budget.end_execution()
 
 
+def test_zero_aggregate_time_budget_never_stops_a_running_loop():
+    from core.runtime_engine.budget_controller import BudgetController
+    from core.runtime_engine.models import SSOTRuntimeConfig
+
+    budget = BudgetController(SSOTRuntimeConfig(
+        max_total_seconds=0,
+        max_tool_seconds=0,
+    ))
+    budget._start_time -= 86_400
+    budget.begin_execution()
+    budget._tool_stage_started_at -= 86_400
+
+    assert budget.check_llm_call().ok is True
+    assert budget.check_execution().ok is True
+    assert budget.remaining_execution_seconds() == float("inf")
+    budget.end_execution()
+
+
 def test_websocket_broadcast_is_workspace_scoped(monkeypatch):
     from threading import Event
 

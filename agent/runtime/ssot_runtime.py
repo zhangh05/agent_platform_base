@@ -46,6 +46,7 @@ _CALLER_RESERVED_RUNTIME_METADATA_KEYS = frozenset({
     "max_tool_nodes",
     "subtask_id",
     "parent_session_id",
+    "workbench_context",
     "cancel_check",
 })
 
@@ -80,6 +81,8 @@ def _apply_runtime_control(metadata: dict[str, Any], runtime_control: Any) -> No
         "subtask_id": str(runtime_control.subtask_id or ""),
         "parent_session_id": str(runtime_control.parent_session_id or ""),
     })
+    if isinstance(runtime_control.workbench_context, dict) and runtime_control.workbench_context:
+        metadata["workbench_context"] = dict(runtime_control.workbench_context)
     if callable(runtime_control.cancel_check):
         metadata["cancel_check"] = runtime_control.cancel_check
 
@@ -847,11 +850,13 @@ def _build_engine(
         max_global_concurrency=8,
         max_layer_concurrency=5,
         max_llm_calls=50,
-        max_total_seconds=180,
-        max_tool_seconds=120,
+        # A turn is goal-driven, not elapsed-time-driven. Per-provider and
+        # per-tool transport deadlines still protect unavailable endpoints.
+        max_total_seconds=0,
+        max_tool_seconds=0,
         single_node_timeout_ms=120_000,
         parallel_layer_timeout_ms=300_000,
-        tracking_max_seconds=150,
+        tracking_max_seconds=0,
         tracking_max_polls=40,
         tracking_poll_interval_cap_seconds=5,
         max_query_loop_iterations=max(

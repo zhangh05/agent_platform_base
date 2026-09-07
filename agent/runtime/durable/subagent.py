@@ -1,5 +1,5 @@
 # agent/runtime/durable/subagent.py
-"""Phase 9: Subagent Runtime — isolated worker profiles, tasks, and execution."""
+"""Durable delegated-agent runtime: profiles, tasks, and execution."""
 
 from __future__ import annotations
 from dataclasses import dataclass, field
@@ -55,13 +55,17 @@ class SubagentProfile:
     name: str
     role: str = ""
     description: str = ""
-    allowed_tools: list = field(default_factory=list)       # explicit tool_id list
-    allowed_action_classes: list = field(default_factory=list)  # read/write/execute/...
+    # Role hints for discovery and prompting only. They are deliberately not
+    # an authorization or tool-surface boundary: children inherit the parent
+    # runtime surface and any server-resolved selected Skill.
+    allowed_tools: list = field(default_factory=list)
+    allowed_action_classes: list = field(default_factory=list)
     max_steps: int = 5
     # Model turns and executable tool nodes are independent budgets. A single
     # planning turn may legitimately emit several bounded read calls.
     max_tool_nodes: int = 10
-    max_runtime_seconds: int = 60
+    # Zero means no aggregate child-runtime deadline.
+    max_runtime_seconds: int = 0
     max_context_tokens: int = 8000
     memory_write_policy: str = "pending_only"  # none | pending_only
     can_modify_files: bool = False
@@ -79,7 +83,7 @@ BUILTIN_PROFILES: dict[str, SubagentProfile] = {
         allowed_tools=["knowledge.manage", "web.manage", "location.manage", "workspace.file", "workspace.artifact", "system.manage"],
         max_steps=8,
         max_tool_nodes=16,
-        max_runtime_seconds=180,
+        max_runtime_seconds=0,
         can_call_network=True,
         memory_write_policy="pending_only",
         output_contract=(
@@ -97,7 +101,7 @@ BUILTIN_PROFILES: dict[str, SubagentProfile] = {
         allowed_tools=["workspace.file", "workspace.artifact", "text.analyze", "report.manage"],
         max_steps=10,
         max_tool_nodes=16,
-        max_runtime_seconds=300,
+        max_runtime_seconds=0,
         can_modify_files=True,
         memory_write_policy="pending_only",
         output_contract=(
@@ -114,7 +118,7 @@ BUILTIN_PROFILES: dict[str, SubagentProfile] = {
         allowed_tools=["data.manage", "report.manage", "workspace.file", "workspace.artifact"],
         max_steps=8,
         max_tool_nodes=16,
-        max_runtime_seconds=180,
+        max_runtime_seconds=0,
         can_modify_files=True,
         memory_write_policy="pending_only",
         output_contract=(
@@ -139,6 +143,8 @@ class SubagentTask:
     profile_id: str = ""
     goal: str = ""
     input_context_refs: list = field(default_factory=list)
+    # A server-resolved Skill context inherited from the parent invocation.
+    workbench_context: dict = field(default_factory=dict)
     status: str = "created"  # created | running | succeeded | failed | cancelled
     allowed_tools: list = field(default_factory=list)
     budget: dict = field(default_factory=dict)
@@ -189,6 +195,7 @@ def create_subagent_task(
     max_steps: int | None = None,
     operation_id: str = "",
     operation_call_id: str = "",
+    workbench_context: dict | None = None,
 ) -> dict:
     profile = get_profile(profile_id)
     if not profile:
@@ -207,7 +214,8 @@ def create_subagent_task(
         profile_id=profile_id,
         goal=goal,
         input_context_refs=context_refs or [],
-        allowed_tools=profile.allowed_tools,
+        workbench_context=dict(workbench_context or {}),
+        allowed_tools=[],
         budget={
             "max_steps": max(1, min(int(max_steps or profile.max_steps), profile.max_steps)),
             "max_tool_nodes": profile.max_tool_nodes,
@@ -222,12 +230,54 @@ def create_subagent_task(
     return {"ok": True, "subtask_id": task.subtask_id, "profile": profile.name}
 
 
-def run_subagent_task(subtask_id: str, ws_id: str) -> dict:
-    """Real LLM-driven subagent execution through SSOT Runtime.
+def _refresh_task_workbench_context(task: SubagentTask) -> dict:
+    """Resolve a delegated Skill again immediately before the child runs."""
+    saved = task.workbench_context if isinstance(task.workbench_context, dict) else {}
+    if not saved:
+        return {}
+    extension_id = str(saved.get("extension_id") or "").strip()
+    skill_id = str(saved.get("skill_id") or "").strip()
+    if not extension_id or not skill_id:
+        raise ValueError("invalid_delegated_workbench_context")
+    from extensions.runtime import resolve_workbench_context
 
-    The profile provides the SSOT Runtime-visible tool allowlist. Tool execution still
-    goes through ToolRuntimeClient with caller=subagent.
-    """
+    selection = {
+        "extension_id": extension_id,
+        "skill_id": skill_id,
+    }
+    saved_device_ids = saved.get("device_ids")
+    if isinstance(saved_device_ids, list) and saved_device_ids:
+        selection["device_ids"] = list(saved_device_ids)
+    resolved = resolve_workbench_context(task.workspace_id, selection)
+    requested_connection_ids = {
+        str(item) for item in (saved.get("connection_ids") or []) if str(item)
+    }
+    if not requested_connection_ids:
+        return resolved
+    connections = [
+        item for item in (resolved.get("connections") or [])
+        if isinstance(item, dict) and str(item.get("connection_id") or "") in requested_connection_ids
+    ]
+    actual_connection_ids = {str(item.get("connection_id") or "") for item in connections}
+    if actual_connection_ids != requested_connection_ids:
+        raise ValueError("delegated_workbench_connection_scope_not_available")
+    device_ids = list(dict.fromkeys(
+        str(item.get("device_id") or "") for item in connections if str(item.get("device_id") or "")
+    ))
+    return {
+        **resolved,
+        "connection_ids": [str(item.get("connection_id") or "") for item in connections],
+        "connections": connections,
+        "device_ids": device_ids,
+        "devices": [
+            item for item in (resolved.get("devices") or [])
+            if isinstance(item, dict) and str(item.get("device_id") or "") in set(device_ids)
+        ],
+    }
+
+
+def run_subagent_task(subtask_id: str, ws_id: str) -> dict:
+    """Run a delegated Agent through the same runtime surface as its parent."""
     try:
         ws_id = _validated_workspace_id(ws_id)
         subtask_id = _validated_subtask_id(subtask_id)
@@ -271,8 +321,6 @@ def run_subagent_task(subtask_id: str, ws_id: str) -> dict:
     task.status = "running"
     task.started_at = task.started_at or _now()
     _save_task(task)
-    start = _time.time()
-    timed_out = False
     result = SubagentResult(subtask_id=subtask_id, status="succeeded")
 
     # Register in live tasks registry for cancel/status
@@ -286,7 +334,7 @@ def run_subagent_task(subtask_id: str, ws_id: str) -> dict:
     }
 
     try:
-        # Create restricted session for profile-gated SSOT Runtime execution.
+        # The profile guides the assignment; it does not reduce capabilities.
         from agent.core.session import AgentSession
 
         subagent_session_id = subtask_id
@@ -303,8 +351,9 @@ def run_subagent_task(subtask_id: str, ws_id: str) -> dict:
         sess.metadata["max_steps"] = effective_steps
         sess.metadata["parent_session_id"] = task.session_id
         sess.metadata["subtask_id"] = subtask_id
+        inherited_workbench_context = _refresh_task_workbench_context(task)
 
-        # Submit via SSOT Runtime with restricted tools.
+        # Submit through the same canonical runtime and tool surface as parent.
         from agent.core.turn import AgentTurn
         from agent.protocol.op import AgentOp
         from agent.runtime.ssot_runtime import run_ssot_turn
@@ -321,7 +370,6 @@ def run_subagent_task(subtask_id: str, ws_id: str) -> dict:
                     "role": profile.role,
                     "max_steps": effective_steps,
                     "max_tool_nodes": effective_tool_nodes,
-                    "max_runtime_seconds": profile.max_runtime_seconds,
                     "allowed_action_classes": list(profile.allowed_action_classes),
                     "output_contract": profile.output_contract,
                 },
@@ -329,6 +377,7 @@ def run_subagent_task(subtask_id: str, ws_id: str) -> dict:
                 max_tool_nodes=effective_tool_nodes,
                 subtask_id=subtask_id,
                 parent_session_id=task.session_id,
+                workbench_context=inherited_workbench_context,
                 cancel_check=cancel_event.is_set,
             ),
         )
@@ -339,20 +388,13 @@ def run_subagent_task(subtask_id: str, ws_id: str) -> dict:
                 run_ssot_turn,
                 sess,
                 turn,
-                set(profile.allowed_tools or []),
-                timeout_seconds=profile.max_runtime_seconds,
+                None,
+                timeout_seconds=0,
                 cancel_event=cancel_event,
             )
-        except TimeoutError as exc:
-            timed_out = True
-            llm_result = None
-            result.status = "failed"
-            result.summary = "Subagent timed out"
-            result.errors.append(str(exc)[:200])
         except Exception as e:
             raise RuntimeError(f"LLM turn failed: {str(e)[:200]}") from e
 
-        elapsed = _time.time() - start
         final_resp = (getattr(llm_result, "final_response", "") or "") if llm_result is not None else ""
         is_ok = bool(getattr(llm_result, "ok", False)) if llm_result is not None else False
 
@@ -367,9 +409,7 @@ def run_subagent_task(subtask_id: str, ws_id: str) -> dict:
                 "summary": summary,
             })
 
-        if timed_out:
-            result.warnings.append(f"Budget exceeded: {profile.max_runtime_seconds}s")
-        elif cancel_event.is_set():
+        if cancel_event.is_set():
             result.status = "cancelled"
             result.summary = "Subagent cancelled by user"
         elif is_ok and final_resp:
@@ -413,10 +453,6 @@ def run_subagent_task(subtask_id: str, ws_id: str) -> dict:
                     f"subagent full-result artifact persistence failed: {str(artifact_exc)[:160]}"
                 )
                 result.summary = "Subagent result persistence failed"
-        elif elapsed >= profile.max_runtime_seconds:
-            result.status = "failed"
-            result.warnings.append(f"Budget exceeded: {profile.max_runtime_seconds}s")
-            result.summary = "Subagent timed out"
         else:
             result.status = "failed"
             result.summary = "Subagent LLM call failed"
@@ -431,16 +467,10 @@ def run_subagent_task(subtask_id: str, ws_id: str) -> dict:
         result.errors.append(f"subagent execution failed: {str(e)[:200]}")
         result.summary = f"Subagent execution error: {str(e)[:100]}"
 
-    elapsed = _time.time() - start
-    if elapsed >= profile.max_runtime_seconds and not timed_out:
-        result.warnings.append(f"Runtime budget {profile.max_runtime_seconds}s exceeded")
-        if result.status != "failed":
-            result.status = "failed"
-
     with _TASK_LOCK:
         persisted = _load_task(ws_id, subtask_id)
         if (persisted and persisted.status == "cancelled") or (
-            cancel_event.is_set() and not timed_out
+            cancel_event.is_set()
         ):
             result.status = "cancelled"
             result.summary = "Subagent cancelled by user"
@@ -783,15 +813,10 @@ def _get_manifest(tool_id: str):
 
 
 def _run_ssot_runtime_with_timeout(
-    run_fn, session, turn, allowed_tool_ids, *, timeout_seconds: int,
+    run_fn, session, turn, allowed_tool_ids, *, timeout_seconds: int = 0,
     cancel_event: threading.Event | None = None,
 ):
-    """Run a subagent turn with a hard parent-side timeout.
-
-    Python cannot forcibly stop an already-running provider call, so timeout
-    returns control to the parent and marks the subtask failed while the worker
-    thread is abandoned best-effort.
-    """
+    """Run a subagent turn; an aggregate timeout is optional, never implicit."""
     import concurrent.futures
     from storage.principal import ContextThreadPoolExecutor
     executor = ContextThreadPoolExecutor(max_workers=1, thread_name_prefix="subagent")
@@ -804,6 +829,8 @@ def _run_ssot_runtime_with_timeout(
         requested_by="subagent",
     )
     try:
+        if int(timeout_seconds or 0) <= 0:
+            return future.result()
         return future.result(timeout=max(1, int(timeout_seconds)))
     except concurrent.futures.TimeoutError as exc:
         if cancel_event is not None:

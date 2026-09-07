@@ -102,18 +102,19 @@ class MainAgentRuntimeControl:
 
 @dataclass(frozen=True)
 class SubagentRuntimeControl:
-    """Typed, server-only envelope for a constrained child Agent turn.
+    """Typed, server-only envelope for a delegated child Agent turn.
 
-    Child profile, budget, parent identity and cancellation callback are runtime
-    control facts. They must not share caller-supplied AgentOp.metadata, because
-    the profile is rendered as a system-level prompt extension and restricts the
-    canonical tool registry exposed to the child.
+    A profile describes the delegated role and output contract; it is not an
+    authorization boundary. The child inherits the parent runtime's tool
+    surface and, when selected, its server-resolved Skill context. These facts
+    stay outside caller metadata so neither can be forged by request payloads.
     """
     profile: dict[str, Any] = field(default_factory=dict)
     max_steps: int = 0
     max_tool_nodes: int = 0
     subtask_id: str = ""
     parent_session_id: str = ""
+    workbench_context: dict[str, Any] = field(default_factory=dict)
     cancel_check: Any = None
 
 
@@ -157,14 +158,18 @@ class SSOTRuntimeConfig:
     max_depth: int = 8
     max_global_concurrency: int = 8
     max_layer_concurrency: int = 5
-    max_total_seconds: int = 60
-    max_tool_seconds: int = 30
+    # Zero means no aggregate wall-clock deadline. Individual transport/tool
+    # timeouts remain their own protocol-level failure contracts.
+    max_total_seconds: int = 0
+    max_tool_seconds: int = 0
     max_llm_calls: int = 50
     max_orchestration_step_tokens: int = 8_000
     max_orchestration_evidence_tokens: int = 60_000
     tracking_enabled: bool = True
     tracking_max_polls: int = 8
-    tracking_max_seconds: int = 45
+    # Zero disables a global tracking wall-clock deadline; poll-count and
+    # explicit cancellation remain the bounded control mechanisms.
+    tracking_max_seconds: int = 0
     tracking_poll_interval_cap_seconds: float = 2.0
 
     # One input-budget contract for the active runtime. Tool definitions remain
@@ -207,9 +212,9 @@ class SSOTRuntimeResult:
 @dataclass
 class ExecutionBudget:
     """Per-request execution budget — enforced by BudgetController."""
-    max_total_seconds: int = 60
+    max_total_seconds: int = 0
     max_planner_seconds: int = 20
-    max_tool_seconds: int = 30
+    max_tool_seconds: int = 0
     max_nodes: int = 30
     max_depth: int = 8
     max_parallel_width: int = 8

@@ -1,13 +1,8 @@
-"""
-Budget Controller for SSOT Runtime Engine.
+"""Structural execution budgets for the SSOT Runtime Engine.
 
-Per-request execution budget enforced at every stage:
-  - LLM call timeout
-  - Tool execution timeout
-  - Max tool calls and parallel width
-  - Max LLM calls
-
-Budget violations MUST fail fast — never allow the system to hang.
+Aggregate wall-clock limits are opt-in (a value greater than zero). The agent
+loop must not be stopped merely because useful work spans a long-running task;
+individual provider and tool transports retain their own timeout contracts.
 """
 
 from __future__ import annotations
@@ -56,7 +51,7 @@ class BudgetController:
         """Check budget before planner call."""
         elapsed = (time.monotonic() - self._start_time) * 1000
         limit_ms = self._budget.max_planner_seconds * 1000
-        if elapsed > limit_ms:
+        if limit_ms > 0 and elapsed > limit_ms:
             return BudgetStatus(ok=False, exceeded="PLANNER_TIMEOUT", elapsed_total_ms=elapsed)
         return BudgetStatus(ok=True, elapsed_total_ms=elapsed)
 
@@ -66,7 +61,7 @@ class BudgetController:
         elapsed = (time.monotonic() - self._start_time) * 1000
         total_limit_ms = self._budget.max_total_seconds * 1000
 
-        if elapsed > total_limit_ms:
+        if total_limit_ms > 0 and elapsed > total_limit_ms:
             return BudgetStatus(
                 ok=False, exceeded="TOTAL_TIME_EXCEEDED",
                 elapsed_total_ms=elapsed, llm_calls_used=self._llm_calls,
@@ -90,9 +85,9 @@ class BudgetController:
         if self._tool_stage_started_at is not None:
             tool_elapsed += (time.monotonic() - self._tool_stage_started_at) * 1000
 
-        if elapsed > total_limit_ms:
+        if total_limit_ms > 0 and elapsed > total_limit_ms:
             return BudgetStatus(ok=False, exceeded="TOTAL_TIME_EXCEEDED", elapsed_total_ms=elapsed)
-        if tool_elapsed > tool_limit_ms:
+        if tool_limit_ms > 0 and tool_elapsed > tool_limit_ms:
             return BudgetStatus(ok=False, exceeded="TOOL_TIME_EXCEEDED", elapsed_total_ms=elapsed)
 
         return BudgetStatus(ok=True, elapsed_total_ms=elapsed)
@@ -138,14 +133,15 @@ class BudgetController:
         )
 
     def remaining_execution_seconds(self) -> float:
-        """Return the smaller remaining total/tool wall-clock allowance."""
-        total_remaining = (
-            self._budget.max_total_seconds * 1000 - self.elapsed_ms()
-        )
-        tool_remaining = (
-            self._budget.max_tool_seconds * 1000 - self.tool_elapsed_ms
-        )
-        return max(0.0, min(total_remaining, tool_remaining) / 1000.0)
+        """Return active aggregate time remaining, or infinity when unbounded."""
+        remaining: list[float] = []
+        if self._budget.max_total_seconds > 0:
+            remaining.append(self._budget.max_total_seconds * 1000 - self.elapsed_ms())
+        if self._budget.max_tool_seconds > 0:
+            remaining.append(self._budget.max_tool_seconds * 1000 - self.tool_elapsed_ms)
+        if not remaining:
+            return float("inf")
+        return max(0.0, min(remaining) / 1000.0)
 
     def remaining_node_capacity(self) -> int:
         """Return how many execution nodes may still be reserved this turn."""

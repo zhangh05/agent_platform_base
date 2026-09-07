@@ -20,6 +20,7 @@ import copy
 import hashlib
 import json
 import logging
+import math
 import re
 import time
 from collections.abc import Callable
@@ -998,10 +999,14 @@ class StreamingToolExecutor:
                     else:
                         execution_task = asyncio.create_task(execution)
                         execution_task.add_done_callback(self._consume_detached_task)
-                        result_by_id[tc.id] = await asyncio.wait_for(
-                            asyncio.shield(execution_task),
-                            timeout=max(0.001, budget.remaining_execution_seconds()),
-                        )
+                        remaining_seconds = budget.remaining_execution_seconds()
+                        if math.isfinite(remaining_seconds):
+                            result_by_id[tc.id] = await asyncio.wait_for(
+                                asyncio.shield(execution_task),
+                                timeout=max(0.001, remaining_seconds),
+                            )
+                        else:
+                            result_by_id[tc.id] = await asyncio.shield(execution_task)
                 except asyncio.TimeoutError:
                     if operation is not None and ctx is not None and execution_task is not None:
                         execution_task.add_done_callback(
@@ -3691,7 +3696,11 @@ class QueryLoop:
         if max_polls <= 0:
             return []
 
-        deadline = time.monotonic() + max_seconds
+        deadline = (
+            time.monotonic() + max_seconds
+            if max_seconds > 0
+            else float("inf")
+        )
         user_input = ctx.user_input or ""
         states: list[dict[str, Any]] = []
 
