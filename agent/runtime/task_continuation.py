@@ -242,8 +242,7 @@ def commit_task_continuation(
     """Commit validated task state after the canonical QueryLoop reaches terminal success."""
     if not run_ok or not str(assistant_response or "").strip():
         return None
-    # The continuation contract guides the model, but never acts as a local
-    # response-quality gate.  If the delivered shape does not match the
+    # The continuation contract guides the model. If the delivered shape does not match the
     # server-derived mechanical contract, simply leave durable continuation
     # state unchanged instead of rejecting or rewriting the user's answer.
     if continuation_contract and not _continuation_delivery_matches(

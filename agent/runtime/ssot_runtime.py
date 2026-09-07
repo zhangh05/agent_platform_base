@@ -292,16 +292,6 @@ def run_ssot_turn(
             messages=context_messages,
         )
         if task_state_contract:
-            from agent.runtime.task_state import acknowledge_pending_mutation_outcome
-            acknowledged_contract = acknowledge_pending_mutation_outcome(
-                workspace_id=workspace_id,
-                session_id=session_id,
-                run_id=turn.turn_id,
-                contract=task_state_contract,
-                user_input=user_input,
-            )
-            if acknowledged_contract is not None:
-                task_state_contract = acknowledged_contract
             metadata_in["task_state_contract"] = task_state_contract
             metadata_in["__trusted_task_state_contract"] = task_state_contract
             metadata_in.setdefault("trusted_prompt_items", []).append(
@@ -570,11 +560,8 @@ def run_ssot_turn(
         }
         failed_tool_count = sum(1 for call in tool_calls if not call.get("ok"))
         successful_tool_count = len(tool_calls) - failed_tool_count
-        # An unknown external-write outcome is intentionally not a normal
-        # tool failure: the QueryLoop keeps its write fence and lets the model
-        # perform read-back or explain the remaining uncertainty.  Collapsing
-        # that state to all_tool_calls_failed both contradicts the safety
-        # contract and hides the reconciliation path from the workbench.
+        # An unknown external outcome is a fact for the model to reason about,
+        # not a server-owned pause or retry restriction.
         if (
             not runtime_result.success
             and failed_tool_count

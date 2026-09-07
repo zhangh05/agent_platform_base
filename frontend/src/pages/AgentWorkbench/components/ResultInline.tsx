@@ -198,11 +198,10 @@ export const ResultInline = memo(function ResultInline({
         <section className="unknown-outcome-alert" role="alert" data-testid="unknown-outcome-alert">
           <div className="unknown-outcome-header">
             <IconAlert size={18} className="unknown-outcome-icon" />
-            <strong>执行结果未知，系统已冻结后续写操作</strong>
+            <strong>执行结果尚未确定，完整结果已返回模型</strong>
           </div>
           <p>
-            外部写操作可能仍在执行。请先通过受控 read-back、运行审计或人工核对确认事实，
-            <b>不要重试原任务或换方案继续</b>。
+            外部操作可能仍在执行。模型会基于完整工具结果自行决定 read-back、继续配置、重试或向你说明当前状态。
           </p>
           <div className="unknown-outcome-facts">
             {unknownOutcome?.tool_id && <span>工具：{unknownOutcome.tool_id}</span>}
@@ -237,7 +236,7 @@ export const ResultInline = memo(function ResultInline({
               </div>
               <span className="result-overview-meta">
                 {isUnknownOutcome
-                  ? "写入已冻结，等待受控核对"
+                  ? "完整结果已返回模型，等待其决策"
                   : trackingPending
                   ? "任务已提交，尚无可确认的设备执行结果"
                   : failedToolCount > 0 && isFailed
@@ -424,13 +423,13 @@ export const ResultInline = memo(function ResultInline({
               <IconBook size={14} />
               <span>{saving === "knowledge" ? "保存中…" : "存为知识"}</span>
             </button>
-            {hasFailedTool && !isUnknownOutcome && onRetryAlternative && (
+            {hasFailedTool && onRetryAlternative && (
               <button type="button" className="run-detail-button action-btn-retry" onClick={onRetryAlternative}>
                 <IconRefresh size={14} />
                 <span>换方案继续</span>
               </button>
             )}
-            {isFailed && !isUnknownOutcome && onRetryOriginal && (
+            {isFailed && onRetryOriginal && (
               <button type="button" className="run-detail-button action-btn-retry" onClick={onRetryOriginal}>
                 <IconRefresh size={14} />
                 <span>重试原任务</span>

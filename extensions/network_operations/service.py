@@ -94,7 +94,7 @@ def _normalize_checks(value: Any) -> list[dict[str, str]]:
     """Validate deterministic checks without pretending every vendor has one parser.
 
     A check is deliberately a small, auditable evidence rule.  It never uses an
-    LLM or a local "quality gate" to decide whether an operational condition is
+    LLM or a local heuristic to decide whether an operational condition is
     true: it either matches persisted command output, or it does not.
     """
     if value is None:

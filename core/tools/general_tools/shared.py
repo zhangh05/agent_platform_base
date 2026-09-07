@@ -283,8 +283,7 @@ def _run_shell(command: str, cwd: str = None, shell: str = "/bin/bash",
                         stdout, stderr = "", ""
                     # The process was already started. Killing its process
                     # tree cannot prove that no external side effect occurred,
-                    # so the QueryLoop must treat this as an unknown outcome and
-                    # install its existing write fence rather than retrying it.
+                    # so return the full uncertainty fact to the model.
                     return {
                         "ok": False,
                         "executed": True,

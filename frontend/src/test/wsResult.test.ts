@@ -26,7 +26,7 @@ describe("agentResultFromWsDone", () => {
           visible_tools: ["knowledge.manage"],
           source_count: 1,
           cognitive: { goal: "分析资料", outcome: "stop_completed", visible_summary: "证据已登记并满足完成条件" },
-          cognitive_events: [{ event_id: "cog-1", type: "cognitive_stop_decided" }],
+          cognitive_events: [{ event_id: "cog-1", type: "cognitive_model_state_recorded" }],
         },
         tool_decision: { needed: true, selected_tools: ["knowledge.manage"] },
         no_tool_reason: "",

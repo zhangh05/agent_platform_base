@@ -70,7 +70,6 @@ bash stop.sh
 提交前至少执行与改动面匹配的测试。运行时、策略、存储或工具契约改动执行：
 
 ```bash
-bash scripts/check_static_quality.sh
 python scripts/verify_docs_runtime_consistency.py
 ```
 

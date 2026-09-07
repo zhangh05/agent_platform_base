@@ -492,7 +492,7 @@ def _execute_commands(connection: _Connection, commands, facts, *, read: bool, c
                        error="configuration_outcome_unknown" if uncertain else "configuration_batch_incomplete" if not complete else "",
                        execution_may_continue=uncertain, automatic_retry_allowed=False,
                        unexecuted_commands=selected[len(results):],
-                       requires_readback=True, rollback_performed=False)
+                       recommended_readback=True, rollback_performed=False)
     return payload
 
 
@@ -555,7 +555,7 @@ def probe_target(
                     return _result(False, connection.stages, started,
                                    error="configuration_outcome_unknown", detail=str(exc)[:300],
                                    status="unknown", execution_may_continue=True,
-                                   automatic_retry_allowed=False, requires_readback=True)
+                                   automatic_retry_allowed=False, recommended_readback=True)
                 raise
             finally:
                 if not session_key or configure:

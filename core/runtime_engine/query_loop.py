@@ -30,7 +30,6 @@ from agent.llm.schemas import LLMMessage, LLMResponse, LLMToolCall
 from agent.llm.tool_adapter import tool_spec_to_openai_function
 from core.tools.redaction import redact_tool_output
 
-from .cognitive_gate import decide_next_action
 from .cognitive_state import initialize_cognitive_state
 from .context_budget import (
     RuntimeContextBudget,
@@ -434,7 +433,7 @@ class StreamingToolExecutor:
         tool_call: LLMToolCall,
         result: StreamingToolResult,
     ) -> dict[str, Any]:
-        """Install a fail-closed fence when an external write may continue."""
+        """Record an external outcome that remains uncertain for model context."""
         output = result.output if isinstance(result.output, dict) else {}
         record = {
             "status": "unknown",
@@ -940,7 +939,7 @@ class StreamingToolExecutor:
                     # A reachability probe proves neither the command state
                     # nor the intended configuration.  Only the network
                     # extension's explicit evidence-producing operations may
-                    # settle a write fence.
+                    # reconcile that prior record.
                     and str((tc.arguments or {}).get("action") or "") in {"read", "collect"}
                     and str((tc.arguments or {}).get("connection_id") or "")
                     and str((tc.arguments or {}).get("connection_id") or "") == str(pending.get("connection_id") or "")
@@ -1022,7 +1021,7 @@ class StreamingToolExecutor:
                 output["operation_id"] = final_operation["operation_id"]
                 result.output = output
             if self._result_may_continue(result) and not self._is_read_only_call(tc):
-                write_fence = self._mark_unknown_write_outcome(ctx, tc, result)
+                self._mark_unknown_write_outcome(ctx, tc, result)
         await execute_read_group(read_group)
 
         # Return in original order
@@ -1248,7 +1247,7 @@ class StreamingToolExecutor:
 
         The worker may still finish, so that fact remains in audit metadata.
         Replaying an idempotent read cannot duplicate a mutation, however, and
-        must use the normal retry policy instead of the unknown-write fence.
+        must use the normal retry policy without altering write behavior.
         Write and unknown-action calls retain ``TOOL_TIMEOUT_UNCERTAIN``.
         """
         if result.success or str(result.error_code or "").upper() != "TOOL_TIMEOUT_UNCERTAIN":
@@ -1527,45 +1526,10 @@ class QueryLoop:
         validation_correction_attempts = 0
         batch_replan_attempts = 0
         # In-memory loop deduplication retains the readable canonical key.
-        # Cross-restart fences use only fixed-size SHA-256 identities. Prefix-
-        # truncated legacy records are deliberately not compared to a new call:
-        # equality would be unsound and can suppress a distinct large mutation.
-        completed_call_keys: set[str] = set()
-        durable_completed_call_keys: set[str] = set()
-        legacy_completed_call_keys: set[str] = set()
         trusted_task_state = ctx.extras.get("__trusted_task_state_contract")
-        replan_required = False
-        durable_failed_replan_call_keys: set[str] = set()
-        legacy_failed_replan_call_keys: set[str] = set()
         if isinstance(trusted_task_state, dict):
             from .goal_loop import hydrate_goal_loop
             hydrate_goal_loop(ctx, trusted_task_state)
-            for item in (trusted_task_state.get("completed_mutation_keys") or []):
-                value = str(item or "").strip()
-                if not value:
-                    continue
-                if self._is_compact_durable_call_key(value):
-                    durable_completed_call_keys.add(value)
-                else:
-                    legacy_completed_call_keys.add(value)
-            replan_required = (
-                str(trusted_task_state.get("status") or "") == "replan_required"
-                or str(trusted_task_state.get("recovery_status") or "") == "replan_required"
-            )
-            for item in (trusted_task_state.get("failed_replan_call_keys") or []):
-                value = str(item or "").strip()
-                if not value:
-                    continue
-                if self._is_compact_durable_call_key(value):
-                    durable_failed_replan_call_keys.add(value)
-                else:
-                    legacy_failed_replan_call_keys.add(value)
-        pending_mutation_keys = set(
-            str(item)[:640]
-            for item in ((trusted_task_state or {}).get("pending_mutation_keys") or [])
-            if isinstance(item, str) and str(item).strip()
-        )
-        mutation_epoch = 0
         used_call_ids: set[str] = set()
         execution_duration_ms = 0.0
         output_truncated = False
@@ -1636,10 +1600,8 @@ class QueryLoop:
             }
             metric_overrides = dict(values.pop("metrics", {}) or {})
             projected_metrics.update(metric_overrides)
-            # The write fence is runtime-owned state.  It must survive a
-            # successful read-back round so task persistence and the UI can
-            # distinguish an unresolved external-write outcome from an
-            # ordinary tool failure.
+            # Persist the observed external outcome for the model and UI. It
+            # is descriptive telemetry, never an execution restriction.
             unknown_outcome = ctx.extras.get("unknown_outcome_reconciliation") or ctx.extras.get("unknown_outcome")
             if isinstance(unknown_outcome, dict) and unknown_outcome:
                 projected_metrics["unknown_outcome"] = dict(unknown_outcome)
@@ -1685,24 +1647,21 @@ class QueryLoop:
                     ),
                 )
                 cognitive_registered_results = len(all_results)
-            cognitive_decision = decide_next_action(
-                tool_results=all_results,
-                execution_outcome=projected_metrics["execution_outcome"],
-                goal_assertions=assertion_result,
-                terminal_error=str(values.get("error") or ""),
-                blocking_unknowns=cognitive_state.summary().get("blocking_unknown_count", 0),
-            )
             cognitive_state.set_decision(
-                cognitive_decision.outcome,
-                reason_codes=cognitive_decision.reason_codes,
-                visible_summary=cognitive_decision.visible_summary,
+                "model_directed",
+                reason_codes=["runtime_facts_delivered"],
+                visible_summary="完整工具结果已提供给模型，由模型决定下一步。",
             )
             cognitive_state.set_outcome(
-                cognitive_decision.outcome,
-                reason_codes=cognitive_decision.reason_codes,
-                visible_summary=cognitive_decision.visible_summary,
+                "model_directed",
+                reason_codes=["runtime_facts_delivered"],
+                visible_summary="完整工具结果已提供给模型，由模型决定下一步。",
             )
-            cognitive_state._append("cognitive_stop_decided", cognitive_decision.as_dict())
+            cognitive_state._append("cognitive_model_state_recorded", {
+                "outcome": "model_directed",
+                "reason_codes": ["runtime_facts_delivered"],
+                "terminal": False,
+            })
             projected_metrics["cognitive"] = cognitive_state.summary()
             projected_metrics["cognitive_events"] = list(cognitive_state.events)
             ctx.extras["cognitive_state"] = cognitive_state.as_trace_payload()
@@ -2101,98 +2060,6 @@ class QueryLoop:
                     continue
 
                 # Deduplicate only after deterministic alias/argument repair.
-                # This lets the model recover with changed arguments while
-                # preventing an identical successful or failed operation from
-                # running forever. The old pre-gate comparison missed aliases
-                # such as file_read -> read because their raw keys differed.
-                candidate_epoch = mutation_epoch
-                candidate_keys: dict[str, str] = {}
-                candidate_durable_keys: dict[str, str] = {}
-                for tc in tool_calls:
-                    candidate_keys[tc.id] = self._completion_key(tc, candidate_epoch)
-                    candidate_durable_keys[tc.id] = self._durable_call_key(tc)
-                    if not self._executor._is_read_only_call(tc):
-                        candidate_epoch += 1
-                legacy_ambiguous_mutation_calls = [
-                    tc for tc in tool_calls
-                    if (
-                        legacy_completed_call_keys
-                        or (replan_required and legacy_failed_replan_call_keys)
-                    ) and not self._executor._is_read_only_call(tc)
-                ]
-                if legacy_ambiguous_mutation_calls:
-                    return finish(
-                        final_response=(
-                            "检测到旧版本保存的副作用调用身份无法无碰撞校验；"
-                            "系统已冻结新的写操作，请先通过只读核验确认历史结果。"
-                        ),
-                        error="task_state_legacy_call_key_ambiguous",
-                        metrics={"execution_outcome": "unknown"},
-                    )
-                unknown_mutation_calls = [
-                    tc for tc in tool_calls
-                    if pending_mutation_keys and not self._executor._is_read_only_call(tc)
-                ]
-                if unknown_mutation_calls:
-                    return finish(
-                        final_response=(
-                            "存在中断时未确认结果的副作用操作；系统已冻结新的写操作，"
-                            "请先通过只读核验确认其实际结果。"
-                        ),
-                        error="task_state_unknown_mutation_outcome",
-                        metrics={"execution_outcome": "unknown"},
-                    )
-                repeated_replan_calls = [
-                    tc for tc in tool_calls
-                    if replan_required
-                    and candidate_durable_keys[tc.id] in durable_failed_replan_call_keys
-                ]
-                if repeated_replan_calls:
-                    return finish(
-                        final_response=(
-                            "任务处于重规划状态；系统拒绝重放前一轮已失败的相同工具步骤。"
-                            "请改用不同且通过策略校验的替代观察或恢复步骤。"
-                        ),
-                        error="replan_repeated_failed_call",
-                    )
-                repeated_calls = [
-                    tc for tc in tool_calls
-                    if candidate_keys[tc.id] in completed_call_keys
-                    or candidate_durable_keys[tc.id] in durable_completed_call_keys
-                ]
-                repeated_mutations = [
-                    tc for tc in repeated_calls
-                    if not self._executor._is_read_only_call(tc)
-                ]
-                if repeated_mutations:
-                    return finish(
-                        final_response=self._build_tool_result_fallback(ctx, all_results),
-                        error="duplicate_mutation_call",
-                    )
-                if repeated_calls and len(repeated_calls) == len(tool_calls):
-                    recovery_goals = [
-                        item for item in ctx.extras.get("recovery_goals") or []
-                        if isinstance(item, dict) and item.get("status") != "passed"
-                    ]
-                    duplicate_replans = int(ctx.extras.get("recovery_duplicate_replans") or 0)
-                    if recovery_goals and duplicate_replans < 2:
-                        ctx.extras["recovery_duplicate_replans"] = duplicate_replans + 1
-                        messages = self._append_turn_nudge(
-                            messages,
-                            "[RUNTIME RECOVERY NOVELTY] The proposed read is identical to an already attempted "
-                            "call and was not executed. Recovery goals remain open. Choose a materially different "
-                            "safe read using collected device profile or official documentation evidence; do not "
-                            "repeat the rejected call.",
-                        )
-                        continue
-                    return finish(
-                        final_response=self._build_tool_result_fallback(ctx, all_results),
-                        error="duplicate_tool_call",
-                    )
-                # Do not remove only part of a graph: a retained node may depend
-                # on the repeated node. Repeated reads in a mixed graph are safe
-                # to observe again; an identical mutation is never replayed.
-
                 cognitive_state.select_plan(
                     [{"action": tc.name, "purpose": "补充当前任务所需观察"} for tc in tool_calls],
                     reason="已通过规范化、语义、风险与预算校验的执行计划",
@@ -2287,13 +2154,6 @@ class QueryLoop:
                             "ok": bool(result.ok),
                             "output": dict(result.output or {}) if isinstance(result.output, dict) else {},
                         })
-                    for tc, result in zip(tool_calls, results):
-                        completed_call_keys.add(
-                            self._completion_key(tc, mutation_epoch)
-                        )
-                        if result.ok and not self._executor._is_read_only_call(tc):
-                            mutation_epoch += 1
-
                     # ── Tracking: auto-poll producer-declared long tasks ──
                     polled_results = await self._settle_tracking(ctx, results, budget=budget)
                 finally:
@@ -2583,9 +2443,8 @@ class QueryLoop:
                 final_text = final_text.strip()
 
             # Semantic answer quality belongs to the model, its prompt and the
-            # evidence/tool contracts.  Do not regex-score or regenerate a
-            # completed answer here: those local gates repeatedly replaced
-            # useful responses with generic framework text.  Deterministic
+            # evidence/tool contracts.  The runtime does not score or replace
+            # a completed answer with generated framework text. Deterministic
             # secret/path masking remains a presentation safety boundary.
             from core.tools.redaction import redact_string
             final_text = redact_string(final_text)
@@ -3226,20 +3085,9 @@ class QueryLoop:
 
     @classmethod
     def _durable_call_key(cls, tc: LLMToolCall) -> str:
-        """Return a fixed-size, collision-resistant identity for durable fences.
-
-        TaskState outlives one loop and must never use a prefix-truncated tool
-        payload as an execution identity: two large write arguments can share a
-        prefix while representing different side effects. The complete
-        canonical call identity is SHA-256 hashed before it crosses the durable
-        checkpoint boundary.
-        """
+        """Return a fixed-size identity for durable execution telemetry."""
         digest = hashlib.sha256(cls._tool_call_key(tc).encode("utf-8")).hexdigest()
         return f"sha256:{digest}"
-
-    @staticmethod
-    def _is_compact_durable_call_key(value: object) -> bool:
-        return bool(re.fullmatch(r"sha256:[0-9a-f]{64}", str(value or "").strip()))
 
     def _record_task_state_execution_manifest(
         self,
@@ -3258,9 +3106,8 @@ class QueryLoop:
                 "call_key": self._durable_call_key(call),
                 "side_effecting": not self._executor._is_read_only_call(call),
                 "ok": bool(result.ok),
-                # Preserve a transport/runtime timeout's uncertainty across the
-                # durable checkpoint boundary; this is not equivalent to a
-                # completed failed call and must retain its mutation fence.
+                # Preserve uncertainty as telemetry so the model receives the
+                # factual outcome without a runtime execution restriction.
                 "execution_may_continue": bool(result.execution_may_continue),
             })
         if len(manifest) > 128:
@@ -3419,13 +3266,6 @@ class QueryLoop:
             "one materially different read-only call."
         )
 
-
-    def _completion_key(self, tc: LLMToolCall, mutation_epoch: int) -> str:
-        """Deduplicate reads only within the same observed state generation."""
-        key = self._tool_call_key(tc)
-        if self._executor._is_read_only_call(tc):
-            return f"{key}:state_epoch={max(0, int(mutation_epoch))}"
-        return key
 
     def _prepare_tool_calls(
         self,

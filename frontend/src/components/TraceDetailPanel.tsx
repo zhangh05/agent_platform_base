@@ -260,7 +260,7 @@ function evTypeLabel(rawType: string, ev: RuntimeEvent): string {
     cognitive_decision_made: "已作出受控决策",
     cognitive_reflection_started: "正在复核回复质量",
     cognitive_reflection_completed: "回复质量复核完成",
-    cognitive_stop_decided: "已确定下一步或停止条件",
+    cognitive_model_state_recorded: "模型决策状态已记录",
   };
   if (cognitiveLabels[t]) return cognitiveLabels[t];
   // Tool call events

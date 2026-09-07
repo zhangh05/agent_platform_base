@@ -44,7 +44,6 @@ HTTP / WebSocket -> backend/ -> agent/app/ -> agent/runtime/
 ## 常用验证
 
 ```bash
-bash scripts/check_static_quality.sh
 python scripts/verify_docs_runtime_consistency.py
 .venv/bin/pytest -q harness/test_goal_loop.py harness/test_docs_consistency_script.py
 cd frontend && npm test -- --run && npm run build

@@ -1,6 +1,6 @@
 import { test, expect, selectWorkspace } from "./fixtures";
 
-test("17. unknown write outcome is visible and cannot be retried from the workbench", async ({ page, api, workspaceId }) => {
+test("17. unknown write outcome is visible without a runtime freeze claim", async ({ page, api, workspaceId }) => {
   await page.routeWebSocket("**/ws/agent", (ws) => {
     ws.onMessage((message) => {
       const frame = JSON.parse(String(message));
@@ -58,7 +58,7 @@ test("17. unknown write outcome is visible and cannot be retried from the workbe
 
   const alert = page.getByTestId("unknown-outcome-alert");
   await expect(alert).toBeVisible();
-  await expect(alert).toContainText("执行结果未知");
+  await expect(alert).toContainText("执行结果尚未确定");
   await expect(alert).toContainText("workspace.file");
   await expect(alert).toContainText("call-write-e2e");
   await expect(alert).toContainText("TOOL_TIMEOUT_UNCERTAIN");

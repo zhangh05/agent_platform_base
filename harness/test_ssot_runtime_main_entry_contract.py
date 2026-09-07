@@ -213,7 +213,7 @@ def test_agent_app_projects_server_owned_cognitive_summary_and_events(monkeypatc
     }
     cognitive_events = [{
         "event_id": "cog-terminal",
-        "type": "cognitive_stop_decided",
+        "type": "cognitive_model_state_recorded",
         "turn_id": "server-turn",
         "trace_id": "server-trace",
         "state_revision": 4,

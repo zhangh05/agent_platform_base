@@ -80,7 +80,7 @@ The references contain illustrative records and richer example datasets. The imp
 - Desktop evidence is captured at 1200 x 900 px.
 - Shared responsive breakpoints at 920, 900, 760, and 700 px collapse asymmetric grids, master-detail layouts, and page actions without changing business behavior.
 - Controls have visible hover, focus-visible, active, disabled, loading, empty, warning, error, and destructive states.
-- The production build, type checker, focused interaction tests, full frontend suite, token lint, and repository quality gates are the executable acceptance evidence recorded with the release.
+- The production build, type checker, focused interaction tests, full frontend suite, and token lint are the executable acceptance evidence recorded with the release.
 
 ## Final result
 

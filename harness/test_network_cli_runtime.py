@@ -54,7 +54,7 @@ def test_configuration_stops_batch_and_preserves_effect_uncertainty(failure):
     assert result["unexecuted_commands"] == ["interface LoopBack 100", "return"]
     assert result["execution_may_continue"] is (failure != "device_command_rejected")
     assert not result["ok"] and not result["automatic_retry_allowed"]
-    assert result["requires_readback"] and not result["rollback_performed"]
+    assert result["recommended_readback"] and not result["rollback_performed"]
 
 
 def test_configuration_preserves_repeated_lines_and_exact_model_commands():

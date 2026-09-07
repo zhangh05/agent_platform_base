@@ -779,27 +779,7 @@ def test_engine_executes_dependent_tool_group_then_synthesizes():
     assert model_messages[1][-1].tool_call_id == "provider-b"
 
 
-def test_read_dedupe_key_changes_after_a_successful_mutation():
-    from core.runtime_engine.query_loop import QueryLoop
-
-    loop = QueryLoop(
-        SSOTRuntimeConfig(),
-        {"workspace.file": {"description": "file", "args_schema": {}}},
-        SimpleNamespace(),
-    )
-    read = LLMToolCall(
-        id="read", name="workspace.file",
-        arguments={"action": "read", "filepath": "result.txt"},
-    )
-    write = LLMToolCall(
-        id="write", name="workspace.file",
-        arguments={"action": "write", "filename": "result.txt", "content": "new"},
-    )
-    assert loop._completion_key(read, 0) != loop._completion_key(read, 1)
-    assert loop._completion_key(write, 0) == loop._completion_key(write, 1)
-
-
-def test_repeated_mutation_is_not_replayed_when_mixed_with_a_new_read():
+def test_model_can_repeat_a_mutation_when_it_selects_that_step():
     from agent.llm.schemas import LLMResponse
     from core.runtime_engine.engine import SSOTRuntimeEngine
     from core.runtime_engine.tool_runtime import ToolRuntime
@@ -853,9 +833,12 @@ def test_repeated_mutation_is_not_replayed_when_mixed_with_a_new_read():
         "write once", workspace_id="default", session_id="session",
     ))
 
-    assert received == [{"action": "write", "filename": "state.txt", "content": "ready"}]
-    assert result.success is False
-    assert "duplicate_mutation_call" in result.errors
+    assert received == [
+        {"action": "write", "filename": "state.txt", "content": "ready"},
+        {"action": "write", "filename": "state.txt", "content": "ready"},
+        {"action": "list"},
+    ]
+    assert "duplicate_mutation_call" not in result.errors
 
 
 def test_plain_json_plan_text_is_not_an_alternate_tool_call_path():

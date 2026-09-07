@@ -53,6 +53,7 @@ def test_reclaimed_running_job_is_fenced_without_reexecution(monkeypatch, tmp_pa
     assert unknown["error_code"] == "WORKER_LEASE_EXPIRED"
     assert unknown["execution_may_continue"] is True
 
+    queue.enqueue = lambda *_args: None
     from jobs.manager import retry_job
-    with pytest.raises(ValueError, match="unknown_outcome_requires_reconciliation"):
-        retry_job("default", job.job_id)
+    retried = retry_job("default", job.job_id)
+    assert retried.status == "queued"

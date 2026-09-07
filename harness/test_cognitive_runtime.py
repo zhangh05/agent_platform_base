@@ -2,13 +2,6 @@ import asyncio
 from types import SimpleNamespace
 
 from core.runtime_engine.cognitive_events import COGNITIVE_DECISION_MADE, build_cognitive_event
-from core.runtime_engine.cognitive_gate import (
-    CONTINUE_REPLAN,
-    STOP_COMPLETED,
-    STOP_PARTIAL,
-    STOP_UNKNOWN_OUTCOME,
-    decide_next_action,
-)
 from core.runtime_engine.cognitive_state import initialize_cognitive_state
 
 
@@ -39,41 +32,6 @@ def test_cognitive_event_discards_untrusted_payload_fields_and_bounds_text():
     assert event["payload"]["decision"] == "execute_tool"
     assert "raw_reasoning" not in event["payload"]
     assert len(event["payload"]["visible_summary"]) == 320
-
-
-def test_cognitive_gate_hard_stops_unknown_outcomes():
-    unknown = decide_next_action(
-        tool_results=[SimpleNamespace(ok=False, execution_may_continue=True)],
-        execution_outcome="unknown",
-        goal_assertions={},
-    )
-    assert unknown.outcome == STOP_UNKNOWN_OUTCOME
-    assert unknown.terminal is True
-
-
-def test_cognitive_gate_replans_failed_observations():
-    replan = decide_next_action(
-        tool_results=[SimpleNamespace(ok=False, execution_may_continue=False)],
-        execution_outcome="partial",
-        goal_assertions={},
-    )
-    assert replan.outcome == CONTINUE_REPLAN
-
-
-def test_cognitive_gate_completes_only_without_runtime_blockers():
-    decision = decide_next_action(tool_results=[SimpleNamespace(ok=True, execution_may_continue=False)], execution_outcome="success", goal_assertions={"required": True, "status": "passed"})
-    assert decision.outcome == STOP_COMPLETED
-    assert decision.terminal is True
-
-
-def test_cognitive_gate_preserves_partial_success_when_a_required_goal_is_blocked():
-    decision = decide_next_action(
-        tool_results=[SimpleNamespace(ok=True, execution_may_continue=False)],
-        execution_outcome="partial",
-        goal_assertions={"required": True, "status": "failed"},
-    )
-    assert decision.outcome == STOP_PARTIAL
-    assert decision.terminal is True
 
 
 def test_query_loop_honors_cancel_arriving_during_final_llm_response():
@@ -133,7 +91,7 @@ def test_query_loop_projects_server_generated_cognitive_events_once():
     result = asyncio.run(loop.run(context, BudgetController(config), None))
 
     summary = result.metrics["cognitive"]
-    assert summary["outcome"] == STOP_COMPLETED
+    assert summary["outcome"] == "model_directed"
     assert summary["goal"] == "杭州天气如何？"
     assert summary["outcome"] != context.extras["cognitive"]["outcome"]
     event_ids = [event["event_id"] for event in result.metrics["cognitive_events"]]
@@ -154,7 +112,7 @@ def test_agent_result_contract_normalizes_cognitive_projection_and_labels():
     assert normalized["cognitive"] == {"outcome": "stop_completed"}
     assert normalized["metadata"]["cognitive_events"] == []
     assert normalized["cognitive_events"] == []
-    assert label_for("cognitive_stop_decided") == "已确定下一步或停止条件"
+    assert label_for("cognitive_model_state_recorded") == "模型决策状态已记录"
 
 def test_cognitive_state_marks_conflicting_claims_as_blocking_unknown():
     from types import SimpleNamespace
@@ -198,29 +156,3 @@ def test_cognitive_state_clears_transient_failure_when_same_step_recovers():
     state.register_tool_results([recovered])
     assert state.summary()["unknown_count"] == 0
     assert state.summary()["known_fact_count"] == 1
-
-
-def test_cognitive_gate_does_not_complete_with_blocking_evidence_gap():
-    from core.runtime_engine.cognitive_gate import STOP_NEEDS_USER_INPUT, decide_next_action
-
-    decision = decide_next_action(
-        tool_results=[SimpleNamespace(ok=True, execution_may_continue=False)],
-        execution_outcome="success",
-        goal_assertions={},
-        blocking_unknowns=1,
-    )
-    assert decision.outcome == STOP_NEEDS_USER_INPUT
-    assert decision.terminal is True
-
-def test_cognitive_gate_completes_recovered_noncritical_tool_failure():
-    decision = decide_next_action(
-        tool_results=[
-            SimpleNamespace(ok=False, execution_may_continue=False),
-            SimpleNamespace(ok=True, execution_may_continue=False),
-        ],
-        execution_outcome="complete",
-        goal_assertions={},
-    )
-    assert decision.outcome == STOP_COMPLETED
-    assert decision.terminal is True
-    assert decision.reason_codes == ("completion_with_nonblocking_tool_failure",)

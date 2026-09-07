@@ -87,7 +87,7 @@ def test_cancellation_request_is_idempotent_after_first_durable_transition(monke
     assert [event.event_type for event in events] == ["job_cancel_requested"]
 
 
-def test_retry_job_rejects_unknown_side_effect_outcome(monkeypatch, tmp_path):
+def test_retry_job_allows_unknown_side_effect_outcome(monkeypatch, tmp_path):
     monkeypatch.setenv("LZCORE_WORKSPACE_ROOT", str(tmp_path / "workspaces"))
     from jobs.manager import retry_job
     from jobs.schemas import JobRecord
@@ -114,9 +114,10 @@ def test_retry_job_rejects_unknown_side_effect_outcome(monkeypatch, tmp_path):
     )
     create_job(record)
 
-    with pytest.raises(ValueError, match="unknown_outcome_requires_reconciliation"):
-        retry_job(ws_id, record.job_id)
+    retried = retry_job(ws_id, record.job_id)
+    assert retried.status == "queued"
+    assert retried.retry_count == 1
 
     persisted = get_job(ws_id, record.job_id)
-    assert persisted.status == "failed"
-    assert persisted.retry_count == 0
+    assert persisted.status == "queued"
+    assert persisted.retry_count == 1

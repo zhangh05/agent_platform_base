@@ -45,7 +45,7 @@ const routineResult: AgentResult = {
 };
 
 describe("unknown outcome result UI", () => {
-  it("shows the durable uncertainty fact and suppresses unsafe retry actions", () => {
+  it("shows the durable uncertainty fact without claiming a runtime freeze", () => {
     const retryOriginal = vi.fn();
     const retryAlternative = vi.fn();
 
@@ -59,13 +59,14 @@ describe("unknown outcome result UI", () => {
     );
 
     expect(screen.getByLabelText("执行摘要")).toHaveTextContent("结果未知");
-    expect(screen.getByLabelText("执行摘要")).toHaveTextContent("写入已冻结，等待受控核对");
-    expect(screen.getByTestId("unknown-outcome-alert")).toHaveTextContent("执行结果未知");
+    expect(screen.getByLabelText("执行摘要")).toHaveTextContent("完整结果已返回模型，等待其决策");
+    expect(screen.getByTestId("unknown-outcome-alert")).toHaveTextContent("执行结果尚未确定");
+    expect(screen.getByTestId("unknown-outcome-alert")).toHaveTextContent("自行决定 read-back、继续配置、重试");
     expect(screen.getByText("工具：workspace.file")).toBeInTheDocument();
     expect(screen.getByText("调用：call-write-1")).toBeInTheDocument();
     expect(screen.getByText("代码：TOOL_TIMEOUT_UNCERTAIN")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "重试原任务" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "换方案继续" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "重试原任务" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "换方案继续" })).toBeInTheDocument();
     expect(retryOriginal).not.toHaveBeenCalled();
     expect(retryAlternative).not.toHaveBeenCalled();
   });

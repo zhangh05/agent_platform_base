@@ -315,7 +315,7 @@ def test_completed_cognitive_decision_does_not_replan_from_retryable_tool_failur
     assert event["successful_tool_count"] == 1
 
 
-def test_replan_contract_projects_failure_and_completed_mutation_fence(monkeypatch, tmp_path):
+def test_replan_contract_projects_failure_without_mutation_fence(monkeypatch, tmp_path):
     monkeypatch.setenv("LZCORE_WORKSPACE_ROOT", str(tmp_path))
     from agent.runtime.task_state import (
         commit_task_state,
@@ -359,12 +359,9 @@ def test_replan_contract_projects_failure_and_completed_mutation_fence(monkeypat
     assert contract["status"] == "replan_required"
     assert contract["recovery_status"] == ""
     assert contract["failure"]["classification"] == "tool_failure"
-    assert contract["completed_mutation_keys"] == [
-        'workspace.file:{"arguments":{"action":"write","path":"audit.md"},"result_bindings":{}}'
-    ]
     guidance = render_task_state_guidance(contract)
     assert "Replan from the recorded failure" in guidance
-    assert "Completed side-effecting calls" in guidance
+    assert "execution-fenced" not in guidance
 
 
 def test_ssot_runtime_drops_request_forged_task_state_contract(monkeypatch, tmp_path):
@@ -418,7 +415,7 @@ def test_ssot_runtime_drops_request_forged_task_state_contract(monkeypatch, tmp_
 
 
 
-def test_task_state_completed_mutation_key_hits_queryloop_execution_fence():
+def test_task_state_completed_mutation_history_does_not_block_queryloop():
     import asyncio
     from agent.llm.schemas import LLMResponse, LLMToolCall
     from core.runtime_engine.engine import SSOTRuntimeEngine
@@ -468,9 +465,8 @@ def test_task_state_completed_mutation_key_hits_queryloop_execution_fence():
             },
         },
     ))
-    assert invoked == []
-    assert result.success is False
-    assert "duplicate_mutation_call" in result.errors
+    assert invoked
+    assert "duplicate_mutation_call" not in result.errors
 
 
 
@@ -694,7 +690,7 @@ def test_ssot_task_state_resolution_failure_is_fail_closed(monkeypatch, tmp_path
     assert result.metadata["task_state_persistence"]["stage"] == "resolution"
     assert called == []
 
-def test_replan_contract_persists_failed_call_keys_and_queryloop_rejects_replay(monkeypatch, tmp_path):
+def test_replan_contract_allows_model_to_retry_failed_call(monkeypatch, tmp_path):
     import asyncio
     from agent.llm.schemas import LLMResponse, LLMToolCall
     from agent.runtime.task_state import commit_task_state, resolve_task_state
@@ -755,7 +751,6 @@ def test_replan_contract_persists_failed_call_keys_and_queryloop_rejects_replay(
     )
     assert contract is not None
     assert contract["status"] == "replan_required"
-    assert contract["failed_replan_call_keys"] == [call_key]
 
     engine = SSOTRuntimeEngine(
         config=config,
@@ -769,10 +764,8 @@ def test_replan_contract_persists_failed_call_keys_and_queryloop_rejects_replay(
         session_id="session-replan-fence",
         extras={"__trusted_task_state_contract": contract},
     ))
-    assert invoked == []
-    assert result.success is False
-    assert "replan_repeated_failed_call" in result.errors
-    assert result.metadata["cognitive"]["outcome"] == "continue_replan"
+    assert invoked
+    assert "replan_repeated_failed_call" not in result.errors
 
 def test_task_state_maps_server_cancel_fact_to_cancelled(monkeypatch, tmp_path):
     monkeypatch.setenv("LZCORE_WORKSPACE_ROOT", str(tmp_path))
@@ -909,7 +902,7 @@ def test_ssot_runtime_persists_active_checkpoint_before_engine_runs(monkeypatch,
     assert result.metadata["task_state"]["task"]["status"] == "completed"
     assert captured["extras"]["__trusted_task_state_contract"]["status"] == "active"
 
-def test_task_state_tool_checkpoint_preserves_unknown_mutation_for_restart(monkeypatch, tmp_path):
+def test_task_state_tool_checkpoint_keeps_restart_resumable(monkeypatch, tmp_path):
     monkeypatch.setenv("LZCORE_WORKSPACE_ROOT", str(tmp_path))
     from agent.runtime.task_state import (
         begin_task_state,
@@ -938,20 +931,18 @@ def test_task_state_tool_checkpoint_preserves_unknown_mutation_for_restart(monke
         }],
     )
     assert prepared is not None
-    assert prepared["pending_mutation_keys"] == ["workspace.file:write:audit"]
+    assert "pending_mutation_keys" not in prepared
     outcome = reconcile_active_task_states("ws-tool-checkpoint")
     assert outcome["interrupted"] == 1
     recovered = load_task_state("ws-tool-checkpoint", "session-tool-checkpoint")
-    assert recovered["task"]["status"] == "waiting_user"
-    assert recovered["task"]["next_action"] == "resolve_unknown_mutation_outcome"
+    assert recovered["task"]["status"] == "interrupted"
+    assert recovered["task"]["next_action"] == "resume_after_service_restart"
 
-def test_explicit_unknown_mutation_attestation_releases_restart_fence(monkeypatch, tmp_path):
+def test_restart_keeps_task_resumable_without_mutation_attestation(monkeypatch, tmp_path):
     monkeypatch.setenv("LZCORE_WORKSPACE_ROOT", str(tmp_path))
     from agent.runtime.task_state import (
-        acknowledge_pending_mutation_outcome,
         begin_task_state,
         checkpoint_task_state_execution,
-        list_task_events,
         load_task_state,
         reconcile_active_task_states,
         resolve_task_state,
@@ -976,44 +967,23 @@ def test_explicit_unknown_mutation_attestation_releases_restart_fence(monkeypatc
     contract = resolve_task_state(
         workspace_id="ws-unknown-attestation",
         session_id="session-unknown-attestation",
-        user_input="我已通过只读核验确认先前写入已成功，请继续。",
+        user_input="继续。",
         messages=[{"role": "user", "content": "写入审计文件。", "run_id": "run-original"}],
     )
     assert contract is not None
-    assert contract["pending_mutation_keys"] == ["workspace.file:write:audit"]
-    assert acknowledge_pending_mutation_outcome(
-        workspace_id="ws-unknown-attestation",
-        session_id="session-unknown-attestation",
-        run_id="run-resume",
-        contract=contract,
-        user_input="继续。",
-    ) is None
-    assert load_task_state("ws-unknown-attestation", "session-unknown-attestation")["task"]["pending_mutation_keys"]
-    acknowledged = acknowledge_pending_mutation_outcome(
-        workspace_id="ws-unknown-attestation",
-        session_id="session-unknown-attestation",
-        run_id="run-resume",
-        contract=contract,
-        user_input="我已通过只读核验确认先前写入已成功，请继续。",
-    )
-    assert acknowledged is not None
-    assert acknowledged["pending_mutation_keys"] == []
     resumed = begin_task_state(
         workspace_id="ws-unknown-attestation",
         session_id="session-unknown-attestation",
         run_id="run-resume",
-        user_input="我已通过只读核验确认先前写入已成功，请继续。",
-        continuation_contract=acknowledged,
+        user_input="继续。",
+        continuation_contract=contract,
     )
     assert resumed is not None
     assert resumed["status"] == "active"
-    assert resumed["pending_mutation_keys"] == []
-    events = list_task_events("ws-unknown-attestation", "session-unknown-attestation")
-    assert events[-2]["event_type"] == "task_mutation_outcome_acknowledged"
-    assert events[-2]["verification_source"] == "user_attested"
+    assert load_task_state("ws-unknown-attestation", "session-unknown-attestation")["task"]["status"] == "active"
 
 
-def test_ssot_runtime_explicit_unknown_mutation_attestation_unfreezes_trusted_contract(monkeypatch, tmp_path):
+def test_ssot_runtime_resumes_interrupted_contract_without_attestation(monkeypatch, tmp_path):
     monkeypatch.setenv("LZCORE_WORKSPACE_ROOT", str(tmp_path))
     from types import SimpleNamespace
     from agent.core.session import AgentSession
@@ -1066,10 +1036,9 @@ def test_ssot_runtime_explicit_unknown_mutation_attestation_unfreezes_trusted_co
     assert result.ok is True
     trusted = captured["extras"]["__trusted_task_state_contract"]
     assert trusted["status"] == "active"
-    assert trusted["pending_mutation_keys"] == []
 
 
-def test_queryloop_unknown_mutation_checkpoint_freezes_new_writes():
+def test_queryloop_unknown_mutation_history_does_not_freeze_new_writes():
     import asyncio
     from agent.llm.schemas import LLMResponse, LLMToolCall
     from core.runtime_engine.engine import SSOTRuntimeEngine
@@ -1117,9 +1086,8 @@ def test_queryloop_unknown_mutation_checkpoint_freezes_new_writes():
             },
         },
     ))
-    assert invoked == []
-    assert result.success is False
-    assert "task_state_unknown_mutation_outcome" in result.errors
+    assert invoked
+    assert "task_state_unknown_mutation_outcome" not in result.errors
 
 
 def test_queryloop_checkpoint_failure_prevents_tool_execution():
@@ -1239,8 +1207,8 @@ def test_durable_call_key_distinguishes_large_mutations_after_restart():
     assert invoked == [dict(next_call.arguments)]
 
 
-def test_legacy_durable_call_key_freezes_mutation_instead_of_guessing_identity():
-    """Historical prefix-truncated checkpoints are an unknown mutation outcome."""
+def test_legacy_durable_call_key_does_not_freeze_mutation():
+    """Historical telemetry does not override the model's selected call."""
     import asyncio
     from agent.llm.schemas import LLMResponse, LLMToolCall
     from core.runtime_engine.engine import SSOTRuntimeEngine
@@ -1262,12 +1230,11 @@ def test_legacy_durable_call_key_freezes_mutation_instead_of_guessing_identity()
         extras={"__trusted_task_state_contract": {"task_id": "tsk-legacy-key", "completed_mutation_keys": ["workspace.file:{legacy-prefix-truncated}"]}},
     ))
 
-    assert result.success is False
-    assert "task_state_legacy_call_key_ambiguous" in result.errors
-    assert invoked == []
+    assert result.success is True
+    assert invoked
 
-def test_queryloop_uncertain_write_checkpoint_keeps_pending_mutation_fence(monkeypatch, tmp_path):
-    """A returned timeout must not clear the durable side-effect fence."""
+def test_queryloop_uncertain_write_checkpoint_keeps_telemetry_without_fence(monkeypatch, tmp_path):
+    """A returned timeout is retained as telemetry, not a future write restriction."""
     import asyncio
     from agent.llm.schemas import LLMResponse, LLMToolCall
     from agent.runtime.task_state import (
@@ -1350,4 +1317,4 @@ def test_queryloop_uncertain_write_checkpoint_keeps_pending_mutation_fence(monke
     assert len(settled) == 1
     assert settled[0][0]["execution_may_continue"] is True
     persisted = load_task_state(workspace_id, session_id)
-    assert persisted["task"]["pending_mutation_keys"] == [settled[0][0]["call_key"]]
+    assert "pending_mutation_keys" not in persisted["task"]

@@ -9,12 +9,12 @@ COGNITIVE_PLAN_SELECTED = "cognitive_plan_selected"
 COGNITIVE_EVIDENCE_REGISTERED = "cognitive_evidence_registered"
 COGNITIVE_GAP_DETECTED = "cognitive_gap_detected"
 COGNITIVE_DECISION_MADE = "cognitive_decision_made"
-COGNITIVE_STOP_DECIDED = "cognitive_stop_decided"
+COGNITIVE_MODEL_STATE_RECORDED = "cognitive_model_state_recorded"
 
 COGNITIVE_EVENT_TYPES = frozenset({
     COGNITIVE_INITIALIZED, COGNITIVE_GOAL_NORMALIZED, COGNITIVE_PLAN_SELECTED,
     COGNITIVE_EVIDENCE_REGISTERED, COGNITIVE_GAP_DETECTED, COGNITIVE_DECISION_MADE,
-    COGNITIVE_STOP_DECIDED,
+    COGNITIVE_MODEL_STATE_RECORDED,
 })
 _TEXT_KEYS = frozenset({"decision", "selected_action", "expected_observation", "risk_level", "visible_summary", "outcome", "goal", "blocked_by", "next_action"})
 _LIST_KEYS = frozenset({"reason_codes", "criteria"})

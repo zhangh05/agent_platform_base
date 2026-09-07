@@ -60,7 +60,7 @@ const STAGE_INDEX: Record<string, number> = {
   cognitive_decision_made: 2,
   cognitive_reflection_started: 2,
   cognitive_reflection_completed: 2,
-  cognitive_stop_decided: 3,
+  cognitive_model_state_recorded: 3,
 };
 
 const PHASE_COPY = [

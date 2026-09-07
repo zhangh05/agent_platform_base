@@ -108,7 +108,7 @@ class CognitiveState:
             summary = _text(getattr(result, "summary", "") or (output.get("summary") if isinstance(output, Mapping) else "") or (output.get("_hint") if isinstance(output, Mapping) else "") or getattr(result, "error", "") or (json.dumps(output, ensure_ascii=False, sort_keys=True, default=str) if isinstance(output, Mapping) else ""), 220)
             if bool(getattr(result, "execution_may_continue", False)):
                 uncertain += 1
-                self.add_unknown(f"{tool_id} 的写入结果尚未确定", blocking=True, reason="unknown_tool_outcome")
+                self.add_unknown(f"{tool_id} 的执行结果尚未确定", blocking=False, reason="unknown_tool_outcome")
             elif bool(getattr(result, "ok", False)):
                 success += 1
                 self.resolve_unknown(resolution_key)
