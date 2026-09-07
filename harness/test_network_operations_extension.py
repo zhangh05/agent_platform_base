@@ -45,13 +45,13 @@ def test_published_skill_has_configuration_capability_by_default(monkeypatch, tm
     assert len(calls) == 2
 
 
-def test_configuration_revalidates_authority_at_service_boundary(monkeypatch, tmp_path):
+def test_configuration_revalidates_connection_scope_at_service_boundary(monkeypatch, tmp_path):
     _setup(monkeypatch, tmp_path)
     conn = _register_connection("default", {"name": "CE", "host": "127.0.0.1", "protocol": "telnet", "vendor": "h3c"})
     monkeypatch.setattr(service, "probe_target", lambda *a, **kw: pytest.fail("must not open a socket"))
     result = service.test_connection("default", conn["connection_id"], commands=["system-view"], skill_id="deleted")
     assert result["ok"] is False
-    assert result["error"] == "device_execution_not_allowed_by_skill"
+    assert result["error"] == "connection_not_allowed_by_skill"
 
 
 def test_configuration_failure_retains_unknown_effects(monkeypatch, tmp_path):

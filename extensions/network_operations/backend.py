@@ -337,10 +337,6 @@ def device_manage(invocation):
     connection = service.get_connection(invocation.workspace_id, connection_id)
     if not connection:
         return {"ok": False, "error": "connection_not_found", "connection_id": connection_id}
-    if action == "configure" and not service.skill_allows_connection(
-        service.get_skill(invocation.workspace_id, str(getattr(invocation, "skill", "") or "")), connection_id
-    ):
-        return {"ok": False, "executed": False, "error": "device_execution_not_allowed_by_skill"}
     if getattr(invocation, "skill", None):
         skill = service.get_skill(invocation.workspace_id, str(invocation.skill))
         if not skill or connection_id not in set(skill.get("connection_ids") or []):
@@ -363,10 +359,6 @@ def device_manage(invocation):
     if action in {"read", "configure"} and isinstance(raw_commands, list):
         from extensions.network_operations.device_tools import is_read_only_command
         effective_action = "read" if all(is_read_only_command(command) for command in raw_commands) else "configure"
-    if effective_action == "configure" and not service.skill_allows_connection(
-        service.get_skill(invocation.workspace_id, str(getattr(invocation, "skill", "") or "")), connection_id
-    ):
-        return {"ok": False, "executed": False, "error": "device_execution_not_allowed_by_skill"}
     result = service.test_connection(
         invocation.workspace_id,
         connection_id,

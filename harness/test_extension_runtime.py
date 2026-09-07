@@ -42,12 +42,10 @@ def test_selected_network_skill_owns_a_domain_prompt_contract():
         "source": "server_validated_extension_context",
     })
 
-    assert "network.operations.skill.v1" in rendered
+    assert "network.operations.skill.v2" in rendered
     assert "network.operations.device.manage" in rendered
-    assert "network__operations__device__manage" in rendered
-    assert "raw device-command payload" in rendered
-    assert "Pagination control" in rendered
-    assert "registered device connections are the authorization boundary" in rendered
+    assert "exact command text and order" in rendered
+    assert "resource boundary" in rendered
     assert "on demand" in rendered
     assert "connection_activation" not in rendered
     assert "connection-1" in rendered
@@ -73,7 +71,7 @@ def test_selected_skill_prompt_does_not_silently_drop_large_resource_scope():
     item = trusted_prompt_item("workbench_skill", rendered)
 
     assert connection_ids[-1] in item.content
-    assert "network__operations__inspection" in item.content
+    assert "network.operations.inspection" in item.content
 
 
 def test_network_workflow_templates_are_owned_by_the_extension():

@@ -21,9 +21,9 @@ from extensions.network_operations.skill_prompt import render_network_skill_prom
 
 def test_config_prompt_is_builtin_for_every_selected_network_skill():
     prompt = render_network_skill_prompt({"skill_id": "test"})
-    assert "Device execution contract" in prompt
-    assert "fresh shell" in prompt
-    assert "Configuration write capability is enabled" not in prompt
+    assert "not a read/write permission model" in prompt
+    assert "device account is the final authority" in prompt
+    assert "configuration_write" not in prompt
 
 
 @pytest.mark.parametrize("commands,vendor", [([], "h3c"), ([42], "h3c")])
@@ -672,16 +672,16 @@ def test_selected_skill_prompt_explains_semantic_collect_without_raw_pager_comma
         "semantic_catalog": semantic_catalog(),
         "network_runtime_version": "network.cli.v2",
     })
-    assert 'action="collect"' in prompt
-    assert "Never send paging-disable commands yourself" in prompt
+    assert "`collect`" in prompt
+    assert "semantic_catalog" in prompt
     assert '"network_runtime_version":"network.cli.v2"' in prompt
 
 
 def test_prompt_makes_autonomous_commands_the_default_not_templates():
     prompt = render_network_skill_prompt({})
-    assert 'use action="read"' in prompt
-    assert "There are no implicit default commands" in prompt
-    assert "No framework script decides your diagnostic sequence" in prompt
+    assert "`read` for targeted raw observations" in prompt
+    assert "exact command text and order" in prompt
+    assert "continue until the objective is answered" in prompt
     assert "only when the semantic catalog cannot" not in prompt
 
 

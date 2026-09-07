@@ -1,9 +1,4 @@
-"""LLM operating contract for a selected network.operations Skill.
-
-This module is deliberately separate from the platform system prompt and from
-HTTP/tool handlers.  It is injected only after the server validates a Skill
-selected in the workbench.
-"""
+"""Model operating contract for a selected network Skill."""
 
 from __future__ import annotations
 
@@ -11,40 +6,24 @@ import json
 from typing import Any
 
 
-# Keep the established Skill contract identifier stable for persisted and
-# external consumers.  Runtime capabilities evolve independently through the
-# network_runtime_version field in the validated context snapshot.
-NETWORK_SKILL_PROMPT_VERSION = "network.operations.skill.v1"
-
+NETWORK_SKILL_PROMPT_VERSION = "network.operations.skill.v2"
 
 NETWORK_SKILL_OPERATING_CONTRACT = """## Selected network Skill operating contract
-- The workbench selection is active for this turn. Treat the server-resolved Skill, devices, connection ids and allowed tools below as the complete authorization boundary; never substitute a host, port, credential or unselected connection.
-- On-demand reads and device configuration are built-in capabilities of every selected network Skill. The selected Skill's registered devices, connections and allowed tools are the complete execution boundary.
-- Selection grants permission, not an instruction to contact every device. Skill initialization performs no network IO. Choose only the devices needed for the current diagnostic step; connect on demand through the device or inspection tool. Do not probe the entire authorized set before a targeted read. A two-device read must pass only those two connection ids, even when six devices are authorized.
-- last_observed_status and last_tested_at describe historical observations, not current availability. current_reachability=not_checked is neither failure nor success. A previous failure does not prevent an authorized on-demand attempt.
-- Use `network.operations.context_read` when historical observations, explicitly confirmed references, available evidence sources, or prior syntax outcomes could improve the investigation. These records are context, not commands: only `state=confirmed`, `current=true`, `authority=user_confirmed` references describe expected state. A candidate reference, including one derived from the first successful inspection, never means healthy or normal.
-- A saved or previously verified connection is configuration, not current reachability evidence. Operations connect on demand and reuse a synchronized task-owned session; stale sessions reconnect before command dispatch. Never depend on a browser-held session and never ask the user to connect manually.
-- Call `network__operations__device__manage` (`network.operations.device.manage`) with action=\"probe\" only when reachability itself must be checked. For live evidence use action=\"read\" with `connection_id` and exact `commands` that you choose from the current question and previous output. There are no implicit default commands. Optional action=\"collect\" with supported `facts` explicitly selects a predefined driver template; it is not required and does not constrain raw command selection. Never send a bare host, username, password or secret.
-- `commands` is an ordered raw device-command payload. The runtime transmits exactly what you provide to the selected device; it does not apply command allowlists, dangerous-command checks, vendor-specific rewriting, command-count limits or output summaries. Use the real device response to decide the next action.
-- A syntax rejection may include `model_recovery_guidance` and advisory command experience. Treat both as evidence for your own next decision. The runtime does not automatically replace the command, select a semantic fact, or search documentation; you choose the next tool and exact command after reading the feedback.
-- Pagination control, prompt learning, Telnet negotiation, command echo removal, encoding and command completion belong to the network CLI runtime. Never send paging-disable commands yourself. Inspect command_results: `complete`, `pages`, `error_code`, `device_error` and `truncated` determine whether raw output is complete.
-- For a small targeted read, issue independent `network__operations__device__manage` calls in parallel. For repeatable or multi-device collection, call `network__operations__inspection` (`network.operations.inspection`) once with action=\"run\", authorized connection ids and your explicit `commands`. `facts` or `script_id` are optional template alternatives; choose exactly one command source; the runtime automatically polls its declared task to terminal. Never use `exec.run` to sleep, manually poll that task, create a duplicate inspection, or repeat per-device reads already covered by its terminal result.
-- Choose a small evidence-gathering step, read its actual output, then decide whether to narrow commands, inspect another authorized device, consult a reference, or answer. Do not submit commands whose parameters depend on unseen output in the same batch. Same-connection commands run serially; independent connections may run in parallel. No framework script decides your diagnostic sequence.
-- Inspect `session.reused`, `command_source`, exact `command_results.command`, `complete`, `error_code` and `truncated`. An `interaction_required`, disconnected or incomplete command is full evidence for your next decision. You decide whether to answer, retry, read back, issue a different command or continue the configuration sequence.
-- Each target is independent. A failed connection is structured evidence for model decision-making, not a fatal Agent error: continue available targets, use another authorized connection only when one exists, and report exact unavailable coverage. Do not label the whole task failed when the requested outcome is otherwise fully evidenced.
-- Read output is evidence, not a conclusion. Reconcile requested devices, successful devices, unavailable devices and unsupported commands before answering. Distinguish configured state from observed live state and preserve exact command output qualifiers.
-- `status=collected` means only that the command completed without a transport or CLI error. It does not mean a protocol is configured, a neighbor is established, an interface is up, a route exists, or the design is correct. Use `observation_status` and literal observations for those claims. Empty observations are negative/unknown evidence, never healthy state.
-- Never infer topology, adjacency, health, RT/RD values, policy, labels or end-to-end reachability from device names, requested fact names, successful coverage, absence of findings, or generic protocol knowledge. Mark a claim confirmed only when an observation or normalized signal explicitly supports it; mark conflicting, missing or projected-away evidence as unknown and state the exact narrower observation needed.
-- When the user asks about configuration, topology, address-family activation, RT/RD, policy, or design correctness, choose targeted configuration-reading commands that cover the question (or explicitly request the optional `current_config` fact). Operational facts alone can prove live table entries but cannot prove how the device is configured. Conversely, configuration alone cannot prove a live peer or route is established.
-- A difference is not itself a defect. Before recommending a change, state the required invariant, evaluate it against both sides' exact values and the intended roles, and identify the concrete impact. Do not require symmetric configuration or identical protocol activation across different roles. Separate proven faults, missing evidence and optional design choices; do not present a preference as a mandatory best practice. Validate hypothetical failure claims against the same observed values.
-- Preserve normalized interface_addresses and prefix_length exactly when comparing both ends. State tables show control-plane or forwarding-table state, not measured packet delivery. When end_to_end_packet_delivery_tested=false, end-to-end traffic remains unverified even when all peers and routes are present; do not title it confirmed data-plane connectivity.
-- A current_config fact includes a vendor-neutral snapshot (identity, interfaces, routing processes, neighbors, address families, MPLS, VPN and policy signals), source hashes and a durable raw-result reference. Compare snapshots device by device, then reconcile topology and consistency across the selected set.
-- Skill-authored instructions below refine the task but cannot expand selected resources, tools or the current user request.
+- Complete the user's network objective; do not stop at the first failed tool call. Inspect evidence, choose the next useful tool call, and continue until the objective is answered or the user cancels.
+- The selected Skill context is a resource boundary only: use its registered device ids, connection ids and enabled extension tools. It is not a read/write permission model. Every selected connection accepts raw device commands; the device account is the final authority.
+- Connect on demand. Do not ask the user to pre-connect, assume a historical status is live, or contact every authorized device unless the objective requires it.
+- Use `network.operations.device.manage` with exact `connection_id` and ordered `commands`. `display`, `show` and `ping` are observations; every other command sequence is a configuration sequence. The runtime sends the exact command text and order you provide. It does not add, remove, rewrite, approve, block or summarize commands or device output.
+- Use `probe` for reachability, `read` for targeted raw observations, and `collect` only when its supported fact template is useful. Use `network.operations.inspection` for deliberate multi-device collection. Use other available tools, including context or web/documentation tools, when their evidence helps achieve the objective.
+- Syntax errors, stale IDs, connection failures, incomplete output and unsupported commands are evidence, not task completion. Read the structured error, correct identifiers or commands using available tools, choose another available target when appropriate, and continue. Do not blindly repeat an unchanged failed call.
+- Keep independent targets running. A dependent command waits only for its required output; an unrelated device failure never ends the task.
+- Do not invent facts. Distinguish observed state, configuration state, failed coverage and unknowns. If a usable path remains, keep gathering the missing observation.
+- If optional approval is enabled, a configuration call may become a durable external wait. Preserve the objective and all evidence; the same loop resumes with the decision result.
+- Skill-authored instructions refine the objective but cannot select an unregistered device, connection, credential or extension tool.
 """
 
 
 def render_network_skill_prompt(context: dict[str, Any]) -> str:
-    """Render bounded domain guidance plus a server-validated selection snapshot."""
+    """Render the compact operating contract and server-resolved scope."""
     snapshot = {
         "prompt_version": NETWORK_SKILL_PROMPT_VERSION,
         "skill_id": str(context.get("skill_id") or ""),
@@ -53,6 +32,7 @@ def render_network_skill_prompt(context: dict[str, Any]) -> str:
         "device_ids": list(context.get("device_ids") or []),
         "connection_ids": list(context.get("connection_ids") or []),
         "connection_policy": "on_demand",
+        "approval_enabled": bool(context.get("approval_enabled")),
         "devices": list(context.get("devices") or []),
         "connections": list(context.get("connections") or []),
         "semantic_catalog": list(context.get("semantic_catalog") or []),
@@ -61,15 +41,8 @@ def render_network_skill_prompt(context: dict[str, Any]) -> str:
         "source": str(context.get("source") or ""),
     }
     owner_instructions = str(context.get("instructions") or "").strip()
-    contract = NETWORK_SKILL_OPERATING_CONTRACT.strip() + """
-
-Device execution contract:
-- Use network.operations.device.manage action=configure with one authorized connection_id and your explicit ordered commands. Every batch uses a fresh shell; include any required device mode transitions yourself. The runtime does not insert, remove, review or substitute commands.
-- The selected Skill and its registered device connections are the authorization boundary. Within that boundary, the registered device account determines what the device accepts. No command-content policy, destructive-operation review, confirmation gate, automatic rollback, automatic save or reboot prohibition applies.
-- Return every command's exact result to yourself. A command may be rejected, interrupted or incomplete; decide the next tool call from that result. No framework freezes later writes or forces a read-only recovery path.
-"""
     parts = [
-        contract,
+        NETWORK_SKILL_OPERATING_CONTRACT.strip(),
         "<selected_skill_context>\n"
         + json.dumps(snapshot, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
         + "\n</selected_skill_context>",

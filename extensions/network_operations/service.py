@@ -485,10 +485,13 @@ def test_connection(
             if not latest or latest.get("revision") != record.get("revision"):
                 raise ValueError("connection_changed_before_execution")
             if skill_id:
-                # Re-read the server-owned Skill scope before opening a socket.
+                # Re-read only the server-owned resource scope before opening
+                # a socket. A Skill does not grant a separate configure
+                # permission: every selected connection supports raw device
+                # commands and the device account decides their authority.
                 skill = get_skill(workspace_id, skill_id)
-                if not skill_allows_connection(skill, connection_id):
-                    raise ValueError("device_execution_not_allowed_by_skill")
+                if not skill_contains_connection(skill, connection_id):
+                    raise ValueError("connection_not_allowed_by_skill")
                 session_options = {"configure": True}
             remaining = timeout - (time.monotonic() - execution_started)
             if remaining <= 0:
@@ -736,7 +739,7 @@ def get_skill(workspace_id: str, skill_id: str) -> dict[str, Any] | None:
     return _with_skill_base_capability(record) if record else None
 
 
-def skill_allows_connection(skill: dict[str, Any] | None, connection_id: str) -> bool:
+def skill_contains_connection(skill: dict[str, Any] | None, connection_id: str) -> bool:
     return bool(
         skill and skill.get("enabled", True)
         and "network.operations.device.manage" in (skill.get("allowed_tool_ids") or [])
