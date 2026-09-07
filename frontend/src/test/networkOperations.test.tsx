@@ -68,6 +68,26 @@ test("operational context separates observations from explicitly confirmed refer
   })));
 });
 
+test("command feedback renders one row for duplicate driver commands during a rolling upgrade", async () => {
+  const original = vi.mocked(apiRequest).getMockImplementation();
+  vi.mocked(apiRequest).mockImplementation(async (request) => {
+    if (request.url?.endsWith("/context")) return {
+      observations: [], references: [], sources: [],
+      command_experience: [
+        { experience_id: "legacy-1", connection_id: "c1", driver_id: "h3c.comware", command: "display cpu-usage", status: "accepted", observations: 1, last_observed_at: "2026-09-06T00:00:00Z" },
+        { experience_id: "legacy-2", connection_id: "c2", driver_id: "h3c.comware", command: " DISPLAY   CPU-USAGE ", status: "accepted", observations: 1, last_observed_at: "2026-09-07T00:00:00Z" },
+      ],
+    } as never;
+    return original?.(request) as never;
+  });
+  render(<NetworkOperations />);
+  await screen.findByTestId("device-card-d1");
+  fireEvent.click(screen.getByRole("button", { name: /环境与证据/ }));
+  expect(screen.getAllByText(/DISPLAY\s+CPU-USAGE/i)).toHaveLength(1);
+  expect(screen.getByText("1 条")).toBeInTheDocument();
+  expect(screen.getByText(/2 次观察/)).toBeInTheDocument();
+});
+
 test("operational context exposes confirmed hard deletes", async () => {
   render(<><NetworkOperations /><ConfirmHost /></>);
   await screen.findByTestId("device-card-d1");

@@ -1608,11 +1608,22 @@ def record_command_experience(
         if not command:
             continue
         status = "accepted" if item.get("complete") and not item.get("error_code") and not item.get("truncated") else "rejected"
-        key = hashlib.sha256(f"{connection_id}|{driver_id}|{command}".encode()).hexdigest()[:24]
+        # Syntax feedback belongs to a driver command, not to one connection.
+        # Keeping a connection in the identity made the same `display` command
+        # appear once per device in the management UI and made a row deletion
+        # look ineffective.  Connection provenance remains an aggregated field.
+        key = _command_experience_id(driver_id, command)
         previous = _store(workspace_id).get("command_experience", key) or {}
+        previous_connections = {
+            str(value) for value in (previous.get("connection_ids") or []) if str(value)
+        }
+        if previous.get("connection_id"):
+            previous_connections.add(str(previous["connection_id"]))
+        previous_connections.add(str(connection_id))
         record = {
             "experience_id": key,
             "connection_id": connection_id,
+            "connection_ids": sorted(previous_connections),
             "driver_id": driver_id,
             "command": command,
             "status": status,
@@ -1627,6 +1638,23 @@ def record_command_experience(
     return recorded
 
 
+def _normalize_command_experience_command(command: str) -> str:
+    """One deterministic identity for command-feedback aggregation."""
+    return " ".join(str(command or "").split()).casefold()
+
+
+def _command_experience_id(driver_id: str, command: str) -> str:
+    normalized = _normalize_command_experience_command(command)
+    return hashlib.sha256(f"{str(driver_id or 'unknown').casefold()}|{normalized}".encode()).hexdigest()[:24]
+
+
+def _command_experience_connections(record: dict[str, Any]) -> set[str]:
+    values = {str(value) for value in (record.get("connection_ids") or []) if str(value)}
+    if record.get("connection_id"):
+        values.add(str(record["connection_id"]))
+    return values
+
+
 def list_command_experience(
     workspace_id: str,
     *,
@@ -1634,11 +1662,41 @@ def list_command_experience(
     limit: int = 80,
 ) -> list[dict[str, Any]]:
     allowed = None if connection_ids is None else {str(item) for item in connection_ids if str(item)}
-    records = _store(workspace_id).list("command_experience", limit=max(1, min(limit, 500)))
-    if allowed is not None:
-        records = [item for item in records if str(item.get("connection_id") or "") in allowed]
-    records.sort(key=lambda item: str(item.get("last_observed_at") or ""), reverse=True)
-    return records[:limit]
+    # Aggregate before applying the display limit.  Otherwise a legacy duplicate
+    # near the page boundary could hide a different command altogether.
+    records = _store(workspace_id).list("command_experience", limit=INTERNAL_SCAN_LIMIT)
+    grouped: dict[str, dict[str, Any]] = {}
+    for item in records:
+        if not isinstance(item, dict):
+            continue
+        connections = _command_experience_connections(item)
+        if allowed is not None and not connections.intersection(allowed):
+            continue
+        driver_id = str(item.get("driver_id") or "unknown")
+        command = str(item.get("command") or "").strip()
+        if not command:
+            continue
+        experience_id = _command_experience_id(driver_id, command)
+        current = grouped.get(experience_id)
+        observed_at = str(item.get("last_observed_at") or "")
+        if current is None:
+            current = {
+                **item,
+                "experience_id": experience_id,
+                "connection_ids": sorted(connections),
+                "observations": 0,
+            }
+            grouped[experience_id] = current
+        else:
+            current["connection_ids"] = sorted(set(current.get("connection_ids") or []).union(connections))
+            if observed_at >= str(current.get("last_observed_at") or ""):
+                # Latest real device outcome remains the advisory status.
+                current.update({key: value for key, value in item.items() if key not in {"experience_id", "observations", "connection_ids"}})
+                current["experience_id"] = experience_id
+        current["observations"] = int(current.get("observations") or 0) + int(item.get("observations") or 0)
+    result = list(grouped.values())
+    result.sort(key=lambda item: str(item.get("last_observed_at") or ""), reverse=True)
+    return result[:limit]
 
 
 def record_inspection_observation(workspace_id: str, task: dict[str, Any]) -> dict[str, Any]:
@@ -1738,8 +1796,27 @@ def delete_reference(workspace_id: str, reference_id: str) -> bool:
 
 @_connection_transaction
 def delete_command_experience(workspace_id: str, experience_id: str) -> bool:
-    """Hard-delete one advisory command-feedback record."""
-    return _store(workspace_id).delete("command_experience", experience_id)
+    """Hard-delete a command feedback identity, including legacy duplicates."""
+    store = _store(workspace_id)
+    selected = store.get("command_experience", experience_id) or {}
+    selected_identity = ""
+    if selected:
+        selected_identity = _command_experience_id(
+            str(selected.get("driver_id") or "unknown"),
+            str(selected.get("command") or ""),
+        )
+    deleted = False
+    for record in store.list("command_experience", limit=INTERNAL_SCAN_LIMIT):
+        if not isinstance(record, dict):
+            continue
+        record_id = str(record.get("experience_id") or "")
+        identity = _command_experience_id(
+            str(record.get("driver_id") or "unknown"),
+            str(record.get("command") or ""),
+        )
+        if record_id == experience_id or identity == experience_id or (selected_identity and identity == selected_identity):
+            deleted = store.delete("command_experience", record_id) or deleted
+    return deleted
 
 
 @_connection_transaction

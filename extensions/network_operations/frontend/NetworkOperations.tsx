@@ -12,7 +12,7 @@ type Connection = { connection_id: string; device_id: string; name?: string; pro
 type Skill = { skill_id: string; name: string; description: string; instructions?: string; enabled: boolean; approval_enabled?: boolean; device_ids: string[]; connection_ids: string[]; allowed_tool_ids: string[] };
 type Observation = { observation_id: string; source_id: string; observed_at: string; completeness: string; target_ids: string[]; candidate_reference_id?: string };
 type OperationalReference = { reference_id: string; name: string; state: "candidate" | "confirmed" | "superseded" | "invalidated"; authority: string; current: boolean; completeness: string; target_ids: string[]; updated_at: string };
-type CommandExperience = { experience_id: string; connection_id: string; driver_id: string; command: string; status: "accepted" | "rejected"; observations: number; last_observed_at: string };
+type CommandExperience = { experience_id: string; connection_id: string; connection_ids?: string[]; driver_id: string; command: string; status: "accepted" | "rejected"; observations: number; last_observed_at: string };
 type EvidenceSource = { source_id: string; kind: string; available: boolean; authority: string; advisory_only?: boolean };
 type OperationalContext = { observations: Observation[]; references: OperationalReference[]; command_experience: CommandExperience[]; sources: EvidenceSource[] };
 type DeviceForm = Omit<Device, "device_id"> & { device_id?: string };
@@ -46,6 +46,28 @@ const sourceKindLabels: Record<string, string> = {
   syntax_feedback: "设备语法经验",
 };
 const displayTime = (value: string) => value ? new Date(value).toLocaleString("zh-CN", { hour12: false }) : "时间未知";
+
+// The service returns a canonical list, but retain this UI-side guard for a
+// rolling upgrade or a stale proxy response: one driver command is one row.
+const dedupeCommandExperience = (items: CommandExperience[]): CommandExperience[] => {
+  const grouped = new Map<string, CommandExperience>();
+  for (const item of items) {
+    const command = item.command.trim().replace(/\s+/g, " ").toLocaleLowerCase();
+    const identity = `${item.driver_id.trim().toLocaleLowerCase()}|${command}`;
+    const current = grouped.get(identity);
+    if (!current) {
+      grouped.set(identity, { ...item, connection_ids: [...new Set([...(item.connection_ids || []), item.connection_id].filter(Boolean))] });
+      continue;
+    }
+    const latest = item.last_observed_at >= current.last_observed_at ? item : current;
+    grouped.set(identity, {
+      ...latest,
+      observations: current.observations + item.observations,
+      connection_ids: [...new Set([...(current.connection_ids || []), current.connection_id, ...(item.connection_ids || []), item.connection_id].filter(Boolean))],
+    });
+  }
+  return [...grouped.values()].sort((left, right) => right.last_observed_at.localeCompare(left.last_observed_at));
+};
 
 export default function NetworkOperations() {
   const workspaceId = useSessionStore((state) => state.currentWorkspaceId);
@@ -83,7 +105,7 @@ export default function NetworkOperations() {
     setDevices(deviceResult.devices || []);
     setConnections(connectionResult.connections || []);
     setSkills(skillResult.skills || []);
-    setOperationalContext({ observations: contextResult.observations || [], references: contextResult.references || [], command_experience: contextResult.command_experience || [], sources: contextResult.sources || [] });
+    setOperationalContext({ observations: contextResult.observations || [], references: contextResult.references || [], command_experience: dedupeCommandExperience(contextResult.command_experience || []), sources: contextResult.sources || [] });
   }, [workspaceId]);
 
   useEffect(() => { void load().catch(() => setNotice("数据加载失败，请检查服务。")); }, [load]);

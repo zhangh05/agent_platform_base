@@ -221,7 +221,10 @@ def register_routes(app):
         ws = _workspace()
         if not ws:
             return jsonify({"ok": False, "error": "workspace_id is required"}), 400
-        return jsonify({"ok": True, "deleted": service.delete_command_experience(ws, experience_id)})
+        deleted = service.delete_command_experience(ws, experience_id)
+        if not deleted:
+            return jsonify({"ok": False, "error": "command_experience_not_found"}), 404
+        return jsonify({"ok": True, "deleted": True})
 
     @app.route("/api/extensions/network.operations/scripts", methods=["GET", "POST"])
     def network_inspection_scripts():

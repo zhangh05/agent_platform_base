@@ -404,6 +404,47 @@ def test_hard_delete_context_records_removes_only_model_context(monkeypatch, tmp
     assert service.list_command_experience("default") == []
 
 
+def test_command_feedback_is_unique_across_devices_and_deletes_legacy_duplicates(monkeypatch, tmp_path):
+    _setup(monkeypatch, tmp_path)
+    first = _register_connection("default", {
+        "name": "R1", "host": "10.0.0.1", "protocol": "telnet", "vendor": "h3c",
+    })
+    second = _register_connection("default", {
+        "name": "R2", "host": "10.0.0.2", "protocol": "telnet", "vendor": "h3c",
+    })
+    outcome = {
+        "device_profile": {"driver_id": "h3c.comware"},
+        "command_results": [{"command": "display cpu-usage", "complete": True, "error_code": "", "truncated": False}],
+    }
+    first_record = service.record_command_experience("default", first["connection_id"], outcome)[0]
+    second_record = service.record_command_experience("default", second["connection_id"], {
+        **outcome,
+        "command_results": [{"command": " DISPLAY   CPU-USAGE ", "complete": True, "error_code": "", "truncated": False}],
+    })[0]
+    assert first_record["experience_id"] == second_record["experience_id"]
+
+    # Simulate a physical row created before the canonical identity migration.
+    service._store("default").save("command_experience", "legacy_cpu_usage", {
+        "experience_id": "legacy_cpu_usage",
+        "connection_id": second["connection_id"],
+        "driver_id": "h3c.comware",
+        "command": "display cpu-usage",
+        "status": "accepted",
+        "observations": 1,
+        "last_observed_at": "2026-09-07T00:00:00Z",
+        "advisory_only": True,
+    })
+
+    listed = service.list_command_experience("default")
+    assert len(listed) == 1
+    assert listed[0]["experience_id"] == first_record["experience_id"]
+    assert listed[0]["observations"] == 3
+    assert set(listed[0]["connection_ids"]) == {first["connection_id"], second["connection_id"]}
+
+    assert service.delete_command_experience("default", listed[0]["experience_id"]) is True
+    assert service.list_command_experience("default") == []
+
+
 def test_device_manage_syntax_rejection_returns_model_guidance_without_runtime_call(monkeypatch, tmp_path):
     _setup(monkeypatch, tmp_path)
     connection = _register_connection("default", {
