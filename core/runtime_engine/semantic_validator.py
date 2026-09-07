@@ -386,7 +386,7 @@ class SemanticValidator:
 
         # Path access is ultimately enforced by the resource-owning handler.
         # This layer only validates published tool schemas and must not impose
-        # a second command/path risk policy.
+        # command or path policy beyond the resource-owning handler.
 
     def _validate_reference_kinds(
         self,

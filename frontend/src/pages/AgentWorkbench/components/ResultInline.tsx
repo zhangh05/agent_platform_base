@@ -337,7 +337,7 @@ export const ResultInline = memo(function ResultInline({
                 </div>
               ) : actionCount > 0 ? (
                 <div className="action-trace-note">
-                  本轮没有触发自动重试；危险命令和有副作用动作不会自动重试。
+                  本轮没有触发自动重试；后续动作由模型根据完整结果决定。
                 </div>
               ) : (
                 <div className="action-trace-note">

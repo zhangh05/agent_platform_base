@@ -1,8 +1,8 @@
 """Domain-neutral registry of materially different recovery strategies.
 
 Strategies are planning affordances, never executable authority.  The model
-may select one, while normal schemas, authorization, risk policy and budgets
-still decide whether the resulting canonical tool call can run.
+may select one, while normal schemas, Skill scope and runtime capacity still
+decide whether the resulting canonical tool call can run.
 """
 
 from __future__ import annotations
