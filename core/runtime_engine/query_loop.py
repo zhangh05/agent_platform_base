@@ -3267,7 +3267,7 @@ class QueryLoop:
 
         failures = []
         child_failed = False
-        for result in failed_results[:6]:
+        for result in failed_results:
             output = result.output if isinstance(result.output, dict) else {}
             if (
                 str(result.tool_name or "").replace("__", ".") == "agent.manage"
@@ -3275,8 +3275,8 @@ class QueryLoop:
             ):
                 child_failed = True
             failures.append({
-                "tool_id": str(result.tool_name or "tool")[:160],
-                "error": str(result.error or "tool returned failure").replace("\n", " ")[:240],
+                "tool_id": str(result.tool_name or "tool"),
+                "error": str(result.error or "tool returned failure").replace("\n", " "),
             })
         failure_data = _escape_data(json.dumps(
             failures,

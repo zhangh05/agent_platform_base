@@ -388,6 +388,32 @@ def test_malformed_model_connection_id_is_a_recoverable_not_found_result(monkeyp
     assert result == {"ok": False, "error": "connection_not_found", "connection_id": "/"}
 
 
+def test_visible_connection_id_suffix_resolves_to_its_canonical_skill_connection(monkeypatch, tmp_path):
+    _setup(monkeypatch, tmp_path)
+    connection = _register_connection("default", {
+        "name": "PE1", "host": "10.0.0.1", "protocol": "telnet", "vendor": "h3c",
+    })
+    skill = service.save_skill("default", {
+        "name": "配置 Skill", "device_ids": [connection["device_id"]],
+        "connection_ids": [connection["connection_id"]],
+    })
+    seen = {}
+    monkeypatch.setattr(service, "probe_target", lambda _target, **kwargs: seen.update(kwargs) or {
+        "ok": True, "configuration_ok": True,
+    })
+
+    visible_id = connection["connection_id"].removeprefix("connection_")
+    result = device_manage(SimpleNamespace(
+        workspace_id="default", skill=skill["skill_id"],
+        skill_connection_ids=(connection["connection_id"],),
+        arguments={"action": "configure", "connection_id": visible_id, "commands": ["system-view", "return"]},
+    ))
+
+    assert result["ok"] is True
+    assert seen["configure"] is True
+    assert service.get_connection("default", visible_id)["connection_id"] == connection["connection_id"]
+
+
 def test_hard_delete_context_records_removes_only_model_context(monkeypatch, tmp_path):
     _setup(monkeypatch, tmp_path)
     connection = _register_connection("default", {

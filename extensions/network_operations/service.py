@@ -401,12 +401,29 @@ def list_connections(workspace_id: str, *, device_id: str = "") -> list[dict[str
 
 
 def get_connection(workspace_id: str, connection_id: str, *, include_secret: bool = False) -> dict[str, Any] | None:
-    try:
-        record = _store(workspace_id).get("connections", connection_id)
-    except ValueError:
-        # A malformed or stale id is semantically indistinguishable from an
-        # absent connection to the caller; return a structured tool outcome.
+    """Return a connection by its canonical id or an unambiguous visible suffix.
+
+    Connection records deliberately use a namespaced canonical id such as
+    ``connection_2f64b1865839``. Operators and models frequently retain the
+    visible suffix instead. Requiring them to reconstruct the namespace turns
+    a valid selected connection into a false ``connection_not_found`` outcome.
+    Accept the suffix only when it identifies exactly one registered record;
+    ambiguity remains a miss rather than silently choosing a device.
+    """
+    requested_id = str(connection_id or "").strip()
+    if not requested_id:
         return None
+    try:
+        record = _store(workspace_id).get("connections", requested_id)
+    except ValueError:
+        record = None
+    if not record:
+        suffix = requested_id.removeprefix("connection_")
+        matches = [
+            item for item in _raw_connections(workspace_id)
+            if str(item.get("connection_id") or "").removeprefix("connection_") == suffix
+        ]
+        record = matches[0] if len(matches) == 1 else None
     if not record:
         return None
     return record if include_secret else _public_connection(record)
@@ -455,6 +472,9 @@ def test_connection(
         record = get_connection(workspace_id, connection_id, include_secret=True)
         if not record:
             return {"ok": False, "error": "connection_not_found"}
+        # ``get_connection`` may have resolved an unambiguous visible suffix.
+        # All state writes and Skill checks must use the stored canonical id.
+        connection_id = str(record.get("connection_id") or connection_id)
         probe_id = uuid.uuid4().hex
         record["probe_id"] = probe_id
         _store(workspace_id).save("connections", connection_id, record)

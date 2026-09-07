@@ -337,6 +337,9 @@ def device_manage(invocation):
     connection = service.get_connection(invocation.workspace_id, connection_id)
     if not connection:
         return {"ok": False, "error": "connection_not_found", "connection_id": connection_id}
+    # Resolve a visible suffix to the server-owned canonical identifier before
+    # applying Skill scope and executing the connection lifecycle.
+    connection_id = str(connection.get("connection_id") or connection_id)
     if getattr(invocation, "skill", None):
         skill = service.get_skill(invocation.workspace_id, str(invocation.skill))
         if not skill or connection_id not in set(skill.get("connection_ids") or []):
