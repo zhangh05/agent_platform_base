@@ -56,39 +56,17 @@ class BudgetController:
         return BudgetStatus(ok=True, elapsed_total_ms=elapsed)
 
     def check_llm_call(self) -> BudgetStatus:
-        """Check budget before an LLM call. Inspect limits first, only
-        increment the counter when the call is permitted."""
+        """Record an LLM call; counters are telemetry, never loop gates."""
         elapsed = (time.monotonic() - self._start_time) * 1000
-        total_limit_ms = self._budget.max_total_seconds * 1000
-
-        if total_limit_ms > 0 and elapsed > total_limit_ms:
-            return BudgetStatus(
-                ok=False, exceeded="TOTAL_TIME_EXCEEDED",
-                elapsed_total_ms=elapsed, llm_calls_used=self._llm_calls,
-            )
-
-        if self._budget.max_llm_calls > 0 and self._llm_calls >= self._budget.max_llm_calls:
-            return BudgetStatus(
-                ok=False, exceeded="LLM_CALLS_EXCEEDED",
-                elapsed_total_ms=elapsed, llm_calls_used=self._llm_calls,
-            )
-
         self._llm_calls += 1
         return BudgetStatus(ok=True, elapsed_total_ms=elapsed, llm_calls_used=self._llm_calls)
 
     def check_execution(self) -> BudgetStatus:
         """Check budget mid-execution."""
         elapsed = (time.monotonic() - self._start_time) * 1000
-        total_limit_ms = self._budget.max_total_seconds * 1000
-        tool_limit_ms = self._budget.max_tool_seconds * 1000
         tool_elapsed = self._tool_elapsed_ms
         if self._tool_stage_started_at is not None:
             tool_elapsed += (time.monotonic() - self._tool_stage_started_at) * 1000
-
-        if total_limit_ms > 0 and elapsed > total_limit_ms:
-            return BudgetStatus(ok=False, exceeded="TOTAL_TIME_EXCEEDED", elapsed_total_ms=elapsed)
-        if tool_limit_ms > 0 and tool_elapsed > tool_limit_ms:
-            return BudgetStatus(ok=False, exceeded="TOOL_TIME_EXCEEDED", elapsed_total_ms=elapsed)
 
         return BudgetStatus(ok=True, elapsed_total_ms=elapsed)
 
@@ -107,24 +85,6 @@ class BudgetController:
         node_count = max(0, int(node_count))
         depth = max(0, int(depth))
         parallel_width = max(0, int(parallel_width))
-        if self._budget.max_nodes > 0 and self._nodes_used + node_count > self._budget.max_nodes:
-            return BudgetStatus(
-                ok=False, exceeded="TOOL_NODES_EXCEEDED",
-                elapsed_total_ms=status.elapsed_total_ms,
-                nodes_used=self._nodes_used,
-            )
-        if depth > self._budget.max_depth:
-            return BudgetStatus(
-                ok=False, exceeded="TOOL_DEPTH_EXCEEDED",
-                elapsed_total_ms=status.elapsed_total_ms,
-                nodes_used=self._nodes_used,
-            )
-        if parallel_width > self._budget.max_parallel_width:
-            return BudgetStatus(
-                ok=False, exceeded="TOOL_PARALLEL_WIDTH_EXCEEDED",
-                elapsed_total_ms=status.elapsed_total_ms,
-                nodes_used=self._nodes_used,
-            )
         self._nodes_used += node_count
         return BudgetStatus(
             ok=True,
@@ -134,20 +94,11 @@ class BudgetController:
 
     def remaining_execution_seconds(self) -> float:
         """Return active aggregate time remaining, or infinity when unbounded."""
-        remaining: list[float] = []
-        if self._budget.max_total_seconds > 0:
-            remaining.append(self._budget.max_total_seconds * 1000 - self.elapsed_ms())
-        if self._budget.max_tool_seconds > 0:
-            remaining.append(self._budget.max_tool_seconds * 1000 - self.tool_elapsed_ms)
-        if not remaining:
-            return float("inf")
-        return max(0.0, min(remaining) / 1000.0)
+        return float("inf")
 
     def remaining_node_capacity(self) -> int:
         """Return how many execution nodes may still be reserved this turn."""
-        if self._budget.max_nodes <= 0:
-            return 2_147_483_647
-        return max(0, int(self._budget.max_nodes) - int(self._nodes_used))
+        return 2_147_483_647
 
     def begin_execution(self) -> None:
         """Start a tool stage without charging prior LLM/context time."""

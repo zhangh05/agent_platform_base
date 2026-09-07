@@ -39,7 +39,7 @@ tool id -> manifest -> caller gate -> policy / authorization
 
 ## 目标驱动恢复
 
-可恢复的只读失败会形成受限的恢复目标。模型可通过 `plan_goal_ids` 关联替代调用，但关联本身不是完成证据；运行时仍校验能力、资源身份以及 evidence kind、fact、target。只有成功且终止的只读观察可关闭目标。通用恢复预算包含原始失败；每个领域证据目标分别维护最终重规划预算，`passed` 与 `blocked` 不会被后续投影重新打开。预算耗尽后系统收敛为 `partial` 或 `blocked`，不会无限重试。
+可恢复的只读失败会形成恢复目标。模型可通过 `plan_goal_ids` 关联替代调用，但关联本身不是完成证据；运行时仍校验能力、资源身份以及 evidence kind、fact、target。只有成功且终止的只读观察可关闭目标。恢复次数只记录为可观测性，不构成终止条件；参数失败、连接异常、命令数量、工具节点和模型轮次都不会由运行时把 Agent 收敛为 `partial` 或 `blocked`。
 
 平台仍支持领域无关的 `runtime_recoveries` 只读证据合同；每项必须完整声明 kind、tool、arguments 和证据目标，且不能借此授权新工具、资源、凭据或写操作。网络扩展不使用该合同替模型选择命令：CLI 语法拒绝只产生 `model_recovery_guidance`，下一轮由模型在新命令、显式语义采集、权威文档或报告未知之间自主决定。
 

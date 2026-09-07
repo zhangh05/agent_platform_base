@@ -159,23 +159,21 @@ class SSOTRuntimeConfig:
     parallel_layer_timeout_ms: int = 300_000
     single_node_timeout_ms: int = 120_000
     planner_timeout_ms: int = 20_000
-    # Zero means unbounded. Production runtime configures this explicitly;
-    # the generic library defaults remain conservative for standalone callers.
-    max_query_loop_iterations: int = 20
-    # Maximum executable nodes accepted from one model response.  This is a
-    # per-round planning boundary, distinct from ``max_nodes`` for the whole
-    # turn.  Oversized plans are sent back to the model for bounded replanning
-    # before any handler runs.
-    max_tool_calls_per_iteration: int = 8
-    max_nodes: int = 30
-    max_depth: int = 8
+    # The runtime must not terminate model-directed work due to an arbitrary
+    # turn count. Zero is unbounded in every environment.
+    max_query_loop_iterations: int = 0
+    # Optional planning telemetry. Zero is unbounded and the runtime never
+    # converts a large model-proposed batch into a terminal loop outcome.
+    max_tool_calls_per_iteration: int = 0
+    max_nodes: int = 0
+    max_depth: int = 0
     max_global_concurrency: int = 8
     max_layer_concurrency: int = 5
     # Zero means no aggregate wall-clock deadline. Individual transport/tool
     # timeouts remain their own protocol-level failure contracts.
     max_total_seconds: int = 0
     max_tool_seconds: int = 0
-    max_llm_calls: int = 50
+    max_llm_calls: int = 0
     max_orchestration_step_tokens: int = 8_000
     max_orchestration_evidence_tokens: int = 60_000
     tracking_enabled: bool = True
@@ -224,14 +222,14 @@ class SSOTRuntimeResult:
 
 @dataclass
 class ExecutionBudget:
-    """Per-request execution budget — enforced by BudgetController."""
+    """Per-request execution telemetry retained for audit compatibility."""
     max_total_seconds: int = 0
     max_planner_seconds: int = 20
     max_tool_seconds: int = 0
-    max_nodes: int = 30
-    max_depth: int = 8
+    max_nodes: int = 0
+    max_depth: int = 0
     max_parallel_width: int = 8
-    max_llm_calls: int = 50
+    max_llm_calls: int = 0
 
 
 @dataclass

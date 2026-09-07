@@ -192,7 +192,7 @@ def test_side_effecting_success_cannot_satisfy_read_recovery_goal():
     assert ctx.extras["recovery_goals"][0]["status"] == "pending"
 
 
-def test_three_linked_failures_block_goal_instead_of_looping_forever():
+def test_linked_failures_keep_goal_open_for_model_replanning():
     ctx = _ctx()
     first = LLMToolCall(id="one", name="web.manage", arguments={"action": "search", "query": "one"})
     observe_tool_round(ctx, [first], [_result("one", ok=False, error="failed")], is_read_only_call=lambda _call: True)
@@ -204,12 +204,12 @@ def test_three_linked_failures_block_goal_instead_of_looping_forever():
         )
         observe_tool_round(ctx, [call], [_result(call_id, ok=False, error="failed differently")], is_read_only_call=lambda _call: True)
 
-    assert goal_loop_summary(ctx)["status"] == "blocked"
-    assert evaluate_goal_assertions(ctx, [])["status"] == "failed"
-    assert recovery_final_gate(ctx, []).should_continue is False
+    assert goal_loop_summary(ctx)["status"] == "pending"
+    assert evaluate_goal_assertions(ctx, [])["status"] == "unknown"
+    assert recovery_final_gate(ctx, []).should_continue is True
 
 
-def test_typed_evidence_goal_becomes_blocked_when_replan_budget_is_exhausted():
+def test_typed_evidence_goal_remains_open_without_replan_budget():
     ctx = _ctx()
     install_recovery_goal(ctx, {
         "goal": {
@@ -224,13 +224,13 @@ def test_typed_evidence_goal_becomes_blocked_when_replan_budget_is_exhausted():
             "fact": "status", "status": "unavailable",
         }]}, ok=False, error="unavailable",
     )
-    assert recovery_final_gate(ctx, [unavailable], max_replans=1).should_continue is True
-    assert recovery_final_gate(ctx, [unavailable], max_replans=1).should_continue is False
-    assert ctx.extras["recovery_goals"][0]["status"] == "blocked"
-    assert goal_loop_summary(ctx)["status"] == "blocked"
+    assert recovery_final_gate(ctx, [unavailable]).should_continue is True
+    assert recovery_final_gate(ctx, [unavailable]).should_continue is True
+    assert ctx.extras["recovery_goals"][0]["status"] == "pending"
+    assert goal_loop_summary(ctx)["status"] == "pending"
 
 
-def test_blocked_typed_goal_is_terminal_and_does_not_reopen():
+def test_legacy_blocked_typed_goal_is_reopened_for_continued_recovery():
     ctx = _ctx()
     install_recovery_goal(ctx, {
         "goal": {"evidence_kind": "live_fact", "target": {"resource_id": "r1"}, "fact": "status"},
@@ -238,9 +238,9 @@ def test_blocked_typed_goal_is_terminal_and_does_not_reopen():
     goal = ctx.extras["recovery_goals"][0]
     goal["status"] = "blocked"
 
-    assert recovery_final_gate(ctx, []).should_continue is False
+    assert recovery_final_gate(ctx, []).should_continue is True
     assert goal["status"] == "blocked"
-    assert recovery_final_gate(ctx, []).should_continue is False
+    assert recovery_final_gate(ctx, []).should_continue is True
     assert goal["status"] == "blocked"
 
 
@@ -249,7 +249,7 @@ def test_replan_budget_is_independent_for_new_recovery_goals():
     install_recovery_goal(ctx, {
         "goal": {"goal_id": "g1", "evidence_kind": "live_fact", "target": {"resource_id": "r1"}, "fact": "status"},
     }, source_call_id="source-1")
-    assert recovery_final_gate(ctx, [], max_replans=1).should_continue is True
+    assert recovery_final_gate(ctx, []).should_continue is True
     proof = StreamingToolResult(
         tool_name="system.manage", call_id="proof", output={"evidence_claims": [{
             "evidence_kind": "live_fact", "target": {"resource_id": "r1"},
@@ -260,7 +260,7 @@ def test_replan_budget_is_independent_for_new_recovery_goals():
         "goal": {"goal_id": "g2", "evidence_kind": "live_fact", "target": {"resource_id": "r2"}, "fact": "status"},
     }, source_call_id="source-2")
 
-    gate = recovery_final_gate(ctx, [proof], max_replans=1)
+    gate = recovery_final_gate(ctx, [proof])
     assert gate.should_continue is True
     assert [item["goal_id"] for item in gate.unresolved] == ["g2"]
 

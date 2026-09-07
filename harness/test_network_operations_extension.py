@@ -14,7 +14,6 @@ from extensions.network_operations.backend import (
     skills_read,
 )
 from extensions.network_operations.device_tools import (
-    MAX_READ_ONLY_COMMANDS,
     is_read_only_command as device_is_read_only_command,
     normalize_read_only_commands,
     resolve_source_address,
@@ -380,6 +379,15 @@ def test_command_experience_is_advisory_and_scoped(monkeypatch, tmp_path):
     assert empty_scope["command_experience"] == []
 
 
+def test_malformed_model_connection_id_is_a_recoverable_not_found_result(monkeypatch, tmp_path):
+    _setup(monkeypatch, tmp_path)
+    result = device_manage(SimpleNamespace(
+        workspace_id="default", skill=None,
+        arguments={"action": "read", "connection_id": "/", "commands": ["display version"]},
+    ))
+    assert result == {"ok": False, "error": "connection_not_found", "connection_id": "/"}
+
+
 def test_hard_delete_context_records_removes_only_model_context(monkeypatch, tmp_path):
     _setup(monkeypatch, tmp_path)
     connection = _register_connection("default", {
@@ -678,14 +686,9 @@ def test_read_only_command_boundary_requires_an_array_and_matches_vendor():
         assert normalize_read_only_commands(starter["commands"], starter["vendors"][0]) == starter["commands"]
 
 
-def test_read_only_command_limit_is_shared_and_enforced():
-    commands = ["display version"] * (MAX_READ_ONLY_COMMANDS + 1)
-    try:
-        service.commands_for({"vendor": "h3c"}, commands)
-    except ValueError as exc:
-        assert "1 to 20" in str(exc)
-    else:
-        raise AssertionError("command count above the shared limit must fail")
+def test_read_only_command_batches_have_no_artificial_limit_and_deduplicate():
+    commands = ["display version"] * 64 + ["show version"]
+    assert service.commands_for({"vendor": "h3c"}, commands) == ["display version", "show version"]
 
 
 def test_device_and_skill_catalog_use_current_entities(monkeypatch, tmp_path):

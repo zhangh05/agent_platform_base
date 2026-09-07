@@ -8,7 +8,7 @@
 {
   "workflow_id": "readonly_inspection",
   "name": "批量只读巡检",
-  "failure_policy": "fail_fast",
+  "failure_policy": "continue",
   "nodes": [{
     "node_id": "inspect",
     "tool_id": "network.operations.inspection",
@@ -17,13 +17,13 @@
 }
 ```
 
-节点 ID 唯一，依赖必须存在且无环；引用只能读取传递依赖的输出。定义包含 1–30 个节点，单节点解析后的输入上限为 1 MiB。密码、token、私钥和授权字段不得作为持久化定义的一部分。
+节点 ID 唯一，依赖必须存在且无环；引用只能读取传递依赖的输出。节点数量不设运行时终止上限；单节点解析后的输入上限为 1 MiB。密码、token、私钥和授权字段不得作为持久化定义的一部分。
 
 ## 执行语义
 
-独立只读节点在并发上限内执行；写入和其他有副作用节点形成顺序屏障。结果按稳定的节点顺序记录。`POST /api/workflows/<workflow_id>/runs` 默认同步执行，设置 `enqueue: true` 后创建 durable `workflow_run` 作业。
+独立只读节点在并发上限内执行；写入和其他有副作用节点形成顺序屏障。某个节点失败只写入该节点的完整结果；没有依赖该结果的后续节点仍会执行，声明依赖失败结果的节点则标记为依赖不可用。结果按稳定的节点顺序记录。`POST /api/workflows/<workflow_id>/runs` 默认同步执行，设置 `enqueue: true` 后创建 durable `workflow_run` 作业。
 
-worker 队列是 at-least-once。涉及外部写入的 handler 必须使用作业 ID 与节点 ID 构造幂等键。工作流的 `failure_policy` 仅管理 DAG 节点，不创建第二套 LLM 失败恢复机制，也不会自动重放写操作。
+worker 队列是 at-least-once。涉及外部写入的 handler 必须使用作业 ID 与节点 ID 构造幂等键。工作流固定使用 `continue` 语义，不创建第二套 LLM 失败恢复机制，也不会自动重放写操作。
 
 ## 与对话运行时的关系
 

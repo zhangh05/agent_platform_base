@@ -179,9 +179,6 @@ def _build_cached_tool_definitions(tool_registry: dict) -> list[dict]:
     return tools
 
 
-MAX_VALIDATION_CORRECTION_ROUNDS = 3
-MAX_BATCH_REPLAN_ROUNDS = 2
-
 _PRIORITY_OUTPUT_KEYS = (
     "ok", "status", "task_id", "coverage_status", "analysis_projection",
     "tracking", "progress", "done", "task",
@@ -482,7 +479,7 @@ class StreamingToolExecutor:
             for index, layer in enumerate(layers, start=1)
         }
         if budget is not None:
-            reservation = budget.reserve_execution_batch(
+            budget.reserve_execution_batch(
                 node_count=len(tool_calls),
                 depth=max(
                     (step_depths[step_id] for step_id in calls_by_step),
@@ -500,21 +497,6 @@ class StreamingToolExecutor:
                     default=0,
                 ) or min(1, len(tool_calls)),
             )
-            if not reservation.ok:
-                error = reservation.exceeded or "BUDGET_EXCEEDED"
-                return [StreamingToolResult(
-                    tool_name=tc.name,
-                    call_id=tc.id,
-                    output={
-                        "ok": False,
-                        "executed": False,
-                        "retryable": False,
-                        "error_code": error,
-                        "error": f"execution budget rejected tool batch: {error}",
-                    },
-                    ok=False,
-                    error=error,
-                ) for tc in tool_calls]
 
         if self._emitter:
             self._emitter.emit("orchestration_planned", {
@@ -527,7 +509,6 @@ class StreamingToolExecutor:
 
         evidence: dict[str, StepEvidence] = dict(prior)
         result_by_id: dict[str, StreamingToolResult] = {}
-        stop_requested = False
         executed_parallel_steps_by_layer: dict[int, set[str]] = {
             index: set() for index in range(1, len(layers) + 1)
         }
@@ -542,27 +523,6 @@ class StreamingToolExecutor:
             runnable: list[LLMToolCall] = []
             for step_id in layer:
                 tc = calls_by_step[step_id]
-                if stop_requested:
-                    error = "execution stopped by an earlier failed step"
-                    result = StreamingToolResult(
-                        tool_name=tc.name, call_id=tc.id,
-                        output={"ok": False, "executed": False,
-                                "error_code": "PLAN_STOPPED", "error": error,
-                                "_orchestration": {
-                                    "step_id": step_id, "depends_on": list(tc.depends_on),
-                                    "layer": layer_index, "parallel": False,
-                                    "failure_policy": tc.failure_policy,
-                                }},
-                        ok=False, error=error,
-                    )
-                    result_by_id[tc.id] = result
-                    evidence[step_id] = StepEvidence(
-                        step_id, tc.id, tc.name, False, result.output, error,
-                        str((tc.arguments or {}).get("action") or ""),
-                    )
-                    if tc.failure_policy == "stop":
-                        stop_requested = True
-                    continue
                 failed_dependencies = [
                     dep for dep in tc.depends_on
                     if dep in evidence and not evidence[dep].ok
@@ -608,8 +568,6 @@ class StreamingToolExecutor:
                         step_id, tc.id, tc.name, False, result.output, str(exc),
                         str((tc.arguments or {}).get("action") or ""),
                     )
-                    if tc.failure_policy == "stop":
-                        stop_requested = True
                     continue
                 binding_error = self._validate_resolved_call(tc, resolved_args)
                 if binding_error:
@@ -634,8 +592,6 @@ class StreamingToolExecutor:
                         step_id, tc.id, tc.name, False, result.output, binding_error,
                         str((tc.arguments or {}).get("action") or ""),
                     )
-                    if tc.failure_policy == "stop":
-                        stop_requested = True
                     continue
                 runnable.append(LLMToolCall(
                     id=tc.id, name=tc.name, arguments=resolved_args,
@@ -645,31 +601,6 @@ class StreamingToolExecutor:
                     goal_ids=list(tc.goal_ids),
                 ))
 
-            if stop_requested and runnable:
-                # A stop-policy failure was discovered while validating this
-                # layer. No queued call has started yet, so fail closed rather
-                # than letting an earlier runnable sibling cross the barrier.
-                for tc in runnable:
-                    step_id = str(tc.step_id or tc.id)
-                    error = "execution stopped by a failed step in this layer"
-                    result = StreamingToolResult(
-                        tool_name=tc.name, call_id=tc.id,
-                        output={"ok": False, "executed": False,
-                                "error_code": "PLAN_STOPPED", "error": error,
-                                "_orchestration": {
-                                    "step_id": step_id,
-                                    "depends_on": list(tc.depends_on),
-                                    "layer": layer_index, "parallel": False,
-                                    "failure_policy": tc.failure_policy,
-                                }},
-                        ok=False, error=error,
-                    )
-                    result_by_id[tc.id] = result
-                    evidence[step_id] = StepEvidence(
-                        step_id, tc.id, tc.name, False, result.output, error,
-                        str((tc.arguments or {}).get("action") or ""),
-                    )
-                runnable = []
             runnable_by_step = {str(tc.step_id or tc.id): tc for tc in runnable}
             actual_parallel_steps = self._parallel_step_ids(
                 [str(tc.step_id or tc.id) for tc in runnable], runnable_by_step,
@@ -697,8 +628,6 @@ class StreamingToolExecutor:
                     evidence_output, result.error or "",
                     str((tc.arguments or {}).get("action") or ""),
                 )
-                if not result.ok and tc.failure_policy == "stop":
-                    stop_requested = True
             if self._emitter:
                 self._emitter.emit("orchestration_layer_completed", {
                     "layer": layer_index,
@@ -712,8 +641,6 @@ class StreamingToolExecutor:
         if ctx is not None:
             ctx.extras["orchestration_evidence"] = evidence
             ctx.extras["orchestration_depths"] = step_depths
-            if stop_requested:
-                ctx.extras["orchestration_stop_requested"] = True
             ctx.extras.setdefault("orchestration_batches", []).append({
                 "layers": [list(layer) for layer in layers],
                 "parallel_steps": [
@@ -1479,10 +1406,7 @@ class QueryLoop:
         all_results: list[StreamingToolResult] = []
         iterations = 0
         llm_calls = 0
-        # Doom-loop detection: key=(tool, args_hash) → consecutive_failures
-        failure_counts: dict[str, int] = {}
         validation_correction_attempts = 0
-        batch_replan_attempts = 0
         # In-memory loop deduplication retains the readable canonical key.
         trusted_task_state = ctx.extras.get("__trusted_task_state_contract")
         if isinstance(trusted_task_state, dict):
@@ -1593,8 +1517,6 @@ class QueryLoop:
                     self._build_initial(ctx),
                     "The approval continuation checkpoint is invalid. Do not repeat any prior operation; explain that recovery evidence is unavailable.",
                 )
-        max_iterations = int(getattr(self._config, "max_query_loop_iterations", 0) or 0)
-
         def finish(**values) -> QueryLoopResult:
             """Build every exit projection with the same runtime metrics."""
             nonlocal cognitive_events_emitted, cognitive_registered_results
@@ -1618,7 +1540,7 @@ class QueryLoop:
                 "orchestration_batches": list(ctx.extras.get("orchestration_batches") or []),
                 "batch_compile_events": list(ctx.extras.get("batch_compile_events") or []),
                 "validation_corrections": validation_correction_attempts,
-                "batch_replans": batch_replan_attempts,
+                "batch_replans": 0,
                 "evidence": evidence_summary(ctx.extras),
                 "response_outcome": str(ctx.extras.get("response_outcome") or "complete"),
                 "synthesis_recovery": dict(ctx.extras.get("synthesis_recovery") or {}),
@@ -1764,7 +1686,7 @@ class QueryLoop:
                     "Tools remain available if more verification is needed.",
                 )
 
-        while max_iterations <= 0 or iterations < max_iterations:
+        while True:
             if self._is_cancelled(ctx):
                 # If tools already produced results, surface them as a
                 # fallback instead of discarding everything.  This avoids
@@ -1785,22 +1707,10 @@ class QueryLoop:
                 )
             iterations += 1
 
-            # Budget check. BudgetController is the SSOT for LLM call count;
-            # local llm_calls mirrors it for QueryLoopResult only.
-            budget_status = budget.check_llm_call()
-            if not budget_status.ok:
-                return finish(
-                    final_response=(
-                        "已达到 LLM 调用上限，请简化请求。"
-                        if not all_results
-                        else self._build_tool_result_fallback(ctx, all_results)
-                    ),
-                    tool_results=all_results,
-                    iterations=iterations,
-                    total_tool_calls=len(all_results),
-                    llm_calls=budget.llm_calls,
-                    error=budget_status.exceeded or "budget_exceeded",
-                )
+            # The counter is telemetry only.  A model-directed task has no
+            # runtime turn cap; it ends only on explicit completion,
+            # cancellation, or an external suspension such as approval.
+            budget.check_llm_call()
 
             if metrics is not None:
                 metrics.capture_context_usage(
@@ -1914,18 +1824,6 @@ class QueryLoop:
 
             # Check for tool calls
             if response.tool_calls:
-                if ctx.extras.get("orchestration_stop_requested"):
-                    return finish(
-                        final_response=(
-                            str(response.content or "").strip()
-                            or self._build_tool_result_fallback(ctx, all_results)
-                        ),
-                        tool_results=all_results,
-                        iterations=iterations,
-                        total_tool_calls=len(all_results),
-                        llm_calls=llm_calls,
-                        metrics={"orchestration_stopped": True},
-                    )
                 # Convert to LLMToolCall objects
                 tool_calls = self._parse_tool_calls(response.tool_calls)
                 tool_calls = self._unique_call_ids(tool_calls, iterations, used_call_ids)
@@ -1943,7 +1841,7 @@ class QueryLoop:
                         messages,
                         "系统约束：用户明确要求每个目标使用独立工具调用。当前计划包含已声明的"
                         "批量 action，不能替代该要求。请改为保留原始 scalar action，并按单轮"
-                        "调用上限分批规划；不得使用 batch action。",
+                        "逐个保留 scalar action；不得使用 batch action。",
                     )
                     ctx.extras.setdefault("explicit_individual_call_replans", 0)
                     ctx.extras["explicit_individual_call_replans"] += 1
@@ -1956,102 +1854,20 @@ class QueryLoop:
                 if batch_compile_events:
                     ctx.extras.setdefault("batch_compile_events", []).extend(batch_compile_events)
 
-                # A model response is a proposed plan, not permission to flood
-                # the executor.  Batch compilation gets first chance to reduce
-                # scalar fan-out; any still-oversized round is discarded and
-                # replanned before handlers, checkpoints, or UI tool rows exist.
-                configured_round_limit = int(getattr(self._config, "max_tool_calls_per_iteration", 0) or 0)
-                per_round_limit = configured_round_limit if configured_round_limit > 0 else 2_147_483_647
-                remaining_nodes = budget.remaining_node_capacity()
-                admitted_limit = min(per_round_limit, remaining_nodes)
-                if admitted_limit <= 0:
-                    return finish(
-                        final_response=self._build_tool_result_fallback(ctx, all_results),
-                        tool_results=all_results,
-                        iterations=iterations,
-                        total_tool_calls=len(all_results),
-                        llm_calls=llm_calls,
-                        error="tool_node_budget_exhausted",
-                    )
-                if len(tool_calls) > admitted_limit:
-                    if batch_replan_attempts >= MAX_BATCH_REPLAN_ROUNDS:
-                        return finish(
-                            final_response=(
-                                self._build_tool_result_fallback(ctx, all_results)
-                                if all_results
-                                else "当前计划范围超过本轮可安全执行的容量，系统已停止执行，未调用任何工具。"
-                            ),
-                            tool_results=all_results,
-                            iterations=iterations,
-                            total_tool_calls=len(all_results),
-                            llm_calls=llm_calls,
-                            error="tool_batch_replan_exhausted",
-                            metrics={"rejected_tool_call_count": len(tool_calls)},
-                        )
-                    batch_replan_attempts += 1
-                    event = {
-                        "attempt": batch_replan_attempts,
-                        "proposed_count": len(tool_calls),
-                        "admitted_count": admitted_limit,
-                        "remaining_node_capacity": remaining_nodes,
-                    }
-                    ctx.extras.setdefault("batch_replan_events", []).append(event)
-                    if self._emitter:
-                        self._emitter.emit("tool_batch_replan_required", event)
-                    messages = self._append_turn_nudge(
-                        messages,
-                        "[RUNTIME PLAN BOUNDARY] The proposed tool round was not executed because it exceeded the runtime's "
-                        f"bounded plan capacity ({len(tool_calls)} proposed; at most {admitted_limit} now). "
-                        "Replan the original task without reducing its requested scope. Prefer a declared "
-                        "batch action; otherwise issue only the next bounded independent partition and use "
-                        "later rounds for remaining partitions. Do not repeat the oversized plan and do not "
-                        "claim any rejected call ran.",
-                    )
-                    continue
-
                 gate = self._prepare_tool_calls(ctx, tool_calls)
                 if not gate["ok"]:
-                    if gate.get("hard_block"):
-                        return finish(
-                            final_response=gate["message"],
-                            tool_results=all_results,
-                            iterations=iterations,
-                            total_tool_calls=len(all_results),
-                            llm_calls=llm_calls,
-                            error=gate["error"],
-                            errors=list(gate.get("errors") or []),
-                            risk_level=gate.get("risk_level", "high"),
-                            hard_block=bool(gate.get("hard_block", False)),
-                        )
-                    # Soft validation errors (e.g. missing_required_arg) —
-                    # feed back to LLM as tool results so it can correct itself.
-                    if validation_correction_attempts >= MAX_VALIDATION_CORRECTION_ROUNDS:
-                        ctx.extras["validation_correction_exhausted"] = True
-                        return finish(
-                            final_response=(
-                                "工具参数连续校验失败，已停止自动修正。\n"
-                                + gate["message"]
-                            ),
-                            tool_results=all_results,
-                            iterations=iterations,
-                            total_tool_calls=len(all_results),
-                            llm_calls=llm_calls,
-                            error="validation_correction_exhausted",
-                            errors=list(gate.get("errors") or []),
-                            risk_level="low",
-                        )
+                    # Every validation outcome is evidence for the model, not
+                    # an engine-owned decision to end the task.
                     validation_correction_attempts += 1
                     if self._emitter:
                         self._emitter.emit("tool_validation_failed", {
                             "errors": gate.get("errors", []),
                             "message": gate["message"],
                             "attempt": validation_correction_attempts,
-                            "max_attempts": MAX_VALIDATION_CORRECTION_ROUNDS,
                         })
                     structured_errors = list(gate.get("validation_errors") or [])
                     ctx.extras.setdefault("validation_correction_events", []).append({
                         "attempt": validation_correction_attempts,
-                        "max_attempts": MAX_VALIDATION_CORRECTION_ROUNDS,
                         "errors": structured_errors,
                     })
                     fake_results = [
@@ -2066,7 +1882,6 @@ class QueryLoop:
                                 "error": gate["message"],
                                 "validation_errors": structured_errors,
                                 "correction_attempt": validation_correction_attempts,
-                                "max_correction_attempts": MAX_VALIDATION_CORRECTION_ROUNDS,
                                 "instruction": (
                                     "Correct the reported tool arguments and issue a new call. "
                                     "Do not repeat unchanged invalid arguments."
@@ -2093,7 +1908,7 @@ class QueryLoop:
                     messages = self._append_turn_nudge(
                         messages,
                         "系统约束：规范化后的计划仍包含批量 action，但用户明确禁止批量并"
-                        "要求每个目标独立调用。请改为不超过单轮调用上限的 scalar action；"
+                        "要求每个目标独立调用。请改为逐个 scalar action；"
                         "不得执行该批量 action。",
                     )
                     ctx.extras.setdefault("explicit_individual_call_replans", 0)
@@ -2103,7 +1918,7 @@ class QueryLoop:
                 # Deduplicate only after deterministic alias/argument repair.
                 cognitive_state.select_plan(
                     [{"action": tc.name, "purpose": "补充当前任务所需观察"} for tc in tool_calls],
-                    reason="已通过规范化、语义、风险与预算校验的执行计划",
+                    reason="已通过规范化、语义和授权校验的执行计划",
                 )
                 cognitive_state.set_decision(
                     "execute_tool",
@@ -2134,19 +1949,8 @@ class QueryLoop:
                             final_response="任务状态检查点未能写入，系统未执行工具。",
                             error="task_state_checkpoint_failed",
                         )
-                # Execute tools (parallel read-only, serial writes)
-                if budget.remaining_execution_seconds() <= 0:
-                    ctx.extras["orchestration_stop_requested"] = True
-                    ctx.extras["orchestration_stop_reason"] = "tool_execution_budget_exhausted"
-                    messages = self._append_turn_nudge(
-                        messages,
-                        SYNTHESIS_CHECKPOINT_MARKER
-                        + " The tool execution budget is exhausted and the proposed calls were not executed. "
-                        "Answer the original request now using only successful evidence already collected. "
-                        "State exact missing coverage or the concrete blocker; do not issue more tools and do "
-                        "not suggest that rejected calls ran.",
-                    )
-                    continue
+                # Execute tools (parallel read-only, serial writes). Aggregate
+                # budgets are telemetry and never discard a model-proposed call.
                 execution_started = time.monotonic()
                 # Keep the model-requested graph distinct from server-owned
                 # read recovery. The latter is rendered as auto-tracking
@@ -2358,15 +2162,9 @@ class QueryLoop:
                     if not result.ok and result.call_id not in recovered_source_ids
                 ]
                 if failed_results:
-                    if ctx.extras.get("orchestration_stop_requested"):
-                        recovery_nudge = (
-                            SYNTHESIS_CHECKPOINT_MARKER
-                            + " A failed plan step requested stop. Do not call more tools in this turn. "
-                            "Explain the partial outcome and concrete blocker using only completed evidence."
-                        )
-                    else:
-                        recovery_nudge = self._build_tool_failure_recovery_nudge(failed_results)
-                    messages = self._append_turn_nudge(messages, recovery_nudge)
+                    messages = self._append_turn_nudge(
+                        messages, self._build_tool_failure_recovery_nudge(failed_results),
+                    )
                     ctx.extras.setdefault("tool_recovery_events", []).append({
                         "iteration": iterations,
                         "failed_tools": [result.tool_name for result in failed_results],
@@ -2396,124 +2194,15 @@ class QueryLoop:
                         "Additional tools remain available for a genuine unresolved evidence gap; never claim "
                         "visual details not present in the image.",
                     )
-                elif max_iterations > 0 and iterations >= max_iterations - 1:
-                    messages = self._append_turn_nudge(
-                        messages,
-                        SYNTHESIS_CHECKPOINT_MARKER
-                        + " Use the evidence already collected to answer the original request naturally now. "
-                        "Do not call more tools and never expose internal tool summaries as the answer.",
-                    )
-
-                # ── Doom-loop detection ──
-                deterministic_arg_failures: set[str] = set()
-                for r in results:
-                    if not r.ok and r.error:
-                        err_lower = str(r.error).lower()
-                        # Tool not found (wrong name)
-                        if "not found" in err_lower:
-                            # Different missing paths are different mistakes.
-                            # Treating all of them as one repeated failure turns
-                            # a single bad batch into a false doom-loop before
-                            # the recovery instruction can take effect.
-                            key = f"not_found:{r.tool_name}:{' '.join(err_lower.split())[:180]}"
-                            failure_counts[key] = failure_counts.get(key, 0) + 1
-                            if failure_counts[key] >= 3:
-                                return finish(
-                                    final_response=f"工具 {r.tool_name} 不存在，已尝试 {failure_counts[key]} 次。请检查工具名称是否正确。",
-                                    tool_results=all_results,
-                                    iterations=iterations,
-                                    total_tool_calls=len(all_results),
-                                    llm_calls=llm_calls,
-                                    error="doom_loop",
-                                )
-                        # Authentication failure — do NOT retry unchanged credentials.
-                        if "authentication" in err_lower or "password" in err_lower or "permission denied" in err_lower or "auth" in err_lower:
-                            key = f"auth:{r.tool_name}"
-                            failure_counts[key] = failure_counts.get(key, 0) + 1
-                            if failure_counts[key] >= 2:
-                                return finish(
-                                    final_response=(
-                                        f"认证或权限错误已连续失败 {failure_counts[key]} 次。"
-                                        "请检查凭据、权限或访问目标后再重试。"
-                                    ),
-                                    tool_results=all_results,
-                                    iterations=iterations,
-                                    total_tool_calls=len(all_results),
-                                    llm_calls=llm_calls,
-                                    error="doom_loop_auth",
-                                )
-                        # Budget exhaustion — stop immediately
-                        if "budget" in err_lower or "exceeded" in err_lower:
-                            return finish(
-                                final_response=(
-                                    self._build_tool_result_fallback(ctx, all_results)
-                                    if all_results
-                                    else "已达到 LLM 调用或工具执行预算上限。请简化请求或稍后再试。"
-                                ),
-                                tool_results=all_results,
-                                iterations=iterations,
-                                total_tool_calls=len(all_results),
-                                llm_calls=llm_calls,
-                                error="doom_loop_budget",
-                            )
-                        # Contract violations are deterministic. Count one
-                        # signature per model round, not once per parallel call;
-                        # this permits one informed correction without allowing
-                        # different call ids to consume the whole turn budget.
-                        retry_code = StreamingToolExecutor._retry_error_code(ToolResult(
-                            node_id=r.call_id,
-                            tool=r.tool_name,
-                            success=False,
-                            error=str(r.error or ""),
-                            error_code=str(r.error_code or (r.output or {}).get("error_code") or ""),
-                        ))
-                        if retry_code == "ARGS_INVALID" or str(
-                            r.error_code or (r.output or {}).get("error_code") or ""
-                        ).upper() in {
-                            "ARG_ENUM_INVALID", "ARG_TYPE_MISMATCH", "ARG_RANGE_INVALID",
-                            "ARG_LENGTH_INVALID", "MISSING_REQUIRED_ARG", "UNKNOWN_ARGUMENT",
-                            "TOOL_ARGUMENT_VALIDATION_FAILED",
-                        }:
-                            error_details = (r.output or {}).get("error_details") or {}
-                            normalized_error = " ".join(err_lower.split())[:180]
-                            deterministic_arg_failures.add(
-                                f"args:{r.tool_name}:{_json_compact(error_details, max_chars=300)}:{normalized_error}"
-                            )
-                        # Timeout / connection — generic doom-loop detection
-                        if "timeout" in err_lower or "timed out" in err_lower or "connection" in err_lower or "network" in err_lower:
-                            key = f"timeout:{r.tool_name}:{_json_compact(r.output, max_chars=600)}"
-                            failure_counts[key] = failure_counts.get(key, 0) + 1
-                            if failure_counts[key] >= 3:
-                                return finish(
-                                    final_response=f"工具 {r.tool_name} 连续超时 {failure_counts[key]} 次。请检查网络连接或设备可达性。",
-                                    tool_results=all_results,
-                                    iterations=iterations,
-                                    total_tool_calls=len(all_results),
-                                    llm_calls=llm_calls,
-                                    error="doom_loop_timeout",
-                                )
-
-                for key in deterministic_arg_failures:
-                    failure_counts[key] = failure_counts.get(key, 0) + 1
-                    if failure_counts[key] >= 2:
-                        return finish(
-                            final_response=self._build_tool_result_fallback(ctx, all_results),
-                            tool_results=all_results,
-                            iterations=iterations,
-                            total_tool_calls=len(all_results),
-                            llm_calls=llm_calls,
-                            error="doom_loop_args",
-                        )
-
                 continue
 
             # No tool calls is only a proposed final response. Runtime-owned
             # recovery goals are evidence predicates, so the model cannot end
-            # the turn while a safe, bounded replan is still available.
+            # the turn while required evidence remains unresolved.
             from .recovery_goals import recovery_final_gate
 
             recovery_gate = recovery_final_gate(ctx, all_results)
-            if recovery_gate.should_continue and (max_iterations <= 0 or iterations < max_iterations):
+            if recovery_gate.should_continue:
                 messages = [
                     *messages,
                     LLMMessage(role="assistant", content=str(response.content or "").strip()),
@@ -2583,43 +2272,6 @@ class QueryLoop:
                     "max_parallel_width": self._executor.max_parallel_width,
                 },
             )
-
-        # A planning budget is not a task outcome.  The loop exists to give the
-        # model evidence, observations and room to correct its own course; it
-        # must not turn a reached planning checkpoint into a declared task
-        # failure.  Reserve a bounded, tool-free final synthesis for this exit:
-        # it cannot repeat an external operation and lets the model turn the
-        # evidence it already collected into the user-facing answer.
-        if all_results:
-            recovered = await self._recover_final_synthesis(ctx, budget)
-            llm_calls = budget.llm_calls
-            if recovered:
-                ctx.extras["response_outcome"] = "recovered"
-                return finish(
-                    final_response=recovered,
-                    tool_results=all_results,
-                    iterations=iterations,
-                    total_tool_calls=len(all_results),
-                    llm_calls=llm_calls,
-                    metrics={"planning_checkpoint_reached": True},
-                )
-            ctx.extras["response_outcome"] = "deterministic_fallback"
-
-        # Max iterations exhausted and no synthesis response is available.
-        return finish(
-            final_response=(
-                self._build_tool_result_fallback(ctx, all_results)
-                if all_results else "已达到最大迭代次数，请缩小任务范围后重试。"
-            ),
-            tool_results=all_results,
-            iterations=iterations,
-            total_tool_calls=len(all_results),
-            llm_calls=llm_calls,
-            # The user still receives every fact that was collected.  This is
-            # a synthesis degradation, not a semantic claim that the task or
-            # its external operations failed.
-            metrics={"planning_checkpoint_reached": True},
-        )
 
     # ── Private helpers ──────────────────────────────────────────────────
 

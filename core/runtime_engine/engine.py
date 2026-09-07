@@ -28,7 +28,7 @@ from .models import (
     StatelessContext,
     ToolResult,
 )
-from .query_loop import MAX_VALIDATION_CORRECTION_ROUNDS, QueryLoop
+from .query_loop import QueryLoop
 from .runtime_contracts import ExecutionContract
 from .stage_events import (
     HEARTBEAT,
@@ -489,8 +489,8 @@ class SSOTRuntimeEngine:
                 "retry_events": ctx.extras.get("retry_events", []),
                 "validation_correction_summary": {
                     "attempts": len(ctx.extras.get("validation_correction_events", [])),
-                    "max_attempts": MAX_VALIDATION_CORRECTION_ROUNDS,
-                    "exhausted": bool(ctx.extras.get("validation_correction_exhausted", False)),
+                    "max_attempts": None,
+                    "exhausted": False,
                 },
                 "validation_correction_events": ctx.extras.get("validation_correction_events", []),
                 "tool_recovery_events": ctx.extras.get("tool_recovery_events", []),
@@ -523,10 +523,6 @@ class SSOTRuntimeEngine:
         # No response from LLM
         if error_key in ("no_response",):
             return SSOTRuntimeErrorCode.PLANNER_TIMEOUT
-
-        # Doom-loop (repeated failing tool calls)
-        if error_key and error_key.startswith("doom_loop"):
-            return SSOTRuntimeErrorCode.EXECUTION_TOOL_EXCEPTION
 
         # A hard block can only originate from a structural runtime boundary.
         if hard_block:

@@ -28,7 +28,6 @@ _GENERIC_CONTINUATION_RE = re.compile(
     re.IGNORECASE,
 )
 _TASK_RESUMABLE = frozenset({"active", "completed", "partial", "replan_required", "waiting_user", "interrupted"})
-_MAX_CONSECUTIVE_REPLAN_ATTEMPTS = 2
 
 
 def _now_iso() -> str:
@@ -370,7 +369,9 @@ def _contract_from_state(
                 "target": _bounded_goal_target(item.get("target")),
                 "source_tool_id": _bounded_text(item.get("source_tool_id") or "", 160),
                 "attempts": int(item.get("attempts") or 0),
-                "max_attempts": int(item.get("max_attempts") or 3),
+                # Attempts are observation telemetry only.  There is no
+                # runtime retry/replan ceiling for an agent task.
+                "max_attempts": None,
                 "final_replan_attempts": int(item.get("final_replan_attempts") or 0),
                 "assertion_status": _bounded_text(item.get("assertion_status") or "", 32),
                 "blocked_reason": _bounded_text(item.get("blocked_reason") or "", 120),
@@ -657,21 +658,15 @@ def _failure_from_metadata(metadata: dict[str, Any], run_ok: bool, tool_calls: l
 
 def _derive_status(task: dict[str, Any], metadata: dict[str, Any], run_ok: bool) -> tuple[str, str]:
     assertions = dict(task.get("assertions") or {})
-    failure = dict(task.get("failure") or {})
     runtime_errors = [str(item).strip().lower() for item in _as_list(metadata.get("runtime_errors"))]
     if "cancelled_by_user" in runtime_errors:
         return "cancelled", "cancelled_by_user"
     if str(metadata.get("execution_outcome") or "") == "waiting_external_input":
         return "waiting_user", "await_external_decision"
     if _replan_requested(task, metadata):
-        if int(task.get("replan_attempts") or 0) >= _MAX_CONSECUTIVE_REPLAN_ATTEMPTS:
-            return "failed", "replan_budget_exhausted"
         return "replan_required", "propose_alternative_plan"
     if not run_ok:
         return "failed", "task_failed"
-    goal_loop = metadata.get("goal_loop") if isinstance(metadata.get("goal_loop"), dict) else {}
-    if str(metadata.get("execution_outcome") or "") == "partial" and goal_loop.get("status") == "blocked":
-        return "partial", "review_blocked_recovery_goals"
     if bool(assertions.get("required")) and str(assertions.get("status") or "") != "passed":
         return "replan_required", "satisfy_goal_assertions"
     return "completed", "await_user_or_continuation"

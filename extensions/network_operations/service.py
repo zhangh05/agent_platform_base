@@ -229,7 +229,11 @@ def list_devices(workspace_id: str) -> list[dict[str, Any]]:
 
 
 def get_device(workspace_id: str, device_id: str) -> dict[str, Any] | None:
-    return _store(workspace_id).get("devices", device_id)
+    try:
+        return _store(workspace_id).get("devices", device_id)
+    except ValueError:
+        # Model-proposed identifiers are data, not a storage exception path.
+        return None
 
 
 def _device_identity(name: str, host: str) -> tuple[str, str]:
@@ -397,7 +401,12 @@ def list_connections(workspace_id: str, *, device_id: str = "") -> list[dict[str
 
 
 def get_connection(workspace_id: str, connection_id: str, *, include_secret: bool = False) -> dict[str, Any] | None:
-    record = _store(workspace_id).get("connections", connection_id)
+    try:
+        record = _store(workspace_id).get("connections", connection_id)
+    except ValueError:
+        # A malformed or stale id is semantically indistinguishable from an
+        # absent connection to the caller; return a structured tool outcome.
+        return None
     if not record:
         return None
     return record if include_secret else _public_connection(record)
@@ -720,7 +729,10 @@ def list_skills(workspace_id: str, *, enabled_only: bool = False) -> list[dict[s
 
 
 def get_skill(workspace_id: str, skill_id: str) -> dict[str, Any] | None:
-    record = _store(workspace_id).get("skills", skill_id)
+    try:
+        record = _store(workspace_id).get("skills", skill_id)
+    except ValueError:
+        return None
     return _with_skill_base_capability(record) if record else None
 
 

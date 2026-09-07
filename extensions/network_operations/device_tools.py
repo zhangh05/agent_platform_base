@@ -25,7 +25,6 @@ READ_ONLY_DENY = re.compile(
     r"(^|\s)(undo|delete|remove|erase|format|reload|reboot|shutdown|write|copy|configure|system-view|enable|install|upgrade|reset|clear)(\s|$)",
     re.IGNORECASE,
 )
-MAX_READ_ONLY_COMMANDS = 20
 _NONEMPTY_SEMANTIC_FACTS = frozenset({"device_version", "current_config"})
 
 _NETWORK_READ_COMMAND = re.compile(
@@ -163,11 +162,12 @@ def normalize_read_only_commands(commands: list[str] | tuple[str, ...] | None, v
     """Validate the shared read-only command boundary for every probe path."""
     if not isinstance(commands, (list, tuple)) or any(not isinstance(command, str) for command in commands):
         raise ValueError("commands must be an array of strings")
-    selected = [command.strip() for command in commands]
-    if not selected or len(selected) > MAX_READ_ONLY_COMMANDS:
-        raise ValueError("commands must contain 1 to 20 read-only commands")
-    if len(set(selected)) != len(selected):
-        raise ValueError("commands must be unique")
+    # A command batch is model-owned work, not a UI-sized form. Preserve its
+    # order and collapse accidental duplicates instead of rejecting the whole
+    # device operation. There is intentionally no artificial batch ceiling.
+    selected = list(dict.fromkeys(command.strip() for command in commands if command.strip()))
+    if not selected:
+        raise ValueError("commands must contain at least one read-only command")
     if any(not is_read_only_command(command, vendor) for command in selected):
         raise ValueError("commands_must_be_read_only")
     return selected

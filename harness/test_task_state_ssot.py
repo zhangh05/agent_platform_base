@@ -262,18 +262,18 @@ def test_retryable_tool_failure_marks_replan_required(monkeypatch, tmp_path):
     assert list_task_events("ws-replan", "session-replan")[-1]["event_type"] == "replan_required"
 
 
-def test_exhausted_goal_loop_persists_partial_instead_of_global_failure(monkeypatch, tmp_path):
+def test_unresolved_goal_loop_remains_replan_required(monkeypatch, tmp_path):
     monkeypatch.setenv("LZCORE_WORKSPACE_ROOT", str(tmp_path))
     from agent.runtime.task_state import commit_task_state, list_task_events
 
     metadata = _metadata(
         execution_outcome="partial", assertion_status="failed", decision="stop_partial",
     )
-    metadata["goal_loop"] = {"status": "blocked", "counts": {"blocked": 1}}
+    metadata["goal_loop"] = {"status": "pending", "counts": {"pending": 1}}
     metadata["recovery_goals"] = [{
         "goal_id": "tool-goal-1", "goal_type": "tool_recovery",
-        "status": "blocked", "description": "one target unavailable",
-        "attempts": 3, "max_attempts": 3,
+        "status": "pending", "description": "one target unavailable",
+        "attempts": 3,
     }]
     snapshot = commit_task_state(
         workspace_id="ws-partial-goal", session_id="session-partial-goal",
@@ -284,9 +284,9 @@ def test_exhausted_goal_loop_persists_partial_instead_of_global_failure(monkeypa
     )
 
     assert snapshot is not None
-    assert snapshot["task"]["status"] == "partial"
-    assert snapshot["task"]["next_action"] == "review_blocked_recovery_goals"
-    assert list_task_events("ws-partial-goal", "session-partial-goal")[-1]["event_type"] == "task_partially_completed"
+    assert snapshot["task"]["status"] == "replan_required"
+    assert snapshot["task"]["next_action"] == "satisfy_goal_assertions"
+    assert list_task_events("ws-partial-goal", "session-partial-goal")[-1]["event_type"] == "replan_required"
 
 
 
@@ -447,9 +447,10 @@ def test_task_state_completed_mutation_history_does_not_block_queryloop():
         },
     }
     call_key = QueryLoop(config, registry, runtime)._durable_call_key(call)
+    responses = iter([LLMResponse(tool_calls=[call]), LLMResponse(content="已继续处理。")])
     engine = SSOTRuntimeEngine(
         config=config,
-        llm_invoke=lambda **_kwargs: LLMResponse(tool_calls=[call]),
+        llm_invoke=lambda **_kwargs: next(responses),
         tool_registry=registry,
         tool_runtime=runtime,
     )
@@ -470,7 +471,7 @@ def test_task_state_completed_mutation_history_does_not_block_queryloop():
 
 
 
-def test_second_consecutive_replan_failure_converges_to_failed(monkeypatch, tmp_path):
+def test_consecutive_replan_failures_remain_resumable(monkeypatch, tmp_path):
     monkeypatch.setenv("LZCORE_WORKSPACE_ROOT", str(tmp_path))
     from agent.runtime.task_state import commit_task_state, list_task_events, resolve_task_state
 
@@ -510,9 +511,9 @@ def test_second_consecutive_replan_failure_converges_to_failed(monkeypatch, tmp_
     )
     assert second is not None
     assert second["task"]["replan_attempts"] == 2
-    assert second["task"]["status"] == "failed"
-    assert second["task"]["next_action"] == "replan_budget_exhausted"
-    assert list_task_events("ws-replan-budget", "session-replan-budget")[-1]["event_type"] == "task_failed"
+    assert second["task"]["status"] == "replan_required"
+    assert second["task"]["next_action"] == "propose_alternative_plan"
+    assert list_task_events("ws-replan-budget", "session-replan-budget")[-1]["event_type"] == "replan_required"
 
 
 
@@ -752,9 +753,10 @@ def test_replan_contract_allows_model_to_retry_failed_call(monkeypatch, tmp_path
     assert contract is not None
     assert contract["status"] == "replan_required"
 
+    responses = iter([LLMResponse(tool_calls=[call]), LLMResponse(content="已继续恢复。")])
     engine = SSOTRuntimeEngine(
         config=config,
-        llm_invoke=lambda **_kwargs: LLMResponse(tool_calls=[call]),
+        llm_invoke=lambda **_kwargs: next(responses),
         tool_registry=registry,
         tool_runtime=runtime,
     )
@@ -1068,9 +1070,10 @@ def test_queryloop_unknown_mutation_history_does_not_freeze_new_writes():
             },
         },
     }
+    responses = iter([LLMResponse(tool_calls=[call]), LLMResponse(content="任务已继续。")])
     engine = SSOTRuntimeEngine(
         config=config,
-        llm_invoke=lambda **_kwargs: LLMResponse(tool_calls=[call]),
+        llm_invoke=lambda **_kwargs: next(responses),
         tool_registry=registry,
         tool_runtime=runtime,
     )
@@ -1120,9 +1123,10 @@ def test_queryloop_checkpoint_failure_prevents_tool_execution():
             },
         },
     }
+    responses = iter([LLMResponse(tool_calls=[call]), LLMResponse(content="检查点处理完成。")])
     engine = SSOTRuntimeEngine(
         config=config,
-        llm_invoke=lambda **_kwargs: LLMResponse(tool_calls=[call]),
+        llm_invoke=lambda **_kwargs: next(responses),
         tool_registry=registry,
         tool_runtime=runtime,
     )
@@ -1221,7 +1225,8 @@ def test_legacy_durable_call_key_does_not_freeze_mutation():
     runtime.register("workspace.file", lambda arguments: invoked.append(dict(arguments)) or {"ok": True})
     registry = {"workspace.file": {"description": "files", "args_schema": {"type": "object", "required": ["action"], "properties": {"action": {"type": "string", "enum": ["write"]}, "filename": {"type": "string"}, "content": {"type": "string"}}}}}
     call = LLMToolCall(id="new-write", name="workspace.file", arguments={"action": "write", "filename": "audit.txt", "content": "new content"})
-    engine = SSOTRuntimeEngine(config=config, llm_invoke=lambda **_kwargs: LLMResponse(tool_calls=[call]), tool_registry=registry, tool_runtime=runtime)
+    responses = iter([LLMResponse(tool_calls=[call]), LLMResponse(content="已写入。")])
+    engine = SSOTRuntimeEngine(config=config, llm_invoke=lambda **_kwargs: next(responses), tool_registry=registry, tool_runtime=runtime)
 
     result = asyncio.run(engine.run(
         "继续写入审计内容。",
@@ -1300,9 +1305,10 @@ def test_queryloop_uncertain_write_checkpoint_keeps_telemetry_without_fence(monk
             },
         },
     }
+    responses = iter([LLMResponse(tool_calls=[call]), LLMResponse(content="写入状态已记录。")])
     engine = SSOTRuntimeEngine(
         config=config,
-        llm_invoke=lambda **_kwargs: LLMResponse(tool_calls=[call]),
+        llm_invoke=lambda **_kwargs: next(responses),
         tool_registry=registry,
         tool_runtime=runtime,
     )

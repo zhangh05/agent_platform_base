@@ -45,8 +45,11 @@ def validate_definition(payload: dict[str, Any]) -> dict[str, Any]:
     if not name:
         raise WorkflowError("workflow name is required")
     nodes = payload.get("nodes")
-    if not isinstance(nodes, list) or not 1 <= len(nodes) <= limits.max_nodes:
-        raise WorkflowError(f"workflow must contain 1 to {limits.max_nodes} nodes")
+    if not isinstance(nodes, list) or len(nodes) < 1 or (
+        limits.max_nodes > 0 and len(nodes) > limits.max_nodes
+    ):
+        maximum = str(limits.max_nodes) if limits.max_nodes > 0 else "unlimited"
+        raise WorkflowError(f"workflow must contain 1 to {maximum} nodes")
     available_tools = {item["tool_id"] for item in _tool_client().list_tools() if item.get("enabled", True)}
     normalized = []
     node_ids: set[str] = set()
@@ -80,12 +83,15 @@ def validate_definition(payload: dict[str, Any]) -> dict[str, Any]:
         if missing or node["node_id"] in node["depends_on"]:
             raise WorkflowError(f"invalid dependencies for {node['node_id']}: {sorted(missing)}")
     layers = _execution_layers(normalized)
-    if len(layers) > limits.max_depth:
+    if limits.max_depth > 0 and len(layers) > limits.max_depth:
         raise WorkflowError(f"workflow depth exceeds runtime limit: {limits.max_depth}")
     order = [node_id for layer in layers for node_id in layer]
-    failure_policy = str(payload.get("failure_policy") or "fail_fast")
-    if failure_policy not in {"fail_fast", "continue"}:
-        raise WorkflowError("failure_policy must be fail_fast or continue")
+    # A failed node is evidence, not an instruction to kill independent work.
+    # New definitions use the only agent semantic: continue independent
+    # branches. Legacy records are normalized on read below.
+    failure_policy = str(payload.get("failure_policy") or "continue")
+    if failure_policy != "continue":
+        raise WorkflowError("failure_policy must be continue")
     try:
         version = int(payload.get("version") or 1)
     except (TypeError, ValueError) as exc:
@@ -209,7 +215,12 @@ def get_workflow(workspace_id: str, workflow_id: str) -> dict[str, Any] | None:
     if not path.is_file(): return None
     try:
         value = json.loads(path.read_text(encoding="utf-8"))
-        return value if isinstance(value, dict) else None
+        if not isinstance(value, dict):
+            return None
+        # Legacy workflows may have persisted fail_fast.  A read must never
+        # revive that terminal behavior.
+        value["failure_policy"] = "continue"
+        return value
     except (OSError, json.JSONDecodeError):
         return None
 
@@ -265,7 +276,7 @@ def execute_workflow(workspace_id: str, workflow_id: str, inputs: dict[str, Any]
     runtime_config = SSOTRuntimeConfig()
     budget = BudgetController(runtime_config)
     layers = definition.get("execution_layers") or _execution_layers(definition["nodes"])
-    reservation = budget.reserve_execution_batch(
+    budget.reserve_execution_batch(
         node_count=len(definition["nodes"]),
         depth=len(layers),
         parallel_width=min(
@@ -273,8 +284,6 @@ def execute_workflow(workspace_id: str, workflow_id: str, inputs: dict[str, Any]
             max((len(layer) for layer in layers), default=1),
         ),
     )
-    if not reservation.ok:
-        raise WorkflowError(f"workflow execution budget rejected: {reservation.exceeded}")
     from storage.redaction import redact_dict
     outputs: dict[str, Any] = {}
     dependency_outcomes: dict[str, bool] = {}
@@ -400,27 +409,6 @@ def execute_workflow(workspace_id: str, workflow_id: str, inputs: dict[str, Any]
             groups.append((True, read_group))
 
         for parallel, node_ids in groups:
-            budget_status = budget.check_execution()
-            if not budget_status.ok:
-                for node_id in node_ids:
-                    record["nodes"].append({
-                        "node_id": node_id,
-                        "tool_id": nodes_by_id[node_id]["tool_id"],
-                        "status": "failed",
-                        "summary": "流程执行预算已耗尽，当前步骤未执行",
-                        "errors": [budget_status.exceeded],
-                        "started_at": now_iso(),
-                        "finished_at": now_iso(),
-                        "orchestration": {
-                            "layer": layer_index,
-                            "parallel": False,
-                            "depends_on": list(nodes_by_id[node_id].get("depends_on") or []),
-                        },
-                    })
-                    dependency_outcomes[node_id] = False
-                failed = True
-                _save_run(record)
-                break
             if parallel and len(node_ids) > 1:
                 with ContextThreadPoolExecutor(max_workers=min(5, len(node_ids)), thread_name_prefix="workflow-read") as pool:
                     futures = {node_id: pool.submit(execute_node, node_id) for node_id in node_ids}
@@ -441,10 +429,6 @@ def execute_workflow(workspace_id: str, workflow_id: str, inputs: dict[str, Any]
                 if not success:
                     failed = True
             _save_run(record)
-        if failed and definition["failure_policy"] == "fail_fast":
-            break
-        if not budget.check_execution().ok:
-            break
     budget.end_execution()
     if record["status"] == "running":
         record["status"] = "failed" if failed else "succeeded"

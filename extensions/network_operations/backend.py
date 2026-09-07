@@ -770,9 +770,9 @@ def register():
                     "properties": {
                         **common,
                         "action": {"type": "string", "enum": ["run", "list", "get", "cancel", "retry"]},
-                        "connection_ids": {"type": "array", "items": {"type": "string"}, "minItems": 1, "maxItems": 100},
-                        "commands": {"type": "array", "items": {"type": "string", "minLength": 1}, "minItems": 1, "maxItems": 20},
-                        "facts": {"type": "array", "items": {"type": "string", "enum": list(service.SEMANTIC_FACTS)}, "minItems": 1, "maxItems": 10},
+                        "connection_ids": {"type": "array", "items": {"type": "string"}, "minItems": 1},
+                        "commands": {"type": "array", "items": {"type": "string", "minLength": 1}, "minItems": 1},
+                        "facts": {"type": "array", "items": {"type": "string", "enum": list(service.SEMANTIC_FACTS)}, "minItems": 1},
                         "script_id": {"type": "string"},
                         "task_id": {"type": "string"},
                     },

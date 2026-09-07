@@ -2,8 +2,7 @@
 
 Tool handlers may publish a recovery directive after a deterministic failure.
 The runtime owns whether work may stop: a model response is not completion
-while a registered recovery goal still lacks matching evidence and bounded
-replanning remains possible.
+while a registered recovery goal still lacks matching evidence.
 """
 
 from __future__ import annotations
@@ -96,7 +95,7 @@ def install_recovery_goal(ctx, directive: dict[str, Any], *, source_call_id: str
     return record
 
 
-def recovery_final_gate(ctx, tool_results: list[Any], *, max_replans: int = 3) -> RecoveryFinalGate:
+def recovery_final_gate(ctx, tool_results: list[Any]) -> RecoveryFinalGate:
     """Reject premature final prose while recoverable evidence goals are open."""
     from .goal_assertions import evaluate_goal_assertions
 
@@ -117,34 +116,17 @@ def recovery_final_gate(ctx, tool_results: list[Any], *, max_replans: int = 3) -
         _project_goal_status(ctx, evaluated)
         return RecoveryFinalGate(False)
     _project_goal_status(ctx, evaluated)
-    blocked_goal_ids = {
-        str(item.get("goal_id") or "")
-        for item in ctx.extras.get("recovery_goals") or []
-        if isinstance(item, dict) and item.get("status") == "blocked"
-    }
-    actionable = tuple(
-        item for item in unresolved
-        if str(item.get("goal_id") or "") not in blocked_goal_ids
-    )
-    if not actionable:
-        return RecoveryFinalGate(False, unresolved)
-    limit = max(1, int(max_replans))
     goals_by_id = {
         str(item.get("goal_id") or ""): item
         for item in ctx.extras.get("recovery_goals") or []
         if isinstance(item, dict)
     }
     permitted: list[dict[str, Any]] = []
-    for assertion in actionable:
+    for assertion in unresolved:
         goal = goals_by_id.get(str(assertion.get("goal_id") or ""))
         if not goal:
             continue
-        attempts = int(goal.get("final_replan_attempts") or 0)
-        if attempts >= limit:
-            goal["status"] = "blocked"
-            goal["blocked_reason"] = "recovery_replan_budget_exhausted"
-            continue
-        goal["final_replan_attempts"] = attempts + 1
+        goal["final_replan_attempts"] = int(goal.get("final_replan_attempts") or 0) + 1
         permitted.append(assertion)
     if not permitted:
         return RecoveryFinalGate(False, unresolved)

@@ -2,7 +2,7 @@
 
 The model proposes actions, but the runtime owns whether a failed observation
 has been resolved.  Every canonical tool result is normalized here.  A
-recoverable failed read installs a bounded goal; later calls must either name
+recoverable failed read installs a goal; later calls must either name
 that goal explicitly through ``plan_goal_ids`` or produce a compatible
 successful observation.  This keeps the policy generic while allowing domain
 extensions to publish richer evidence goals and deterministic recovery plans.
@@ -23,7 +23,6 @@ _TERMINAL_FAILURE_CODES = frozenset({
     "UNAUTHORIZED",
     "FORBIDDEN",
     "CREDENTIAL_ACCESS",
-    "PLAN_STOPPED",
 })
 
 _TARGET_KEYS = (
@@ -118,7 +117,6 @@ def goal_loop_nudge(ctx) -> str:
             "target": goal.get("target"),
             "failure_class": goal.get("failure_class"),
             "attempts": goal.get("attempts"),
-            "max_attempts": goal.get("max_attempts"),
             "strategy_candidates": [
                 item.get("strategy_id") for item in goal.get("strategy_candidates") or []
                 if isinstance(item, dict) and item.get("strategy_id")
@@ -218,7 +216,6 @@ def _install_generic_goal(ctx, call: Any, observation: dict[str, Any]) -> None:
             "strategy_candidates": DEFAULT_RECOVERY_STRATEGIES.candidates(observation["failure_class"]),
             "status": "pending",
             "attempts": 1,
-            "max_attempts": 3,
             "attempt_call_ids": [source_call_id],
         })
         assertions = ctx.extras.setdefault("goal_assertions", [])
@@ -264,10 +261,6 @@ def _mark_explicit_goals_blocked(ctx, call: Any, observation: dict[str, Any]) ->
         attempts = int(goal.get("attempts") or 1) + 1
         goal["attempts"] = attempts
         goal.setdefault("attempt_call_ids", []).append(observation["call_id"])
-        if attempts >= int(goal.get("max_attempts") or 3):
-            goal["status"] = "blocked"
-            goal["blocked_reason"] = observation["failure_class"] or "recovery_attempts_exhausted"
-            _event(ctx, "goal_blocked", str(goal["goal_id"]), observation["call_id"], str(goal["blocked_reason"]))
 
 
 def _compatible_observation(goal: dict[str, Any], observation: dict[str, Any]) -> bool:

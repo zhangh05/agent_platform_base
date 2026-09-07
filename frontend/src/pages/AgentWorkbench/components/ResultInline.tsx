@@ -331,8 +331,7 @@ export const ResultInline = memo(function ResultInline({
 
               {validationCorrection.attempts > 0 && (
                 <div className="action-trace-note">
-                  工具参数校验未通过后已交由模型修正
-                  {validationCorrection.exhausted ? "，达到上限后停止，未执行无效调用。" : "，无效调用未进入执行器。"}
+                  工具参数校验未通过后已交由模型修正；无效调用未进入执行器，模型可继续调整后重试。
                 </div>
               )}
 
@@ -351,7 +350,7 @@ export const ResultInline = memo(function ResultInline({
                         <b>{goal.status === "passed" ? "目标已满足" : goal.status === "blocked" ? "目标受阻" : "正在补充证据"}</b>
                         {` ${goal.source_tool_id ? `${toolLabel(goal.source_tool_id)}失败后的替代取证` : goal.description || goal.goal_id || "恢复目标"}`}
                       </span>
-                      <span className="action-retry-meta">{Number(goal.attempts || 0)}/{Number(goal.max_attempts || 3)}</span>
+                      <span className="action-retry-meta">第 {Number(goal.attempts || 0)} 次尝试</span>
                     </div>
                   ))}
                 </div>

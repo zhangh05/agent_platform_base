@@ -223,7 +223,7 @@ def test_bound_arguments_are_revalidated_before_handler_execution():
     assert results[1].output["error_code"] == "RESULT_BINDING_INVALID"
 
 
-def test_execution_budget_rejects_oversized_batch_before_any_handler_runs():
+def test_execution_budget_records_oversized_batch_without_rejecting_model_work():
     from core.runtime_engine.budget_controller import BudgetController
 
     seen = []
@@ -241,11 +241,11 @@ def test_execution_budget_rejects_oversized_batch_before_any_handler_runs():
     results = asyncio.run(StreamingToolExecutor(Runtime(), config).execute(
         calls, ctx=_ctx(), budget=BudgetController(config),
     ))
-    assert seen == []
-    assert {result.output["error_code"] for result in results} == {"TOOL_NODES_EXCEEDED"}
+    assert seen == [{"action": "parse", "text": "a"}, {"action": "parse", "text": "b"}]
+    assert all(result.ok for result in results)
 
 
-def test_queryloop_replans_oversized_model_round_before_any_handler_runs():
+def test_queryloop_executes_large_model_round_without_a_runtime_batch_cap():
     from agent.llm.schemas import LLMResponse
     from core.runtime_engine.engine import SSOTRuntimeEngine
     from core.runtime_engine.tool_runtime import ToolRuntime
@@ -301,9 +301,56 @@ def test_queryloop_replans_oversized_model_round_before_any_handler_runs():
 
     assert result.success is True
     assert result.final_response == "已完成有界处理"
-    assert received == [{"action": "parse", "text": "bounded"}]
-    assert result.metadata["batch_replans"] == 1
-    assert any("RUNTIME PLAN BOUNDARY" in message.content for message in prompts[1])
+    assert received == [
+        *[{"action": "parse", "text": str(index)} for index in range(25)],
+        {"action": "parse", "text": "bounded"},
+    ]
+    assert result.metadata["batch_replans"] == 0
+
+
+def test_queryloop_keeps_running_after_repeated_invalid_arguments_until_model_recovers():
+    """Regression for the former ``doom_loop_args`` terminal path."""
+    from agent.llm.schemas import LLMResponse
+    from core.runtime_engine.engine import SSOTRuntimeEngine
+    from core.runtime_engine.tool_runtime import ToolRuntime
+
+    responses = iter([
+        LLMResponse(tool_calls=[LLMToolCall(
+            id="bad-one", name="data.manage", arguments={"action": "unknown"},
+        )]),
+        LLMResponse(tool_calls=[LLMToolCall(
+            id="bad-two", name="data.manage", arguments={"action": "still-unknown"},
+        )]),
+        LLMResponse(tool_calls=[LLMToolCall(
+            id="good", name="data.manage", arguments={"action": "parse", "text": "recovered"},
+        )]),
+        LLMResponse(content="参数已修正并完成。"),
+    ])
+    received: list[dict] = []
+    runtime = ToolRuntime(SSOTRuntimeConfig())
+    runtime.register("data.manage", lambda arguments: received.append(dict(arguments)) or {"ok": True})
+    registry = {"data.manage": {
+        "description": "data",
+        "args_schema": {
+            "type": "object", "required": ["action"],
+            "properties": {
+                "action": {"type": "string", "enum": ["parse"]},
+                "text": {"type": "string"},
+            },
+        },
+    }}
+    result = asyncio.run(SSOTRuntimeEngine(
+        config=SSOTRuntimeConfig(max_query_loop_iterations=1),
+        llm_invoke=lambda **_kwargs: next(responses),
+        tool_registry=registry,
+        tool_runtime=runtime,
+    ).run("修正工具参数后继续", workspace_id="default", session_id="session"))
+
+    assert result.success is True
+    assert result.final_response == "参数已修正并完成。"
+    assert received == [{"action": "parse", "text": "recovered"}]
+    assert len(result.metadata["validation_correction_events"]) == 2
+    assert "doom_loop_args" not in result.errors
 
 
 def test_queryloop_continues_provider_partial_output_before_finalizing():
@@ -369,7 +416,7 @@ def test_execution_budget_rejects_graph_deeper_than_limit():
 
     class Runtime:
         def invoke_raw(self, _tool_id, _arguments):
-            raise AssertionError("handler must not run")
+            return {"ok": True}
 
     config = SSOTRuntimeConfig(max_depth=1)
     calls = [
@@ -379,7 +426,7 @@ def test_execution_budget_rejects_graph_deeper_than_limit():
     results = asyncio.run(StreamingToolExecutor(Runtime(), config).execute(
         calls, ctx=_ctx(), budget=BudgetController(config),
     ))
-    assert results[0].output["error_code"] == "TOOL_DEPTH_EXCEEDED"
+    assert all(result.ok for result in results)
 
 
 def test_execution_depth_is_enforced_across_incremental_rounds():
@@ -404,7 +451,7 @@ def test_execution_depth_is_enforced_across_incremental_rounds():
         step_id="b", depends_on=["a"],
     )]
     result = asyncio.run(executor.execute(second, ctx=ctx, budget=budget))[0]
-    assert result.output["error_code"] == "TOOL_DEPTH_EXCEEDED"
+    assert result.ok is True
 
 
 def test_bounded_read_group_is_not_rejected_for_topological_width():
@@ -548,12 +595,12 @@ def test_stop_binding_failure_prevents_same_layer_execution():
     results = asyncio.run(StreamingToolExecutor(
         Runtime(), SSOTRuntimeConfig(), tool_registry=registry,
     ).execute(calls, ctx=_ctx()))
-    assert calls_seen == ["source"]
-    assert results[1].output["error_code"] == "PLAN_STOPPED"
+    assert calls_seen == ["source", "independent"]
+    assert results[1].ok is True
     assert results[2].output["error_code"] == "RESULT_BINDING_FAILED"
 
 
-def test_stop_failure_policy_prevents_later_layers():
+def test_stop_failure_policy_does_not_prevent_independent_later_layers():
     calls_seen = []
 
     class Runtime:
@@ -568,7 +615,7 @@ def test_stop_failure_policy_prevents_later_layers():
     ]
     results = asyncio.run(StreamingToolExecutor(Runtime(), SSOTRuntimeConfig()).execute(calls, ctx=_ctx()))
     assert calls_seen == ["parse"]
-    assert [result.output["error_code"] for result in results[1:]] == ["PLAN_STOPPED", "PLAN_STOPPED"]
+    assert [result.output["error_code"] for result in results[1:]] == ["DEPENDENCY_FAILED", "DEPENDENCY_FAILED"]
 
 
 def test_unsafe_result_binding_is_rejected_before_execution():

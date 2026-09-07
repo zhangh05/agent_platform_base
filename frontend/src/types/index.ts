@@ -203,10 +203,9 @@ export interface AgentResult {
       exhausted?: boolean;
       terminal_reason?: string;
     }>;
-    /** Invalid tool arguments returned to the model for bounded correction. */
+    /** Invalid tool arguments returned to the model for continued correction. */
     validation_correction_summary?: {
       attempts?: number;
-      max_attempts?: number;
       final_replan_attempts?: number;
       assertion_status?: "passed" | "failed" | "unknown";
       blocked_reason?: string;
@@ -214,7 +213,6 @@ export interface AgentResult {
     };
     validation_correction_events?: Array<{
       attempt?: number;
-      max_attempts?: number;
       errors?: Array<Record<string, unknown>>;
     }>;
     orchestration_batches?: Array<{
