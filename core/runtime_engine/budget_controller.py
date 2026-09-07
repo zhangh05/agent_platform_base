@@ -67,7 +67,7 @@ class BudgetController:
                 elapsed_total_ms=elapsed, llm_calls_used=self._llm_calls,
             )
 
-        if self._llm_calls >= self._budget.max_llm_calls:
+        if self._budget.max_llm_calls > 0 and self._llm_calls >= self._budget.max_llm_calls:
             return BudgetStatus(
                 ok=False, exceeded="LLM_CALLS_EXCEEDED",
                 elapsed_total_ms=elapsed, llm_calls_used=self._llm_calls,
@@ -107,7 +107,7 @@ class BudgetController:
         node_count = max(0, int(node_count))
         depth = max(0, int(depth))
         parallel_width = max(0, int(parallel_width))
-        if self._nodes_used + node_count > self._budget.max_nodes:
+        if self._budget.max_nodes > 0 and self._nodes_used + node_count > self._budget.max_nodes:
             return BudgetStatus(
                 ok=False, exceeded="TOOL_NODES_EXCEEDED",
                 elapsed_total_ms=status.elapsed_total_ms,
@@ -145,6 +145,8 @@ class BudgetController:
 
     def remaining_node_capacity(self) -> int:
         """Return how many execution nodes may still be reserved this turn."""
+        if self._budget.max_nodes <= 0:
+            return 2_147_483_647
         return max(0, int(self._budget.max_nodes) - int(self._nodes_used))
 
     def begin_execution(self) -> None:

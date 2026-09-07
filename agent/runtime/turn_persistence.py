@@ -117,7 +117,7 @@ def persist_run_record(session, turn, result, context) -> bool:
             from core.runtime_engine.context_compaction import build_history_state_record
 
             store = SessionMessageStore(session_id=session.session_id, ws_id=ws_id)
-            if user_input:
+            if user_input and not str(op_metadata.get("approval_resume_id") or "").strip():
                 user_attachments = list((getattr(turn.op, "metadata", {}) or {}).get("attachments") or [])
                 user_message_run_id = user_message_storage_run_id(
                     client_request_id, run_id,
@@ -294,7 +294,7 @@ def _merge_result_projection(run_id: str, ws_id: str, result, context) -> None:
         "no_tool_reason": result_dict.get("no_tool_reason") or "",
         "metadata": _safe_metadata(metadata),
         "timeline_summary": result_dict.get("timeline_summary") or metadata.get("timeline_summary") or {},
-        "warnings": [redact_text(str(w))[:300] for w in list(result_dict.get("warnings") or [])[:20]],
+        "warnings": [redact_text(str(w)) for w in list(result_dict.get("warnings") or [])],
         "warning_count": len(list(result_dict.get("warnings") or [])),
         "execution_outcome": execution_outcome,
         "tool_execution_outcome": tool_execution_outcome,
@@ -338,7 +338,7 @@ def _merge_result_projection(run_id: str, ws_id: str, result, context) -> None:
         _log.warning("Cannot write audit sidecar for run %s", run_id, exc_info=True)
 
 
-def _safe_tool_calls(tool_calls: list, *, limit: int = 64) -> list:
+def _safe_tool_calls(tool_calls: list, *, limit: int = 0) -> list:
     # Auto-tracking can emit dozens of status polls for one background task.
     # Keep the original model-requested call and only the latest poll for each
     # tracked call. Full poll history remains in trace/tracking_events; the run
@@ -359,41 +359,28 @@ def _safe_tool_calls(tool_calls: list, *, limit: int = 64) -> list:
     compacted.sort(key=lambda item: item[0])
 
     safe = []
-    for _, call in compacted[:max(0, int(limit))]:
+    visible_calls = compacted if int(limit) <= 0 else compacted[:int(limit)]
+    for _, call in visible_calls:
         safe.append({
-            "call_id": str(call.get("call_id", ""))[:120],
-            "tool_id": str(call.get("tool_id", ""))[:120],
+            "call_id": str(call.get("call_id", "")),
+            "tool_id": str(call.get("tool_id", "")),
             "ok": bool(call.get("ok", False)),
-            "summary": redact_text(str(call.get("summary", "")))[:800],
-            "errors": [redact_text(str(e))[:240] for e in list(call.get("errors") or [])[:5]],
-            "warnings": [redact_text(str(w))[:240] for w in list(call.get("warnings") or [])[:5]],
+            "summary": redact_text(str(call.get("summary", ""))),
+            "errors": [redact_text(str(e)) for e in list(call.get("errors") or [])],
+            "warnings": [redact_text(str(w)) for w in list(call.get("warnings") or [])],
             "metadata": _safe_metadata(call.get("metadata") or {}, max_depth=2),
         })
     return safe
 
 
 def _history_tool_context(result) -> list[dict]:
-    """Return bounded, redacted tool facts suitable for chat continuation."""
+    """Return complete, redacted tool facts suitable for chat continuation."""
     if result is None:
         return []
     compact = _safe_tool_calls(
         list(getattr(result, "tool_calls", None) or []),
-        limit=80,
+        limit=0,
     )
-    limit = 8
-    # Follow-up questions need terminal failures and the newest evidence more
-    # often than the first calls in a long turn. Keep those facts while
-    # retaining chronological order for readable conversation context.
-    selected = {
-        index for index, item in enumerate(compact)
-        if not item["ok"]
-    }
-    if len(selected) > limit:
-        selected = set(sorted(selected)[-limit:])
-    for index in range(len(compact) - 1, -1, -1):
-        if len(selected) >= limit:
-            break
-        selected.add(index)
     return [
         {
             "tool_id": item["tool_id"],
@@ -401,8 +388,7 @@ def _history_tool_context(result) -> list[dict]:
             "summary": item["summary"],
             "errors": item["errors"],
         }
-        for index, item in enumerate(compact)
-        if index in selected
+        for item in compact
     ]
 
 

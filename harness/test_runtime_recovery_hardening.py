@@ -71,13 +71,14 @@ def test_persisted_tool_context_is_added_to_assistant_history_only():
     assert "web.manage: succeeded" in messages[0]["content"]
 
 
-def test_projected_tool_fallback_discloses_truncation():
+def test_projected_tool_fallback_preserves_every_tool_result():
     text = _tool_result_fallback_from_projected_calls([
         {"tool_id": f"tool.{index}", "ok": True, "summary": "done"}
         for index in range(11)
     ])
 
-    assert "以下仅展示前 10 条，共 11 条。" in text
+    assert "tool.10" in text
+    assert "仅展示前" not in text
 
 
 def test_llm_errors_are_normalized_before_reaching_user_projections():
@@ -100,7 +101,7 @@ def test_llm_invocation_never_returns_raw_exception_text():
     assert response.error == "llm_provider_error"
 
 
-def test_history_tool_context_keeps_failures_and_latest_evidence():
+def test_history_tool_context_preserves_all_evidence():
     result = type("Result", (), {"tool_calls": [
         {
             "call_id": f"call-{index}", "tool_id": f"tool.{index}",
@@ -110,7 +111,7 @@ def test_history_tool_context_keeps_failures_and_latest_evidence():
     ]})()
 
     context = _history_tool_context(result)
-    assert len(context) == 8
+    assert len(context) == 12
     assert any(item["tool_id"] == "tool.5" and not item["ok"] for item in context)
     assert context[-1]["tool_id"] == "tool.11"
 

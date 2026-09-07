@@ -334,7 +334,7 @@ def device_manage(invocation):
     connection = service.get_connection(invocation.workspace_id, connection_id)
     if not connection:
         return {"ok": False, "error": "connection_not_found", "connection_id": connection_id}
-    if action == "configure" and not service.configuration_allowed(
+    if action == "configure" and not service.skill_allows_connection(
         service.get_skill(invocation.workspace_id, str(getattr(invocation, "skill", "") or "")), connection_id
     ):
         return {"ok": False, "executed": False, "error": "device_execution_not_allowed_by_skill"}
@@ -361,7 +361,7 @@ def device_manage(invocation):
         read=action in {"read", "collect"},
         timeout=int(args.get("timeout") or 15),
         session_scope=str(getattr(invocation, "run_id", None) or getattr(invocation, "task_id", None) or ""),
-        **({"configuration_skill_id": str(invocation.skill)} if action == "configure" else {}),
+        **({"skill_id": str(invocation.skill)} if action == "configure" else {}),
     )
     if action == "configure":
         return result

@@ -50,7 +50,7 @@ def test_configuration_revalidates_authority_at_service_boundary(monkeypatch, tm
     _setup(monkeypatch, tmp_path)
     conn = _register_connection("default", {"name": "CE", "host": "127.0.0.1", "protocol": "telnet", "vendor": "h3c"})
     monkeypatch.setattr(service, "probe_target", lambda *a, **kw: pytest.fail("must not open a socket"))
-    result = service.test_connection("default", conn["connection_id"], commands=["system-view"], configuration_skill_id="deleted")
+    result = service.test_connection("default", conn["connection_id"], commands=["system-view"], skill_id="deleted")
     assert result["ok"] is False
     assert result["error"] == "device_execution_not_allowed_by_skill"
 

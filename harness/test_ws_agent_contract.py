@@ -98,7 +98,7 @@ def test_ws_worker_injects_cooperative_cancel_check(monkeypatch):
     assert check() is True
 
 
-def test_ws_live_tool_summary_is_bounded_without_truncating_done_payload(monkeypatch):
+def test_ws_live_tool_summary_preserves_complete_output(monkeypatch):
     from backend.ws import agent_ws
     import agent.app.service as service
     from agent.runtime.stream_emitter import StreamEmitter
@@ -135,7 +135,7 @@ def test_ws_live_tool_summary_is_bounded_without_truncating_done_payload(monkeyp
         messages.append(event_queue.get())
     live = next(item for item in messages if item.get("type") == "event")
     done = next(item for item in messages if item.get("type") == "done")
-    assert len(live["data"]["summary"]) == 8003
+    assert live["data"]["summary"] == long_summary
     assert done["final_response"] == long_summary
 
 

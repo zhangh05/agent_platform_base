@@ -24,6 +24,7 @@ class LoadedExtension:
     workbench_skill_catalog: Callable[[str], list[dict[str, Any]]] | None = None
     workbench_context_resolver: Callable[[str, dict[str, Any]], dict[str, Any]] | None = None
     workbench_prompt_renderer: Callable[[dict[str, Any]], str] | None = None
+    execution_interceptor: Callable[[dict[str, Any]], dict[str, Any] | None] | None = None
 
 
 _CACHE: tuple[LoadedExtension, ...] | None = None
@@ -336,6 +337,9 @@ def load_extensions(*, registry: ExtensionRegistry | None = None, refresh: bool 
         prompt_renderer = contribution.get("workbench_prompt_renderer")
         if prompt_renderer is not None and not callable(prompt_renderer):
             raise ExtensionValidationError("workbench_prompt_renderer contribution must be callable")
+        execution_interceptor = contribution.get("execution_interceptor")
+        if execution_interceptor is not None and not callable(execution_interceptor):
+            raise ExtensionValidationError("execution_interceptor contribution must be callable")
         loaded.append(LoadedExtension(
             manifest=manifest,
             root=root,
@@ -346,6 +350,7 @@ def load_extensions(*, registry: ExtensionRegistry | None = None, refresh: bool 
             workbench_skill_catalog=skill_catalog,
             workbench_context_resolver=context_resolver,
             workbench_prompt_renderer=prompt_renderer,
+            execution_interceptor=execution_interceptor,
         ))
     result = tuple(loaded)
     # Validate the aggregate extension surface while loading, so a deployment
@@ -381,6 +386,15 @@ def load_extensions(*, registry: ExtensionRegistry | None = None, refresh: bool 
     if use_default_registry and not refresh:
         _CACHE = result
     return result
+
+
+def execution_interceptors() -> tuple[tuple[str, Callable[[dict[str, Any]], dict[str, Any] | None]], ...]:
+    """Return enabled extension execution hooks in deterministic order."""
+    return tuple(
+        (extension.manifest.extension_id, extension.execution_interceptor)
+        for extension in load_extensions()
+        if extension.execution_interceptor is not None
+    )
 
 
 def resolve_workbench_context(workspace_id: str, selection: dict[str, Any]) -> dict[str, Any]:

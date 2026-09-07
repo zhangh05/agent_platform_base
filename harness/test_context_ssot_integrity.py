@@ -28,7 +28,7 @@ def test_restored_history_overlap_is_not_injected_twice():
     assert persisted + memory[2:] == [*persisted, {"role": "user", "content": "next"}]
 
 
-def test_recent_history_budget_keeps_newest_messages():
+def test_recent_history_preserves_all_messages():
     messages = [
         {"role": "user", "content": f"old-{index}-" + "x" * 500}
         for index in range(20)
@@ -39,9 +39,9 @@ def test_recent_history_budget_keeps_newest_messages():
         per_message_tokens=180,
     )
     assert "old-19-" in text
-    assert "old-0-" not in text
+    assert "old-0-" in text
     from core.runtime_engine.context_budget import estimate_text_tokens
-    assert estimate_text_tokens(text) <= 450
+    assert estimate_text_tokens(text) > 450
 
 
 def test_history_retention_prioritizes_constraints_corrections_and_entities():

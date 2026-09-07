@@ -9,9 +9,7 @@
  *  - sending: 是否在等后端
  *
  * 持久化策略:
- *  - 每个会话最多 100 条消息
- *  - 最多保留 20 个最近会话
- *  - 超出后按最近一条消息时间执行 LRU 淘汰
+ *  - 保留完整会话历史；服务端是会话事实来源，本地缓存不得静默裁剪
  *  - localStorage key: "lzcore_workbench"
  */
 import { create } from "zustand";
@@ -96,53 +94,20 @@ export interface ChatMsg {
   attachments?: Array<{ file_id: string; name: string; mime_type: string; size_bytes: number; kind: "image" | "file"; previewUrl?: string }>;
 }
 
-const MAX_MSGS_PER_SESSION = 100;
-const MAX_SESSIONS = 20;
-
 let msgSeq = 0;
 function nextId(): string {
   msgSeq += 1;
   return `msg-${Date.now()}-${msgSeq}`;
 }
 
-/**
- * Cap a session's history to MAX_MSGS_PER_SESSION (drop oldest, keep newest).
- * Also cap the entire map to MAX_SESSIONS entries by simple LRU on
- * session_id (good enough — chat sessions are not high-cardinality).
- */
+/** Keep the client cache lossless. Retention is an explicit user action. */
 function capHistory(
   map: Record<string, ChatMsg[]>,
   keepSessionId?: string,
 ): Record<string, ChatMsg[]> {
   if (!map || typeof map !== "object") return {};
-  // Per-session cap
-  const capped: Record<string, ChatMsg[]> = {};
-  for (const [k, v] of Object.entries(map)) {
-    if (!Array.isArray(v)) continue;
-    if (v.length > MAX_MSGS_PER_SESSION) {
-      capped[k] = v.slice(v.length - MAX_MSGS_PER_SESSION);
-    } else {
-      capped[k] = v;
-    }
-  }
-  // Global cap (LRU: drop sessions with oldest most-recent message)
-  const keys = Object.keys(capped);
-  if (keys.length > MAX_SESSIONS) {
-    // Get timestamp of newest message per session
-    const latestTs: Record<string, number> = {};
-    for (const k of keys) {
-      const msgs = capped[k];
-      if (msgs.length === 0) { latestTs[k] = 0; continue; }
-      const newest = msgs[msgs.length - 1];
-      latestTs[k] = new Date(newest.created_at || 0).getTime();
-    }
-    const sorted = [...keys]
-      .filter((key) => key !== keepSessionId)
-      .sort((a, b) => latestTs[a] - latestTs[b]);
-    const toDelete = sorted.slice(0, keys.length - MAX_SESSIONS);
-    for (const k of toDelete) delete capped[k];
-  }
-  return capped;
+  void keepSessionId;
+  return Object.fromEntries(Object.entries(map).filter(([, value]) => Array.isArray(value)));
 }
 
 function messageKey(m: Pick<ChatMsg, "message_id" | "client_request_id" | "run_id" | "role" | "text" | "created_at">): string {

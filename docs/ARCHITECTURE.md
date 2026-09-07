@@ -12,6 +12,8 @@ LZCore 的边界由执行链路而非页面或提示词决定：`backend/` 接�
 
 工具通过 `ToolRuntimeClient` 统一进入 manifest、调用方检查、Skill 范围、executor 和审计。通用工具由 canonical registry 管理；扩展工具仍须使用同一执行边界。网络设备命令没有平台危险命令策略或配置写入开关，设备账号决定实际命令权限。
 
+`extensions/approval/` 是可选的外部决定扩展。Skill 的 `approval_enabled=false` 时不会改变工具路径；为 `true` 时，核心 `execution_interceptor` 边界在实际执行前生成扩展拥有的 prepared-operation 记录。记录覆盖精确参数和服务端范围版本，界面批准后仍会重新核验，再通过 `ToolRuntimeClient` 调用。这个扩展不包含命令危险度分类、自动回滚、TTL 或第二个模型循环。
+
 ## 恢复
 
 QueryLoop 只对可恢复的只读观察建立有界目标。`plan_goal_ids` 只关联替代调用，运行时还会校验能力和资源目标；正向 evidence claim 必须来自成功、已终止的结果。每个领域目标独立计量重规划次数，阻塞或完成后不会被投影重新打开。写入、取消、Skill 范围外调用和写入结果未知都不会触发平台自动重试；完整工具结果始终交回模型决定下一步。平台保留经过完整合同校验的 `runtime_recoveries`；网络 CLI 语义纠错使用模型可读反馈，由模型在下一轮选择动作。

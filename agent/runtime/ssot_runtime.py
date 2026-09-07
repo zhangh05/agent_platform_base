@@ -76,8 +76,8 @@ def _apply_runtime_control(metadata: dict[str, Any], runtime_control: Any) -> No
     profile = runtime_control.profile if isinstance(runtime_control.profile, dict) else {}
     metadata.update({
         "subagent_profile": dict(profile),
-        "max_steps": max(1, int(runtime_control.max_steps or 1)),
-        "max_tool_nodes": max(1, int(runtime_control.max_tool_nodes or runtime_control.max_steps or 1)),
+        "max_steps": max(0, int(runtime_control.max_steps or 0)),
+        "max_tool_nodes": max(0, int(runtime_control.max_tool_nodes or 0)),
         "subtask_id": str(runtime_control.subtask_id or ""),
         "parent_session_id": str(runtime_control.parent_session_id or ""),
     })
@@ -98,7 +98,7 @@ def _persist_inflight_user_message(session, turn, user_input: str) -> None:
     again, so this is idempotent.  An interrupted process therefore restores a
     safe untrusted context for an explicit later resume.
     """
-    if not user_input:
+    if not user_input or str((getattr(turn.op, "metadata", {}) or {}).get("approval_resume_id") or "").strip():
         return
     from agent.runtime.message_identity import (
         user_message_storage_run_id,
@@ -183,6 +183,7 @@ def run_ssot_turn(
     )
     _apply_runtime_control(metadata_in, getattr(turn.op, "runtime_control", None))
     task_continuation_contract: dict[str, Any] | None = None
+    approval_resume_id = str(metadata_in.get("approval_resume_id") or "").strip()
 
     try:
         from backend.core.chat_attachments import build_attachment_runtime_guidance
@@ -225,6 +226,32 @@ def run_ssot_turn(
                 label=str(workbench_context.get("skill_id") or "selected_skill"),
             )
         )
+
+    # An approval decision is a durable, server-owned fact.  A resume turn
+    # never trusts browser-supplied commands or results; it may only expose a
+    # settled operation bound to this exact workspace and session.
+    if approval_resume_id:
+        try:
+            from extensions.approval.service import get_operation
+            from core.runtime_engine.prompt_contract import trusted_prompt_item
+            operation = get_operation(workspace_id, approval_resume_id)
+            if not operation or str(operation.get("session_id") or "") != str(session_id or ""):
+                raise ValueError("approval_operation_not_found")
+            if str(operation.get("status") or "") not in {"executed", "unknown", "invalidated", "rejected", "cancelled"}:
+                raise ValueError("approval_operation_not_settled")
+            metadata_in.setdefault("trusted_prompt_items", []).append(
+                trusted_prompt_item(
+                    "approval_resume",
+                    "A previously prepared operation is settled. Do not repeat it. "
+                    "Use its complete structured result as evidence and continue the original task.\n"
+                    + json.dumps(operation, ensure_ascii=False, sort_keys=True, default=str),
+                    label=approval_resume_id,
+                )
+            )
+        except Exception as exc:
+            _LOG.warning("approval resume resolution failed", exc_info=True)
+            approval_resume_id = ""
+            metadata_in.pop("approval_resume_id", None)
 
     # Build the full LLM-visible tool registry first. RuntimeContextBudget
     # deducts its schema cost before assigning history/retrieval capacity.
@@ -438,15 +465,10 @@ def run_ssot_turn(
         # and, for multi-error paths, as `errors`. Preserve the ordered union
         # before projecting lifecycle facts; otherwise cancellation is visible
         # to the response but lost to TaskState terminal derivation.
-        runtime_errors = [
-            str(item)[:240]
-            for item in (runtime_result.errors or [])
-            if str(item).strip()
-        ]
+        runtime_errors = [str(item) for item in (runtime_result.errors or []) if str(item).strip()]
         terminal_error = str(getattr(runtime_result, "error", "") or "").strip()
         if terminal_error and terminal_error not in runtime_errors:
-            runtime_errors.append(terminal_error[:240])
-        runtime_errors = runtime_errors[:16]
+            runtime_errors.append(terminal_error)
         metadata = {
             **context.metadata,
             "runtime_engine": "ssot_runtime",
@@ -656,7 +678,7 @@ def run_ssot_turn(
         session,
         user_input,
         result.final_response,
-        include_user=True,
+        include_user=not bool(approval_resume_id),
         include_assistant=True,
         run_id=turn.turn_id,
         client_request_id=history_exclude_client_request_id,
@@ -845,7 +867,9 @@ def _build_engine(
     config = SSOTRuntimeConfig(
         max_global_concurrency=8,
         max_layer_concurrency=5,
-        max_llm_calls=50,
+        # Zero means unbounded. A loop ends on the model's final response,
+        # cancellation, or an external interruption—not a hidden counter.
+        max_llm_calls=0,
         # A turn is goal-driven, not elapsed-time-driven. Per-provider and
         # per-tool transport deadlines still protect unavailable endpoints.
         max_total_seconds=0,
@@ -855,13 +879,13 @@ def _build_engine(
         tracking_max_seconds=0,
         tracking_max_polls=40,
         tracking_poll_interval_cap_seconds=5,
-        max_query_loop_iterations=max(
-            1,
-            min(int(max_query_loop_iterations or 20), 20),
+        max_query_loop_iterations=(
+            max(0, int(max_query_loop_iterations))
+            if max_query_loop_iterations is not None else 0
         ),
-        max_nodes=max(1, min(int(max_tool_nodes or 30), 30)),
-        max_tool_calls_per_iteration=max(
-            1, min(int(max_tool_nodes or 8), 8),
+        max_nodes=(max(0, int(max_tool_nodes)) if max_tool_nodes is not None else 0),
+        max_tool_calls_per_iteration=(
+            max(0, int(max_tool_nodes)) if max_tool_nodes is not None else 0
         ),
         context_window_tokens=int(getattr(context_budget, "context_window_tokens", 0) or 0),
         max_input_tokens=int(getattr(context_budget, "max_input_tokens", 48_000) or 48_000),
@@ -1192,41 +1216,35 @@ def _tool_result_fallback_from_projected_calls(tool_calls: list[dict[str, Any]])
         + (f"，失败 {fail_count} 个" if fail_count else "")
     ]
 
-    if len(tool_calls) > 10:
-        lines.append(f"以下仅展示前 10 条，共 {len(tool_calls)} 条。")
-
-    for call in tool_calls[:10]:
+    for call in tool_calls:
         tool_id = str(call.get("tool_id") or "tool")
         status = "✅" if call.get("ok") else "❌"
         summary = str(call.get("summary") or "").strip()
         result = call.get("result") if isinstance(call.get("result"), dict) else {}
         lines.append(f"\n### {status} {tool_id}")
         if summary and summary not in {"Tool completed", "Tool failed"}:
-            lines.append(summary[:1200] + ("..." if len(summary) > 1200 else ""))
+            lines.append(summary)
         command = result.get("command") or result.get("description")
         if command:
-            lines.append(f"> `{str(command)[:160]}`")
+            lines.append(f"> `{str(command)}`")
         if result.get("exit_code") is not None:
             lines.append(f"Exit: exit_code={result.get('exit_code')}")
         stdout = str(result.get("stdout") or "").strip()
         stderr = str(result.get("stderr") or "").strip()
         if stdout:
-            lines.append(f"```\n{stdout[:1200]}\n```")
+            lines.append(f"```\n{stdout}\n```")
         if stderr:
-            lines.append(f"```\n{stderr[:1200]}\n```")
+            lines.append(f"```\n{stderr}\n```")
         artifacts = call.get("artifacts") if isinstance(call.get("artifacts"), list) else []
         if artifacts:
             ids = [
                 str(item.get("artifact_id") or item.get("title") or "").strip()
-                for item in artifacts[:5]
+                for item in artifacts
                 if isinstance(item, dict)
             ]
             ids = [value for value in ids if value]
             if ids:
                 lines.append("产物：" + "、".join(ids))
-
-    if len(tool_calls) > 10:
-        lines.append(f"\n其余 {len(tool_calls) - 10} 个工具结果已省略。")
 
     return "\n".join(lines).strip()
 
@@ -1482,11 +1500,9 @@ def _build_retrieved_context_block(
                 "memory_hits": [],
                 "knowledge_hits": retriever.search_knowledge(user_input, top_k=2),
             }
-        from core.runtime_engine.context_budget import truncate_text_to_tokens
         from storage.redaction import redact_text
 
         lines: list[str] = []
-        item_tokens = max(200, min(750, max_tokens // 3))
         if include_workspace_memory:
             core_rules = MemoryStore().list_retrievable(
                 workspace_id,
@@ -1496,23 +1512,19 @@ def _build_retrieved_context_block(
             for rule in core_rules:
                 content = redact_text(str(rule.get("content") or rule.get("summary") or "")).strip()
                 if content:
-                    compacted, _ = truncate_text_to_tokens(content, min(item_tokens, 350))
-                    lines.append(f"[core-rule scope=workspace authority=explicit-user] {compacted}")
+                    lines.append(f"[core-rule scope=workspace authority=explicit-user] {content}")
         for hit in retrieved.get("memory_hits", [])[:3]:
             if str(hit.get("memory_type") or "") == "core_rule":
                 continue
             content = redact_text(str(hit.get("content") or hit.get("summary") or "")).strip()
             if content:
-                compacted, _ = truncate_text_to_tokens(content, item_tokens)
                 scope = str(hit.get("scope") or "workspace")
-                lines.append(f"[memory scope={scope}] {compacted}")
+                lines.append(f"[memory scope={scope}] {content}")
         for hit in retrieved.get("knowledge_hits", [])[:2]:
             content = redact_text(str(hit.get("content") or hit.get("summary") or "")).strip()
             if content:
-                compacted, _ = truncate_text_to_tokens(content, item_tokens)
-                lines.append(f"[knowledge scope=workspace] {compacted}")
-        compacted, _ = truncate_text_to_tokens("\n".join(lines), max_tokens)
-        return compacted
+                lines.append(f"[knowledge scope=workspace] {content}")
+        return "\n".join(lines)
     except Exception:
         _LOG.debug("governed context retrieval failed", exc_info=True)
         return ""
@@ -1851,26 +1863,8 @@ def _format_recent_history(
     max_tokens: int,
     per_message_tokens: int,
 ) -> str:
-    """Fit newest messages into a budget while preserving chronological order."""
-    from core.runtime_engine.context_budget import estimate_text_tokens, truncate_text_to_tokens
-
-    selected: list[str] = []
-    used = 0
-    for message in reversed(messages):
-        content, _ = truncate_text_to_tokens(message["content"], per_message_tokens)
-        line = (
-            f"  [{message['role']}] "
-            f"{content}"
-        )
-        cost = estimate_text_tokens(line) + 1
-        if selected and used + cost > max_tokens:
-            break
-        if not selected and cost > max_tokens:
-            line, _ = truncate_text_to_tokens(line, max_tokens)
-            cost = estimate_text_tokens(line)
-        selected.append(line)
-        used += cost
-    return "\n".join(reversed(selected))
+    """Return all history; budgeting is telemetry and never a filter."""
+    return "\n".join(f"  [{message['role']}] {message['content']}" for message in messages)
 
 
 def _append_context_message(messages: list[dict[str, Any]], seen: set[str], raw: Any) -> None:
@@ -1923,7 +1917,7 @@ def _summarize_older_messages(
     *,
     max_tokens: int,
 ) -> str:
-    from core.runtime_engine.context_budget import estimate_text_tokens, truncate_text_to_tokens
+    from core.runtime_engine.context_budget import estimate_text_tokens
     from core.runtime_engine.context_compaction import history_state_signals
     from storage.redaction import redact_text
 
@@ -1933,10 +1927,7 @@ def _summarize_older_messages(
         enumerate(messages),
         key=lambda item: (-_history_record_score(item[1]), -item[0]),
     )
-    selected = sorted(
-        [item for item in ranked if _history_record_score(item[1]) > 0][:12],
-        key=lambda item: item[0],
-    )
+    selected = sorted([item for item in ranked if _history_record_score(item[1]) > 0], key=lambda item: item[0])
     if not selected and messages:
         indexes = sorted(set(range(min(2, len(messages)))) | set(range(max(0, len(messages) - 3), len(messages))))
         selected = [(index, messages[index]) for index in indexes]
@@ -1944,7 +1935,7 @@ def _summarize_older_messages(
     lines: list[str] = []
     for _, message in selected:
         content = redact_text(message["content"])
-        compacted, _ = truncate_text_to_tokens(content, min(220, max_tokens))
+        compacted = content
         state = message.get("history_state") if isinstance(message.get("history_state"), dict) else {}
         signals = ",".join(str(value) for value in state.get("signals", []) if value) or ",".join(history_state_signals(content)) or "context"
         state_projection = {
@@ -1957,12 +1948,9 @@ def _summarize_older_messages(
             if state_projection else ""
         )
         lines.append(f"  [history_state role={message['role']} signals={signals}]{state_text} excerpt={compacted}")
-        if estimate_text_tokens("\n".join(lines)) >= max_tokens:
-            break
     if not lines:
         return ""
-    compacted, _ = truncate_text_to_tokens("\n".join(lines), max_tokens)
-    return compacted
+    return "\n".join(lines)
 
 
 def _retrieve_history_references(messages: list[dict[str, str]], user_input: str) -> list[dict[str, str]]:

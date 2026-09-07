@@ -550,9 +550,8 @@ def _run_agent_thread(
             else:
                 name = event.get("type", event.get("name", "event")) if isinstance(event, dict) else "event"
                 data = event
-                # Only surface lightweight fields for live display; the
-                # full result (including large output arrays) is carried
-                # through the final 'done' payload and run persistence.
+                # Preserve the complete tool-visible summary. Presentation
+                # may collapse it, but transport must not discard it.
                 if name in ("tool_call", "tool_result") and isinstance(event, dict):
                     summary = str(event.get("summary") or event.get("message") or "")
                     data = {
@@ -561,7 +560,7 @@ def _run_agent_thread(
                                 event.get("tool_id", ""))),
                         "tool_id": event.get("tool_id", event.get("name", "")),
                         "ok": event.get("ok", event.get("status") == "ok"),
-                        "summary": summary[:8000] + ("..." if len(summary) > 8000 else ""),
+                        "summary": summary,
                         "call_id": event.get("call_id", ""),
                     }
                 if isinstance(data, dict):

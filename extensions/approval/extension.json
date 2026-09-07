@@ -1,0 +1,20 @@
+{
+  "extension_id": "approval",
+  "name": "操作审批",
+  "version": "1.0.0",
+  "api_version": "1",
+  "min_platform_version": "1.1.0",
+  "description": "可选的外部决定扩展；关闭时不介入任何工具执行。",
+  "capabilities": ["external_decision", "prepared_operations"],
+  "permissions": ["workspace:read", "workspace:write"],
+  "routes": [
+    "/api/extensions/approval/operations",
+    "/api/extensions/approval/operations/<operation_id>",
+    "/api/extensions/approval/operations/<operation_id>/decision"
+  ],
+  "frontend_modules": [],
+  "workflow_templates": [],
+  "frontend_routes": [],
+  "entrypoint": "backend.py:register",
+  "metadata": {"minimum_role": "operator", "minimum_write_role": "operator"}
+}

@@ -661,6 +661,8 @@ def _derive_status(task: dict[str, Any], metadata: dict[str, Any], run_ok: bool)
     runtime_errors = [str(item).strip().lower() for item in _as_list(metadata.get("runtime_errors"))]
     if "cancelled_by_user" in runtime_errors:
         return "cancelled", "cancelled_by_user"
+    if str(metadata.get("execution_outcome") or "") == "waiting_external_input":
+        return "waiting_user", "await_external_decision"
     if _replan_requested(task, metadata):
         if int(task.get("replan_attempts") or 0) >= _MAX_CONSECUTIVE_REPLAN_ATTEMPTS:
             return "failed", "replan_budget_exhausted"

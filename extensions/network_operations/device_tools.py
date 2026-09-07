@@ -452,7 +452,19 @@ def _execute_commands(connection: _Connection, commands, facts, *, read: bool, c
         connection.paging = session.disable_paging()
         connection.paging_initialized = True
     results = []
+    dispatch_blocked = False
     for command in selected:
+        if dispatch_blocked:
+            # A previous transport exception made it objectively impossible to
+            # send this command through the same session. Keep an explicit row
+            # rather than silently dropping the remainder of the model plan.
+            result = CLICommandResult(
+                command, "", session.prompt, False, 0, session.encoding, 0,
+                error_code="command_not_sent_after_transport_failure",
+                dispatch_status="not_sent",
+            )
+            results.append(_semantic_result_payload(result, command_facts.get(command, "")))
+            continue
         try:
             result = session.run_command(command)
         except Exception:
@@ -461,9 +473,15 @@ def _execute_commands(connection: _Connection, commands, facts, *, read: bool, c
             session.invalidate()
             result = CLICommandResult(command, "", session.prompt, False, 0, session.encoding, 0,
                                       error_code="command_dispatch_uncertain", dispatch_status="uncertain")
+            dispatch_blocked = True
         results.append(_semantic_result_payload(result, command_facts.get(command, "")))
-        if configure and (not result.complete or result.error_code):
-            break
+        # A configuration batch is an ordered collection of independent model
+        # instructions, not an implicit transaction.  Preserve the outcome of
+        # every command and keep sending later commands after a deterministic
+        # command failure.  The model receives the complete sequence and
+        # decides whether a follow-up, read-back, or a different plan is
+        # warranted.  A transport uncertainty still invalidates the session,
+        # but it must not be misrepresented as a policy-created short circuit.
     output = {item["command"]: item["output"] for item in results}
     complete = all(item["complete"] and not item["error_code"] for item in results)
     payload = {
@@ -491,7 +509,10 @@ def _execute_commands(connection: _Connection, commands, facts, *, read: bool, c
                        status="unknown" if uncertain else "succeeded" if complete else "partial",
                        error="configuration_outcome_unknown" if uncertain else "configuration_batch_incomplete" if not complete else "",
                        execution_may_continue=uncertain, automatic_retry_allowed=False,
-                       unexecuted_commands=selected[len(results):],
+                       unexecuted_commands=[
+                           item["command"] for item in results
+                           if item.get("dispatch_status") == "not_sent"
+                       ],
                        recommended_readback=True, rollback_performed=False)
     return payload
 

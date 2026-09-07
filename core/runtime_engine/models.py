@@ -148,6 +148,8 @@ class SSOTRuntimeConfig:
     parallel_layer_timeout_ms: int = 300_000
     single_node_timeout_ms: int = 120_000
     planner_timeout_ms: int = 20_000
+    # Zero means unbounded. Production runtime configures this explicitly;
+    # the generic library defaults remain conservative for standalone callers.
     max_query_loop_iterations: int = 20
     # Maximum executable nodes accepted from one model response.  This is a
     # per-round planning boundary, distinct from ``max_nodes`` for the whole

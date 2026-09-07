@@ -34,7 +34,7 @@ def test_configuration_rejects_only_missing_or_non_string_payloads(commands, ven
 
 
 @pytest.mark.parametrize("failure", ["device_command_rejected", "command_dispatch_uncertain", "interaction_required", "execution_timeout"])
-def test_configuration_stops_batch_and_preserves_effect_uncertainty(failure):
+def test_configuration_collects_every_command_result_after_a_failure(failure):
     from extensions.network_operations.device_tools import _execute_commands, _Connection
     from extensions.network_operations.cli_runtime import CLICommandResult
     driver, _ = resolve_driver("h3c", "<CE>")
@@ -50,11 +50,42 @@ def test_configuration_stops_batch_and_preserves_effect_uncertainty(failure):
     session.driver = driver
     conn = _Connection(session, lambda: None, [], paging_initialized=True)
     result = _execute_commands(conn, ["system-view", "interface LoopBack 100", "return"], None, read=False, configure=True)
-    assert calls == ["system-view"]
-    assert result["unexecuted_commands"] == ["interface LoopBack 100", "return"]
+    assert calls == ["system-view", "interface LoopBack 100", "return"]
+    assert result["unexecuted_commands"] == []
+    assert [item["command"] for item in result["command_results"]] == calls
     assert result["execution_may_continue"] is (failure != "device_command_rejected")
     assert not result["ok"] and not result["automatic_retry_allowed"]
     assert result["recommended_readback"] and not result["rollback_performed"]
+
+
+def test_configuration_marks_only_unsendable_remainder_after_transport_exception():
+    from extensions.network_operations.device_tools import _execute_commands, _Connection
+    from extensions.network_operations.cli_runtime import CLICommandResult
+    driver, _ = resolve_driver("h3c", "<CE>")
+    calls = []
+
+    class Session:
+        prompt, encoding, synchronized = "<CE>", "utf-8", True
+
+        def run_command(self, command):
+            calls.append(command)
+            if command == "system-view":
+                raise OSError("transport disconnected")
+            return CLICommandResult(command, "ok", self.prompt, True, 0, self.encoding, 0, dispatch_status="sent")
+
+        def invalidate(self):
+            self.synchronized = False
+
+    session = Session()
+    session.driver = driver
+    result = _execute_commands(
+        _Connection(session, lambda: None, [], paging_initialized=True),
+        ["system-view", "interface LoopBack 100", "return"], None,
+        read=False, configure=True,
+    )
+    assert calls == ["system-view"]
+    assert [item["dispatch_status"] for item in result["command_results"]] == ["uncertain", "not_sent", "not_sent"]
+    assert result["unexecuted_commands"] == ["interface LoopBack 100", "return"]
 
 
 def test_configuration_preserves_repeated_lines_and_exact_model_commands():

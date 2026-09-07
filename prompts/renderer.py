@@ -181,52 +181,6 @@ def _apply_context_policy(ctx: dict, citations: list, spec) -> tuple[dict, list[
     return dict(ctx), []
 
 
-def _fit_context_budget(value: dict, max_chars: int) -> dict:
-    """Deterministically shrink string leaves while preserving context shape."""
-    if len(_safe_json(value)) <= max_chars:
-        return value
-    cap = 1000
-    bounded = value
-    while cap >= 80:
-        bounded = _bound_strings(value, cap)
-        if len(_safe_json(bounded)) <= max_chars:
-            return bounded
-        cap //= 2
-    bounded = _bound_strings(value, 80)
-    while len(_safe_json(bounded)) > max_chars and _drop_last_list_item(bounded):
-        pass
-    return bounded
-
-
-def _bound_strings(value, cap: int):
-    if isinstance(value, dict):
-        return {str(k): _bound_strings(v, cap) for k, v in value.items()}
-    if isinstance(value, list):
-        return [_bound_strings(v, cap) for v in value]
-    if isinstance(value, tuple):
-        return tuple(_bound_strings(v, cap) for v in value)
-    if isinstance(value, str):
-        return value if len(value) <= cap else value[:cap] + "..."
-    return value
-
-
-def _drop_last_list_item(value) -> bool:
-    """Drop one item from the deepest non-empty list to honor a hard budget."""
-    if isinstance(value, dict):
-        for child in reversed(list(value.values())):
-            if _drop_last_list_item(child):
-                return True
-        return False
-    if isinstance(value, list):
-        for child in reversed(value):
-            if _drop_last_list_item(child):
-                return True
-        if value:
-            value.pop()
-            return True
-    return False
-
-
 def _stringify(value) -> str:
     if value is None:
         return ""

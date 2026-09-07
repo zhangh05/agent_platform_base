@@ -117,7 +117,7 @@ def push_continuation_runtime_event(
             "name": event.get("name", event.get("tool", event.get("tool_id", ""))),
             "tool_id": event.get("tool_id", event.get("name", "")),
             "ok": event.get("ok", event.get("status") == "ok"),
-            "summary": summary[:8000] + ("..." if len(summary) > 8000 else ""),
+            "summary": summary,
             "call_id": event.get("call_id", ""),
         }
     push_event(session_id, "continuation_runtime_event", {

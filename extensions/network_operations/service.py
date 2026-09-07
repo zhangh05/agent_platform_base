@@ -439,7 +439,7 @@ def test_connection(
     facts: list[str] | None = None,
     timeout: int = 15,
     session_scope: str = "",
-    configuration_skill_id: str = "",
+    skill_id: str = "",
 ) -> dict[str, Any]:
     execution_started = time.monotonic()
     with _connection_lock(workspace_id):
@@ -455,8 +455,8 @@ def test_connection(
         if commands is not None and facts:
             raise ValueError("commands_and_facts_are_mutually_exclusive")
         normalized_facts = _normalize_semantic_facts(facts) if facts else []
-        selected = commands if (read or configuration_skill_id) and not normalized_facts else []
-        if configuration_skill_id:
+        selected = commands if (read or skill_id) and not normalized_facts else []
+        if skill_id:
             if read or normalized_facts:
                 raise ValueError("configuration_cannot_use_read_or_templates")
             selected = normalize_configuration_commands(selected, target.vendor)
@@ -475,10 +475,10 @@ def test_connection(
             latest = get_connection(workspace_id, connection_id, include_secret=True)
             if not latest or latest.get("revision") != record.get("revision"):
                 raise ValueError("connection_changed_before_execution")
-            if configuration_skill_id:
-                # Re-read authority after queueing and before opening a socket.
-                skill = get_skill(workspace_id, configuration_skill_id)
-                if not configuration_allowed(skill, connection_id):
+            if skill_id:
+                # Re-read the server-owned Skill scope before opening a socket.
+                skill = get_skill(workspace_id, skill_id)
+                if not skill_allows_connection(skill, connection_id):
                     raise ValueError("device_execution_not_allowed_by_skill")
                 session_options = {"configure": True}
             remaining = timeout - (time.monotonic() - execution_started)
@@ -515,11 +515,11 @@ def test_connection(
     with _connection_lock(workspace_id):
         current = get_connection(workspace_id, connection_id, include_secret=True)
         if not current:
-            if configuration_skill_id:
+            if skill_id:
                 return {**result, "connection": None, "observation_superseded": True}
             return {"ok": False, "status": "failed", "error": "connection_deleted_during_test", "connection": None}
         if current.get("revision") != record.get("revision"):
-            if configuration_skill_id:
+            if skill_id:
                 return {**result, "connection": _public_connection(current), "observation_superseded": True}
             return {"ok": False, "status": "failed", "error": "connection_changed_during_test", "connection": _public_connection(current)}
         if current.get("probe_id") != probe_id:
@@ -724,7 +724,7 @@ def get_skill(workspace_id: str, skill_id: str) -> dict[str, Any] | None:
     return _with_skill_base_capability(record) if record else None
 
 
-def configuration_allowed(skill: dict[str, Any] | None, connection_id: str) -> bool:
+def skill_allows_connection(skill: dict[str, Any] | None, connection_id: str) -> bool:
     return bool(
         skill and skill.get("enabled", True)
         and "network.operations.device.manage" in (skill.get("allowed_tool_ids") or [])
@@ -772,6 +772,10 @@ def save_skill(workspace_id: str, payload: dict[str, Any]) -> dict[str, Any]:
         "device_ids": device_ids,
         "connection_ids": connection_ids,
         "allowed_tool_ids": allowed_tool_ids,
+        # Approval is an optional workflow extension.  It never changes the
+        # device account's authority and it is off unless the Skill owner
+        # explicitly enables it.
+        "approval_enabled": bool(payload.get("approval_enabled", existing.get("approval_enabled", False))),
         "default_script_id": default_script_id,
         "instructions": str(payload.get("instructions") or "").strip()[:2000],
         "created_at": str(existing.get("created_at") or now_iso()),
@@ -829,6 +833,7 @@ def resolve_workbench_selection(workspace_id: str, selection: dict[str, Any]) ->
         "skill_name": str(skill.get("name") or ""),
         "instructions": str(skill.get("instructions") or ""),
         "allowed_tool_ids": list(skill.get("allowed_tool_ids") or []),
+        "approval_enabled": bool(skill.get("approval_enabled", False)),
         "device_ids": selected,
         "connection_ids": [str(item.get("connection_id") or "") for item in connections],
         "connection_policy": "on_demand",

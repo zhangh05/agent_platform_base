@@ -492,6 +492,9 @@ export function TaskWorkbench() {
                   total={visibleHistory.length}
                   lastUserInput={lastUserInput}
                   onRetryOriginal={handleRetryOriginal}
+                  onResumeApproval={(operationId) => {
+                    void onSendRef.current("继续处理此前任务，审批结果已回传。", { approval_resume_id: operationId });
+                  }}
                 />
               ))}
               {activeJob?.status === "running" && latestAssistant?.status !== "streaming" ? (

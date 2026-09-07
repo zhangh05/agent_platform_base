@@ -11,6 +11,7 @@ import { ThinkingBlock } from "./ThinkingBlock";
 import hljs from "highlight.js/lib/core";
 import { useSessionStore } from "../../../stores/session";
 import { IconAlert, IconDocument, IconSparkle } from "../../../components/Icon";
+import { ApprovalActions } from "./ApprovalActions";
 
 const COPY_FEEDBACK_MS = 2000;
 
@@ -20,6 +21,7 @@ interface MessageRowProps {
   total: number;
   lastUserInput: string;
   onRetryOriginal: (text: string) => void;
+  onResumeApproval?: (operationId: string) => void;
 }
 
 /** Parse <think>...</think> and <thinking>...</thinking> blocks from content */
@@ -86,7 +88,7 @@ async function handleCodeCopyClick(event: React.MouseEvent<HTMLDivElement>) {
   }, COPY_FEEDBACK_MS);
 }
 
-export const MessageRow = memo(function MessageRow({ m, idx: _idx, total: _total, lastUserInput, onRetryOriginal }: MessageRowProps) {
+export const MessageRow = memo(function MessageRow({ m, idx: _idx, total: _total, lastUserInput, onRetryOriginal, onResumeApproval = () => {} }: MessageRowProps) {
   const workspaceId = useSessionStore((s) => s.currentWorkspaceId);
   const handleRetry = useCallback(() => {
     if (lastUserInput) onRetryOriginal(lastUserInput);
@@ -123,7 +125,7 @@ export const MessageRow = memo(function MessageRow({ m, idx: _idx, total: _total
               <span key={tc.call_id || `${tc.tool_id}-${tci}`} className={`live-tool-chip ${tc.status || "running"}`}>
                 <span className={`live-tool-dot ${tc.status || "running"}`} />
                 {tc.tool_name || toolLabel(tc.tool_id)}
-                {tc.summary && <span className="live-tool-summary">{tc.summary.slice(0, 40)}</span>}
+                {tc.summary && <span className="live-tool-summary">{tc.summary}</span>}
               </span>
             ))}
           </div>
@@ -189,6 +191,7 @@ export const MessageRow = memo(function MessageRow({ m, idx: _idx, total: _total
               fallbackText={sanitizeAssistantText(m.text)}
               onRetryOriginal={lastUserInput ? handleRetry : undefined}
             />
+            <ApprovalActions result={m.result} workspaceId={workspaceId || ""} onResume={onResumeApproval} />
           </>
         )}
         {m.status === "error" && m.error && (

@@ -9,7 +9,7 @@ import "./NetworkOperations.css";
 type Region = { region_id: string; name: string };
 type Device = { device_id: string; name: string; host: string; vendor: string; device_type: string; region_id: string };
 type Connection = { connection_id: string; device_id: string; name?: string; protocol: "ssh" | "telnet"; port: number; username?: string; source_address?: string; effective_source_address?: string; auth_method?: string; status: string; verified: boolean; credential_configured?: boolean; last_error?: string; last_tested_at?: string; driver_id?: string; detected_vendor?: string; os_family?: string; semantic_facts?: string[]; profile_detected_from?: string };
-type Skill = { skill_id: string; name: string; description: string; instructions?: string; enabled: boolean; device_ids: string[]; connection_ids: string[]; allowed_tool_ids: string[] };
+type Skill = { skill_id: string; name: string; description: string; instructions?: string; enabled: boolean; approval_enabled?: boolean; device_ids: string[]; connection_ids: string[]; allowed_tool_ids: string[] };
 type Observation = { observation_id: string; source_id: string; observed_at: string; completeness: string; target_ids: string[]; candidate_reference_id?: string };
 type OperationalReference = { reference_id: string; name: string; state: "candidate" | "confirmed" | "superseded" | "invalidated"; authority: string; current: boolean; completeness: string; target_ids: string[]; updated_at: string };
 type CommandExperience = { experience_id: string; connection_id: string; driver_id: string; command: string; status: "accepted" | "rejected"; observations: number; last_observed_at: string };
@@ -17,7 +17,7 @@ type EvidenceSource = { source_id: string; kind: string; available: boolean; aut
 type OperationalContext = { observations: Observation[]; references: OperationalReference[]; command_experience: CommandExperience[]; sources: EvidenceSource[] };
 type DeviceForm = Omit<Device, "device_id"> & { device_id?: string };
 type ConnectionForm = { connection_id?: string; device_id: string; name: string; protocol: "ssh" | "telnet"; port: string; username: string; source_address: string; password: string; private_key: string; passphrase: string; auth_method: string };
-type SkillForm = { skill_id?: string; name: string; description: string; instructions: string; enabled: boolean; device_ids: string[]; connection_ids: string[]; allowed_tool_ids: string[] };
+type SkillForm = { skill_id?: string; name: string; description: string; instructions: string; enabled: boolean; approval_enabled: boolean; device_ids: string[]; connection_ids: string[]; allowed_tool_ids: string[] };
 
 const base = "/extensions/network.operations";
 const toolOptions = [
@@ -29,7 +29,7 @@ const baseToolId = "network.operations.device.manage";
 const allowedToolIds = [baseToolId, ...toolOptions.map((item) => item.id)];
 const emptyDevice: DeviceForm = { name: "", host: "", vendor: "h3c", device_type: "switch", region_id: "" };
 const emptyConnection: ConnectionForm = { device_id: "", name: "", protocol: "ssh", port: "22", username: "", source_address: "", password: "", private_key: "", passphrase: "", auth_method: "password" };
-const emptySkill: SkillForm = { name: "", description: "", instructions: "", enabled: true, device_ids: [], connection_ids: [], allowed_tool_ids: allowedToolIds };
+const emptySkill: SkillForm = { name: "", description: "", instructions: "", enabled: true, approval_enabled: false, device_ids: [], connection_ids: [], allowed_tool_ids: allowedToolIds };
 const friendlyErrors: Record<string, string> = {
   "device name and host already exist": "设备名称与管理地址均相同的设备已存在",
 };
@@ -310,6 +310,7 @@ export default function NetworkOperations() {
       </section>) : (<section className="network-panel"><h2>{skillForm.skill_id ? "编辑 Skill" : "创建 Skill"}</h2><p>Skill 决定工作台可选设备与可信连接，模型在此边界内自主编排工具。</p><form onSubmit={saveSkill} className="form-grid">
         <label>名称<input required value={skillForm.name} onChange={(event) => setSkillForm({ ...skillForm, name: event.target.value })} /></label>
         <label className="check enabled-check"><input type="checkbox" checked={skillForm.enabled} onChange={(event) => setSkillForm({ ...skillForm, enabled: event.target.checked })} />工作台启用</label>
+        <label className="check enabled-check"><input type="checkbox" checked={skillForm.approval_enabled} onChange={(event) => setSkillForm({ ...skillForm, approval_enabled: event.target.checked })} />执行前要求审批</label>
         <label className="full-field">说明<textarea value={skillForm.description} onChange={(event) => setSkillForm({ ...skillForm, description: event.target.value })} /></label>
         <fieldset><legend>多选设备</legend>{devices.map((device) => <label className="check" key={device.device_id}><input type="checkbox" checked={skillForm.device_ids.includes(device.device_id)} onChange={(event) => setSkillForm({ ...skillForm, device_ids: event.target.checked ? [...skillForm.device_ids, device.device_id] : skillForm.device_ids.filter((id) => id !== device.device_id), connection_ids: event.target.checked ? skillForm.connection_ids : skillForm.connection_ids.filter((id) => connections.find((connection) => connection.connection_id === id)?.device_id !== device.device_id) })} />{device.name} · {device.host}</label>)}</fieldset>
         <fieldset><legend>设备连接</legend>{connections.filter((connection) => connection.credential_configured && skillForm.device_ids.includes(connection.device_id)).map((connection) => <label className="check" key={connection.connection_id}><input type="checkbox" checked={skillForm.connection_ids.includes(connection.connection_id)} onChange={(event) => setSkillForm({ ...skillForm, connection_ids: event.target.checked ? [...skillForm.connection_ids, connection.connection_id] : skillForm.connection_ids.filter((id) => id !== connection.connection_id) })} />{byDevice.get(connection.device_id)?.name} · {connection.protocol.toUpperCase()}:{connection.port} · {connection.verified ? "最近连接成功" : "调用时主动连接"}</label>)}</fieldset>

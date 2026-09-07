@@ -850,6 +850,29 @@ class StreamingToolExecutor:
                 continue
             await execute_read_group(read_group)
             read_group = []
+            # Extensions may defer one concrete side-effecting invocation
+            # before an operation ledger entry or handler can begin.  This is
+            # intentionally a neutral runtime seam: the core neither knows nor
+            # decides why outside input is needed.  Later calls in the same
+            # model round are still prepared independently so one deferred
+            # target never silently erases the rest of the proposed plan.
+            from .execution_interceptors import before_tool_execution
+            interception = before_tool_execution(
+                tool_id=tc.name.replace("__", "."),
+                call_id=tc.id,
+                arguments=tc.arguments,
+                ctx=ctx,
+            )
+            if interception is not None:
+                output = interception.as_tool_output()
+                result_by_id[tc.id] = StreamingToolResult(
+                    tool_name=tc.name,
+                    call_id=tc.id,
+                    output=output,
+                    ok=True,
+                    summary=interception.summary,
+                )
+                continue
             operation = None
             if ctx is not None:
                 from .operation_ledger import plan_operation
@@ -1314,7 +1337,7 @@ class StreamingToolExecutor:
             latency_ms=float(result.latency_ms or 0.0),
             error_code=error_code,
             execution_may_continue=may_continue,
-            summary=str(getattr(result, "summary", "") or "")[:220],
+            summary=str(getattr(result, "summary", "") or ""),
         )
 
 
@@ -1433,7 +1456,7 @@ class QueryLoop:
 
         # Build initial messages (cacheable prefix)
         messages = self._build_initial(ctx)
-        max_iterations = getattr(self._config, "max_query_loop_iterations", 20)
+        max_iterations = int(getattr(self._config, "max_query_loop_iterations", 0) or 0)
 
         def finish(**values) -> QueryLoopResult:
             """Build every exit projection with the same runtime metrics."""
@@ -1509,6 +1532,9 @@ class QueryLoop:
                 else
                 "unknown"
                 if metric_overrides.get("execution_outcome") == "unknown"
+                else
+                "waiting_external_input"
+                if metric_overrides.get("execution_outcome") == "waiting_external_input"
                 else derive_execution_outcome(
                     all_results,
                     terminal_error=values.get("error"),
@@ -1601,7 +1627,7 @@ class QueryLoop:
                     "Tools remain available if more verification is needed.",
                 )
 
-        while iterations < max_iterations:
+        while max_iterations <= 0 or iterations < max_iterations:
             if self._is_cancelled(ctx):
                 # If tools already produced results, surface them as a
                 # fallback instead of discarding everything.  This avoids
@@ -1797,9 +1823,8 @@ class QueryLoop:
                 # the executor.  Batch compilation gets first chance to reduce
                 # scalar fan-out; any still-oversized round is discarded and
                 # replanned before handlers, checkpoints, or UI tool rows exist.
-                per_round_limit = max(
-                    1, int(getattr(self._config, "max_tool_calls_per_iteration", 8) or 8)
-                )
+                configured_round_limit = int(getattr(self._config, "max_tool_calls_per_iteration", 0) or 0)
+                per_round_limit = configured_round_limit if configured_round_limit > 0 else 2_147_483_647
                 remaining_nodes = budget.remaining_node_capacity()
                 admitted_limit = min(per_round_limit, remaining_nodes)
                 if admitted_limit <= 0:
@@ -2066,6 +2091,30 @@ class QueryLoop:
                             is_read_only_call=self._executor._is_read_only_call,
                         )
 
+                pending_interruptions = [
+                    dict((result.output or {}).get("external_interruption") or {})
+                    for result in results
+                    if isinstance(result.output, dict)
+                    and str((result.output or {}).get("status") or "") == "waiting_external_input"
+                    and isinstance((result.output or {}).get("external_interruption"), dict)
+                ]
+                if pending_interruptions:
+                    # A deferred invocation is neither a failed tool nor a
+                    # completed task.  Do not ask the model for a fabricated
+                    # final answer, and do not execute later model turns until
+                    # an extension supplies an external decision.
+                    ctx.extras["external_interruptions"] = pending_interruptions
+                    ctx.extras["response_outcome"] = "waiting_external_input"
+                    ctx.extras["execution_outcome"] = "waiting_external_input"
+                    return finish(
+                        final_response="操作已准备，正在等待外部决定。",
+                        tool_results=all_results,
+                        iterations=iterations,
+                        total_tool_calls=len(all_results),
+                        llm_calls=llm_calls,
+                        metrics={"external_interruptions": pending_interruptions},
+                    )
+
                 self._emit_stage(
                     EXECUTION_COMPLETED, t_start, stage_started_at=execution_started,
                     iteration=iterations, tool_calls=len(results),
@@ -2139,7 +2188,7 @@ class QueryLoop:
                     ctx.extras.setdefault("tool_recovery_events", []).append({
                         "iteration": iterations,
                         "failed_tools": [result.tool_name for result in failed_results],
-                        "errors": [str(result.error or "")[:240] for result in failed_results],
+                        "errors": [str(result.error or "") for result in failed_results],
                     })
                 safe_recovery_nudge = self._build_safe_read_recovery_nudge(ctx)
                 if safe_recovery_nudge:
@@ -2165,7 +2214,7 @@ class QueryLoop:
                         "Additional tools remain available for a genuine unresolved evidence gap; never claim "
                         "visual details not present in the image.",
                     )
-                elif iterations >= max_iterations - 1:
+                elif max_iterations > 0 and iterations >= max_iterations - 1:
                     messages = self._append_turn_nudge(
                         messages,
                         SYNTHESIS_CHECKPOINT_MARKER
@@ -2282,7 +2331,7 @@ class QueryLoop:
             from .recovery_goals import recovery_final_gate
 
             recovery_gate = recovery_final_gate(ctx, all_results)
-            if recovery_gate.should_continue and iterations < max_iterations:
+            if recovery_gate.should_continue and (max_iterations <= 0 or iterations < max_iterations):
                 messages = [
                     *messages,
                     LLMMessage(role="assistant", content=str(response.content or "").strip()),
@@ -3802,7 +3851,7 @@ class QueryLoop:
             if r.tool_name in ("exec.run", "exec__run", "exec__background"):
                 desc = output.get("description") or output.get("command", "")
                 if desc:
-                    lines.append(f"> `{str(desc)[:120]}`")
+                    lines.append(f"> `{str(desc)}`")
                 if exit_code is not None:
                     ec_str = f"exit_code={exit_code}"
                     if exit_code != 0:
@@ -3812,15 +3861,15 @@ class QueryLoop:
                 stdout = output.get("stdout", "")
                 stderr = output.get("stderr", "")
                 if stdout.strip():
-                    lines.append(f"```\n{str(stdout)[:800]}\n```")
+                    lines.append(f"```\n{str(stdout)}\n```")
                 if stderr.strip():
-                    lines.append(f"```\n{str(stderr)[:800]}\n```")
+                    lines.append(f"```\n{str(stderr)}\n```")
 
             # ── other tools: compact summary ──
             else:
                 summary = str(output.get("summary") or output.get("message") or "")
                 if summary:
-                    lines.append(summary[:8000] + ("..." if len(summary) > 8000 else ""))
+                    lines.append(summary)
                 elif not r.ok:
                     lines.append(f"error: {r.error}")
 
