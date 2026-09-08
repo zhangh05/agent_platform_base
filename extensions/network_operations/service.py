@@ -1201,6 +1201,10 @@ def _enqueue_prepared_inspection(workspace_id: str, task: dict[str, Any], *, cre
         payload={"task_id": task["task_id"]},
         created_by=created_by,
         enqueue=False,
+        # The job is a worker implementation detail.  Inspection evidence and
+        # progress belong to the network extension/workbench, not the user's
+        # task centre alongside independently requested tasks.
+        metadata={"task_center_visible": False, "job_role": "internal_inspection"},
     )
     task["job_id"] = job.job_id
     _store(workspace_id).save("inspections", task["task_id"], task)

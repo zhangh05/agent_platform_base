@@ -46,7 +46,7 @@ def _check_transition(current: str, target: str) -> bool:
 
 
 def create_job(workspace_id="default", job_type="agent_run", title="", payload=None,
-               input_artifacts=None, created_by="user", enqueue=True) -> JobRecord:
+               input_artifacts=None, created_by="user", enqueue=True, metadata=None) -> JobRecord:
     if job_type not in ENABLED_JOB_TYPES:
         raise ValueError(f"unsupported job_type: {job_type}")
 
@@ -58,6 +58,7 @@ def create_job(workspace_id="default", job_type="agent_run", title="", payload=N
         payload=payload,
         input_artifacts=input_artifacts or [],
         created_by=created_by, status="created",
+        metadata=dict(metadata or {}),
     )
     rec = _create(rec)
     # Every job created inside a side-effecting tool call inherits the

@@ -36,6 +36,27 @@ def _validated_job_id(raw):
         return None, (jsonify({"ok": False, "error": "invalid_job_id"}), 400)
 
 
+def _task_center_jobs(jobs):
+    """Project only user-facing jobs into the task-centre list.
+
+    Network inspections retain durable worker records so cancellation, retry
+    and evidence collection remain reliable.  They are workbench tool steps,
+    however, not user-created tasks, and must never create cards in the task
+    centre.  The explicit metadata handles new records; the type check keeps
+    pre-change records out as well.
+    """
+    visible = []
+    for job in jobs:
+        record = job if isinstance(job, dict) else getattr(job, "as_dict", lambda: {})()
+        if str(record.get("job_type") or "") == "network_inspection":
+            continue
+        metadata = record.get("metadata") if isinstance(record.get("metadata"), dict) else {}
+        if metadata.get("task_center_visible") is False:
+            continue
+        visible.append(job)
+    return visible
+
+
 def register_job_routes(app):
     """Register all job API routes on the Flask app."""
 
@@ -79,7 +100,8 @@ def register_job_routes(app):
         if err:
             return err
         from jobs.store import list_jobs
-        return jsonify({"jobs": list_jobs(ws_id=ws, status=status, job_type=jtype, limit=lim)})
+        jobs = list_jobs(ws_id=ws, status=status, job_type=jtype, limit=lim)
+        return jsonify({"jobs": _task_center_jobs(jobs)})
 
     @app.route("/api/jobs/<job_id>", methods=["GET", "DELETE"])
     def api_job_detail(job_id):
@@ -116,7 +138,7 @@ def register_job_routes(app):
         if err:
             return err
         from jobs.store import list_jobs
-        return jsonify({"jobs": list_jobs(ws_id=ws_id)})
+        return jsonify({"jobs": _task_center_jobs(list_jobs(ws_id=ws_id))})
 
     @app.route("/api/workspaces/<ws_id>/jobs/<job_id>")
     def api_workspace_job_detail(ws_id, job_id):
