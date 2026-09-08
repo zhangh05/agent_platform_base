@@ -24,6 +24,7 @@ def test_config_prompt_is_builtin_for_every_selected_network_skill():
     assert "not a read/write permission model" in prompt
     assert "device account is the final authority" in prompt
     assert "never completes an unfinished user-requested configuration" in prompt
+    assert "network.operations.wait" in prompt
     assert "connection_not_allowed_by_skill" in prompt
     assert "configuration_write" not in prompt
 
@@ -54,6 +55,8 @@ def test_configuration_collects_every_command_result_after_a_failure(failure):
     result = _execute_commands(conn, ["system-view", "interface LoopBack 100", "return"], None, read=False, configure=True)
     assert calls == ["system-view", "interface LoopBack 100", "return"]
     assert result["unexecuted_commands"] == []
+    assert result["configuration_workflow"]["requested_commands"] == calls
+    assert result["configuration_workflow"]["unexecuted_commands"] == []
     assert [item["command"] for item in result["command_results"]] == calls
     assert result["execution_may_continue"] is (failure != "device_command_rejected")
     assert not result["ok"] and not result["automatic_retry_allowed"]
@@ -88,6 +91,8 @@ def test_configuration_marks_only_unsendable_remainder_after_transport_exception
     assert calls == ["system-view"]
     assert [item["dispatch_status"] for item in result["command_results"]] == ["uncertain", "not_sent", "not_sent"]
     assert result["unexecuted_commands"] == ["interface LoopBack 100", "return"]
+    assert result["configuration_workflow"]["uncertain_commands"] == ["system-view"]
+    assert result["configuration_workflow"]["unexecuted_commands"] == ["interface LoopBack 100", "return"]
 
 
 def test_configuration_preserves_repeated_lines_and_exact_model_commands():

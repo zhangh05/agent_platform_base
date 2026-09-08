@@ -12,6 +12,7 @@ from extensions.network_operations.backend import (
     devices_read,
     inspection,
     skills_read,
+    wait,
 )
 from extensions.network_operations.device_tools import (
     is_read_only_command as device_is_read_only_command,
@@ -82,6 +83,16 @@ def test_configuration_contract_describes_external_execution_without_authorizati
     assert contract["idempotency"] == "unsafe_to_retry" and not contract["read_only"]
     decision = ToolPolicy().check(spec, ToolInvocation(tool_id=spec.tool_id, workspace_id="default", arguments={"action": "configure", "connection_id": "test", "commands": ["system-view"]}))
     assert decision.allowed
+
+
+def test_network_wait_is_a_first_class_cancellable_workflow_step(monkeypatch):
+    clock = [0.0]
+    monkeypatch.setattr("extensions.network_operations.backend.time.monotonic", lambda: clock[0])
+    monkeypatch.setattr("extensions.network_operations.backend.time.sleep", lambda seconds: clock.__setitem__(0, clock[0] + seconds))
+    invocation = SimpleNamespace(workspace_id="default", skill=None, arguments={"seconds": 1.25})
+    result = wait(invocation)
+    assert result["ok"] and result["requested_seconds"] == 1.25
+    assert result["elapsed_seconds"] >= 1.25
 
 
 def _register_connection(workspace_id, payload):
@@ -980,10 +991,18 @@ def test_skill_base_tools_and_configuration_are_intrinsic(monkeypatch, tmp_path)
     conn = _register_connection("default", {"name": "CE", "host": "127.0.0.1", "protocol": "telnet", "vendor": "h3c"})
     skill = service.save_skill("default", {"name": "test", "device_ids": [conn["device_id"]], "connection_ids": [conn["connection_id"]], "allowed_tool_ids": []})
     monkeypatch.setattr(service, "probe_target", lambda *_args, **_kwargs: {"ok": True})
-    assert skill["allowed_tool_ids"] == [service.SKILL_BASE_TOOL_ID, "network.operations.context_read"]
+    assert skill["allowed_tool_ids"] == [
+        service.SKILL_BASE_TOOL_ID,
+        "network.operations.context_read",
+        "network.operations.wait",
+    ]
     service._store("default").save("skills", skill["skill_id"], {**skill, "allowed_tool_ids": []})
     for resolved in [service.get_skill("default", skill["skill_id"]), service.list_skills("default")[0], service.resolve_workbench_selection("default", {"skill_id": skill["skill_id"]})]:
-        assert resolved["allowed_tool_ids"] == [service.SKILL_BASE_TOOL_ID, "network.operations.context_read"]
+        assert resolved["allowed_tool_ids"] == [
+            service.SKILL_BASE_TOOL_ID,
+            "network.operations.context_read",
+            "network.operations.wait",
+        ]
         assert "capabilities" not in resolved
     inv = SimpleNamespace(workspace_id="default", skill=skill["skill_id"], arguments={"action": "configure", "connection_id": conn["connection_id"], "commands": ["system-view"]})
     assert device_manage(inv)["ok"] is True

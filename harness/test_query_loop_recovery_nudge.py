@@ -37,20 +37,51 @@ def test_network_retry_final_gate_rejects_claims_without_current_command_evidenc
     assert "no `configure` execution result" in nudge
 
 
-def test_network_retry_final_gate_finishes_explicit_shutdown_undo_pair():
+def test_network_configuration_gate_requires_generic_post_write_readback():
     ctx = SimpleNamespace(extras={
         "workbench_context": {"extension_id": "network.operations"},
-        "__raw_user_input": "继续在 PE1 执行 shutdown，等待 10 秒后 undo shutdown",
     })
     configure = StreamingToolResult(
         tool_name="network.operations.device.manage", call_id="write", ok=True,
-        output={"executed_action": "configure", "command_results": [{"command": "shutdown"}]},
+        output={
+            "executed_action": "configure",
+            "configuration_workflow": {"requested_commands": ["system-view", "interface X", "description test"], "requires_readback": True},
+        },
     )
-    nudge = QueryLoop._network_retry_final_gate(
-        ctx, "undo shutdown 尚未执行，等待用户继续", [configure],
+    nudge = QueryLoop._network_retry_final_gate(ctx, "配置完成", [configure])
+    assert "independent successful `read`" in nudge
+
+
+def test_network_configuration_gate_preserves_unsent_exact_commands_without_replay():
+    ctx = SimpleNamespace(extras={"workbench_context": {"extension_id": "network.operations"}})
+    configure = StreamingToolResult(
+        tool_name="network.operations.device.manage", call_id="write", ok=False,
+        output={
+            "executed_action": "configure",
+            "configuration_workflow": {
+                "requested_commands": ["system-view", "interface X", "shutdown", "return"],
+                "uncertain_commands": ["system-view"],
+                "unexecuted_commands": ["interface X", "shutdown", "return"],
+                "requires_readback": True,
+            },
+        },
     )
-    assert "Do not request another confirmation" in nudge
-    assert "undo shutdown" in nudge
+    nudge = QueryLoop._network_retry_final_gate(ctx, "我之后再继续", [configure])
+    assert "Do not replay commands already sent" in nudge
+    assert '"shutdown"' in nudge
+
+
+def test_network_configuration_gate_allows_final_after_write_and_independent_read():
+    ctx = SimpleNamespace(extras={"workbench_context": {"extension_id": "network.operations"}})
+    configure = StreamingToolResult(
+        tool_name="network.operations.device.manage", call_id="write", ok=True,
+        output={"executed_action": "configure", "configuration_workflow": {"requires_readback": True}},
+    )
+    read = StreamingToolResult(
+        tool_name="network.operations.device.manage", call_id="read", ok=True,
+        output={"executed_action": "read", "command_results": [{"command": "display interface brief"}]},
+    )
+    assert QueryLoop._network_retry_final_gate(ctx, "配置与回读均已完成", [configure, read]) == ""
 
 
 def test_failed_subagent_recovery_forbids_parent_wholesale_replay():

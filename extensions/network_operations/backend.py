@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from typing import Any
 
 from flask import jsonify, request
@@ -462,6 +463,30 @@ def device_manage(invocation):
     }
 
 
+def wait(invocation):
+    """Wait for an explicitly requested network convergence interval."""
+    if not _skill_allows(invocation, "network.operations.wait"):
+        return {"ok": False, "error": "tool_not_allowed_by_skill"}
+    try:
+        seconds = float((invocation.arguments or {}).get("seconds"))
+    except (TypeError, ValueError):
+        return {"ok": False, "error": "seconds must be a non-negative number"}
+    if seconds < 0:
+        return {"ok": False, "error": "seconds must be a non-negative number"}
+    started = time.monotonic()
+    deadline = started + seconds
+    from core.tools.context import get_runtime_cancel_check
+    cancel = get_runtime_cancel_check()
+    while True:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            break
+        if cancel and cancel():
+            return {"ok": False, "status": "cancelled", "error": "cancelled_by_user", "requested_seconds": seconds, "elapsed_seconds": time.monotonic() - started}
+        time.sleep(min(0.25, remaining))
+    return {"ok": True, "status": "succeeded", "requested_seconds": seconds, "elapsed_seconds": time.monotonic() - started}
+
+
 def inspection(invocation):
     if not _skill_allows(invocation, "network.operations.inspection"):
         return {"ok": False, "error": "tool_not_allowed_by_skill"}
@@ -782,6 +807,23 @@ def register():
                         "timeout": {"type": "integer", "minimum": 1, "maximum": 90},
                     },
                     "required": ["action"],
+                },
+            },
+            {
+                "tool_id": "network.operations.wait",
+                "name": "等待网络收敛",
+                "description": "按模型明确指定的秒数等待网络协议、链路或设备状态收敛。等待可取消，结果会返回实际经过时间；它不连接设备、不执行命令，也不替代写后回读。需要“等待 N 秒后继续”的网络工作流时必须调用此工具，不能只在回答中承诺等待。",
+                "category": "ops",
+                "permission_action": "network",
+                "action_execution_contracts": {
+                    "wait": {"action_class": "network", "risk_level": "low", "side_effects": "none", "idempotency": "safe_to_retry", "read_only": True},
+                },
+                "referenceable_outputs": {"*": ["requested_seconds", "elapsed_seconds", "status"]},
+                "handler": wait,
+                "input_schema": {
+                    "type": "object",
+                    "properties": {**common, "seconds": {"type": "number", "minimum": 0}},
+                    "required": ["seconds"],
                 },
             },
             {

@@ -3385,63 +3385,87 @@ class QueryLoop:
 
     @staticmethod
     def _network_retry_final_gate(ctx, final_text: str, tool_results: list[StreamingToolResult]) -> str:
-        """Keep a network retry grounded in this turn's actual tool evidence."""
+        """Keep every network configuration workflow grounded in tool evidence.
+
+        This deliberately knows nothing about vendor syntax or a particular
+        command such as ``shutdown``.  The device tool publishes the exact
+        model sequence and dispatch states; this gate only prevents a final
+        answer from discarding an unfinished sequence or a missing independent
+        post-write observation.
+        """
         workbench = ctx.extras.get("workbench_context") if isinstance(ctx.extras, dict) else None
         if not isinstance(workbench, dict) or workbench.get("extension_id") != "network.operations":
             return ""
-        request = str(ctx.extras.get("__raw_user_input") or "").lower()
-        requested_undo_shutdown = "undo shutdown" in request
-        if not requested_undo_shutdown and not any(
-            token in request for token in ("retry", "again", "continue", "重试", "再试", "继续")
-        ):
-            return ""
         text = final_text.lower()
-        claims_execution = any(token in text for token in (
-            "configure", "shutdown", "undo shutdown", "connection_not_allowed_by_skill",
-            "connection_outside_selected_skill", "已执行", "被拒绝", "回读", "配置未",
-        ))
         network_results = [
             item for item in tool_results
             if str(item.tool_name or "").replace("__", ".") == "network.operations.device.manage"
         ]
-        if not network_results:
+        request = str(ctx.extras.get("__raw_user_input") or "").lower()
+        if not network_results and any(token in request for token in ("retry", "again", "continue", "重试", "再试", "继续")):
             return (
                 "[RUNTIME NETWORK RETRY EVIDENCE]\n"
                 "This retry has no network command result. Do not claim that a device command was executed, rejected, or read back. "
                 "Use the selected Skill's network tools now to obtain current evidence and continue the user's unfinished objective."
             )
-        configured = any(
-            isinstance(item.output, dict) and item.output.get("executed_action") == "configure"
-            for item in network_results
-        )
-        if claims_execution and not configured:
-            return (
-                "[RUNTIME NETWORK RETRY EVIDENCE]\n"
-                "This retry has network evidence, but no `configure` execution result. A read/probe/catalog result cannot be reported as a configuration attempt or refusal. "
-                "Continue with the unfinished objective using a configure call, unless the latest structured write result explicitly says its outcome is unknown or may still be executing."
-            )
-        if requested_undo_shutdown:
-            # A shutdown/undo pair is one user-requested transaction.  Once a
-            # read-back establishes that shutdown took effect, asking the user
-            # for another confirmation before the explicitly requested undo
-            # leaves the live interface administratively down.  Require the
-            # model to continue until tool evidence contains the undo command,
-            # or to report a concrete terminal execution error.
-            serialized_results = json.dumps(
-                [item.output for item in network_results if isinstance(item.output, dict)],
-                ensure_ascii=False,
-                default=str,
-            ).lower()
-            unfinished_language = any(marker in text for marker in (
-                "尚未执行", "未执行", "等待你", "等待用户", "wait for", "not executed",
+        configured = [
+            (index, item) for index, item in enumerate(network_results)
+            if isinstance(item.output, dict) and item.output.get("executed_action") == "configure"
+        ]
+        if not configured:
+            claims_execution = any(token in text for token in (
+                "configure", "已执行", "被拒绝", "配置未", "not executed", "rejected",
             ))
-            if "undo shutdown" not in serialized_results and unfinished_language:
+            if claims_execution and any(token in request for token in ("retry", "again", "continue", "重试", "再试", "继续")):
                 return (
-                    "[RUNTIME NETWORK CONFIGURATION COMPLETION]\n"
-                    "The user explicitly required `shutdown`, a real wait, and `undo shutdown` in this same task. "
-                    "Current evidence shows the undo command has not been executed. Do not request another confirmation or end the task. "
-                    "Use a changed `configure` call now to send the required `undo shutdown`, then make a separate read-back call and report its actual result."
+                    "[RUNTIME NETWORK RETRY EVIDENCE]\n"
+                    "This retry has network evidence, but no `configure` execution result. A read/probe/catalog result cannot be reported as a configuration attempt or refusal. "
+                    "Continue with the unfinished objective using a configure call, unless the latest structured write result explicitly says its outcome is unknown or may still be executing."
                 )
+            return ""
+
+        last_config_index, last_config = configured[-1]
+        last_output = dict(last_config.output or {})
+        workflow = last_output.get("configuration_workflow")
+        workflow = dict(workflow) if isinstance(workflow, dict) else {}
+        unexecuted = list(workflow.get("unexecuted_commands") or last_output.get("unexecuted_commands") or [])
+        uncertain = list(workflow.get("uncertain_commands") or [])
+        if unexecuted:
+            return (
+                "[RUNTIME CONFIGURATION WORKFLOW]\n"
+                "The most recent configuration batch did not send every requested command. The exact unsent commands are data below. "
+                "Do not replay commands already sent. Reconcile any uncertain command with read-back, then decide and execute the remaining user-requested stage now; do not end with a promise to continue.\n"
+                + json.dumps({"unexecuted_commands": unexecuted, "uncertain_commands": uncertain}, ensure_ascii=False)
+            )
+
+        # Any successful read after the final configure call is an independent
+        # post-write observation.  It is intentionally command-agnostic: the
+        # model selects the vendor-appropriate read command from the objective
+        # and live device state instead of a server-side command heuristic.
+        post_write_read = any(
+            index > last_config_index
+            and isinstance(item.output, dict)
+            and item.output.get("executed_action") == "read"
+            and item.ok
+            for index, item in enumerate(network_results)
+        )
+        if bool(workflow.get("requires_readback", True)) and not post_write_read:
+            return (
+                "[RUNTIME CONFIGURATION WORKFLOW]\n"
+                "A configuration batch has run, but this turn has no independent successful `read` after its final write. "
+                "Do not treat the CLI prompt acknowledgement as the requested network outcome. Use a targeted read now to observe the relevant final state; if the read cannot be obtained, make a concrete evidence-based blocker statement rather than a future-work promise."
+            )
+
+        deferred_language = any(marker in text for marker in (
+            "尚未执行", "未执行", "等待你", "等待用户", "请确认", "请批准",
+            "wait for", "not executed", "need your confirmation", "awaiting confirmation",
+        ))
+        if deferred_language:
+            return (
+                "[RUNTIME CONFIGURATION WORKFLOW]\n"
+                "The user already submitted a concrete configuration objective. Current final prose defers an unfinished stage to a later confirmation. "
+                "Continue the active workflow now using the full conversation and tool evidence, or report a concrete terminal device/transport blocker. Do not ask for confirmation or merely promise a later action."
+            )
         return ""
 
     def _append_tool_round(

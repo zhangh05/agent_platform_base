@@ -11,6 +11,7 @@
     "network.operations.skills_read",
     "network.operations.context_read",
     "network.operations.device.manage",
+    "network.operations.wait",
     "network.operations.inspection"
   ],
   "permissions": ["workspace:read", "workspace:write", "network:network"],

@@ -34,6 +34,7 @@ SKILL_TOOL_IDS = frozenset({
     "network.operations.skills_read",
     "network.operations.context_read",
     "network.operations.device.manage",
+    "network.operations.wait",
     "network.operations.inspection",
 })
 INTERNAL_SCAN_LIMIT = 5000
@@ -739,6 +740,7 @@ def _with_skill_base_capability(record: dict[str, Any]) -> dict[str, Any]:
         "allowed_tool_ids": list(dict.fromkeys([
         *(record.get("allowed_tool_ids") or []), SKILL_BASE_TOOL_ID,
         "network.operations.context_read",
+        "network.operations.wait",
         ])),
     }
 

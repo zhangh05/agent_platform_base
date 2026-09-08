@@ -472,14 +472,26 @@ def _execute_commands(connection: _Connection, commands, facts, *, read: bool, c
                         (item.get("dispatch_status") == "sent" and not item["complete"])
                         for item in results)
         payload.pop("read_ok")
+        unexecuted = [
+            item["command"] for item in results
+            if item.get("dispatch_status") == "not_sent"
+        ]
         payload.update(ok=complete, configuration_ok=complete,
                        status="unknown" if uncertain else "succeeded" if complete else "partial",
                        error="configuration_outcome_unknown" if uncertain else "configuration_batch_incomplete" if not complete else "",
                        execution_may_continue=uncertain, automatic_retry_allowed=False,
-                       unexecuted_commands=[
-                           item["command"] for item in results
-                           if item.get("dispatch_status") == "not_sent"
-                       ],
+                       unexecuted_commands=unexecuted,
+                       configuration_workflow={
+                           "requested_commands": list(selected),
+                           "sent_commands": [item["command"] for item in results if item.get("dispatch_status") == "sent"],
+                           "uncertain_commands": [item["command"] for item in results if item.get("dispatch_status") == "uncertain"],
+                           "unexecuted_commands": unexecuted,
+                           "deterministic_failures": [
+                               item["command"] for item in results
+                               if item.get("dispatch_status") == "sent" and not item.get("complete")
+                           ],
+                           "requires_readback": True,
+                       },
                        recommended_readback=True, rollback_performed=False)
     return payload
 
