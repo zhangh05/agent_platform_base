@@ -31,6 +31,17 @@ _OPERATION = re.compile(
     r"(?P<summarize>总结|汇总|归纳|收敛|提炼)|"
     r"(?P<refine>优化|改进|调整)"
 )
+# A relation is an explicit edit of the immediately preceding deliverable, not
+# merely a request which happens to say that the agent should repair failures.
+# In particular, operational requests commonly finish with wording such as
+# "失败后自主诊断并修复".  Treating that trailing contingency as a relation
+# silently grafts a new device task onto an unrelated completed task.
+_DIRECT_OPERATION_START = re.compile(
+    r"^(?:(?:请|麻烦|帮我)\s*)?(?:重写|改写|润色|改版|换成|改成|改为|"
+    r"删除|删掉|去掉|移除|剔除|只保留|只输出|不包括|排除|"
+    r"补充|补齐|补漏|完善|修复|纠正|更正|总结|汇总|归纳|收敛|提炼|"
+    r"优化|改进|调整|把|将)"
+)
 
 
 def _bounded_count(value: str) -> tuple[int | None, str]:
@@ -55,6 +66,12 @@ def classify_task_relation(user_input: str) -> dict[str, Any] | None:
         return {"kind": "append", "expected_new_items": count or None, "unit": append.group("unit") or ""}
     if _EXPAND.fullmatch(value):
         return {"kind": "expand", "instruction_present": False}
+    # Do not infer continuity from an operation word buried in a new request.
+    # The first action must explicitly be a rewrite/scope/repair operation.
+    # This deliberately biases toward a fresh task: losing stale task context
+    # is recoverable, whereas inheriting a prior side-effecting task is not.
+    if not _DIRECT_OPERATION_START.match(value):
+        return None
     operation = _OPERATION.search(value)
     if not operation or len(value) > 240:
         return None

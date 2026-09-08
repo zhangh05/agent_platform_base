@@ -33,6 +33,14 @@ def test_new_topic_is_not_classified_as_a_continuation_operation():
     assert classify_task_relation("分析杭州未来三天天气") is None
 
 
+def test_new_operational_request_with_contingent_repair_is_not_a_continuation():
+    request = (
+        "现在对 C1 中的 PE1 执行真实配置操作：进入 GigabitEthernet0/1，执行 shutdown；"
+        "若任何工具、连接或命令失败，继续利用已授权工具自主诊断并修复后完成该目标。"
+    )
+    assert classify_task_relation(request) is None
+
+
 def test_oversized_instruction_is_not_promoted_to_a_contract_relation():
     assert classify_task_relation("重写" + "内容" * 121) is None
 

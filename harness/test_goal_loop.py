@@ -6,7 +6,11 @@ import asyncio
 from agent.llm.schemas import LLMResponse, LLMToolCall
 from core.runtime_engine.engine import SSOTRuntimeEngine
 from core.runtime_engine.goal_assertions import evaluate_goal_assertions
-from core.runtime_engine.goal_loop import goal_loop_summary, observe_tool_round
+from core.runtime_engine.goal_loop import (
+    goal_loop_summary,
+    observe_tool_round,
+    supersede_generic_goals_after_completion_evidence,
+)
 from core.runtime_engine.models import SSOTRuntimeConfig, StatelessContext
 from core.runtime_engine.query_loop import StreamingToolResult
 from core.runtime_engine.recovery_goals import (
@@ -63,6 +67,28 @@ def test_changed_same_capability_observation_satisfies_open_goal():
     assert goal_loop_summary(ctx)["status"] == "passed"
     assert evaluate_goal_assertions(ctx, []) ["status"] == "passed"
     assert recovery_final_gate(ctx, []).should_continue is False
+
+
+def test_completion_evidence_supersedes_unrelated_generic_failures_but_not_typed_goals():
+    ctx = _ctx()
+    failed = LLMToolCall(
+        id="bad-search", name="web.manage",
+        arguments={"action": "search", "query": "bad"},
+    )
+    observe_tool_round(ctx, [failed], [_result("bad-search", ok=False, error="invalid query")], is_read_only_call=lambda _call: True)
+    install_recovery_goal(ctx, {
+        "goal": {
+            "goal_id": "write-readback", "evidence_kind": "live_fact",
+            "target": {"connection_id": "connection-1"}, "fact": "interface_status",
+        },
+    }, source_call_id="write")
+
+    supersede_generic_goals_after_completion_evidence(ctx, completion_call_ids={"readback"})
+
+    generic = next(goal for goal in ctx.extras["recovery_goals"] if goal["goal_type"] == "tool_recovery")
+    assert generic["status"] == "superseded"
+    # The typed write/read-back goal is still a hard evidence requirement.
+    assert recovery_final_gate(ctx, []).should_continue is True
 
 
 def test_cross_tool_recovery_requires_and_accepts_explicit_goal_link():

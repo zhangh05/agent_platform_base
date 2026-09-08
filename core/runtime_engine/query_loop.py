@@ -2158,6 +2158,30 @@ class QueryLoop:
                         messages,
                         "上一项外部操作的实际结果尚未确定。完整结果已提供；请自行决定 read-back、继续配置、重试或向用户说明当前状态。",
                     )
+                if self._has_post_configuration_readback(ctx, results):
+                    from .goal_loop import supersede_generic_goals_after_completion_evidence
+
+                    completed_goal_ids = supersede_generic_goals_after_completion_evidence(
+                        ctx,
+                        completion_call_ids={
+                            str(result.call_id or "") for result in results if result.ok and str(result.call_id or "")
+                        },
+                    )
+                    messages = self._append_turn_nudge(
+                        messages,
+                        "[POST-CONFIGURATION READ-BACK] This request now has a successful device read-back "
+                        "after a configuration call. Assess the user's exact completion criteria from the full "
+                        "evidence already provided. If they are satisfied, produce the final answer now; do not "
+                        "make duplicate device calls or re-read the same evidence artifact merely to restate it. "
+                        "If a criterion is genuinely not evidenced, make only the narrow call that proves that gap.",
+                    )
+                    if completed_goal_ids:
+                        messages = self._append_turn_nudge(
+                            messages,
+                            "[RUNTIME GOAL RECONCILIATION] Earlier failed exploratory calls have been superseded "
+                            "by the successful requested-operation evidence. They are retained for audit only and "
+                            "must not trigger retries or prevent the final answer.",
+                        )
                 recovered_source_ids = {
                     str(item.get("source_call_id") or "")
                     for item in ctx.extras.get("safe_read_recovery_events") or []
@@ -2822,6 +2846,38 @@ class QueryLoop:
                 goal_ids=goal_ids,
             ))
         return result
+
+    @staticmethod
+    def _has_post_configuration_readback(
+        ctx: StatelessContext,
+        results: list[StreamingToolResult],
+    ) -> bool:
+        """Recognize evidence that can close a write-and-verify request.
+
+        This is deliberately only a model-facing observation: it neither
+        suppresses a tool nor decides that a user goal is complete.  It avoids
+        a common loop where the model keeps fetching the same large evidence
+        artifact after an already-successful post-write device read.
+        """
+        history = ctx.extras.get("tool_call_history") or []
+        had_configuration = any(
+            isinstance(item, dict)
+            and str(item.get("tool") or "") == "network.operations.device.manage"
+            and str((item.get("arguments") or {}).get("action") or "") == "configure"
+            for item in history
+        )
+        if not had_configuration:
+            return False
+        for result in results:
+            output = result.output if isinstance(result.output, dict) else {}
+            if (
+                bool(result.ok)
+                and str(result.tool_name or "").replace("__", ".") == "network.operations.device.manage"
+                and str(output.get("requested_action") or "") in {"read", "collect"}
+                and output.get("connection_ok") is not False
+            ):
+                return True
+        return False
 
     @staticmethod
     def _tool_call_key(tc: LLMToolCall) -> str:

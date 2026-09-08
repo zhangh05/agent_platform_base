@@ -134,6 +134,36 @@ def goal_loop_nudge(ctx) -> str:
     )
 
 
+def supersede_generic_goals_after_completion_evidence(
+    ctx,
+    *,
+    completion_call_ids: set[str],
+) -> list[str]:
+    """Demote stale exploratory failures once the requested operation is proven.
+
+    A generic recovery goal represents one failed *attempt*, not an independent
+    user requirement.  It must help the model correct a bad call, but must not
+    keep an otherwise completed task alive after later, target-specific evidence
+    proves the requested outcome.  Domain handlers keep their typed recovery
+    goals (for example an uncertain write that still needs read-back); only
+    ``tool_recovery`` goals are demoted here.
+    """
+    completed: list[str] = []
+    for goal in ctx.extras.get("recovery_goals") or []:
+        if not isinstance(goal, dict):
+            continue
+        if goal.get("goal_type") != "tool_recovery" or goal.get("status") != "pending":
+            continue
+        goal["status"] = "superseded"
+        goal["superseded_by"] = "completion_evidence"
+        goal["completion_call_ids"] = sorted(completion_call_ids)
+        goal_id = str(goal.get("goal_id") or "")
+        if goal_id:
+            completed.append(goal_id)
+            _event(ctx, "goal_superseded", goal_id, ",".join(sorted(completion_call_ids)), "requested_outcome_proven")
+    return completed
+
+
 def goal_loop_summary(ctx) -> dict[str, Any]:
     goals = [dict(item) for item in ctx.extras.get("recovery_goals") or [] if isinstance(item, dict)]
     counts = {"pending": 0, "passed": 0, "blocked": 0}

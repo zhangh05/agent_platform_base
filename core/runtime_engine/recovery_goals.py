@@ -100,10 +100,21 @@ def recovery_final_gate(ctx, tool_results: list[Any]) -> RecoveryFinalGate:
     from .goal_assertions import evaluate_goal_assertions
 
     configured = ctx.extras.get("goal_assertions") or []
+    goals_by_id = {
+        str(item.get("goal_id") or ""): item
+        for item in ctx.extras.get("recovery_goals") or []
+        if isinstance(item, dict)
+    }
+    # Generic tool-recovery records are advisory after independent completion
+    # evidence has superseded them.  Typed domain evidence goals remain hard
+    # requirements, e.g. a configuration write with unknown outcome still
+    # needs a read-back before finalisation.
     recovery_ids = {
         str(item.get("assertion_id") or "")
         for item in configured
-        if isinstance(item, dict) and item.get("runtime_owned_recovery") is True
+        if isinstance(item, dict)
+        and item.get("runtime_owned_recovery") is True
+        and goals_by_id.get(str(item.get("goal_id") or ""), {}).get("status") != "superseded"
     }
     if not recovery_ids:
         return RecoveryFinalGate(False)
@@ -116,11 +127,6 @@ def recovery_final_gate(ctx, tool_results: list[Any]) -> RecoveryFinalGate:
         _project_goal_status(ctx, evaluated)
         return RecoveryFinalGate(False)
     _project_goal_status(ctx, evaluated)
-    goals_by_id = {
-        str(item.get("goal_id") or ""): item
-        for item in ctx.extras.get("recovery_goals") or []
-        if isinstance(item, dict)
-    }
     permitted: list[dict[str, Any]] = []
     for assertion in unresolved:
         goal = goals_by_id.get(str(assertion.get("goal_id") or ""))

@@ -256,7 +256,7 @@ _PARAM_DESCRIPTIONS = {
     "passphrase": "Private key passphrase; secret value is redacted.",
     "host_key_fingerprint": "Expected SSH host-key fingerprint.",
     "accept_host_key": "Set true only when the user accepts/trusts the observed host key.",
-    "commands": "Read-only commands to run on a network device.",
+    "commands": "Commands for this action. For network read, every command must be read-only; for network configure, supply only the intended configuration sequence and keep read-back commands in a separate read call.",
     "baseline_id": "Network inspection baseline id.",
     "task_id": "Runtime or extension task id.",
     "confirm": "Explicit confirmation flag for actions that support it.",

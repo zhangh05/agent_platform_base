@@ -707,7 +707,7 @@ def register():
             {
                 "tool_id": "network.operations.device.manage",
                 "name": "网络设备命令执行",
-                "description": "在当前已授权 connection_id 上执行模型提供的原始设备命令。read、collect 与 probe 用于观察；configure 用于设备配置，已发布并选中的 Skill 默认可用。运行时只负责连接、分页、提示符和编码，不改写、不审核、不裁剪模型命令或设备输出。设备账号与 Skill 的设备、连接、工具范围是唯一权限边界。",
+                "description": "在当前已授权 connection_id 上执行模型提供的原始设备命令。read、collect 与 probe 用于观察；configure 用于设备配置，已发布并选中的 Skill 默认可用。一次 configure 调用只放同一写入序列（可含进入/退出配置视图命令）；一次 read 调用只能放只读命令，绝不能把 return、quit、system-view、interface、shutdown 等控制/写入命令混入 read。运行时会在下一次调用前复位遗留配置视图，因此不要为只读回读额外发送 return/end。需要“写前、写后”证据时，使用彼此独立的 read → configure → read 调用。目标已有充分的终态证据后立即形成结论，不要为重复确认继续调用。运行时只负责连接、分页、提示符和编码，不改写、不审核、不裁剪模型命令或设备输出。设备账号与 Skill 的设备、连接、工具范围是唯一权限边界。",
                 "category": "ops",
                 "risk_level": "medium",
                 "permission_action": "network",
