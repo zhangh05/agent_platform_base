@@ -1087,7 +1087,7 @@ def test_connection_inspection_evidence_summary(monkeypatch, tmp_path):
         collector=lambda _asset, commands: {command: "first" for command in commands}, background=False,
     )
     evidence = service.inspection_evidence_summary("default", first["task_id"])
-    assert evidence["artifact_sensitivity"] == "secret"
+    assert evidence["artifact_sensitivity"] == "internal"
     assert evidence["devices"][0]["connection_id"] == asset["connection_id"]
     assert evidence["devices"][0]["output_hash"]
     assert "raw_output" not in evidence["devices"][0]

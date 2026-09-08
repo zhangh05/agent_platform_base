@@ -107,13 +107,17 @@ export const ResultInline = memo(function ResultInline({
   const passedGoals = recoveryGoals.filter((goal) => goal.status === "passed").length;
   const blockedGoals = recoveryGoals.filter((goal) => goal.status === "blocked").length;
   const tracking = trackingStats(result);
-  const trackingPending = Boolean(tracking.taskId && !tracking.done);
   const toolCalls = result?.tool_calls ?? [];
   const actionCount = toolCalls.length;
   const failedToolCount = toolCalls.filter((tc) => !tc.ok).length;
   const successToolCount = toolCalls.filter((tc) => tc.ok).length;
   const executionOutcome = result?.metadata?.execution_outcome;
   const isUnknownOutcome = executionOutcome === "unknown";
+  // A persisted producer tracker can lag behind the agent turn that already
+  // produced a verified final answer.  Never render that stale tracker as the
+  // current state: it contradicts the completed result directly above it.
+  const hasCompletedAgentAnswer = Boolean(result?.ok && finalText && !isUnknownOutcome);
+  const trackingPending = Boolean(tracking.taskId && !tracking.done && !hasCompletedAgentAnswer);
   const unknownOutcome = result?.metadata?.unknown_outcome;
   const showActionTrace = !!result && (actionCount > 0 || retry.events.length > 0 || validationCorrection.attempts > 0 || toolRecoveryEvents.length > 0 || recoveryGoals.length > 0 || tracking.taskId || isFailed || isUnknownOutcome);
 

@@ -1346,12 +1346,20 @@ def _execute_inspection(
 
 def _save_evidence_artifact(workspace_id: str, task: dict[str, Any], raw_outputs: dict[str, dict[str, str]]) -> str:
     from artifacts.store import save_artifact
+    from core.tools.redaction import redact_tool_output
+
+    # Device observations are the evidence the selected agent must reason over.
+    # Store the complete command transcript in an LLM-readable internal
+    # artifact, applying only deterministic credential redaction.  Marking the
+    # whole transcript ``secret`` made workspace.artifact return a placeholder
+    # and silently removed the very evidence needed for diagnosis.
+    evidence_payload = redact_tool_output({**task, "raw_outputs": raw_outputs})
     artifact = save_artifact(
         workspace_id=workspace_id,
-        content=json.dumps({**task, "raw_outputs": raw_outputs}, ensure_ascii=False, indent=2),
+        content=json.dumps(evidence_payload, ensure_ascii=False, indent=2),
         artifact_type="output_data",
         title=f"网络巡检证据 {task['task_id']}",
-        sensitivity="secret",
+        sensitivity="internal",
         module=EXTENSION_ID,
         capability_id="network_inspection",
         metadata={"inspection_task_id": task["task_id"], "evidence_authority": "status_baseline_inspection"},
@@ -1926,7 +1934,7 @@ def operational_context(
 
 
 def inspection_evidence_summary(workspace_id: str, task_id: str) -> dict[str, Any]:
-    """Return a safe evidence index without disclosing raw SSH output."""
+    """Return a safe evidence index and an LLM-readable, redacted artifact."""
     task = get_inspection(workspace_id, task_id)
     if not task:
         raise ValueError("inspection_not_found")
@@ -1955,6 +1963,6 @@ def inspection_evidence_summary(workspace_id: str, task_id: str) -> dict[str, An
         "ok": True,
         "task_id": task_id,
         "artifact_id": task.get("artifact_id", ""),
-        "artifact_sensitivity": "secret",
+        "artifact_sensitivity": "internal",
         "devices": devices,
     }

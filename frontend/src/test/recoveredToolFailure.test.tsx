@@ -51,6 +51,8 @@ describe("ResultInline recovered tool failures", () => {
   it("does not describe a queued tracked task as completed", () => {
     render(<ResultInline result={{
       ...baseResult,
+      ok: false,
+      final_response: "",
       metadata: {
         execution_outcome: "partial" as const,
         tracking_summary: {
