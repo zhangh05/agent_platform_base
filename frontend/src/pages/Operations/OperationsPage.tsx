@@ -42,6 +42,14 @@ type JobItem = {
   error?: string;
 };
 
+const TERMINAL_DELETE_STATUSES = new Set([
+  "succeeded", "completed", "success", "ok", "failed", "error", "cancelled", "archived",
+]);
+
+function canHardDelete(job: JobItem): boolean {
+  return TERMINAL_DELETE_STATUSES.has(String(job.status || "").toLowerCase());
+}
+
 /** Extract session_id from nested payload */
 function getSessionId(job: JobItem): string {
   return String(job.payload?.session_id ?? "");
@@ -148,6 +156,7 @@ export function OperationsPage() {
   const [searchParams] = useSearchParams();
 
   const [jobs, setJobs] = useState<JobItem[]>([]);
+  const [selectedJobIds, setSelectedJobIds] = useState<Set<string>>(() => new Set());
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [jobQuery, setJobQuery] = useState("");
@@ -410,14 +419,37 @@ export function OperationsPage() {
     });
   }, [jobQuery, jobStatus, jobs]);
 
+  const selectableVisibleIds = useMemo(
+    () => visibleJobs.filter(canHardDelete).map((job) => job.job_id),
+    [visibleJobs],
+  );
+  const allVisibleTerminalSelected = selectableVisibleIds.length > 0
+    && selectableVisibleIds.every((jobId) => selectedJobIds.has(jobId));
+
+  const toggleJobSelection = (jobId: string) => {
+    setSelectedJobIds((previous) => {
+      const next = new Set(previous);
+      if (next.has(jobId)) next.delete(jobId); else next.add(jobId);
+      return next;
+    });
+  };
+  const toggleVisibleTerminalSelection = () => {
+    setSelectedJobIds((previous) => {
+      const next = new Set(previous);
+      if (allVisibleTerminalSelected) selectableVisibleIds.forEach((jobId) => next.delete(jobId));
+      else selectableVisibleIds.forEach((jobId) => next.add(jobId));
+      return next;
+    });
+  };
+
   // ── Cancel / Retry / Restore ──
   const handleRetry = async (job_id: string) => {
     try { await jobsApi.retry(job_id, wsId); toast({ kind: "success", title: "已重试" }); loadJobs(); }
     catch (e: unknown) { toast({ kind: "error", title: "重试失败", body: isApiError(e) ? e.message : String(e) }); }
   };
   const handleDelete = async (job: JobItem) => {
-    if (["queued", "running"].includes(job.status)) {
-      toast({ kind: "error", title: "运行中的任务不能删除", body: "请先取消任务，等待状态结束后再删除。" });
+    if (!canHardDelete(job)) {
+      toast({ kind: "error", title: "仅终态任务可删除", body: "请先取消或等待任务结束后再删除。" });
       return;
     }
     if (!window.confirm(`永久删除任务「${job.title || job.job_id}」及其事件和日志？此操作不可恢复。`)) return;
@@ -432,6 +464,23 @@ export function OperationsPage() {
       await loadJobs();
     } catch (e: unknown) {
       toast({ kind: "error", title: "删除失败", body: isApiError(e) ? e.message : String(e) });
+    }
+  };
+  const handleBatchDelete = async () => {
+    const jobIds = [...selectedJobIds].sort();
+    if (!jobIds.length) return;
+    if (!window.confirm(`永久删除已选 ${jobIds.length} 条任务及其事件和日志？此操作不可恢复。`)) return;
+    try {
+      await jobsApi.deleteMany(jobIds, wsId);
+      if (selectedJob && jobIds.includes(selectedJob.job_id)) {
+        selectedJobRef.current = null;
+        setSelectedJob(null); setRuns(null); setSelRun(null);
+      }
+      setSelectedJobIds(new Set());
+      toast({ kind: "success", title: `已永久删除 ${jobIds.length} 条任务` });
+      await loadJobs();
+    } catch (e: unknown) {
+      toast({ kind: "error", title: "批量删除失败", body: isApiError(e) ? e.message : String(e) });
     }
   };
   const handleRestore = async (job: JobItem) => {
@@ -495,6 +544,22 @@ export function OperationsPage() {
         <div className="split-shell operations-split">
           {/* ══════ 左侧 作业列表 ══════ */}
           <aside className="list-scroll jobs-list operations-pane-scroll">
+            {selectableVisibleIds.length > 0 && (
+              <div className="job-bulk-actions">
+                <label className="job-select-all">
+                  <input
+                    type="checkbox"
+                    checked={allVisibleTerminalSelected}
+                    onChange={toggleVisibleTerminalSelection}
+                    aria-label="选择当前筛选结果中的全部可删除任务"
+                  />
+                  选择可删除项
+                </label>
+                <Button variant="danger-ghost" size="sm" disabled={selectedJobIds.size === 0} onClick={() => void handleBatchDelete()}>
+                  <IconTrash size={13} />删除已选 ({selectedJobIds.size})
+                </Button>
+              </div>
+            )}
             {visibleJobs.map((job) => {
               const meta = sMeta(job.status);
               const active = selectedJob?.job_id === job.job_id;
@@ -515,6 +580,15 @@ export function OperationsPage() {
                   }}
                 >
                   <div className="job-card-head">
+                    {canHardDelete(job) && (
+                      <input
+                        type="checkbox"
+                        checked={selectedJobIds.has(job.job_id)}
+                        aria-label={`选择任务 ${job.title || job.job_id}`}
+                        onClick={(event) => event.stopPropagation()}
+                        onChange={() => toggleJobSelection(job.job_id)}
+                      />
+                    )}
                     <StatusDot status={meta.dot} />
                     <span className="job-card-title">{job.title || job.job_id?.slice(0, 12)}</span>
                     <Badge kind={meta.kind}>{meta.label}</Badge>
@@ -547,7 +621,7 @@ export function OperationsPage() {
                     {canRestore(job) && (
                       <Button variant="ghost" size="sm" onClick={(e) => { e.stopPropagation(); handleRestore(job); }}>恢复</Button>
                     )}
-                    {!(["queued", "running"].includes(job.status)) && (
+                    {canHardDelete(job) && (
                       <Button variant="danger-ghost" size="sm" title="永久删除任务" onClick={(e) => { e.stopPropagation(); void handleDelete(job); }}><IconTrash size={13} />删除</Button>
                     )}
                   </div>

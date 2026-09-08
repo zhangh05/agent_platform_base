@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "../router";
 import { OperationsPage } from "../pages/Operations/OperationsPage";
@@ -132,5 +132,32 @@ describe("OperationsPage", () => {
     window.dispatchEvent(new CustomEvent("lzcore:run-completed"));
 
     await waitFor(() => expect(screen.getByText("Deep linked run")).toBeInTheDocument());
+  });
+
+  it("bulk-deletes the selected terminal tasks in one request", async () => {
+    enqueue("/jobs", { status: 200, data: { jobs: [
+      { job_id: "job-terminal-a", job_type: "agent_run", status: "succeeded", title: "Terminal A" },
+      { job_id: "job-running", job_type: "agent_run", status: "running", title: "Running" },
+      { job_id: "job-terminal-b", job_type: "agent_run", status: "failed", title: "Terminal B" },
+    ] } });
+    enqueue("/jobs/batch-delete", { status: 200, data: { ok: true, deleted: true, job_ids: ["job-terminal-a", "job-terminal-b"] } });
+    enqueue("/jobs", { status: 200, data: { jobs: [{ job_id: "job-running", job_type: "agent_run", status: "running", title: "Running" }] } });
+    vi.stubGlobal("confirm", vi.fn().mockReturnValue(true));
+
+    render(<MemoryRouter initialEntries={["/runs"]}><OperationsPage /></MemoryRouter>);
+    fireEvent.click(await screen.findByLabelText("选择任务 Terminal A"));
+    fireEvent.click(screen.getByLabelText("选择任务 Terminal B"));
+    fireEvent.click(screen.getByRole("button", { name: "删除已选 (2)" }));
+
+    await waitFor(() => {
+      const request = getRequests().find((item) => item.url === "/jobs/batch-delete");
+      expect(request?.method).toBe("DELETE");
+      expect(request?.data).toMatchObject({
+        workspace_id: "default",
+        job_ids: ["job-terminal-a", "job-terminal-b"],
+        confirmation: "DELETE JOBS job-terminal-a,job-terminal-b",
+      });
+    });
+    expect(screen.queryByLabelText("选择任务 Running")).not.toBeInTheDocument();
   });
 });

@@ -346,6 +346,16 @@ export const jobsApi = {
       data: { workspace_id, confirmation: `DELETE ${job_id}` },
     }),
 
+  /** DELETE /api/jobs/batch-delete — permanently remove selected terminal tasks. */
+  deleteMany: (job_ids: string[], workspace_id: string) => {
+    const sorted = [...job_ids].sort();
+    return apiRequest<{ ok: boolean; deleted: boolean; job_ids: string[] }>({
+      method: "DELETE",
+      url: "/jobs/batch-delete",
+      data: { workspace_id, job_ids: sorted, confirmation: `DELETE JOBS ${sorted.join(",")}` },
+    });
+  },
+
   /** GET /api/jobs/:id/events */
   events: (job_id: string, workspace_id: string, signal?: AbortSignal) =>
     apiRequest<{ events: JobEvent[] }>({ method: "GET", url: `/jobs/${job_id}/events`, params: { workspace_id } }, signal),

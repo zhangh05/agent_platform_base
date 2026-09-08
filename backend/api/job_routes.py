@@ -6,6 +6,11 @@ from storage.ids import validate_job_id, validate_workspace_id
 from jobs.redaction import sanitize_job_record_for_api
 
 
+_TERMINAL_DELETE_STATUSES = frozenset({
+    "succeeded", "completed", "success", "ok", "failed", "error", "cancelled", "archived",
+})
+
+
 def _invalid_ws():
     return jsonify({"ok": False, "error": "invalid_workspace_id"}), 400
 
@@ -124,13 +129,57 @@ def register_job_routes(app):
         if request.method == "DELETE":
             if str(data.get("confirmation") or "") != f"DELETE {job_id}":
                 return jsonify({"ok": False, "error": "job_delete_confirmation_required"}), 400
-            if rec.status in {"queued", "running"}:
+            if rec.status not in _TERMINAL_DELETE_STATUSES:
                 return jsonify({"ok": False, "error": "active_job_cannot_be_deleted"}), 409
             from jobs.store import delete_job
             if not delete_job(ws, job_id, soft=False):
                 return jsonify({"ok": False, "error": "job_delete_failed"}), 500
             return jsonify({"ok": True, "job_id": job_id, "deleted": True})
         return jsonify({"ok": True, "job": sanitize_job_record_for_api(rec.as_dict())})
+
+    @app.route("/api/jobs/batch-delete", methods=["DELETE"])
+    def api_jobs_batch_delete():
+        """Hard-delete a user-selected set of terminal task records.
+
+        Validate the full selection before mutating storage so an active or
+        missing job cannot turn a bulk action into a surprising partial delete.
+        """
+        data = request.get_json(silent=True) or {}
+        ws, err = _validated_ws_id(data.get("workspace_id", ""))
+        if err:
+            return err
+        raw_ids = data.get("job_ids")
+        if not isinstance(raw_ids, list) or not raw_ids:
+            return jsonify({"ok": False, "error": "job_ids_required"}), 400
+        if len(raw_ids) > 100:
+            return jsonify({"ok": False, "error": "too_many_jobs"}), 400
+        try:
+            job_ids = sorted({validate_job_id(str(job_id)) for job_id in raw_ids})
+        except ValueError:
+            return jsonify({"ok": False, "error": "invalid_job_id"}), 400
+        if len(job_ids) != len(raw_ids):
+            return jsonify({"ok": False, "error": "duplicate_job_id"}), 400
+        if str(data.get("confirmation") or "") != f"DELETE JOBS {','.join(job_ids)}":
+            return jsonify({"ok": False, "error": "job_batch_delete_confirmation_required"}), 400
+
+        from jobs.store import delete_job, get_job
+        records = {job_id: get_job(ws, job_id) for job_id in job_ids}
+        missing = [job_id for job_id, record in records.items() if record is None]
+        if missing:
+            return jsonify({"ok": False, "error": "job_not_found", "job_ids": missing}), 404
+        active = [
+            job_id for job_id, record in records.items()
+            if record.status not in _TERMINAL_DELETE_STATUSES
+        ]
+        if active:
+            return jsonify({"ok": False, "error": "active_job_cannot_be_deleted", "job_ids": active}), 409
+        try:
+            for job_id in job_ids:
+                if not delete_job(ws, job_id, soft=False):
+                    raise OSError(f"job_delete_failed:{job_id}")
+        except OSError:
+            return jsonify({"ok": False, "error": "job_batch_delete_failed"}), 500
+        return jsonify({"ok": True, "deleted": True, "job_ids": job_ids})
 
     @app.route("/api/workspaces/<ws_id>/jobs")
     def api_workspace_jobs(ws_id):
