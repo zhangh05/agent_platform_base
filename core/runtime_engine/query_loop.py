@@ -788,7 +788,16 @@ class StreamingToolExecutor:
                     output = dict(result.output or {})
                     output["read_only"] = True
                     result.output = output
-                pending = ctx.extras.get("unknown_outcome") if ctx is not None else None
+                # Once one same-connection read-back reconciles an uncertain
+                # write, later read-only calls in this batch must observe that
+                # terminal reconciliation.  Looking only at unknown_outcome
+                # made every subsequent valid read-back try to settle the same
+                # ledger entry again, which raised operation_not_resolvable and
+                # aborted the entire agent turn.
+                pending = (
+                    ctx.extras.get("unknown_outcome_reconciliation")
+                    or ctx.extras.get("unknown_outcome")
+                ) if ctx is not None else None
                 if (
                     isinstance(pending, dict)
                     and self._is_reliable_network_readback(result, tc, pending)

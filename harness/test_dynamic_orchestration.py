@@ -1127,11 +1127,17 @@ def test_network_unknown_write_is_settled_only_by_same_connection_readback(monke
         LLMToolCall(id="readback", name="network.operations.device.manage", arguments={
             "action": "read", "connection_id": "conn-a", "commands": ["display interface brief"],
         }),
+        # A model may request several useful reads in the same batch.  The
+        # second eligible read-back must not attempt to settle an operation
+        # already reconciled by the first one.
+        LLMToolCall(id="second-readback", name="network.operations.device.manage", arguments={
+            "action": "read", "connection_id": "conn-a", "commands": ["display current-configuration"],
+        }),
     ]
 
     results = asyncio.run(executor.execute(calls, ctx=ctx))
 
-    assert [result.ok for result in results] == [False, True, True, True]
+    assert [result.ok for result in results] == [False, True, True, True, True]
     assert ctx.extras["unknown_outcome"]["connection_id"] == "conn-a"
     assert ctx.extras["unknown_outcome_reconciliation"] == {
         **ctx.extras["unknown_outcome"], "status": "reconciled",
