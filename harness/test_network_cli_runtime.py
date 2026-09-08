@@ -23,6 +23,8 @@ def test_config_prompt_is_builtin_for_every_selected_network_skill():
     prompt = render_network_skill_prompt({"skill_id": "test"})
     assert "not a read/write permission model" in prompt
     assert "device account is the final authority" in prompt
+    assert "never completes an unfinished user-requested configuration" in prompt
+    assert "connection_not_allowed_by_skill" in prompt
     assert "configuration_write" not in prompt
 
 

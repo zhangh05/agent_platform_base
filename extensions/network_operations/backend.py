@@ -343,7 +343,12 @@ def device_manage(invocation):
     if getattr(invocation, "skill", None):
         skill = service.get_skill(invocation.workspace_id, str(invocation.skill))
         if not skill or connection_id not in set(skill.get("connection_ids") or []):
-            return {"ok": False, "error": "connection_not_allowed_by_skill"}
+            return {
+                "ok": False,
+                "error": "connection_outside_selected_skill",
+                "connection_id": connection_id,
+                "skill_id": str(invocation.skill),
+            }
         selected_connections = set(getattr(invocation, "skill_connection_ids", ()) or ())
         if selected_connections and connection_id not in selected_connections:
             return {"ok": False, "error": "connection_not_selected_in_workbench"}

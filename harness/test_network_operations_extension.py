@@ -58,7 +58,7 @@ def test_configuration_scope_is_checked_once_at_the_tool_boundary(monkeypatch, t
         arguments={"action": "configure", "connection_id": other["connection_id"], "commands": ["system-view"]},
     ))
     assert result["ok"] is False
-    assert result["error"] == "connection_not_allowed_by_skill"
+    assert result["error"] == "connection_outside_selected_skill"
 
 
 def test_configuration_failure_retains_unknown_effects(monkeypatch, tmp_path):
