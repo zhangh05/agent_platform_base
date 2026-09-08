@@ -1872,6 +1872,21 @@ def delete_reference(workspace_id: str, reference_id: str) -> bool:
 
 
 @_connection_transaction
+def delete_references(workspace_id: str, reference_ids: list[str]) -> list[str]:
+    """Hard-delete the selected user-visible operational reference records."""
+    ids = sorted({str(reference_id or "").strip() for reference_id in reference_ids if str(reference_id or "").strip()})
+    if not ids or len(ids) > 500:
+        raise ValueError("reference_ids_must_contain_1_to_500_items")
+    store = _store(workspace_id)
+    if any(not store.get("references", reference_id) for reference_id in ids):
+        raise ValueError("reference_not_found")
+    for reference_id in ids:
+        if not store.delete("references", reference_id):
+            raise RuntimeError("reference_delete_failed")
+    return ids
+
+
+@_connection_transaction
 def delete_command_experience(workspace_id: str, experience_id: str) -> bool:
     """Hard-delete a command feedback identity, including legacy duplicates."""
     store = _store(workspace_id)

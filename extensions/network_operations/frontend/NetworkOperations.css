@@ -58,6 +58,11 @@
 .network-admin .source-indicator { width: 7px; height: 7px; flex: 0 0 auto; border-radius: 50%; background: var(--text-4); }
 .network-admin .source-indicator.available { background: var(--accent); }
 .network-admin .reference-main > div { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
+.network-admin .reference-heading-actions, .network-admin .reference-select-all { display: flex; align-items: center; gap: var(--space-2); }
+.network-admin .reference-heading-actions { flex-wrap: wrap; justify-content: flex-end; }
+.network-admin .reference-select-all { color: var(--text-3); font-size: var(--fs-12); white-space: nowrap; }
+.network-admin .reference-select-all input, .network-admin .reference-select { accent-color: var(--accent); }
+.network-admin .reference-select { flex: 0 0 auto; margin: 0; }
 .network-admin .reference-state, .network-admin .command-state { display: inline-flex; align-items: center; min-height: 22px; padding: 2px 7px; border-radius: var(--r-8); background: var(--surface-2); color: var(--text-3); font-size: var(--fs-12); white-space: nowrap; }
 .network-admin .reference-state.confirmed, .network-admin .reference-state.complete, .network-admin .command-state.accepted { background: var(--ok-soft); color: var(--ok); }
 .network-admin .reference-state.partial, .network-admin .reference-state.candidate { background: var(--warn-soft); color: var(--warn); }

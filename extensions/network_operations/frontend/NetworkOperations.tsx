@@ -82,6 +82,7 @@ export default function NetworkOperations() {
   const [connections, setConnections] = useState<Connection[]>([]);
   const [skills, setSkills] = useState<Skill[]>([]);
   const [operationalContext, setOperationalContext] = useState<OperationalContext>({ observations: [], references: [], command_experience: [], sources: [] });
+  const [selectedReferenceIds, setSelectedReferenceIds] = useState<Set<string>>(() => new Set());
   const [deviceForm, setDeviceForm] = useState<DeviceForm>(emptyDevice);
   const [connectionForm, setConnectionForm] = useState<ConnectionForm>(emptyConnection);
   const [skillForm, setSkillForm] = useState<SkillForm>(emptySkill);
@@ -109,6 +110,10 @@ export default function NetworkOperations() {
   }, [workspaceId]);
 
   useEffect(() => { void load().catch(() => setNotice("数据加载失败，请检查服务。")); }, [load]);
+  useEffect(() => {
+    const available = new Set(operationalContext.references.map((reference) => reference.reference_id));
+    setSelectedReferenceIds((previous) => new Set([...previous].filter((referenceId) => available.has(referenceId))));
+  }, [operationalContext.references]);
   useEffect(() => {
     if (!notice) return;
     const timer = window.setTimeout(() => setNotice(""), 4500);
@@ -245,6 +250,33 @@ export default function NetworkOperations() {
       destructive: true,
     })) return;
     void run(() => apiRequest({ method: "DELETE", url: `${base}/references/${reference.reference_id}`, data: { workspace_id: workspaceId } }), "运行参考已永久删除");
+  };
+
+  const toggleReferenceSelection = (referenceId: string) => {
+    setSelectedReferenceIds((previous) => {
+      const next = new Set(previous);
+      if (next.has(referenceId)) next.delete(referenceId); else next.add(referenceId);
+      return next;
+    });
+  };
+  const allReferencesSelected = operationalContext.references.length > 0
+    && operationalContext.references.every((reference) => selectedReferenceIds.has(reference.reference_id));
+  const toggleAllReferenceSelection = () => {
+    setSelectedReferenceIds(allReferencesSelected ? new Set() : new Set(operationalContext.references.map((reference) => reference.reference_id)));
+  };
+  const removeSelectedReferences = async () => {
+    const referenceIds = [...selectedReferenceIds].sort();
+    if (!referenceIds.length) return;
+    if (!await confirm({
+      title: "永久删除运行参考",
+      body: `将硬删除已选 ${referenceIds.length} 条运行参考。它们不再提供给模型，且不可恢复。`,
+      confirmLabel: "永久删除",
+      destructive: true,
+    })) return;
+    void run(
+      () => apiRequest({ method: "DELETE", url: `${base}/references/batch-delete`, data: { workspace_id: workspaceId, reference_ids: referenceIds } }),
+      `已永久删除 ${referenceIds.length} 条运行参考`,
+    ).then((outcome) => { if (outcome.ok) setSelectedReferenceIds(new Set()); });
   };
 
   const removeObservation = async (observation: Observation) => {
@@ -421,8 +453,9 @@ export default function NetworkOperations() {
         <div className="source-list">{operationalContext.sources.map((source) => <div className="source-row" key={source.source_id}><span className={`source-indicator ${source.available ? "available" : ""}`} aria-hidden="true" /><div><strong>{sourceLabels[source.source_id] || source.source_id}</strong><small>{sourceKindLabels[source.kind] || source.kind} · {source.authority === "user_confirmed" ? "用户确认" : "观测事实"}{source.advisory_only ? " · 仅建议" : ""}</small></div><b>{source.available ? "可用" : "暂无数据"}</b></div>)}</div>
       </section>
       <section className="network-panel reference-panel">
-        <div className="panel-heading"><div><h2>运行参考</h2><p>巡检只产生候选参考；只有完整观察经明确确认后才代表预期状态。</p></div><span className="record-count">{operationalContext.references.length} 条</span></div>
+        <div className="panel-heading"><div><h2>运行参考</h2><p>巡检只产生候选参考；只有完整观察经明确确认后才代表预期状态。</p></div><div className="reference-heading-actions"><span className="record-count">{operationalContext.references.length} 条</span><label className="reference-select-all"><input type="checkbox" checked={allReferencesSelected} disabled={!operationalContext.references.length || busy} onChange={toggleAllReferenceSelection} aria-label="选择全部运行参考" />选择全部</label><Button size="sm" variant="danger-ghost" disabled={!selectedReferenceIds.size || busy} onClick={() => void removeSelectedReferences()}><IconTrash size={13} />删除已选 ({selectedReferenceIds.size})</Button></div></div>
         <div className="reference-list">{operationalContext.references.length ? operationalContext.references.map((reference) => <article className="reference-row" key={reference.reference_id}>
+          <input className="reference-select" type="checkbox" checked={selectedReferenceIds.has(reference.reference_id)} disabled={busy} onChange={() => toggleReferenceSelection(reference.reference_id)} aria-label={`选择运行参考 ${reference.name}`} />
           <div className="reference-main"><div><strong>{reference.name}</strong><span className={`reference-state ${reference.state}`}>{reference.state === "candidate" ? "候选" : reference.state === "confirmed" ? "已确认" : reference.state === "superseded" ? "已替代" : "已失效"}</span></div><small>{reference.target_ids.length} 个目标 · {reference.completeness === "complete" ? "证据完整" : "证据不完整"} · {displayTime(reference.updated_at)}</small></div>
           <div className="reference-actions">{reference.state === "candidate" && reference.completeness === "complete" ? <Button size="sm" variant="primary" onClick={() => void transitionReference(reference, "confirm")}>确认参考</Button> : null}{reference.state === "candidate" || reference.state === "confirmed" ? <Button size="sm" variant="danger-ghost" onClick={() => void transitionReference(reference, "invalidate")}>标记失效</Button> : null}<Button size="sm" variant="danger-ghost" aria-label={`永久删除运行参考 ${reference.name}`} icon={<IconTrash size={13} />} onClick={() => void removeReference(reference)}>永久删除</Button></div>
         </article>) : <div className="empty">完成一次巡检后会出现候选参考，系统不会自动把第一次观察当作正常状态。</div>}</div>

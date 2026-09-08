@@ -30,6 +30,7 @@
     "/api/extensions/network.operations/inspections/<task_id>/evidence",
     "/api/extensions/network.operations/inspections/<task_id>/retry",
     "/api/extensions/network.operations/context",
+    "/api/extensions/network.operations/references/batch-delete",
     "/api/extensions/network.operations/references/<reference_id>",
     "/api/extensions/network.operations/observations/<observation_id>",
     "/api/extensions/network.operations/command-experience/<experience_id>",

@@ -364,6 +364,24 @@ def test_partial_observation_cannot_be_confirmed_as_expected_state(monkeypatch, 
         service.transition_reference("default", observation["candidate_reference_id"], "confirm")
 
 
+def test_selected_operational_references_are_hard_deleted_together(monkeypatch, tmp_path):
+    _setup(monkeypatch, tmp_path)
+    connection = _register_connection("default", {
+        "name": "R1", "host": "10.0.0.1", "protocol": "telnet", "vendor": "h3c",
+    })
+    first = service.record_inspection_observation("default", {
+        "task_id": "inspection_first", "status": "succeeded", "finished_at": "2026-09-06T00:00:00Z",
+        "artifact_id": "artifact-1", "results": {connection["connection_id"]: {"status": "succeeded", "output_hash": "first"}},
+    })
+    second = service.record_inspection_observation("default", {
+        "task_id": "inspection_second", "status": "succeeded", "finished_at": "2026-09-07T00:00:00Z",
+        "artifact_id": "artifact-2", "results": {connection["connection_id"]: {"status": "succeeded", "output_hash": "second"}},
+    })
+    deleted = service.delete_references("default", [first["candidate_reference_id"], second["candidate_reference_id"]])
+    assert deleted == sorted([first["candidate_reference_id"], second["candidate_reference_id"]])
+    assert service.list_references("default") == []
+
+
 def test_command_experience_is_advisory_and_scoped(monkeypatch, tmp_path):
     _setup(monkeypatch, tmp_path)
     connection = _register_connection("default", {

@@ -206,6 +206,20 @@ def register_routes(app):
         except ValueError as exc:
             return jsonify({"ok": False, "error": str(exc)}), 400
 
+    @app.route("/api/extensions/network.operations/references/batch-delete", methods=["DELETE"])
+    def network_references_batch_delete():
+        ws = _workspace()
+        if not ws:
+            return jsonify({"ok": False, "error": "workspace_id is required"}), 400
+        reference_ids = _payload().get("reference_ids")
+        if not isinstance(reference_ids, list):
+            return jsonify({"ok": False, "error": "reference_ids_must_be_a_list"}), 400
+        try:
+            deleted_ids = service.delete_references(ws, reference_ids)
+            return jsonify({"ok": True, "deleted": True, "reference_ids": deleted_ids})
+        except ValueError as exc:
+            return jsonify({"ok": False, "error": str(exc)}), 400
+
     @app.route("/api/extensions/network.operations/observations/<observation_id>", methods=["DELETE"])
     def network_observation(observation_id):
         ws = _workspace()

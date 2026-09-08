@@ -68,6 +68,31 @@ test("operational context separates observations from explicitly confirmed refer
   })));
 });
 
+test("selects and permanently deletes multiple operational references in one request", async () => {
+  const original = vi.mocked(apiRequest).getMockImplementation();
+  vi.mocked(apiRequest).mockImplementation(async (request) => {
+    if (request.url?.endsWith("/context")) return {
+      observations: [], command_experience: [], sources: [],
+      references: [
+        { reference_id: "ref-a", name: "巡检候选参考 A", state: "candidate", authority: "observed", current: false, completeness: "complete", target_ids: ["c1"], updated_at: "2026-09-06T00:00:00Z" },
+        { reference_id: "ref-b", name: "巡检候选参考 B", state: "candidate", authority: "observed", current: false, completeness: "complete", target_ids: ["c2"], updated_at: "2026-09-07T00:00:00Z" },
+      ],
+    } as never;
+    return original?.(request) as never;
+  });
+  render(<><NetworkOperations /><ConfirmHost /></>);
+  await screen.findByTestId("device-card-d1");
+  fireEvent.click(screen.getByRole("button", { name: /环境与证据/ }));
+  fireEvent.click(screen.getByLabelText("选择运行参考 巡检候选参考 A"));
+  fireEvent.click(screen.getByLabelText("选择运行参考 巡检候选参考 B"));
+  fireEvent.click(screen.getByRole("button", { name: "删除已选 (2)" }));
+  fireEvent.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "永久删除" }));
+  await waitFor(() => expect(apiRequest).toHaveBeenCalledWith(expect.objectContaining({
+    method: "DELETE", url: "/extensions/network.operations/references/batch-delete",
+    data: { workspace_id: "default", reference_ids: ["ref-a", "ref-b"] },
+  })));
+});
+
 test("command feedback renders one row for duplicate driver commands during a rolling upgrade", async () => {
   const original = vi.mocked(apiRequest).getMockImplementation();
   vi.mocked(apiRequest).mockImplementation(async (request) => {
