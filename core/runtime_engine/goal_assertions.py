@@ -63,7 +63,12 @@ def _runtime_goal_status(ctx, assertion: dict[str, Any]) -> str:
     if not isinstance(goal, dict):
         return "unknown"
     status = str(goal.get("status") or "pending").lower()
-    if status == "passed":
+    # ``superseded`` is an intentional successful terminal state for a
+    # generic exploratory recovery goal: later, target-specific completion
+    # evidence has made retrying the failed probe irrelevant.  Treating it as
+    # unknown here disagreed with the final gate (which already ignores it)
+    # and could turn a fully verified task into ``goal_assertion_not_satisfied``.
+    if status in {"passed", "superseded"}:
         return "passed"
     if status == "blocked":
         return "failed"

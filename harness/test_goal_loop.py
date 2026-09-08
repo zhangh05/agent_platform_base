@@ -87,6 +87,13 @@ def test_completion_evidence_supersedes_unrelated_generic_failures_but_not_typed
 
     generic = next(goal for goal in ctx.extras["recovery_goals"] if goal["goal_type"] == "tool_recovery")
     assert generic["status"] == "superseded"
+    # Completion evidence closes the generic failed-probe assertion as well;
+    # only the typed write/read-back requirement below remains open.
+    assertion = evaluate_goal_assertions(ctx, [])
+    generic_assertion = next(item for item in assertion["assertions"] if item["goal_id"] == generic["goal_id"])
+    assert generic_assertion["status"] == "passed"
+    assert goal_loop_summary(ctx)["status"] == "pending"
+    assert goal_loop_summary(ctx)["counts"]["superseded"] == 1
     # The typed write/read-back goal is still a hard evidence requirement.
     assert recovery_final_gate(ctx, []).should_continue is True
 

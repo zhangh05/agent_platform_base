@@ -166,10 +166,10 @@ def supersede_generic_goals_after_completion_evidence(
 
 def goal_loop_summary(ctx) -> dict[str, Any]:
     goals = [dict(item) for item in ctx.extras.get("recovery_goals") or [] if isinstance(item, dict)]
-    counts = {"pending": 0, "passed": 0, "blocked": 0}
+    counts = {"pending": 0, "passed": 0, "blocked": 0, "superseded": 0}
     for goal in goals:
         raw_status = str(goal.get("status") or "pending")
-        status = raw_status if raw_status in {"passed", "blocked"} else "pending"
+        status = raw_status if raw_status in {"passed", "blocked", "superseded"} else "pending"
         counts[status] = counts.get(status, 0) + 1
     return {
         "status": "blocked" if counts.get("blocked") else "pending" if counts.get("pending") else "passed" if goals else "not_required",
@@ -184,7 +184,7 @@ def hydrate_goal_loop(ctx, trusted_contract: dict[str, Any] | None) -> None:
         return
     restored = [
         dict(item) for item in trusted_contract.get("recovery_goals") or []
-        if isinstance(item, dict) and item.get("status") != "passed" and item.get("goal_id")
+        if isinstance(item, dict) and item.get("status") not in {"passed", "superseded"} and item.get("goal_id")
     ]
     if not restored:
         return
