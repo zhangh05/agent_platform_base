@@ -2518,7 +2518,15 @@ class QueryLoop:
             return LLMResponse(error="llm_call_timeout")
         except Exception as e:
             self._llm_call_count += 1  # P1-7: count against budget even on error
-            _LOG.warning("LLM invocation raised %s", type(e).__name__)
+            # The SSOT adapter intentionally raises when a provider returns an
+            # error without usable content.  Preserve its redacted detail in
+            # diagnostics: logging only ``RuntimeError`` turns a recoverable
+            # provider/schema problem into an opaque retry loop.
+            _LOG.warning(
+                "LLM invocation raised %s: %s",
+                type(e).__name__,
+                _redact_tool_error(e),
+            )
             return LLMResponse(error=_normalize_llm_error(type(e).__name__))
 
     async def _recover_final_synthesis(
@@ -3382,7 +3390,10 @@ class QueryLoop:
         if not isinstance(workbench, dict) or workbench.get("extension_id") != "network.operations":
             return ""
         request = str(ctx.extras.get("__raw_user_input") or "").lower()
-        if not any(token in request for token in ("retry", "again", "continue", "重试", "再试", "继续")):
+        requested_undo_shutdown = "undo shutdown" in request
+        if not requested_undo_shutdown and not any(
+            token in request for token in ("retry", "again", "continue", "重试", "再试", "继续")
+        ):
             return ""
         text = final_text.lower()
         claims_execution = any(token in text for token in (
@@ -3409,6 +3420,28 @@ class QueryLoop:
                 "This retry has network evidence, but no `configure` execution result. A read/probe/catalog result cannot be reported as a configuration attempt or refusal. "
                 "Continue with the unfinished objective using a configure call, unless the latest structured write result explicitly says its outcome is unknown or may still be executing."
             )
+        if requested_undo_shutdown:
+            # A shutdown/undo pair is one user-requested transaction.  Once a
+            # read-back establishes that shutdown took effect, asking the user
+            # for another confirmation before the explicitly requested undo
+            # leaves the live interface administratively down.  Require the
+            # model to continue until tool evidence contains the undo command,
+            # or to report a concrete terminal execution error.
+            serialized_results = json.dumps(
+                [item.output for item in network_results if isinstance(item.output, dict)],
+                ensure_ascii=False,
+                default=str,
+            ).lower()
+            unfinished_language = any(marker in text for marker in (
+                "尚未执行", "未执行", "等待你", "等待用户", "wait for", "not executed",
+            ))
+            if "undo shutdown" not in serialized_results and unfinished_language:
+                return (
+                    "[RUNTIME NETWORK CONFIGURATION COMPLETION]\n"
+                    "The user explicitly required `shutdown`, a real wait, and `undo shutdown` in this same task. "
+                    "Current evidence shows the undo command has not been executed. Do not request another confirmation or end the task. "
+                    "Use a changed `configure` call now to send the required `undo shutdown`, then make a separate read-back call and report its actual result."
+                )
         return ""
 
     def _append_tool_round(

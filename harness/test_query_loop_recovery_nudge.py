@@ -37,6 +37,22 @@ def test_network_retry_final_gate_rejects_claims_without_current_command_evidenc
     assert "no `configure` execution result" in nudge
 
 
+def test_network_retry_final_gate_finishes_explicit_shutdown_undo_pair():
+    ctx = SimpleNamespace(extras={
+        "workbench_context": {"extension_id": "network.operations"},
+        "__raw_user_input": "继续在 PE1 执行 shutdown，等待 10 秒后 undo shutdown",
+    })
+    configure = StreamingToolResult(
+        tool_name="network.operations.device.manage", call_id="write", ok=True,
+        output={"executed_action": "configure", "command_results": [{"command": "shutdown"}]},
+    )
+    nudge = QueryLoop._network_retry_final_gate(
+        ctx, "undo shutdown 尚未执行，等待用户继续", [configure],
+    )
+    assert "Do not request another confirmation" in nudge
+    assert "undo shutdown" in nudge
+
+
 def test_failed_subagent_recovery_forbids_parent_wholesale_replay():
     nudge = QueryLoop._build_tool_failure_recovery_nudge([
         StreamingToolResult(

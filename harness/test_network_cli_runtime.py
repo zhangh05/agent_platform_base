@@ -675,6 +675,9 @@ def test_selected_skill_prompt_explains_semantic_collect_without_raw_pager_comma
         "network_runtime_version": "network.cli.v2",
     })
     assert "`collect`" in prompt
+    assert "prefer `device.manage(action=\"collect\", facts=[...])`" in prompt
+    assert "Do not guess vendor syntax" in prompt
+    assert "poll it to a terminal result" in prompt
     assert "semantic_catalog" in prompt
     assert '"network_runtime_version":"network.cli.v2"' in prompt
 
@@ -684,6 +687,7 @@ def test_prompt_makes_autonomous_commands_the_default_not_templates():
     assert "`read` for targeted raw observations" in prompt
     assert "exact command text and order" in prompt
     assert "continue until the objective is answered" in prompt
+    assert "Never end a response with a future-work promise" in prompt
     assert "only when the semantic catalog cannot" not in prompt
 
 
