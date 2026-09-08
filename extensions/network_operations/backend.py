@@ -506,6 +506,7 @@ def _inspection_result(task: dict[str, Any]) -> dict[str, Any]:
             "task_id": task_id,
             "status": status,
             "done": terminal,
+            "observation_token": str((task or {}).get("updated_at") or ""),
             "next_poll_seconds": 1,
             "suggested_next_action": "synthesize_results" if terminal else "poll_get",
             "poll_action": "get",

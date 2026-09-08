@@ -3507,6 +3507,12 @@ class QueryLoop:
                 "tool_name": tool_name,
                 "poll_index": 0,
                 "last_error_count": 0,
+                # Automatic polling is only a convenience, never an agent
+                # decision loop. Keep going only while its producer exposes a
+                # new observation; an identical queued/running observation is
+                # returned to the LLM for the next decision instead of being
+                # polled by the runtime forever.
+                "observation_key": self._tracking_observation_key(tracking),
                 "due_at": time.monotonic() + self._tracking_wait(
                     tracking, cap_seconds, deadline
                 ),
@@ -3608,6 +3614,35 @@ class QueryLoop:
                         "reason": reason,
                     })
                     continue
+                observation_key = self._tracking_observation_key(tracking)
+                if not tracking.get("done") and observation_key == state["observation_key"]:
+                    # This is not a timeout or a call-count limit. We have an
+                    # exact, successful observation with no new state for the
+                    # automatic poller to act on. Preserve it for the model,
+                    # then let the model decide whether to wait, inspect a
+                    # different signal, or make another explicit poll.
+                    payload = dict(poll_result.output or {})
+                    payload["tracking"] = {
+                        **dict(tracking),
+                        "done": True,
+                        "terminal": True,
+                        "status": "tracking_no_progress",
+                        "auto_polling": "stopped",
+                        "stop_reason": "tracking_no_progress",
+                    }
+                    payload["tracking_prior_state"] = dict(tracking)
+                    poll_result.output = payload
+                    state["tracking"] = payload["tracking"]
+                    ctx.extras["tracking_events"].append({
+                        "tool": tool_name,
+                        "call_id": poll_call_id,
+                        "tracking": payload["tracking"],
+                        "source": "auto_polling_stopped",
+                        "poll_index": poll_index,
+                        "reason": "tracking_no_progress",
+                    })
+                    continue
+                state["observation_key"] = observation_key
                 state["due_at"] = time.monotonic() + self._tracking_wait(
                     state["tracking"], cap_seconds, deadline
                 )
@@ -3650,6 +3685,28 @@ class QueryLoop:
             result.output.setdefault("tracking_poll_count", int(state["poll_index"]))
             result.output.setdefault("tracking_source_call_id", source_call_id)
         return tracked_results
+
+    @staticmethod
+    def _tracking_observation_key(tracking: dict[str, Any]) -> str:
+        """Stable producer-state identity for automatic polling only.
+
+        Deliberately omit poll counters and timing hints: they describe the
+        polling mechanism, not a change in the producer's actual state.
+        Producers can expose a revision/timestamp in ``observation_token``
+        when progress is not represented by ``status`` or ``progress``.
+        """
+        progress = tracking.get("progress") if isinstance(tracking.get("progress"), dict) else {}
+        return _json_compact({
+            "status": str(tracking.get("status") or ""),
+            "done": bool(tracking.get("done")),
+            "progress": progress,
+            "observation_token": str(
+                tracking.get("observation_token")
+                or tracking.get("revision")
+                or tracking.get("updated_at")
+                or ""
+            ),
+        })
 
     async def _sleep_until_poll_or_cancel(
         self,

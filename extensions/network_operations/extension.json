@@ -52,6 +52,6 @@
   "metadata": {
     "minimum_role": "viewer",
     "minimum_write_role": "operator",
-    "quotas": {"daily_calls": 500, "max_concurrency": 5, "max_devices": 1000}
+    "quotas": {"max_concurrency": 5, "max_devices": 1000}
   }
 }

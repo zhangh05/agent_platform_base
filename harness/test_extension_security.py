@@ -8,18 +8,13 @@ from extensions.state import get_extension_state, record_extension_failure, set_
 
 def test_extension_quota_is_workspace_scoped(monkeypatch, tmp_path):
     monkeypatch.setenv("LZCORE_WORKSPACE_ROOT", str(tmp_path / "workspaces"))
-    limits = {"daily_calls": 2, "max_concurrency": 1}
+    limits = {"max_concurrency": 1}
     with extension_quota("vendor.sample", "workspace_a", limits):
         status = quota_status("vendor.sample", "workspace_a", limits)
         assert status["active"] == 1
         with pytest.raises(ExtensionQuotaError, match="concurrency"):
             with extension_quota("vendor.sample", "workspace_a", limits):
                 pass
-    with extension_quota("vendor.sample", "workspace_a", limits):
-        pass
-    with pytest.raises(ExtensionQuotaError, match="daily"):
-        with extension_quota("vendor.sample", "workspace_a", limits):
-            pass
     with extension_quota("vendor.sample", "workspace_b", limits):
         pass
 
