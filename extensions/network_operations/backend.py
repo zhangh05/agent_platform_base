@@ -377,6 +377,9 @@ def device_manage(invocation):
         timeout=int(args.get("timeout") or 15),
         session_scope=str(getattr(invocation, "run_id", None) or getattr(invocation, "task_id", None) or ""),
     )
+    # Preserve the server-determined execution class in the tool evidence so a
+    # later synthesis cannot present a read-back as a configuration attempt.
+    result = {**result, "requested_action": action, "executed_action": effective_action}
     if effective_action == "configure":
         return result
     if result.get("ok"):

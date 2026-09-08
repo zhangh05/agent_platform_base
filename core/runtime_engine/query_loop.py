@@ -2217,6 +2217,19 @@ class QueryLoop:
                 })
                 continue
 
+            network_retry_nudge = self._network_retry_final_gate(ctx, str(response.content or ""), all_results)
+            if network_retry_nudge:
+                messages = [
+                    *messages,
+                    LLMMessage(role="assistant", content=str(response.content or "").strip()),
+                    LLMMessage(role="user", content=network_retry_nudge),
+                ]
+                ctx.extras.setdefault("network_execution_evidence_events", []).append({
+                    "type": "unsupported_network_retry_final_rejected",
+                    "iteration": iterations,
+                })
+                continue
+
             # No tool calls and no recoverable evidence gap → final response
             if response_stage_started_at is None:
                 response_stage_started_at = model_started_at
@@ -3302,6 +3315,42 @@ class QueryLoop:
             "with the concrete blocker and the best next action."
             + child_boundary
         )
+
+    @staticmethod
+    def _network_retry_final_gate(ctx, final_text: str, tool_results: list[StreamingToolResult]) -> str:
+        """Keep a network retry grounded in this turn's actual tool evidence."""
+        workbench = ctx.extras.get("workbench_context") if isinstance(ctx.extras, dict) else None
+        if not isinstance(workbench, dict) or workbench.get("extension_id") != "network.operations":
+            return ""
+        request = str(ctx.extras.get("__raw_user_input") or "").lower()
+        if not any(token in request for token in ("retry", "again", "continue", "重试", "再试", "继续")):
+            return ""
+        text = final_text.lower()
+        claims_execution = any(token in text for token in (
+            "configure", "shutdown", "undo shutdown", "connection_not_allowed_by_skill",
+            "connection_outside_selected_skill", "已执行", "被拒绝", "回读", "配置未",
+        ))
+        network_results = [
+            item for item in tool_results
+            if str(item.tool_name or "").replace("__", ".") == "network.operations.device.manage"
+        ]
+        if not network_results:
+            return (
+                "[RUNTIME NETWORK RETRY EVIDENCE]\n"
+                "This retry has no network command result. Do not claim that a device command was executed, rejected, or read back. "
+                "Use the selected Skill's network tools now to obtain current evidence and continue the user's unfinished objective."
+            )
+        configured = any(
+            isinstance(item.output, dict) and item.output.get("executed_action") == "configure"
+            for item in network_results
+        )
+        if claims_execution and not configured:
+            return (
+                "[RUNTIME NETWORK RETRY EVIDENCE]\n"
+                "This retry has network evidence, but no `configure` execution result. A read/probe/catalog result cannot be reported as a configuration attempt or refusal. "
+                "Continue with the unfinished objective using a configure call, unless the latest structured write result explicitly says its outcome is unknown or may still be executing."
+            )
+        return ""
 
     def _append_tool_round(
         self,

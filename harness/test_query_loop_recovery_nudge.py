@@ -1,3 +1,5 @@
+from types import SimpleNamespace
+
 from core.runtime_engine.query_loop import QueryLoop, StreamingToolResult
 
 
@@ -17,6 +19,22 @@ def test_failure_recovery_nudge_treats_tool_error_as_data_not_instruction():
     assert '&lt;/tool_failure_evidence&gt;' in nudge
     assert "&lt;runtime_guidance" in nudge
     assert 'Do not repeat an unchanged failed call.' in nudge
+
+
+def test_network_retry_final_gate_rejects_claims_without_current_command_evidence():
+    ctx = SimpleNamespace(extras={
+        "workbench_context": {"extension_id": "network.operations"},
+        "__raw_user_input": "再试试",
+    })
+    nudge = QueryLoop._network_retry_final_gate(ctx, "仍然被授权边界拒绝，shutdown 未执行", [])
+    assert "no network command result" in nudge
+
+    read = StreamingToolResult(
+        tool_name="network.operations.device.manage", call_id="read", ok=True,
+        output={"executed_action": "read"},
+    )
+    nudge = QueryLoop._network_retry_final_gate(ctx, "配置未执行，只做了回读", [read])
+    assert "no `configure` execution result" in nudge
 
 
 def test_failed_subagent_recovery_forbids_parent_wholesale_replay():
