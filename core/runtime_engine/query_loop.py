@@ -1423,6 +1423,7 @@ class QueryLoop:
             hydrate_goal_loop(ctx, trusted_task_state)
         used_call_ids: set[str] = set()
         execution_duration_ms = 0.0
+        provider_failure_count = 0
         planner_completed_emitted = False
         cognitive_state = initialize_cognitive_state(
             turn_id=ctx.request_id,
@@ -1792,42 +1793,41 @@ class QueryLoop:
                 continue
 
             if response is None or response.error:
-                final_resp: str
-                if all_results:
-                    provider_error = str(response.error if response else "no_response")
-                    recovered = await self._recover_final_synthesis(ctx, budget)
-                    if recovered:
-                        final_resp = recovered
-                        ctx.extras["response_outcome"] = "recovered"
-                    else:
-                        final_resp = self._build_tool_result_fallback(ctx, all_results)
-                        ctx.extras["response_outcome"] = "deterministic_fallback"
-                    ctx.extras["response_provider_error"] = provider_error
+                # A provider outage is not a completed answer and must never
+                # discard accumulated tool evidence.  Keep the same full
+                # conversation in the loop and wait for the provider to
+                # recover; user cancellation remains the escape hatch.
+                provider_error = str(response.error if response else "no_response")
+                provider_failure_count += 1
+                ctx.extras.setdefault("provider_recovery_events", []).append({
+                    "attempt": provider_failure_count,
+                    "error": provider_error,
+                    "tool_results_preserved": len(all_results),
+                })
+                # A positive loop setting is an explicit compatibility
+                # profile (principally deterministic/offline callers).  The
+                # production runtime sets it to zero and therefore retries
+                # indefinitely.  Keep the old finite fallback only for that
+                # caller-selected compatibility mode.
+                if int(self._config.max_query_loop_iterations or 0) > 0:
+                    recovered = await self._recover_final_synthesis(ctx, budget) if all_results else ""
+                    final_response = recovered or (
+                        self._build_tool_result_fallback(ctx, all_results)
+                        if all_results else _llm_failure_message(provider_error)
+                    )
+                    ctx.extras["response_outcome"] = (
+                        "recovered" if recovered else "deterministic_fallback"
+                    )
                     return finish(
-                        final_response=final_resp,
+                        final_response=final_response,
                         tool_results=all_results,
                         iterations=iterations,
                         total_tool_calls=len(all_results),
                         llm_calls=budget.llm_calls,
-                        metrics={
-                            "response_provider_error": provider_error,
-                            "response_recovered": bool(recovered),
-                        },
+                        error=provider_error if not all_results else None,
                     )
-                elif response is not None and response.content and response.content.strip():
-                    final_resp = response.content.strip()
-                elif response is not None:
-                    final_resp = _llm_failure_message(response.error)
-                else:
-                    final_resp = _llm_failure_message("no_response")
-                return finish(
-                    final_response=final_resp,
-                    tool_results=all_results,
-                    iterations=iterations,
-                    total_tool_calls=len(all_results),
-                    llm_calls=budget.llm_calls,
-                    error=response.error if response else "no_response",
-                )
+                await self._wait_for_provider_recovery(ctx, provider_failure_count)
+                continue
 
             llm_calls = budget.llm_calls
 
@@ -1953,11 +1953,8 @@ class QueryLoop:
                     ]
                     try:
                         checkpoint("prepared", prepared_manifest)
-                    except Exception:
-                        return finish(
-                            final_response="任务状态检查点未能写入，系统未执行工具。",
-                            error="task_state_checkpoint_failed",
-                        )
+                    except Exception as exc:  # noqa: BLE001 -- persistence must not own the agent loop
+                        self._record_checkpoint_degradation(ctx, "prepared", exc)
                 # Execute tools (parallel read-only, serial writes). Aggregate
                 # budgets are telemetry and never discard a model-proposed call.
                 execution_started = time.monotonic()
@@ -1978,11 +1975,8 @@ class QueryLoop:
                         settled_manifest = list(ctx.extras.get("task_state_execution_manifest") or [])[-len(results):]
                         try:
                             checkpoint("settled", settled_manifest)
-                        except Exception:
-                            return finish(
-                                final_response="工具已返回，但任务状态结果检查点未能写入；系统停止，结果不得视为完成。",
-                                error="task_state_checkpoint_failed",
-                            )
+                        except Exception as exc:  # noqa: BLE001 -- retain delivered evidence and let the model continue
+                            self._record_checkpoint_degradation(ctx, "settled", exc)
                     recovery_calls, recovery_results = await self._execute_safe_read_recovery(
                         ctx,
                         tool_calls,
@@ -2141,6 +2135,9 @@ class QueryLoop:
 
                 # Append assistant message (with tool_calls) + tool results
                 messages = self._append_tool_round(messages, model_tool_calls, results)
+                checkpoint_nudge = self._task_state_checkpoint_nudge(ctx)
+                if checkpoint_nudge:
+                    messages = self._append_turn_nudge(messages, checkpoint_nudge)
                 if self._producer_requests_final_synthesis(polled_results):
                     messages = self._append_turn_nudge(
                         messages,
@@ -2958,21 +2955,18 @@ class QueryLoop:
             ]
             try:
                 checkpoint("prepared", manifest)
-            except Exception:  # noqa: BLE001 -- checkpoint boundary must fail closed
+            except Exception as exc:  # noqa: BLE001 -- persistence degradation is model-visible, never an execution gate
+                self._record_checkpoint_degradation(ctx, "recovery_prepared", exc)
                 for event in events[-len(directives):]:
-                    event.update({"status": "not_run_checkpoint_failed"})
-                return [], []
+                    event.update({"checkpoint": "degraded"})
         recovery_results = await self._executor.execute(recovery_calls, ctx=ctx, budget=budget)
         self._record_task_state_execution_manifest(ctx, recovery_calls, recovery_results)
         if callable(checkpoint):
             settled = list(ctx.extras.get("task_state_execution_manifest") or [])[-len(recovery_results):]
             try:
                 checkpoint("settled", settled)
-            except Exception:  # noqa: BLE001 -- checkpoint boundary must fail closed
-                # The reads have happened, so keep their evidence but force a
-                # terminal failure instead of pretending their state was made
-                # durable. This matches the primary execution contract.
-                raise RuntimeError("task_state_checkpoint_failed_after_network_read_recovery")
+            except Exception as exc:  # noqa: BLE001 -- the reads are valid evidence even when telemetry persistence is degraded
+                self._record_checkpoint_degradation(ctx, "recovery_settled", exc)
         for result, event in zip(recovery_results, events[-len(directives):]):
             event.update({
                 "status": "recovered" if result.ok else "recovery_failed",
@@ -3472,12 +3466,13 @@ class QueryLoop:
         if not getattr(self._config, "tracking_enabled", True):
             return []
 
-        max_polls = max(0, int(getattr(self._config, "tracking_max_polls", 8) or 0))
+        configured_max_polls = max(0, int(getattr(self._config, "tracking_max_polls", 8) or 0))
+        # Zero is the runtime-wide convention for unbounded. Tracking is part
+        # of the same agent loop, so it must not silently introduce a second
+        # 40-poll (or any other) completion ceiling.
+        max_polls = configured_max_polls or None
         cap_seconds = float(getattr(self._config, "tracking_poll_interval_cap_seconds", 2.0))
         max_seconds = max(0, float(getattr(self._config, "tracking_max_seconds", 60)))
-        if max_polls <= 0:
-            return []
-
         deadline = (
             time.monotonic() + max_seconds
             if max_seconds > 0
@@ -3540,8 +3535,7 @@ class QueryLoop:
             states = [
                 state for state in states
                 if not state["tracking"].get("done")
-                and int(state["poll_index"]) < max_polls
-                and int(state["last_error_count"]) < 3
+                and (max_polls is None or int(state["poll_index"]) < max_polls)
             ]
             if not states:
                 break
@@ -3634,6 +3628,48 @@ class QueryLoop:
                 return True
             await asyncio.sleep(min(0.25, max(0.0, wake_at - time.monotonic())))
         return self._is_cancelled(ctx)
+
+    async def _wait_for_provider_recovery(
+        self,
+        ctx: StatelessContext,
+        failure_count: int,
+    ) -> bool:
+        """Wait between provider retries without imposing a retry ceiling."""
+        delay = min(5.0, 0.25 * (2 ** min(max(0, failure_count - 1), 5)))
+        return not await self._sleep_until_poll_or_cancel(ctx, delay)
+
+    @staticmethod
+    def _record_checkpoint_degradation(
+        ctx: StatelessContext,
+        phase: str,
+        error: Exception,
+    ) -> None:
+        """Record persistence trouble as runtime evidence, never a loop gate."""
+        events = ctx.extras.setdefault("task_state_checkpoint_events", [])
+        if not isinstance(events, list):
+            events = []
+            ctx.extras["task_state_checkpoint_events"] = events
+        events.append({
+            "phase": str(phase),
+            "status": "degraded",
+            "error": _redact_tool_error(error),
+        })
+
+    @staticmethod
+    def _task_state_checkpoint_nudge(ctx: StatelessContext) -> str:
+        """Expose checkpoint degradation without replacing tool evidence."""
+        events = ctx.extras.get("task_state_checkpoint_events") or []
+        if not isinstance(events, list) or not events:
+            return ""
+        latest = events[-1] if isinstance(events[-1], dict) else {}
+        if latest.get("nudge_delivered"):
+            return ""
+        latest["nudge_delivered"] = True
+        return (
+            "[RUNTIME PERSISTENCE OBSERVATION] Task-state checkpoint persistence is degraded, "
+            "but the complete tool results above are real execution evidence. Continue the original "
+            "goal from those results; do not claim the persistence layer succeeded."
+        )
 
     @staticmethod
     def _is_cancelled(ctx: StatelessContext) -> bool:

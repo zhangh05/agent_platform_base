@@ -639,7 +639,7 @@ def _install_task_state_failure_probe_engine(monkeypatch):
     monkeypatch.setattr("agent.runtime.ssot_runtime._record_experience_and_maybe_reflect", lambda **_kwargs: None)
 
 
-def test_ssot_task_state_commit_failure_is_fail_closed(monkeypatch, tmp_path):
+def test_ssot_task_state_commit_failure_keeps_completed_agent_result(monkeypatch, tmp_path):
     monkeypatch.setenv("LZCORE_WORKSPACE_ROOT", str(tmp_path))
     from agent.core.session import AgentSession
     from agent.core.turn import AgentTurn
@@ -658,22 +658,19 @@ def test_ssot_task_state_commit_failure_is_fail_closed(monkeypatch, tmp_path):
         workspace_id=session.workspace_id,
     )))
 
-    assert result.ok is False
-    assert result.error_type == "task_state_commit_failed"
-    assert "task_state_commit_failed" in result.errors
+    assert result.ok is True
+    assert "task_state_commit_failed" in result.warnings
     assert result.metadata["task_state_persistence"]["stage"] == "commit"
 
 
-def test_ssot_task_state_resolution_failure_is_fail_closed(monkeypatch, tmp_path):
+def test_ssot_task_state_resolution_failure_keeps_agent_loop_available(monkeypatch, tmp_path):
     monkeypatch.setenv("LZCORE_WORKSPACE_ROOT", str(tmp_path))
     from agent.core.session import AgentSession
     from agent.core.turn import AgentTurn
     from agent.protocol.op import AgentOp
     from agent.runtime.ssot_runtime import run_ssot_turn
 
-    called = []
     _install_task_state_failure_probe_engine(monkeypatch)
-    monkeypatch.setattr("agent.runtime.ssot_runtime._build_engine", lambda **_kwargs: called.append(True))
     monkeypatch.setattr(
         "agent.runtime.task_state.resolve_task_state",
         lambda **_kwargs: (_ for _ in ()).throw(OSError("simulated state read failure")),
@@ -685,11 +682,8 @@ def test_ssot_task_state_resolution_failure_is_fail_closed(monkeypatch, tmp_path
         workspace_id=session.workspace_id,
     )))
 
-    assert result.ok is False
-    assert result.error_type == "task_state_resolution_failed"
-    assert "task_state_resolution_failed" in result.errors
+    assert result.ok is True
     assert result.metadata["task_state_persistence"]["stage"] == "resolution"
-    assert called == []
 
 def test_replan_contract_allows_model_to_retry_failed_call(monkeypatch, tmp_path):
     import asyncio
@@ -1093,7 +1087,7 @@ def test_queryloop_unknown_mutation_history_does_not_freeze_new_writes():
     assert "task_state_unknown_mutation_outcome" not in result.errors
 
 
-def test_queryloop_checkpoint_failure_prevents_tool_execution():
+def test_queryloop_checkpoint_failure_is_visible_without_blocking_tool_execution():
     import asyncio
     from agent.llm.schemas import LLMResponse, LLMToolCall
     from core.runtime_engine.engine import SSOTRuntimeEngine
@@ -1138,9 +1132,9 @@ def test_queryloop_checkpoint_failure_prevents_tool_execution():
             "__task_state_execution_checkpoint": lambda *_args: (_ for _ in ()).throw(OSError("simulated checkpoint failure")),
         },
     ))
-    assert invoked == []
-    assert result.success is False
-    assert "task_state_checkpoint_failed" in result.errors
+    assert invoked == [{"action": "write", "filename": "audit.txt", "content": "new"}]
+    assert result.success is True
+    assert result.metadata["task_state_checkpoint_events"][-1]["status"] == "degraded"
 
 def test_task_state_commit_failure_does_not_advance_secondary_continuation(monkeypatch, tmp_path):
     monkeypatch.setenv("LZCORE_WORKSPACE_ROOT", str(tmp_path))
@@ -1165,8 +1159,8 @@ def test_task_state_commit_failure_does_not_advance_secondary_continuation(monke
         session_id=session.session_id,
         workspace_id=session.workspace_id,
     )))
-    assert result.ok is False
-    assert result.error_type == "task_state_commit_failed"
+    assert result.ok is True
+    assert "task_state_commit_failed" in result.warnings
     assert continuation_calls == []
 
 

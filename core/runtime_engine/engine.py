@@ -434,6 +434,7 @@ class SSOTRuntimeEngine:
             "context_budget": dict(ctx.extras.get("runtime_context_budget") or {}),
             "context_compacted": False,
             "context_estimated_tokens": 0,
+            "task_state_persistence": dict(ctx.extras.get("task_state_persistence") or {}),
         }
         if extra:
             base_meta.update(extra)
@@ -496,6 +497,8 @@ class SSOTRuntimeEngine:
                 "tool_recovery_events": ctx.extras.get("tool_recovery_events", []),
                 "tracking_summary": ctx.extras.get("tracking_summary", {}),
                 "tracking_events": ctx.extras.get("tracking_events", []),
+                "provider_recovery_events": ctx.extras.get("provider_recovery_events", []),
+                "task_state_checkpoint_events": ctx.extras.get("task_state_checkpoint_events", []),
             },
         )
 

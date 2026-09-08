@@ -133,35 +133,27 @@ def _persist_inflight_user_message(session, turn, user_input: str) -> None:
 
 
 def _mark_task_state_persistence_failure(result: AgentResult, code: str) -> None:
-    """Prevent an uncommitted execution from being reported as task completion."""
-    result.ok = False
-    result.error_type = code
-    if code not in result.errors:
-        result.errors.append(code)
-    result.metadata.setdefault(
-        "task_state_persistence",
-        {"stage": "commit", "status": "failed", "code": code},
-    )
-    result.final_response = (
-        "本轮执行结果未能写入可信任务状态，系统已将其标记为未完成。"
-        "为避免重复或遗漏操作，请先恢复任务状态；不要据此回复继续执行副作用操作。"
-    )
+    """Expose state-store degradation without invalidating completed work.
+
+    TaskState is a durable projection of the agent loop, not the authority
+    that decides whether a tool result happened.  Reclassifying a completed
+    turn as failed here previously destroyed the model's response and made a
+    storage incident look like an Agent failure.
+    """
+    result.metadata["task_state_persistence"] = {
+        "stage": "commit", "status": "degraded", "code": code,
+    }
+    if code not in result.warnings:
+        result.warnings.append(code)
 
 
 def _mark_run_record_persistence_failure(result: AgentResult, code: str) -> None:
-    """Prevent a turn without its primary durable record from being reported as successful."""
-    result.ok = False
-    result.error_type = code
-    if code not in result.errors:
-        result.errors.append(code)
-    result.metadata.setdefault(
-        "run_record_persistence",
-        {"stage": "persist", "status": "failed", "code": code},
-    )
-    result.final_response = (
-        "本轮执行结果未能写入可信运行记录，系统已将其标记为未完成。"
-        "为避免重复或遗漏操作，请恢复存储后重新核验任务状态。"
-    )
+    """Expose run-record degradation without rewriting the Agent outcome."""
+    result.metadata["run_record_persistence"] = {
+        "stage": "persist", "status": "degraded", "code": code,
+    }
+    if code not in result.warnings:
+        result.warnings.append(code)
 
 def run_ssot_turn(
     session,
@@ -399,7 +391,14 @@ def run_ssot_turn(
 
     try:
         if task_state_resolution_error is not None:
-            raise _TaskStateResolutionFailure() from task_state_resolution_error
+            # TaskState is a durable observer of the agent loop.  Its storage
+            # outage is delivered as runtime context, never a reason to erase
+            # the model/tool loop before it can pursue the user's goal.
+            metadata_in["task_state_persistence"] = {
+                "stage": "resolution",
+                "status": "degraded",
+                "code": "task_state_resolution_failed",
+            }
         # This identifier is server-owned and binds an external interruption
         # checkpoint to the exact logical turn that created it.
         metadata_in["run_id"] = turn.turn_id
@@ -510,6 +509,17 @@ def run_ssot_turn(
             ),
             "tracking_events": list(
                 (runtime_result.metadata or {}).get("tracking_events") or []
+            ),
+            "provider_recovery_events": list(
+                (runtime_result.metadata or {}).get("provider_recovery_events") or []
+            ),
+            "task_state_persistence": dict(
+                (runtime_result.metadata or {}).get("task_state_persistence")
+                or metadata_in.get("task_state_persistence")
+                or {}
+            ),
+            "task_state_checkpoint_events": list(
+                (runtime_result.metadata or {}).get("task_state_checkpoint_events") or []
             ),
             "context_compacted": bool((runtime_result.metadata or {}).get("context_compacted", False)),
             "context_estimated_tokens": int(
@@ -859,7 +869,10 @@ def _build_engine(
         single_node_timeout_ms=120_000,
         parallel_layer_timeout_ms=300_000,
         tracking_max_seconds=0,
-        tracking_max_polls=40,
+        # Tracking belongs to the same goal-driven loop.  Zero means it has
+        # no hidden poll-count ceiling; only user cancellation or the producer
+        # reporting a terminal state ends automatic tracking.
+        tracking_max_polls=0,
         tracking_poll_interval_cap_seconds=5,
         max_query_loop_iterations=(
             max(0, int(max_query_loop_iterations))

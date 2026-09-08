@@ -72,8 +72,8 @@ def test_final_synthesis_recovery_is_tool_free_and_uses_all_evidence():
     assert context.extras["synthesis_recovery"]["ok"] is True
 
 
-def test_max_iteration_exit_reserves_a_tool_free_final_synthesis():
-    """Planning exhaustion must not replace completed evidence with a ledger."""
+def test_unbounded_loop_accepts_model_final_after_completed_evidence():
+    """A disabled iteration ceiling leaves finalization to the model."""
     responses = [
         LLMResponse(tool_calls=[
             LLMToolCall(
@@ -109,10 +109,8 @@ def test_max_iteration_exit_reserves_a_tool_free_final_synthesis():
 
     assert result.final_response == "已采集设备清单；未发现其他已核验结论。"
     assert result.error is None
-    assert result.metrics["planning_checkpoint_reached"] is True
     assert len(calls) == 2
-    assert calls[-1]["tools"] == []
-    assert context.extras["synthesis_recovery"]["ok"] is True
+    assert calls[-1]["tools"]
 
 
 def test_final_synthesis_retries_without_repeating_tool_work():
