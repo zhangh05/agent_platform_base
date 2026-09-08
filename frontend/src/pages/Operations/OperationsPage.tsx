@@ -501,6 +501,15 @@ export function OperationsPage() {
       <div className="page operations-page">
         <OperationsPageHeader count={0} onRefresh={loadJobs} />
         <div className="page-body">
+          <div className="job-bulk-actions job-bulk-actions-empty" aria-label="批量任务管理">
+            <label className="job-select-all">
+              <input type="checkbox" disabled aria-label="选择当前筛选结果中的全部可删除任务" />
+              选择可删除项
+            </label>
+            <Button variant="danger-ghost" size="sm" disabled>
+              <IconTrash size={13} />删除已选 (0)
+            </Button>
+          </div>
           <div className="hero">
             <div className="hero-mark operations-hero-mark">
               <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
@@ -509,7 +518,7 @@ export function OperationsPage() {
               </svg>
             </div>
             <h2 className="hero-title">暂无任务记录</h2>
-            <p className="hero-sub">在对话工作台发起任务后，这里会展示任务进度、执行过程和产出。</p>
+            <p className="hero-sub">当前没有可选择的终态任务。发起任务后，可在此勾选并批量永久删除。</p>
           </div>
         </div>
       </div>

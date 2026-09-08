@@ -93,6 +93,15 @@ describe("OperationsPage", () => {
     expect(screen.queryByText("任务中心 · 执行审计")).not.toBeInTheDocument();
   });
 
+  it("keeps the batch-management entry visible when there are no terminal tasks", async () => {
+    enqueue("/jobs", { status: 200, data: { jobs: [] } });
+    render(<MemoryRouter initialEntries={["/runs"]}><OperationsPage /></MemoryRouter>);
+
+    expect(await screen.findByLabelText("批量任务管理")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "删除已选 (0)" })).toBeDisabled();
+    expect(screen.getByText("当前没有可选择的终态任务。发起任务后，可在此勾选并批量永久删除。")).toBeInTheDocument();
+  });
+
   it("ignores a late run response from the previously selected job", async () => {
     let resolveFirst!: (value: { status: number; data: unknown }) => void;
     enqueue("/jobs", { status: 200, data: { jobs: [
