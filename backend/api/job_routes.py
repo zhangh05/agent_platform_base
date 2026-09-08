@@ -44,11 +44,10 @@ def _validated_job_id(raw):
 def _task_center_jobs(jobs):
     """Project only user-facing jobs into the task-centre list.
 
-    Network inspections retain durable worker records so cancellation, retry
-    and evidence collection remain reliable.  They are workbench tool steps,
-    however, not user-created tasks, and must never create cards in the task
-    centre.  The explicit metadata handles new records; the type check keeps
-    pre-change records out as well.
+    Network inspections use a temporary worker Job while running; their
+    durable record is the extension-owned inspection/evidence object. They
+    must never create cards in the task centre, including during that brief
+    internal execution window or for legacy records awaiting cleanup.
     """
     visible = []
     for job in jobs:

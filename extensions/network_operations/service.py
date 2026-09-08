@@ -1255,6 +1255,25 @@ def execute_queued_inspection(workspace_id: str, task_id: str, job_id: str) -> d
     return get_inspection(workspace_id, task_id) or task
 
 
+_INSPECTION_JOB_TERMINAL_STATUSES = frozenset({"succeeded", "failed", "cancelled"})
+
+
+def finalize_inspection_job(workspace_id: str, task_id: str, job_id: str) -> bool:
+    """Hard-delete a terminal internal Job while preserving inspection evidence."""
+    from jobs.store import delete_job, get_job
+
+    job = get_job(workspace_id, job_id)
+    if not job or job.job_type != "network_inspection" or job.status not in _INSPECTION_JOB_TERMINAL_STATUSES:
+        return False
+    task = get_inspection(workspace_id, task_id) if task_id else None
+    if task and str(task.get("job_id") or "") == job_id:
+        task.pop("job_id", None)
+        task.pop("cancel_requested", None)
+        task["updated_at"] = now_iso()
+        _store(workspace_id).save("inspections", task_id, task)
+    return delete_job(workspace_id, job_id, soft=False)
+
+
 def _execute_inspection(
     workspace_id: str,
     task_id: str,
@@ -1558,7 +1577,7 @@ def reconcile_network_state() -> int:
     the same transaction lock used by connection and Skill mutations.
     """
     from backend.core.identity import get_user
-    from jobs.store import get_job
+    from jobs.store import get_job, list_jobs
     from storage.principal import known_storage_principals, storage_principal
     from storage.workspace_store import list_workspace_ids
     reconciled = 0
@@ -1587,6 +1606,18 @@ def reconcile_network_state() -> int:
                     })
                     store.save("inspections", task["task_id"], task)
                     reconciled += 1
+                # Previous releases retained finished worker implementation
+                # Jobs. Remove those generic records while preserving the
+                # extension-owned inspection and evidence records.
+                for job in list_jobs(workspace_id, job_type="network_inspection", limit=INTERNAL_SCAN_LIMIT):
+                    if str(job.get("status") or "") not in _INSPECTION_JOB_TERMINAL_STATUSES:
+                        continue
+                    if finalize_inspection_job(
+                        workspace_id,
+                        str((job.get("payload") or {}).get("task_id") or ""),
+                        str(job.get("job_id") or ""),
+                    ):
+                        reconciled += 1
     return reconciled
 
 
@@ -1606,6 +1637,8 @@ def cancel_inspection(workspace_id: str, task_id: str) -> bool:
         if job.status == "cancelled":
             task.update({"status": "cancelled", "finished_at": now_iso()})
         _store(workspace_id).save("inspections", task_id, task)
+        if job.status == "cancelled":
+            finalize_inspection_job(workspace_id, task_id, job_id)
         return True
     # Historical tasks without a durable job have no live worker to cancel.
     task.update({"status": "cancelled", "finished_at": now_iso()})

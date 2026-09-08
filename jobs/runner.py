@@ -42,6 +42,19 @@ def run_job(ws_id: str, job_id: str):
         error_msg = redact_text(str(e))[:300] or "job_execution_failed"
         mark_failed(ws_id, job_id, error_msg)
         append_log(ws_id, job_id, f"Job failed: {error_msg}", level="error")
+    finally:
+        # A network inspection is a workbench operation, not a user task.
+        # Its durable Job exists only while a worker needs queueing, lease and
+        # cancellation coordination. Once terminal, retain extension evidence
+        # but remove this implementation Job, its events and its logs.
+        if rec.job_type == "network_inspection":
+            try:
+                from extensions.network_operations.service import finalize_inspection_job
+                finalize_inspection_job(ws_id, str((rec.payload or {}).get("task_id") or ""), job_id)
+            except Exception:
+                # Cleanup must never turn a completed inspection into a queue
+                # retry. Startup reconciliation will remove any residue.
+                append_log(ws_id, job_id, "Inspection Job cleanup deferred", level="warning")
 
 
 def _run_agent_job(rec: JobRecord):

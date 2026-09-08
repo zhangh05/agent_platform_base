@@ -1110,11 +1110,14 @@ def test_user_inspection_uses_durable_job_worker_and_cancel(monkeypatch, tmp_pat
     run_job("default", task["job_id"])
     finished = service.get_inspection("default", task["task_id"])
     assert finished["status"] == "succeeded"
-    assert get_job("default", task["job_id"]).status == "succeeded"
+    assert "job_id" not in finished
+    assert get_job("default", task["job_id"]) is None
     queued = service.enqueue_connection_inspection("default", [asset["connection_id"]], script_id=script["script_id"])
     assert service.cancel_inspection("default", queued["task_id"]) is True
-    assert service.get_inspection("default", queued["task_id"])["status"] == "cancelled"
-    assert get_job("default", queued["job_id"]).status == "cancelled"
+    cancelled = service.get_inspection("default", queued["task_id"])
+    assert cancelled["status"] == "cancelled"
+    assert "job_id" not in cancelled
+    assert get_job("default", queued["job_id"]) is None
 
 
 def test_inspection_selection_fails_closed(monkeypatch, tmp_path):
@@ -1164,7 +1167,7 @@ def test_all_device_failures_fail_both_inspection_and_job(monkeypatch, tmp_path)
     from jobs.store import get_job
     run_job("default", task["job_id"])
     assert service.get_inspection("default", task["task_id"])["status"] == "failed"
-    assert get_job("default", task["job_id"]).status == "failed"
+    assert get_job("default", task["job_id"]) is None
 
 
 def test_inline_inspection_retry_preserves_immutable_command_plan(monkeypatch, tmp_path):
@@ -1298,6 +1301,6 @@ def test_evidence_failure_transitions_task_to_terminal_failure(monkeypatch, tmp_
         "default", [asset["connection_id"]], commands=["display version"], collector=lambda _asset, commands: {command: "ok" for command in commands}, background=False,
     )
     from jobs.store import get_job
-    assert get_job("default", failed["job_id"]).status == "failed"
+    assert "job_id" not in failed
     assert failed["status"] == "failed"
     assert failed["error"] == "inspection_evidence_persist_failed"
