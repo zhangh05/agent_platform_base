@@ -1866,6 +1866,30 @@ def delete_observation(workspace_id: str, observation_id: str) -> dict[str, Any]
 
 
 @_connection_transaction
+def delete_observations(workspace_id: str, observation_ids: list[str]) -> dict[str, Any]:
+    """Hard-delete selected observations and all references depending on them."""
+    ids = sorted({str(observation_id or "").strip() for observation_id in observation_ids if str(observation_id or "").strip()})
+    if not ids or len(ids) > 500:
+        raise ValueError("observation_ids_must_contain_1_to_500_items")
+    store = _store(workspace_id)
+    if any(not store.get("observations", observation_id) for observation_id in ids):
+        raise ValueError("observation_not_found")
+    selected = set(ids)
+    dependent_reference_ids = [
+        str(reference["reference_id"])
+        for reference in list_references(workspace_id, limit=INTERNAL_SCAN_LIMIT)
+        if selected.intersection({str(item) for item in reference.get("source_observation_ids") or []})
+    ]
+    for reference_id in dependent_reference_ids:
+        if not store.delete("references", reference_id):
+            raise RuntimeError("reference_delete_failed")
+    for observation_id in ids:
+        if not store.delete("observations", observation_id):
+            raise RuntimeError("observation_delete_failed")
+    return {"observation_ids": ids, "deleted_dependent_references": len(dependent_reference_ids)}
+
+
+@_connection_transaction
 def delete_reference(workspace_id: str, reference_id: str) -> bool:
     """Hard-delete a user-visible operational reference record."""
     return _store(workspace_id).delete("references", reference_id)
@@ -1909,6 +1933,32 @@ def delete_command_experience(workspace_id: str, experience_id: str) -> bool:
         if record_id == experience_id or identity == experience_id or (selected_identity and identity == selected_identity):
             deleted = store.delete("command_experience", record_id) or deleted
     return deleted
+
+
+@_connection_transaction
+def delete_command_experiences(workspace_id: str, experience_ids: list[str]) -> list[str]:
+    """Hard-delete selected command feedback identities and legacy duplicates."""
+    ids = sorted({str(experience_id or "").strip() for experience_id in experience_ids if str(experience_id or "").strip()})
+    if not ids or len(ids) > 500:
+        raise ValueError("experience_ids_must_contain_1_to_500_items")
+    store = _store(workspace_id)
+    records = [record for record in store.list("command_experience", limit=INTERNAL_SCAN_LIMIT) if isinstance(record, dict)]
+    selected_identities: set[str] = set()
+    for experience_id in ids:
+        selected = store.get("command_experience", experience_id)
+        if selected:
+            selected_identities.add(_command_experience_id(str(selected.get("driver_id") or "unknown"), str(selected.get("command") or "")))
+            continue
+        if any(_command_experience_id(str(record.get("driver_id") or "unknown"), str(record.get("command") or "")) == experience_id for record in records):
+            selected_identities.add(experience_id)
+            continue
+        raise ValueError("command_experience_not_found")
+    for record in records:
+        identity = _command_experience_id(str(record.get("driver_id") or "unknown"), str(record.get("command") or ""))
+        if str(record.get("experience_id") or "") in ids or identity in selected_identities:
+            if not store.delete("command_experience", str(record.get("experience_id") or "")):
+                raise RuntimeError("command_experience_delete_failed")
+    return ids
 
 
 @_connection_transaction

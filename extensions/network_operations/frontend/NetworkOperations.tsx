@@ -83,6 +83,8 @@ export default function NetworkOperations() {
   const [skills, setSkills] = useState<Skill[]>([]);
   const [operationalContext, setOperationalContext] = useState<OperationalContext>({ observations: [], references: [], command_experience: [], sources: [] });
   const [selectedReferenceIds, setSelectedReferenceIds] = useState<Set<string>>(() => new Set());
+  const [selectedObservationIds, setSelectedObservationIds] = useState<Set<string>>(() => new Set());
+  const [selectedExperienceIds, setSelectedExperienceIds] = useState<Set<string>>(() => new Set());
   const [deviceForm, setDeviceForm] = useState<DeviceForm>(emptyDevice);
   const [connectionForm, setConnectionForm] = useState<ConnectionForm>(emptyConnection);
   const [skillForm, setSkillForm] = useState<SkillForm>(emptySkill);
@@ -114,6 +116,14 @@ export default function NetworkOperations() {
     const available = new Set(operationalContext.references.map((reference) => reference.reference_id));
     setSelectedReferenceIds((previous) => new Set([...previous].filter((referenceId) => available.has(referenceId))));
   }, [operationalContext.references]);
+  useEffect(() => {
+    const available = new Set(operationalContext.observations.map((observation) => observation.observation_id));
+    setSelectedObservationIds((previous) => new Set([...previous].filter((observationId) => available.has(observationId))));
+  }, [operationalContext.observations]);
+  useEffect(() => {
+    const available = new Set(operationalContext.command_experience.map((experience) => experience.experience_id));
+    setSelectedExperienceIds((previous) => new Set([...previous].filter((experienceId) => available.has(experienceId))));
+  }, [operationalContext.command_experience]);
   useEffect(() => {
     if (!notice) return;
     const timer = window.setTimeout(() => setNotice(""), 4500);
@@ -289,6 +299,29 @@ export default function NetworkOperations() {
     void run(() => apiRequest({ method: "DELETE", url: `${base}/observations/${observation.observation_id}`, data: { workspace_id: workspaceId } }), "观察及其依赖运行参考已永久删除");
   };
 
+  const toggleObservationSelection = (observationId: string) => {
+    setSelectedObservationIds((previous) => {
+      const next = new Set(previous);
+      if (next.has(observationId)) next.delete(observationId); else next.add(observationId);
+      return next;
+    });
+  };
+  const allObservationsSelected = operationalContext.observations.length > 0
+    && operationalContext.observations.every((observation) => selectedObservationIds.has(observation.observation_id));
+  const removeSelectedObservations = async () => {
+    const observationIds = [...selectedObservationIds].sort();
+    if (!observationIds.length || !await confirm({
+      title: "永久删除最近观察",
+      body: `将硬删除已选 ${observationIds.length} 条观察快照，依赖它们的运行参考也会一并删除。此操作不可恢复。`,
+      confirmLabel: "永久删除",
+      destructive: true,
+    })) return;
+    void run(
+      () => apiRequest({ method: "DELETE", url: `${base}/observations/batch-delete`, data: { workspace_id: workspaceId, observation_ids: observationIds } }),
+      `已永久删除 ${observationIds.length} 条观察及其依赖参考`,
+    ).then((outcome) => { if (outcome.ok) setSelectedObservationIds(new Set()); });
+  };
+
   const removeCommandExperience = async (item: CommandExperience) => {
     if (!await confirm({
       title: "永久删除命令反馈",
@@ -297,6 +330,29 @@ export default function NetworkOperations() {
       destructive: true,
     })) return;
     void run(() => apiRequest({ method: "DELETE", url: `${base}/command-experience/${item.experience_id}`, data: { workspace_id: workspaceId } }), "命令反馈已永久删除");
+  };
+
+  const toggleExperienceSelection = (experienceId: string) => {
+    setSelectedExperienceIds((previous) => {
+      const next = new Set(previous);
+      if (next.has(experienceId)) next.delete(experienceId); else next.add(experienceId);
+      return next;
+    });
+  };
+  const allExperiencesSelected = operationalContext.command_experience.length > 0
+    && operationalContext.command_experience.every((experience) => selectedExperienceIds.has(experience.experience_id));
+  const removeSelectedExperiences = async () => {
+    const experienceIds = [...selectedExperienceIds].sort();
+    if (!experienceIds.length || !await confirm({
+      title: "永久删除命令反馈",
+      body: `将硬删除已选 ${experienceIds.length} 条命令反馈。模型后续不会再获得这些建议，此操作不可恢复。`,
+      confirmLabel: "永久删除",
+      destructive: true,
+    })) return;
+    void run(
+      () => apiRequest({ method: "DELETE", url: `${base}/command-experience/batch-delete`, data: { workspace_id: workspaceId, experience_ids: experienceIds } }),
+      `已永久删除 ${experienceIds.length} 条命令反馈`,
+    ).then((outcome) => { if (outcome.ok) setSelectedExperienceIds(new Set()); });
   };
 
   const editSkill = (skill: Skill) => {
@@ -461,12 +517,12 @@ export default function NetworkOperations() {
         </article>) : <div className="empty">完成一次巡检后会出现候选参考，系统不会自动把第一次观察当作正常状态。</div>}</div>
       </section>
       <section className="network-panel observation-panel">
-        <div className="panel-heading"><div><h2>最近观察</h2><p>按时间保存的事实快照，可追溯到巡检任务和证据制品。</p></div><span className="record-count">{operationalContext.observations.length} 条</span></div>
-        <div className="observation-list">{operationalContext.observations.length ? operationalContext.observations.map((observation) => <div className="observation-row" key={observation.observation_id}><div><strong>{observation.source_id}</strong><small>{observation.target_ids.length} 个目标 · {displayTime(observation.observed_at)}</small></div><span className={`reference-state ${observation.completeness}`}>{observation.completeness === "complete" ? "完整" : observation.completeness === "partial" ? "部分" : "失败"}</span><Button size="sm" variant="danger-ghost" aria-label={`永久删除观察 ${observation.source_id}`} icon={<IconTrash size={13} />} onClick={() => void removeObservation(observation)}>永久删除</Button></div>) : <div className="empty">尚无巡检观察。</div>}</div>
+        <div className="panel-heading"><div><h2>最近观察</h2><p>按时间保存的事实快照，可追溯到巡检任务和证据制品。</p></div><div className="reference-heading-actions"><span className="record-count">{operationalContext.observations.length} 条</span><label className="reference-select-all"><input type="checkbox" checked={allObservationsSelected} disabled={!operationalContext.observations.length || busy} onChange={() => setSelectedObservationIds(allObservationsSelected ? new Set() : new Set(operationalContext.observations.map((observation) => observation.observation_id)))} aria-label="选择全部最近观察" />选择全部</label><Button size="sm" variant="danger-ghost" disabled={!selectedObservationIds.size || busy} onClick={() => void removeSelectedObservations()}><IconTrash size={13} />删除已选 ({selectedObservationIds.size})</Button></div></div>
+        <div className="observation-list">{operationalContext.observations.length ? operationalContext.observations.map((observation) => <div className="observation-row" key={observation.observation_id}><input className="reference-select" type="checkbox" checked={selectedObservationIds.has(observation.observation_id)} disabled={busy} onChange={() => toggleObservationSelection(observation.observation_id)} aria-label={`选择最近观察 ${observation.source_id}`} /><div><strong>{observation.source_id}</strong><small>{observation.target_ids.length} 个目标 · {displayTime(observation.observed_at)}</small></div><span className={`reference-state ${observation.completeness}`}>{observation.completeness === "complete" ? "完整" : observation.completeness === "partial" ? "部分" : "失败"}</span><Button size="sm" variant="danger-ghost" aria-label={`永久删除观察 ${observation.source_id}`} icon={<IconTrash size={13} />} onClick={() => void removeObservation(observation)}>永久删除</Button></div>) : <div className="empty">尚无巡检观察。</div>}</div>
       </section>
       <section className="network-panel command-panel">
-        <div className="panel-heading"><div><h2>命令反馈</h2><p>真实设备返回的语法经验，只提供给模型参考，不会自动执行或替代命令。</p></div><span className="record-count">{operationalContext.command_experience.length} 条</span></div>
-        <div className="command-list">{operationalContext.command_experience.length ? operationalContext.command_experience.map((item) => <div className="command-row" key={item.experience_id}><code>{item.command}</code><div><span className={`command-state ${item.status}`}>{item.status === "accepted" ? "已接受" : "已拒绝"}</span><small>{item.driver_id} · {item.observations} 次观察</small></div><Button size="sm" variant="danger-ghost" aria-label={`永久删除命令反馈 ${item.command}`} icon={<IconTrash size={13} />} onClick={() => void removeCommandExperience(item)}>永久删除</Button></div>) : <div className="empty">模型执行只读命令后，这里会积累与设备驱动关联的语法反馈。</div>}</div>
+        <div className="panel-heading"><div><h2>命令反馈</h2><p>真实设备返回的语法经验，只提供给模型参考，不会自动执行或替代命令。</p></div><div className="reference-heading-actions"><span className="record-count">{operationalContext.command_experience.length} 条</span><label className="reference-select-all"><input type="checkbox" checked={allExperiencesSelected} disabled={!operationalContext.command_experience.length || busy} onChange={() => setSelectedExperienceIds(allExperiencesSelected ? new Set() : new Set(operationalContext.command_experience.map((experience) => experience.experience_id)))} aria-label="选择全部命令反馈" />选择全部</label><Button size="sm" variant="danger-ghost" disabled={!selectedExperienceIds.size || busy} onClick={() => void removeSelectedExperiences()}><IconTrash size={13} />删除已选 ({selectedExperienceIds.size})</Button></div></div>
+        <div className="command-list">{operationalContext.command_experience.length ? operationalContext.command_experience.map((item) => <div className="command-row" key={item.experience_id}><input className="reference-select" type="checkbox" checked={selectedExperienceIds.has(item.experience_id)} disabled={busy} onChange={() => toggleExperienceSelection(item.experience_id)} aria-label={`选择命令反馈 ${item.command}`} /><code>{item.command}</code><div><span className={`command-state ${item.status}`}>{item.status === "accepted" ? "已接受" : "已拒绝"}</span><small>{item.driver_id} · {item.observations} 次观察</small></div><Button size="sm" variant="danger-ghost" aria-label={`永久删除命令反馈 ${item.command}`} icon={<IconTrash size={13} />} onClick={() => void removeCommandExperience(item)}>永久删除</Button></div>) : <div className="empty">模型执行只读命令后，这里会积累与设备驱动关联的语法反馈。</div>}</div>
       </section>
     </div>}
   </div>;

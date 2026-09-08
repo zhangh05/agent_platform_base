@@ -382,6 +382,36 @@ def test_selected_operational_references_are_hard_deleted_together(monkeypatch, 
     assert service.list_references("default") == []
 
 
+def test_selected_observations_and_command_feedback_are_hard_deleted_together(monkeypatch, tmp_path):
+    _setup(monkeypatch, tmp_path)
+    connection = _register_connection("default", {
+        "name": "R1", "host": "10.0.0.1", "protocol": "telnet", "vendor": "h3c",
+    })
+    first = service.record_inspection_observation("default", {
+        "task_id": "inspection_first", "status": "succeeded", "finished_at": "2026-09-06T00:00:00Z",
+        "artifact_id": "artifact-1", "results": {connection["connection_id"]: {"status": "succeeded", "output_hash": "first"}},
+    })
+    second = service.record_inspection_observation("default", {
+        "task_id": "inspection_second", "status": "succeeded", "finished_at": "2026-09-07T00:00:00Z",
+        "artifact_id": "artifact-2", "results": {connection["connection_id"]: {"status": "succeeded", "output_hash": "second"}},
+    })
+    result = service.delete_observations("default", [first["observation_id"], second["observation_id"]])
+    assert result["deleted_dependent_references"] == 2
+    assert service.list_observations("default") == []
+    assert service.list_references("default") == []
+
+    experiences = service.record_command_experience("default", connection["connection_id"], {
+        "device_profile": {"driver_id": "h3c.comware"},
+        "command_results": [
+            {"command": "display version", "complete": True, "error_code": "", "truncated": False},
+            {"command": "display interface brief", "complete": True, "error_code": "", "truncated": False},
+        ],
+    })
+    deleted = service.delete_command_experiences("default", [item["experience_id"] for item in experiences])
+    assert deleted == sorted(item["experience_id"] for item in experiences)
+    assert service.operational_context("default", connection_ids=[connection["connection_id"]])["command_experience"] == []
+
+
 def test_command_experience_is_advisory_and_scoped(monkeypatch, tmp_path):
     _setup(monkeypatch, tmp_path)
     connection = _register_connection("default", {

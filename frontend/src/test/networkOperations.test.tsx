@@ -93,6 +93,42 @@ test("selects and permanently deletes multiple operational references in one req
   })));
 });
 
+test("selects observations and command feedback for their own batch-delete endpoints", async () => {
+  const original = vi.mocked(apiRequest).getMockImplementation();
+  vi.mocked(apiRequest).mockImplementation(async (request) => {
+    if (request.url?.endsWith("/context")) return {
+      references: [], sources: [],
+      observations: [
+        { observation_id: "obs-a", source_id: "inspection-a", observed_at: "2026-09-06T00:00:00Z", completeness: "complete", target_ids: ["c1"] },
+        { observation_id: "obs-b", source_id: "inspection-b", observed_at: "2026-09-07T00:00:00Z", completeness: "partial", target_ids: ["c2"] },
+      ],
+      command_experience: [
+        { experience_id: "exp-a", connection_id: "c1", driver_id: "h3c.comware", command: "display version", status: "accepted", observations: 1, last_observed_at: "2026-09-06T00:00:00Z" },
+        { experience_id: "exp-b", connection_id: "c2", driver_id: "h3c.comware", command: "display interface brief", status: "accepted", observations: 1, last_observed_at: "2026-09-07T00:00:00Z" },
+      ],
+    } as never;
+    return original?.(request) as never;
+  });
+  render(<><NetworkOperations /><ConfirmHost /></>);
+  await screen.findByTestId("device-card-d1");
+  fireEvent.click(screen.getByRole("button", { name: /环境与证据/ }));
+  fireEvent.click(screen.getByLabelText("选择全部最近观察"));
+  fireEvent.click(screen.getByRole("button", { name: "删除已选 (2)" }));
+  fireEvent.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "永久删除" }));
+  await waitFor(() => expect(apiRequest).toHaveBeenCalledWith(expect.objectContaining({
+    method: "DELETE", url: "/extensions/network.operations/observations/batch-delete",
+    data: { workspace_id: "default", observation_ids: ["obs-a", "obs-b"] },
+  })));
+
+  fireEvent.click(screen.getByLabelText("选择全部命令反馈"));
+  fireEvent.click(screen.getByRole("button", { name: "删除已选 (2)" }));
+  fireEvent.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "永久删除" }));
+  await waitFor(() => expect(apiRequest).toHaveBeenCalledWith(expect.objectContaining({
+    method: "DELETE", url: "/extensions/network.operations/command-experience/batch-delete",
+    data: { workspace_id: "default", experience_ids: ["exp-a", "exp-b"] },
+  })));
+});
+
 test("command feedback renders one row for duplicate driver commands during a rolling upgrade", async () => {
   const original = vi.mocked(apiRequest).getMockImplementation();
   vi.mocked(apiRequest).mockImplementation(async (request) => {

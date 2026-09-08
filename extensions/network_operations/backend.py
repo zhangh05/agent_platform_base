@@ -220,6 +220,20 @@ def register_routes(app):
         except ValueError as exc:
             return jsonify({"ok": False, "error": str(exc)}), 400
 
+    @app.route("/api/extensions/network.operations/observations/batch-delete", methods=["DELETE"])
+    def network_observations_batch_delete():
+        ws = _workspace()
+        if not ws:
+            return jsonify({"ok": False, "error": "workspace_id is required"}), 400
+        observation_ids = _payload().get("observation_ids")
+        if not isinstance(observation_ids, list):
+            return jsonify({"ok": False, "error": "observation_ids_must_be_a_list"}), 400
+        try:
+            result = service.delete_observations(ws, observation_ids)
+            return jsonify({"ok": True, "deleted": True, **result})
+        except ValueError as exc:
+            return jsonify({"ok": False, "error": str(exc)}), 400
+
     @app.route("/api/extensions/network.operations/observations/<observation_id>", methods=["DELETE"])
     def network_observation(observation_id):
         ws = _workspace()
@@ -239,6 +253,20 @@ def register_routes(app):
         if not deleted:
             return jsonify({"ok": False, "error": "command_experience_not_found"}), 404
         return jsonify({"ok": True, "deleted": True})
+
+    @app.route("/api/extensions/network.operations/command-experience/batch-delete", methods=["DELETE"])
+    def network_command_experience_batch_delete():
+        ws = _workspace()
+        if not ws:
+            return jsonify({"ok": False, "error": "workspace_id is required"}), 400
+        experience_ids = _payload().get("experience_ids")
+        if not isinstance(experience_ids, list):
+            return jsonify({"ok": False, "error": "experience_ids_must_be_a_list"}), 400
+        try:
+            deleted_ids = service.delete_command_experiences(ws, experience_ids)
+            return jsonify({"ok": True, "deleted": True, "experience_ids": deleted_ids})
+        except ValueError as exc:
+            return jsonify({"ok": False, "error": str(exc)}), 400
 
     @app.route("/api/extensions/network.operations/scripts", methods=["GET", "POST"])
     def network_inspection_scripts():
