@@ -16,6 +16,7 @@ function belongsToSession(job: JobItem, sessionId: string): boolean {
  */
 export function useActiveTurn(workspaceId: string | null, sessionId: string | null) {
   const [job, setJob] = useState<JobItem | null>(null);
+  const [loaded, setLoaded] = useState(false);
   const mountedRef = useRef(true);
   // A boolean mounted flag cannot distinguish a prior session request from
   // the current session after React has mounted the next effect.
@@ -25,6 +26,7 @@ export function useActiveTurn(workspaceId: string | null, sessionId: string | nu
     const refreshEpoch = ++refreshEpochRef.current;
     if (!workspaceId || !sessionId) {
       setJob(null);
+      setLoaded(false);
       return null;
     }
     try {
@@ -32,9 +34,15 @@ export function useActiveTurn(workspaceId: string | null, sessionId: string | nu
       const match = (response.jobs || []).find((item) => belongsToSession(item, sessionId)) || null;
       if (mountedRef.current && refreshEpoch === refreshEpochRef.current) {
         setJob(match);
+        setLoaded(true);
       }
       return match;
     } catch {
+      // A failed observation must not convert an optimistic streaming message
+      // into an error. Only a successful durable-job snapshot is authoritative.
+      if (mountedRef.current && refreshEpoch === refreshEpochRef.current) {
+        setLoaded(false);
+      }
       return null;
     }
   }, [sessionId, workspaceId]);
@@ -54,5 +62,5 @@ export function useActiveTurn(workspaceId: string | null, sessionId: string | nu
     return () => window.clearInterval(timer);
   }, [job?.status, refresh]);
 
-  return { job, refresh };
+  return { job, loaded, refresh };
 }

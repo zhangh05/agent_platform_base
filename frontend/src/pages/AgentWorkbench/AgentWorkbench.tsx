@@ -157,7 +157,7 @@ export function TaskWorkbench() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [llmHealth, setLlmHealth] = useState<{ connected: boolean; provider?: string; model?: string; recentFailure?: string; visionSupported?: boolean }>({ connected: false });
   const toast = useToastStore((s) => s.show);
-  const { job: activeJob, refresh: refreshActiveTurn } = useActiveTurn(currentWorkspaceId, currentSessionId);
+  const { job: activeJob, loaded: activeTurnLoaded, refresh: refreshActiveTurn } = useActiveTurn(currentWorkspaceId, currentSessionId);
   const durableTurn = activeJob?.metadata?.active_turn;
   const turnRunning = sending || activeJob?.status === "running";
 
@@ -291,6 +291,26 @@ export function TaskWorkbench() {
   }, [selectedResourceIds, selectedSkill, sendPrepared, toast]);
 
   const latestAssistant = [...visibleHistory].reverse().find((message) => message.role === "assistant");
+
+  useEffect(() => {
+    if (!activeTurnLoaded || !currentSessionId || activeJob?.status === "running") return;
+    // A local streaming placeholder is never authoritative after a successful
+    // durable-job read. This happens when a browser retained a WebSocket view
+    // across a backend restart or an interrupted turn finished before the
+    // terminal frame reached the page. A non-running job (including an
+    // unknown/failed terminal state) must not leave a fake running timer.
+    for (const message of visibleHistory) {
+      if (message.role !== "assistant" || message.status !== "streaming" || !message.activeJobId) continue;
+      useWorkbenchStore.getState().updateAssistant(message.id, {
+        status: "error",
+        progressText: "",
+        stageElapsedMs: undefined,
+        error: "服务端确认该回合已不在运行队列；页面已停止等待。请查看任务记录或重新发起请求。",
+        text: message.text || "本轮未收到服务端完成结果，已停止本地等待。",
+      }, currentSessionId);
+    }
+  }, [activeJob?.job_id, activeTurnLoaded, currentSessionId, visibleHistory]);
+
   const progressAssistant = useMemo<ChatMsg | undefined>(() => {
     if (!latestAssistant) return undefined;
     const { id, role, status, created_at, runtimeEvents, toolCalls, result } = latestAssistant;

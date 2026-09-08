@@ -56,4 +56,13 @@ describe("useActiveTurn", () => {
     await act(async () => { stale.resolve({ jobs: [job("job-a", "session-a")] }); });
     await waitFor(() => expect(result.current.job?.status).toBe("succeeded"));
   });
+
+  it("marks the durable snapshot loaded when the session has no active job", async () => {
+    list.mockResolvedValueOnce({ jobs: [] });
+
+    const { result } = renderHook(() => useActiveTurn("ws-1", "session-a"));
+
+    await waitFor(() => expect(result.current.loaded).toBe(true));
+    expect(result.current.job).toBeNull();
+  });
 });
