@@ -3452,32 +3452,21 @@ class QueryLoop:
         results: list[StreamingToolResult],
         budget=None,
     ) -> list[StreamingToolResult]:
-        """After tool execution, auto-poll long tasks.
+        """After tool execution, observe producer-declared long tasks.
 
-        Polling is generic and bounded. It runs only when the tool producer
-        declares a non-terminal ``long_task`` tracking payload.
-        Uses the tool's canonical name for get calls.
+        Automatic polling is only an optimisation while a producer keeps
+        returning a valid, non-terminal tracking contract.  A failed poll or
+        a poll that no longer declares tracking is an observation for the LLM,
+        not permission for the runtime to spin forever against stale
+        ``done=false`` metadata.  Every observation is returned intact so the
+        model can choose the next action from the complete history.
         """
-        # Keep every poll in tracking_events for diagnostics, but expose only
-        # the latest observation for each source call to the model/result
-        # projection. Replaying dozens of intermediate "running" rows bloats
-        # context and makes internal polling look like business tool work.
-        latest_by_source: dict[str, StreamingToolResult] = {}
+        tracked_results: list[StreamingToolResult] = []
         if not getattr(self._config, "tracking_enabled", True):
             return []
 
-        configured_max_polls = max(0, int(getattr(self._config, "tracking_max_polls", 8) or 0))
-        # Zero is the runtime-wide convention for unbounded. Tracking is part
-        # of the same agent loop, so it must not silently introduce a second
-        # 40-poll (or any other) completion ceiling.
-        max_polls = configured_max_polls or None
         cap_seconds = float(getattr(self._config, "tracking_poll_interval_cap_seconds", 2.0))
-        max_seconds = max(0, float(getattr(self._config, "tracking_max_seconds", 60)))
-        deadline = (
-            time.monotonic() + max_seconds
-            if max_seconds > 0
-            else float("inf")
-        )
+        deadline = float("inf")
         user_input = ctx.user_input or ""
         states: list[dict[str, Any]] = []
 
@@ -3528,14 +3517,13 @@ class QueryLoop:
             for state in states
         }
 
-        # Poll the earliest-due task first, then requeue it. This preserves one
-        # global tracking deadline while preventing the first long task from
-        # consuming the entire window and starving the rest.
-        while states and time.monotonic() < deadline and not self._is_cancelled(ctx):
+        # Poll the earliest-due task first, then requeue it.  A valid running
+        # producer may continue indefinitely; cancellation and a changed poll
+        # outcome are the only exits owned by the runtime.
+        while states and not self._is_cancelled(ctx):
             states = [
                 state for state in states
                 if not state["tracking"].get("done")
-                and (max_polls is None or int(state["poll_index"]) < max_polls)
             ]
             if not states:
                 break
@@ -3578,7 +3566,7 @@ class QueryLoop:
                 poll_result = await self._executor._execute_one(
                     poll_call, ctx=ctx, budget=budget
                 )
-                latest_by_source[source_result.call_id] = poll_result
+                tracked_results.append(poll_result)
 
                 new_tracking = extract_tracking_payload(poll_result.output)
                 if new_tracking:
@@ -3592,29 +3580,76 @@ class QueryLoop:
                         "source": "poll",
                         "poll_index": poll_index,
                     })
-                if poll_result.ok:
-                    state["last_error_count"] = 0
-                else:
-                    state["last_error_count"] = int(state["last_error_count"]) + 1
+                if not poll_result.ok or not new_tracking:
+                    # Do not keep polling stale ``done=false`` metadata after
+                    # an actual tool failure or a producer contract breach.
+                    # Preserve the original producer state alongside the
+                    # exact poll result; the next LLM turn decides whether to
+                    # retry, inspect, delegate, or finish.
+                    reason = "tracking_poll_failed" if not poll_result.ok else "tracking_contract_missing"
+                    payload = dict(poll_result.output or {})
+                    payload["tracking"] = {
+                        **dict(tracking or {}),
+                        "done": True,
+                        "terminal": True,
+                        "status": reason,
+                        "auto_polling": "stopped",
+                        "stop_reason": reason,
+                    }
+                    payload["tracking_prior_state"] = dict(tracking or {})
+                    poll_result.output = payload
+                    state["tracking"] = payload["tracking"]
+                    ctx.extras["tracking_events"].append({
+                        "tool": tool_name,
+                        "call_id": poll_call_id,
+                        "tracking": payload["tracking"],
+                        "source": "auto_polling_stopped",
+                        "poll_index": poll_index,
+                        "reason": reason,
+                    })
+                    continue
                 state["due_at"] = time.monotonic() + self._tracking_wait(
                     state["tracking"], cap_seconds, deadline
                 )
             except Exception as e:
-                latest_by_source[source_result.call_id] = StreamingToolResult(
+                poll_result = StreamingToolResult(
                     tool_name=tool_name,
                     call_id=poll_call_id,
-                    output={},
+                    output={
+                        "tracking": {
+                            **dict(tracking or {}),
+                            "done": True,
+                            "terminal": True,
+                            "status": "tracking_poll_crash",
+                            "auto_polling": "stopped",
+                            "stop_reason": "tracking_poll_crash",
+                        },
+                        "tracking_prior_state": dict(tracking or {}),
+                    },
                     ok=False,
                     error="poll_crash: " + _redact_tool_error(e),
                 )
-                state["last_error_count"] = 3
+                tracked_results.append(poll_result)
+                state["tracking"] = dict(poll_result.output["tracking"])
+                ctx.extras["tracking_events"].append({
+                    "tool": tool_name,
+                    "call_id": poll_call_id,
+                    "tracking": state["tracking"],
+                    "source": "auto_polling_stopped",
+                    "poll_index": poll_index,
+                    "reason": "tracking_poll_crash",
+                })
 
-        for source_call_id, state in state_by_source.items():
-            latest = latest_by_source.get(source_call_id)
-            if latest and isinstance(latest.output, dict):
-                latest.output.setdefault("tracking_poll_count", int(state["poll_index"]))
-                latest.output.setdefault("tracking_source_call_id", source_call_id)
-        return list(latest_by_source.values())
+        for result in tracked_results:
+            if not isinstance(result.output, dict):
+                continue
+            source_call_id = str(result.call_id).rsplit("_track_", 1)[0]
+            state = state_by_source.get(source_call_id)
+            if state is None:
+                continue
+            result.output.setdefault("tracking_poll_count", int(state["poll_index"]))
+            result.output.setdefault("tracking_source_call_id", source_call_id)
+        return tracked_results
 
     async def _sleep_until_poll_or_cancel(
         self,

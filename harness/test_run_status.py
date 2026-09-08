@@ -306,7 +306,7 @@ def test_run_record_warning_count_uses_agent_result_warnings(monkeypatch, tmp_pa
     assert rec["warnings"] == _FakeResult.warnings
 
 
-def test_run_projection_keeps_latest_tracking_poll_only():
+def test_run_projection_preserves_every_tracking_poll():
     from agent.runtime.turn_persistence import _safe_tool_calls
 
     calls = [
@@ -319,9 +319,9 @@ def test_run_projection_keeps_latest_tracking_poll_only():
     projected = _safe_tool_calls(calls)
 
     assert [call["call_id"] for call in projected] == [
-        "spawn-a", "spawn-a_track_2", "other",
+        "spawn-a", "spawn-a_track_1", "spawn-a_track_2", "other",
     ]
-    assert projected[1]["summary"] == "completed"
+    assert projected[2]["summary"] == "completed"
 
 
 def test_run_projection_preserves_orchestration_json_types():

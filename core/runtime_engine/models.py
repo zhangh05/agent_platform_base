@@ -177,9 +177,10 @@ class SSOTRuntimeConfig:
     max_orchestration_step_tokens: int = 8_000
     max_orchestration_evidence_tokens: int = 60_000
     tracking_enabled: bool = True
-    tracking_max_polls: int = 8
-    # Zero disables a global tracking wall-clock deadline; poll-count and
-    # explicit cancellation remain the bounded control mechanisms.
+    # Tracking is an extension of the Agent loop.  It has no runtime-owned
+    # poll or wall-clock completion limit; user cancellation or a changed
+    # producer observation returns control to the LLM.
+    tracking_max_polls: int = 0
     tracking_max_seconds: int = 0
     tracking_poll_interval_cap_seconds: float = 2.0
 

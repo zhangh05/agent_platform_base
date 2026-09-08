@@ -429,7 +429,7 @@ class TestProfileToolsFilter:
             assert get_profile(profile_id) is None
 
 
-def test_tracking_exposes_only_latest_poll_but_keeps_full_events(monkeypatch):
+def test_tracking_exposes_every_poll_observation(monkeypatch):
     import asyncio
     from core.runtime_engine.models import SSOTRuntimeConfig, StatelessContext
     from core.runtime_engine.query_loop import QueryLoop, StreamingToolResult
@@ -511,10 +511,61 @@ def test_tracking_exposes_only_latest_poll_but_keeps_full_events(monkeypatch):
         {"action": "get", "subtask_id": "sub-1"},
     ]
     assert all("task_id" not in arguments for arguments in poll_arguments)
-    assert len(exposed) == 1
-    assert exposed[0].call_id == "spawn-1_track_3"
-    assert exposed[0].output["tracking_poll_count"] == 3
+    assert [item.call_id for item in exposed] == [
+        "spawn-1_track_1", "spawn-1_track_2", "spawn-1_track_3",
+    ]
+    assert exposed[-1].output["tracking_poll_count"] == 3
     assert len(ctx.extras["tracking_events"]) == 4
+
+
+def test_tracking_failure_returns_to_llm_without_internal_spin(monkeypatch):
+    import asyncio
+    from core.runtime_engine.models import SSOTRuntimeConfig, StatelessContext
+    from core.runtime_engine.query_loop import QueryLoop, StreamingToolResult
+
+    class _Runtime:
+        @staticmethod
+        def has_tool(name):
+            return name == "agent.manage"
+
+    loop = QueryLoop(
+        SSOTRuntimeConfig(tracking_poll_interval_cap_seconds=0),
+        {"agent.manage": {"description": "", "args_schema": {"type": "object", "properties": {}}}},
+        _Runtime(),
+    )
+    polls = 0
+
+    async def _poll(call, **_kwargs):
+        nonlocal polls
+        polls += 1
+        return StreamingToolResult(
+            tool_name="agent.manage",
+            call_id=call.id,
+            ok=False,
+            output={"ok": False, "error_code": "EXTENSION_DAILY_QUOTA_EXCEEDED"},
+            error="extension_daily_quota_exceeded",
+        )
+
+    monkeypatch.setattr(loop._executor, "_execute_one", _poll)
+    ctx = StatelessContext(
+        workspace_id="default", session_id="s1", request_id="r1", user_input="delegate",
+    )
+    initial = StreamingToolResult(
+        tool_name="agent.manage", call_id="spawn-1", ok=True,
+        output={"ok": True, "tracking": {
+            "kind": "long_task", "task_id": "sub-1", "status": "running", "done": False,
+            "suggested_next_action": "poll_get", "poll_action": "get",
+            "poll_arguments": {"subtask_id": "sub-1"},
+        }},
+    )
+
+    exposed = asyncio.run(loop._settle_tracking(ctx, [initial]))
+
+    assert polls == 1
+    assert len(exposed) == 1
+    assert exposed[0].ok is False
+    assert exposed[0].output["tracking"]["auto_polling"] == "stopped"
+    assert exposed[0].output["tracking"]["stop_reason"] == "tracking_poll_failed"
 
 
 def test_agent_get_exposes_terminal_failure_as_failed_tool_result(monkeypatch):

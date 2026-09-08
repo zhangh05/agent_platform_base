@@ -3,7 +3,6 @@
 from agent.runtime.message_identity import user_message_storage_run_id
 import json
 import logging
-import re
 from datetime import datetime, timezone
 from types import SimpleNamespace
 
@@ -339,28 +338,14 @@ def _merge_result_projection(run_id: str, ws_id: str, result, context) -> None:
 
 
 def _safe_tool_calls(tool_calls: list, *, limit: int = 0) -> list:
-    # Auto-tracking can emit dozens of status polls for one background task.
-    # Keep the original model-requested call and only the latest poll for each
-    # tracked call. Full poll history remains in trace/tracking_events; the run
-    # projection should show the terminal outcome instead of twenty "running"
-    # rows that hide it.
-    compacted: list = []
-    latest_poll_by_source: dict[str, tuple[int, dict]] = {}
-    for index, call in enumerate(list(tool_calls or [])):
+    safe = []
+    # A run/audit projection is an execution record, not a display summary.
+    # Preserve every completed tracking observation in order so neither users
+    # nor later Agent turns lose the failed poll that explains a handoff.
+    visible_calls = list(tool_calls or []) if int(limit) <= 0 else list(tool_calls or [])[:int(limit)]
+    for call in visible_calls:
         if not isinstance(call, dict):
             continue
-        call_id = str(call.get("call_id") or "")
-        match = re.match(r"^(.*)_track_\d+$", call_id)
-        if match:
-            latest_poll_by_source[match.group(1)] = (index, call)
-        else:
-            compacted.append((index, call))
-    compacted.extend(latest_poll_by_source.values())
-    compacted.sort(key=lambda item: item[0])
-
-    safe = []
-    visible_calls = compacted if int(limit) <= 0 else compacted[:int(limit)]
-    for _, call in visible_calls:
         safe.append({
             "call_id": str(call.get("call_id", "")),
             "tool_id": str(call.get("tool_id", "")),
