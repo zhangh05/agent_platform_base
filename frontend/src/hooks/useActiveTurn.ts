@@ -14,7 +14,11 @@ function belongsToSession(job: JobItem, sessionId: string): boolean {
  * is running, which keeps refresh recovery reliable without holding a second
  * page-lifetime WebSocket or SSE connection per browser tab.
  */
-export function useActiveTurn(workspaceId: string | null, sessionId: string | null) {
+export function useActiveTurn(
+  workspaceId: string | null,
+  sessionId: string | null,
+  streamInFlight = false,
+) {
   const [job, setJob] = useState<JobItem | null>(null);
   const [loaded, setLoaded] = useState(false);
   const mountedRef = useRef(true);
@@ -57,10 +61,13 @@ export function useActiveTurn(workspaceId: string | null, sessionId: string | nu
   }, [refresh]);
 
   useEffect(() => {
-    if (job?.status !== "running") return;
+    // A durable Job is created asynchronously after the browser starts its
+    // stream. Keep reconciling during that hand-off too; otherwise one early
+    // empty list response can be mistaken for a terminal state.
+    if (job?.status !== "running" && !streamInFlight) return;
     const timer = window.setInterval(() => { void refresh(); }, 2500);
     return () => window.clearInterval(timer);
-  }, [job?.status, refresh]);
+  }, [job?.status, refresh, streamInFlight]);
 
   return { job, loaded, refresh };
 }

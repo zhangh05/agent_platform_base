@@ -157,7 +157,7 @@ export function TaskWorkbench() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [llmHealth, setLlmHealth] = useState<{ connected: boolean; provider?: string; model?: string; recentFailure?: string; visionSupported?: boolean }>({ connected: false });
   const toast = useToastStore((s) => s.show);
-  const { job: activeJob, loaded: activeTurnLoaded, refresh: refreshActiveTurn } = useActiveTurn(currentWorkspaceId, currentSessionId);
+  const { job: activeJob, loaded: activeTurnLoaded, refresh: refreshActiveTurn } = useActiveTurn(currentWorkspaceId, currentSessionId, sending);
   const durableTurn = activeJob?.metadata?.active_turn;
   const turnRunning = sending || activeJob?.status === "running";
 
@@ -293,11 +293,11 @@ export function TaskWorkbench() {
   const latestAssistant = [...visibleHistory].reverse().find((message) => message.role === "assistant");
 
   useEffect(() => {
-    if (!activeTurnLoaded || !currentSessionId || activeJob?.status === "running") return;
+    if (!activeTurnLoaded || sending || !currentSessionId || !activeJob?.job_id || activeJob.status === "running") return;
     // A local streaming placeholder is never authoritative after a successful
     // durable-job read. This happens when a browser retained a WebSocket view
     // across a backend restart or an interrupted turn finished before the
-    // terminal frame reached the page. A non-running job (including an
+    // terminal frame reached the page. A known non-running job (including an
     // unknown/failed terminal state) must not leave a fake running timer.
     for (const message of visibleHistory) {
       if (message.role !== "assistant" || message.status !== "streaming" || !message.activeJobId) continue;
@@ -309,7 +309,22 @@ export function TaskWorkbench() {
         text: message.text || "本轮未收到服务端完成结果，已停止本地等待。",
       }, currentSessionId);
     }
-  }, [activeJob?.job_id, activeTurnLoaded, currentSessionId, visibleHistory]);
+  }, [activeJob?.job_id, activeJob?.status, activeTurnLoaded, currentSessionId, sending, visibleHistory]);
+
+  useEffect(() => {
+    if (!currentSessionId || activeJob?.status !== "running") return;
+    // Repair a browser-local stale-state marker if a delayed Job snapshot
+    // proves the same durable turn is still alive.
+    for (const message of visibleHistory) {
+      if (message.role !== "assistant" || message.status !== "error") continue;
+      if (message.error !== "服务端确认该回合已不在运行队列；页面已停止等待。请查看任务记录或重新发起请求。") continue;
+      useWorkbenchStore.getState().updateAssistant(message.id, {
+        status: "streaming",
+        error: "",
+        text: message.text || "服务器任务仍在运行，页面已重新接入实时状态。",
+      }, currentSessionId);
+    }
+  }, [activeJob?.status, currentSessionId, visibleHistory]);
 
   const progressAssistant = useMemo<ChatMsg | undefined>(() => {
     if (!latestAssistant) return undefined;

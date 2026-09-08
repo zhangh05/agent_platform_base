@@ -24,7 +24,7 @@ const job = (id: string, sessionId: string) => ({
 });
 
 describe("useActiveTurn", () => {
-  afterEach(() => { list.mockReset(); });
+  afterEach(() => { list.mockReset(); vi.useRealTimers(); });
 
   it("ignores an older session refresh that settles after switching sessions", async () => {
     const first = deferred<{ jobs: ReturnType<typeof job>[] }>();
@@ -64,5 +64,17 @@ describe("useActiveTurn", () => {
 
     await waitFor(() => expect(result.current.loaded).toBe(true));
     expect(result.current.job).toBeNull();
+  });
+
+  it("keeps reconciling while a stream waits for its asynchronously created job", async () => {
+    vi.useFakeTimers();
+    list.mockResolvedValue({ jobs: [] });
+
+    renderHook(() => useActiveTurn("ws-1", "session-a", true));
+    await act(async () => { await Promise.resolve(); });
+    expect(list).toHaveBeenCalledTimes(1);
+
+    await act(async () => { await vi.advanceTimersByTimeAsync(2500); });
+    expect(list).toHaveBeenCalledTimes(2);
   });
 });
