@@ -1574,6 +1574,14 @@ class QueryLoop:
             # Persist the observed external outcome for the model and UI. It
             # is descriptive telemetry, never an execution restriction.
             unknown_outcome = ctx.extras.get("unknown_outcome_reconciliation") or ctx.extras.get("unknown_outcome")
+            if isinstance(unknown_outcome, dict) and unknown_outcome.get("status") == "unknown":
+                if self._has_late_network_readback(all_results, unknown_outcome):
+                    unknown_outcome = {
+                        **unknown_outcome,
+                        "status": "reconciled",
+                        "reconciled_by_call_id": "final_evidence_scan",
+                    }
+                    ctx.extras["unknown_outcome_reconciliation"] = unknown_outcome
             if isinstance(unknown_outcome, dict) and unknown_outcome:
                 projected_metrics["unknown_outcome"] = dict(unknown_outcome)
             from .goal_assertions import evaluate_goal_assertions
@@ -1862,6 +1870,12 @@ class QueryLoop:
                 )
                 if batch_compile_events:
                     ctx.extras.setdefault("batch_compile_events", []).extend(batch_compile_events)
+
+                tool_calls, duplicate_note = self._suppress_repeated_tool_calls(ctx, tool_calls)
+                if duplicate_note:
+                    messages = self._append_turn_nudge(messages, duplicate_note)
+                if not tool_calls:
+                    continue
 
                 gate = self._prepare_tool_calls(ctx, tool_calls)
                 if not gate["ok"]:
@@ -2900,6 +2914,51 @@ class QueryLoop:
         """Return a fixed-size identity for durable execution telemetry."""
         digest = hashlib.sha256(cls._tool_call_key(tc).encode("utf-8")).hexdigest()
         return f"sha256:{digest}"
+
+    def _suppress_repeated_tool_calls(self, ctx: StatelessContext, tool_calls: list[LLMToolCall]) -> tuple[list[LLMToolCall], str]:
+        """Do not re-run exact successful reads or deterministic failed writes."""
+        previous = {
+            str(item.get("call_key") or ""): item
+            for item in (ctx.extras.get("task_state_execution_manifest") or [])
+            if isinstance(item, dict)
+        }
+        executable, suppressed = [], []
+        for call in tool_calls:
+            prior = previous.get(self._durable_call_key(call))
+            if not prior:
+                executable.append(call)
+                continue
+            read_only = self._executor._is_read_only_call(call)
+            deterministic_failure = not read_only and not bool(prior.get("ok")) and not bool(prior.get("execution_may_continue"))
+            if (read_only and bool(prior.get("ok"))) or deterministic_failure:
+                suppressed.append(str(call.name).replace("__", "."))
+            else:
+                executable.append(call)
+        if not suppressed:
+            return executable, ""
+        ctx.extras.setdefault("duplicate_tool_call_events", []).append({"count": len(suppressed), "tools": suppressed})
+        return executable, (
+            "[RUNTIME DEDUPLICATION] Exact calls with existing terminal evidence or a deterministic failure were not re-executed: "
+            + ", ".join(suppressed) + ". Choose a materially different next action."
+        )
+
+    @staticmethod
+    def _has_late_network_readback(results: list[StreamingToolResult], pending: dict[str, Any]) -> bool:
+        """Recognize a successful same-connection device read after a write uncertainty."""
+        connection_id = str(pending.get("connection_id") or "")
+        tool_id = str(pending.get("tool_id") or "")
+        if not connection_id or not tool_id:
+            return False
+        for result in results:
+            output = result.output if isinstance(result.output, dict) else {}
+            if not result.ok or result.tool_name.replace("__", ".") != tool_id:
+                continue
+            if str(output.get("connection_id") or "") != connection_id:
+                continue
+            claims = output.get("evidence_claims") or []
+            if any(isinstance(claim, dict) and str(claim.get("status") or "").lower() == "collected" for claim in claims):
+                return True
+        return False
 
     def _record_task_state_execution_manifest(
         self,
