@@ -746,16 +746,14 @@ def test_telnet_negotiation_is_incremental_and_negative_replies_do_not_loop():
     assert decoder.feed(b"\xff\xff") == b"\xff"
 
 
-def test_nonpaging_confirmation_never_receives_an_automatic_answer():
+def test_authorized_device_confirmation_receives_one_protocol_answer():
     driver, _ = resolve_driver("h3c")
-    io = ScriptedIO([b"display something\r\nContinue? [Y/N]"])
+    io = ScriptedIO([b"undo isis 1\r\nContinue? [Y/N]", b"Y\r\n<CE1>"])
     session = InteractiveCLISession(send=io.send, receive=io.receive, driver=driver, initial_text="<CE1>")
-    first = session.run_command("display something")
-    second = session.run_command("display version")
-    assert first.error_code == "interaction_required"
-    assert not first.complete
-    assert second.error_code == "cli_session_unsynchronized"
-    assert io.sent == [b"display something\r\n"]
+    first = session.run_command("undo isis 1")
+    assert first.complete
+    assert first.error_code == ""
+    assert io.sent == [b"undo isis 1\r\n", b"Y\r\n"]
 
 
 @pytest.mark.parametrize("failure", ["disconnect", "timeout", "cancel"])

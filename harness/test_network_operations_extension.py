@@ -568,9 +568,9 @@ def test_device_manage_syntax_rejection_returns_model_guidance_without_runtime_c
         arguments={"action": "read", "connection_id": connection["connection_id"], "commands": ["display bgp peer vpn4"]},
     ))
 
-    assert result["model_recovery_guidance"][0]["decision_owner"] == "llm"
+    assert result["model_recovery_guidance"][0]["decision_owner"] == "runtime"
     assert result["command_experience"][0]["status"] == "rejected"
-    assert "runtime_recoveries" not in result
+    assert result["runtime_recoveries"][0]["kind"] == "safe_read_fallback"
     assert "runtime_recovery" not in result
 
 

@@ -33,20 +33,18 @@ def _rejected_bgp_output() -> dict:
     }
 
 
-def test_rejected_read_returns_advisory_context_without_executable_fallback():
+def test_rejected_read_publishes_runtime_owned_semantic_recovery():
     guidance = model_recovery_guidance(
         {"action": "read", "connection_id": "conn-1", "commands": ["display bgp peer vpn4"]},
         _rejected_bgp_output(),
     )
 
     assert guidance[0]["candidate_semantic_fact"] == "bgp_peers"
-    assert guidance[0]["decision_owner"] == "llm"
-    assert "tool_id" not in guidance[0]
-    assert "arguments" not in guidance[0]
+    assert guidance[0]["decision_owner"] == "runtime"
     assert infer_semantic_fact("display bgp peer vpn4") == "bgp_peers"
 
 
-def test_unknown_syntax_exposes_search_hint_but_does_not_schedule_search():
+def test_unknown_syntax_exposes_documentation_recovery_context():
     output = _rejected_bgp_output()
     output["command_results"][0]["command"] = "display proprietary foo status"
     guidance = model_recovery_guidance(
@@ -55,8 +53,8 @@ def test_unknown_syntax_exposes_search_hint_but_does_not_schedule_search():
     )
 
     assert guidance[0]["candidate_semantic_fact"] == ""
-    assert "proprietary foo" in guidance[0]["documentation_query_hint"]
-    assert guidance[0]["allowed_next_steps"][-1] == "report_unknown"
+    assert guidance[0]["decision_owner"] == "runtime"
+    assert guidance[0]["candidate_semantic_fact"] == ""
 
 
 def test_transport_uncertainty_and_writes_never_publish_semantic_recovery():
@@ -70,15 +68,14 @@ def test_transport_uncertainty_and_writes_never_publish_semantic_recovery():
     ) == []
 
 
-def test_unavailable_semantic_template_returns_model_guidance_only():
+def test_unavailable_semantic_template_returns_runtime_guidance():
     guidance = semantic_collect_guidance(
         {"action": "collect", "connection_id": "conn-1", "facts": ["bgp_peers"]},
         {"facts": {"bgp_peers": {"status": "unavailable"}}, "device_profile": {"vendor": "h3c"}},
     )
 
     assert guidance[0]["reason"] == "semantic_template_unavailable"
-    assert guidance[0]["decision_owner"] == "llm"
-    assert "tool_id" not in guidance[0]
+    assert guidance[0]["decision_owner"] == "runtime"
 
 
 def test_query_loop_runs_only_the_recovery_action_selected_by_the_llm():

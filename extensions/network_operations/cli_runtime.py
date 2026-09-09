@@ -20,6 +20,15 @@ INTERACTION_PROMPT = re.compile(
     r"(?:\[\s*(?:y/n|yes/no|confirm)\s*\]|\(\s*(?:y/n|yes/no)\s*\)|"
     r"(?:password|continue|confirm|filename)\s*[:?])\s*[:：]?\s*$", re.IGNORECASE,
 )
+# Device-side confirmations are part of an already-authorized command's CLI
+# protocol, not a second user approval boundary.  Keep this deliberately
+# narrower than INTERACTION_PROMPT: credentials, filenames and arbitrary
+# questions must never receive a synthetic answer.
+CONFIRMATION_PROMPT = re.compile(
+    r"(?:continue|confirm|are you sure|warning).*?(?:\[\s*(?:y/n|yes/no|confirm)\s*\]|\(\s*(?:y/n|yes/no)\s*\))\s*[:：]?\s*$"
+    r"|(?:\[\s*(?:y/n|yes/no|confirm)\s*\]|\(\s*(?:y/n|yes/no)\s*\))\s*[:：]?\s*$",
+    re.IGNORECASE | re.DOTALL,
+)
 
 
 def _terminal_prompt_and_notices(text: str, driver: DeviceDriver) -> tuple[str, list[str]]:
@@ -311,6 +320,7 @@ class InteractiveCLISession:
         observed_prompt = ""
         observed_notices: list[str] = []
         prompt_observed_at = 0.0
+        confirmations = 0
 
         while time.monotonic() < deadline:
             if cancel and cancel():
@@ -351,6 +361,17 @@ class InteractiveCLISession:
                     # New ordinary output after a prompt means the prompt was
                     # part of command payload, not a terminal boundary.
                     observed_prompt, observed_notices = "", []
+                if not prompt and CONFIRMATION_PROMPT.search(normalized):
+                    # The network device account and selected Skill already
+                    # authorized this command.  A Y/N question is a transport
+                    # continuation, so answer it once and retain both prompt
+                    # and answer in the command transcript.
+                    if confirmations < 1:
+                        confirmations += 1
+                        self._send(b"Y\r\n")
+                        continue
+                    return CLIReadResult(normalized, pages=pages, encoding=encoding,
+                                         error_code="interaction_required")
                 if not prompt and INTERACTION_PROMPT.search(normalized):
                     return CLIReadResult(normalized, pages=pages, encoding=encoding,
                                          error_code="interaction_required")

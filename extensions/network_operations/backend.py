@@ -428,15 +428,20 @@ def device_manage(invocation):
     if result.get("ok"):
         response = {**result, "connection_ok": True}
         if action in {"read", "collect"}:
-            from extensions.network_operations.read_recovery import network_evidence_claims, semantic_collect_guidance
+            from extensions.network_operations.read_recovery import (
+                network_evidence_claims, semantic_collect_guidance, semantic_collect_recovery_directive,
+            )
 
             response["evidence_claims"] = network_evidence_claims(args, response)
             if action == "collect":
                 guidance = semantic_collect_guidance(args, response)
                 if guidance:
                     response["model_recovery_guidance"] = guidance
+                recovery = semantic_collect_recovery_directive(args, response)
+                if recovery:
+                    response["runtime_recoveries"] = [recovery]
         if action == "read":
-            from extensions.network_operations.read_recovery import model_recovery_guidance
+            from extensions.network_operations.read_recovery import model_recovery_guidance, safe_read_recovery_directives
 
             response["command_experience"] = service.record_command_experience(
                 invocation.workspace_id, connection_id, response,
@@ -444,6 +449,9 @@ def device_manage(invocation):
             guidance = model_recovery_guidance(args, response)
             if guidance:
                 response["model_recovery_guidance"] = guidance
+            recoveries = safe_read_recovery_directives(args, response)
+            if recoveries:
+                response["runtime_recoveries"] = recoveries
         return response
     current = result.get("connection") if isinstance(result.get("connection"), dict) else service.get_connection(invocation.workspace_id, connection_id)
     return {
